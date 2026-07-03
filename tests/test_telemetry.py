@@ -46,7 +46,7 @@ class RecordingLoggingProcessRuntimeState:
     def __init__(self, calls: list[dict[str, object]]) -> None:
         self.calls = calls
 
-    def build_logging_runtime_policy_payload(self, *payload_arguments: object) -> dict[str, object]:
+    def build_logging_runtime_policy(self, *payload_arguments: object) -> dict[str, object]:
         """Build the logging payload through the native runtime policy helper."""
         if len(payload_arguments) != 12:
             raise ValueError("Logging runtime policy payload expects 12 arguments.")
@@ -65,7 +65,8 @@ class RecordingLoggingProcessRuntimeState:
             telemetry_stream_file,
         ) = payload_arguments
         return dict(
-            _core.NativeRuntimeState().build_logging_runtime_policy_payload(
+            _core.NativeRuntimeState()
+            .build_logging_runtime_policy(
                 typing.cast("str", log_filter),
                 typing.cast("str | None", log_file),
                 typing.cast("bool", log_stderr),
@@ -79,11 +80,12 @@ class RecordingLoggingProcessRuntimeState:
                 typing.cast("str", telemetry_mode),
                 typing.cast("str | None", telemetry_stream_file),
             )
+            .logging_runtime_policy_payload()
         )
 
-    def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+    def initialize_logging_runtime_policy(self, payload: object) -> bool:
         """Record the initialized logging payload."""
-        self.calls.append(payload)
+        self.calls.append(typing.cast("dict[str, object]", payload))
         return True
 
 

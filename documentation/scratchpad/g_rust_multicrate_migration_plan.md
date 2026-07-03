@@ -2863,6 +2863,10 @@ Current guardrail notes:
   snapshot payload method. Binary/null diagnostic maps remain native-owned
   snapshot fields, and the timing adapter is guarded from calling
   `snapshot_payload()`.
+- Runner process-runtime policy and state reads now consume typed native
+  logging/JAX policy and runtime-state snapshot handles instead of legacy dict
+  payload getters. Legacy payload helpers remain for compatibility tests, while
+  `g.runner.runtime` is guarded from calling them.
 - Run-start metadata now enters a single native run-metadata builder call that
   writes the effective TOML and extends the run manifest. Runner Python no
   longer calls the config TOML writer directly, and the Python architecture

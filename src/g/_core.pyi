@@ -2831,14 +2831,48 @@ class NativeCliRunLifecycleState:
 class NativeRuntimeCompatibilityToken:
     pass
 
+class NativeLoggingRuntimePolicy:
+    log_filter: str
+    log_file: str | None
+    log_stderr: bool
+    log_queue_size: int
+    log_lossy: bool
+    include_source_location: bool
+    include_span_events: bool
+    trace_file: str | None
+    trace_filter: str
+    trace_event_cap: int | None
+    def logging_runtime_policy_payload(self) -> dict[str, object]: ...
+
+class NativeJaxRuntimePolicy:
+    device: str
+    cache_directory: str | None
+    matmul_precision: str | None
+    persistent_cache: bool
+    persistent_cache_min_entry_size_bytes: int
+    persistent_cache_min_compile_time_seconds: int
+    xla_autotune_cache: bool
+    transfer_guard: bool
+    def jax_runtime_policy_payload(self) -> dict[str, object]: ...
+
+class NativeRuntimeStateSnapshot:
+    logging_policy: NativeLoggingRuntimePolicy | None
+    rayon_thread_count: int | None
+    jax_policy: NativeJaxRuntimePolicy | None
+    def runtime_state_payload(self) -> dict[str, object]: ...
+
 class NativeRuntimePolicy:
     rayon_thread_count: int | None
+    def logging_runtime_policy(self) -> NativeLoggingRuntimePolicy: ...
     def logging_runtime_policy_payload(self) -> dict[str, object]: ...
+    def jax_runtime_policy(self) -> NativeJaxRuntimePolicy: ...
     def jax_runtime_policy_payload(self) -> dict[str, object]: ...
 
 class NativeRunRuntime:
     rayon_thread_count: int | None
+    def logging_runtime_policy(self) -> NativeLoggingRuntimePolicy: ...
     def logging_runtime_policy_payload(self) -> dict[str, object]: ...
+    def jax_runtime_policy(self) -> NativeJaxRuntimePolicy: ...
     def jax_runtime_policy_payload(self) -> dict[str, object]: ...
     def runtime_compatibility_token(self) -> NativeRuntimeCompatibilityToken: ...
 
@@ -2898,7 +2932,9 @@ class NativeRuntimeState:
     @staticmethod
     def global_process_runtime_state() -> NativeRuntimeState: ...
     def logging_runtime_policy_payload(self) -> dict[str, object] | None: ...
+    def logging_runtime_policy(self) -> NativeLoggingRuntimePolicy | None: ...
     def jax_runtime_policy_payload(self) -> dict[str, object] | None: ...
+    def jax_runtime_policy(self) -> NativeJaxRuntimePolicy | None: ...
     def default_local_cache_directory_value(self, directory_name: str) -> str: ...
     def describe_logging_runtime_policy_value(
         self,
@@ -2928,6 +2964,34 @@ class NativeRuntimeState:
         telemetry_mode: str,
         telemetry_stream_file: str | None,
     ) -> dict[str, object]: ...
+    def build_logging_runtime_policy(
+        self,
+        log_filter: str,
+        log_file: str | None,
+        log_stderr: bool,
+        log_queue_size: int,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: str | None,
+        trace_filter: str,
+        trace_event_cap: int | None,
+        telemetry_mode: str,
+        telemetry_stream_file: str | None,
+    ) -> NativeLoggingRuntimePolicy: ...
+    def build_logging_runtime_policy_from_values(
+        self,
+        log_filter: str,
+        log_file: str | None,
+        log_stderr: bool,
+        log_queue_size: int,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: str | None,
+        trace_filter: str,
+        trace_event_cap: int | None,
+    ) -> NativeLoggingRuntimePolicy: ...
     def build_jax_runtime_policy_payload(
         self,
         device: str,
@@ -2939,24 +3003,36 @@ class NativeRuntimeState:
         xla_autotune_cache: bool,
         transfer_guard: bool,
     ) -> dict[str, object]: ...
+    def build_jax_runtime_policy(
+        self,
+        device: str,
+        cache_directory: str | None,
+        matmul_precision: str | None,
+        persistent_cache: bool,
+        persistent_cache_min_entry_size_bytes: int,
+        persistent_cache_min_compile_time_seconds: int,
+        xla_autotune_cache: bool,
+        transfer_guard: bool,
+    ) -> NativeJaxRuntimePolicy: ...
     def build_runtime_policy_handle(
         self,
-        logging_policy_payload: dict[str, object],
+        logging_policy_payload: NativeLoggingRuntimePolicy | dict[str, object],
         rayon_thread_count: int | None,
-        jax_policy_payload: dict[str, object],
+        jax_policy_payload: NativeJaxRuntimePolicy | dict[str, object],
     ) -> NativeRuntimePolicy: ...
     def build_process_runtime_state_handle(
         self,
-        logging_policy_payload: dict[str, object] | None,
+        logging_policy_payload: NativeLoggingRuntimePolicy | dict[str, object] | None,
         rayon_thread_count: int | None,
-        jax_policy_payload: dict[str, object] | None,
+        jax_policy_payload: NativeJaxRuntimePolicy | dict[str, object] | None,
     ) -> NativeRuntimeState: ...
     def runtime_state_payload(self) -> dict[str, object]: ...
+    def runtime_state(self) -> NativeRuntimeStateSnapshot: ...
     def require_compatible_runtime_policy(
         self,
-        logging_policy_payload: dict[str, object],
+        logging_policy_payload: NativeLoggingRuntimePolicy | dict[str, object],
         rayon_thread_count: int | None,
-        jax_policy_payload: dict[str, object],
+        jax_policy_payload: NativeJaxRuntimePolicy | dict[str, object],
     ) -> NativeRuntimeCompatibilityToken: ...
     def build_run_runtime(
         self,
@@ -2966,9 +3042,12 @@ class NativeRuntimeState:
         self,
         runtime_policy: NativeRuntimePolicy,
     ) -> NativeRuntimeCompatibilityToken: ...
-    def require_compatible_logging_runtime_policy(self, payload: dict[str, object]) -> None: ...
-    def record_logging_runtime_policy(self, payload: dict[str, object]) -> None: ...
-    def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool: ...
+    def require_compatible_logging_runtime_policy(
+        self,
+        payload: NativeLoggingRuntimePolicy | dict[str, object],
+    ) -> None: ...
+    def record_logging_runtime_policy(self, payload: NativeLoggingRuntimePolicy | dict[str, object]) -> None: ...
+    def initialize_logging_runtime_policy(self, payload: NativeLoggingRuntimePolicy | dict[str, object]) -> bool: ...
     def require_compatible_rayon_thread_count(self, thread_count: int | None) -> None: ...
     def record_rayon_thread_count(self, thread_count: int) -> None: ...
     def plan_rayon_thread_pool_configuration(self, thread_count: int) -> NativeRayonThreadPoolConfigurationPlan: ...
@@ -2979,26 +3058,29 @@ class NativeRuntimeState:
         rayon_thread_count: int | None,
     ) -> NativeRayonThreadPoolConfigurationPlan | None: ...
     def effective_rayon_thread_count(self, requested_thread_count: int | None) -> int | None: ...
-    def require_compatible_jax_runtime_policy(self, payload: dict[str, object]) -> None: ...
-    def record_jax_runtime_policy(self, payload: dict[str, object]) -> None: ...
-    def complete_jax_runtime_setup(self, payload: dict[str, object]) -> None: ...
+    def require_compatible_jax_runtime_policy(
+        self,
+        payload: NativeJaxRuntimePolicy | dict[str, object],
+    ) -> None: ...
+    def record_jax_runtime_policy(self, payload: NativeJaxRuntimePolicy | dict[str, object]) -> None: ...
+    def complete_jax_runtime_setup(self, payload: NativeJaxRuntimePolicy | dict[str, object]) -> None: ...
     def complete_jax_runtime_setup_session(
         self,
-        payload: dict[str, object],
+        payload: NativeJaxRuntimePolicy | dict[str, object],
         setup_session: NativeJaxRuntimeSetupSession,
     ) -> None: ...
     def plan_jax_runtime_setup_lifecycle(
         self,
-        payload: dict[str, object],
+        payload: NativeJaxRuntimePolicy | dict[str, object],
     ) -> NativeJaxRuntimeSetupLifecyclePlan: ...
     def build_jax_runtime_setup_session(
         self,
-        payload: dict[str, object],
+        payload: NativeJaxRuntimePolicy | dict[str, object],
         resolved_cache_directory: str,
     ) -> NativeJaxRuntimeSetupSession: ...
     def build_jax_runtime_setup_session_resolving_cache_directory(
         self,
-        payload: dict[str, object],
+        payload: NativeJaxRuntimePolicy | dict[str, object],
     ) -> NativeJaxRuntimeSetupSession: ...
 
 class NativeShutdownController:

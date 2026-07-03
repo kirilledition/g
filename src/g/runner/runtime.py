@@ -197,7 +197,7 @@ class RuntimePolicy:
     @property
     def logging_policy(self) -> LoggingRuntimePolicy:
         """Return the requested logging and tracing sink policy view."""
-        return logging_runtime_policy_from_native_payload(self.native_policy.logging_runtime_policy_payload())
+        return logging_runtime_policy_from_native_policy(self.native_policy.logging_runtime_policy())
 
     @property
     def rayon_thread_count(self) -> int | None:
@@ -207,7 +207,7 @@ class RuntimePolicy:
     @property
     def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
         """Return the requested JAX runtime policy view."""
-        return jax_runtime_policy_from_native_payload(self.native_policy.jax_runtime_policy_payload())
+        return jax_runtime_resolution.jax_runtime_policy_from_native_policy(self.native_policy.jax_runtime_policy())
 
 
 @dataclass(frozen=True)
@@ -229,7 +229,7 @@ class RunRuntime:
     @property
     def logging_policy(self) -> LoggingRuntimePolicy:
         """Return the checked logging and tracing sink policy view."""
-        return logging_runtime_policy_from_native_payload(self.native_runtime.logging_runtime_policy_payload())
+        return logging_runtime_policy_from_native_policy(self.native_runtime.logging_runtime_policy())
 
     @property
     def rayon_thread_count(self) -> int | None:
@@ -239,7 +239,7 @@ class RunRuntime:
     @property
     def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
         """Return the checked JAX runtime policy view."""
-        return jax_runtime_policy_from_native_payload(self.native_runtime.jax_runtime_policy_payload())
+        return jax_runtime_resolution.jax_runtime_policy_from_native_policy(self.native_runtime.jax_runtime_policy())
 
 
 @dataclass(frozen=True)
@@ -290,8 +290,9 @@ def configure_runtime_before_jax_import(
 ) -> jax_runtime_models.JaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
+    native_requested_policy = jax_runtime_resolution.jax_runtime_policy_to_native_policy(requested_policy)
     native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session_resolving_cache_directory(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
+        native_requested_policy,
     )
     if not native_setup_session.should_configure:
         return None
@@ -305,19 +306,19 @@ def configure_runtime_before_jax_import(
         diagnostic_sink=record_diagnostic_event,
     )
     PROCESS_RUNTIME_STATE.complete_jax_runtime_setup_session(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
+        native_requested_policy,
         native_setup_session,
     )
     return setup_report
 
 
-def build_logging_runtime_policy(
+def build_native_logging_runtime_policy(
     diagnostics_config: config.GDiagnosticsConfig,
     telemetry_paths: events.TelemetryPaths | None,
-) -> LoggingRuntimePolicy:
-    """Build the process-global logging policy requested by a run."""
+) -> _core.NativeLoggingRuntimePolicy:
+    """Build the typed native process-global logging policy requested by a run."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-    native_payload = PROCESS_RUNTIME_STATE.build_logging_runtime_policy_payload(
+    return PROCESS_RUNTIME_STATE.build_logging_runtime_policy(
         diagnostics_config.log_filter,
         None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
         diagnostics_config.log_stderr,
@@ -331,7 +332,32 @@ def build_logging_runtime_policy(
         diagnostics_config.telemetry.value,
         None if telemetry_stream_file is None else str(telemetry_stream_file),
     )
-    return logging_runtime_policy_from_native_payload(native_payload)
+
+
+def build_logging_runtime_policy(
+    diagnostics_config: config.GDiagnosticsConfig,
+    telemetry_paths: events.TelemetryPaths | None,
+) -> LoggingRuntimePolicy:
+    """Build the process-global logging policy requested by a run."""
+    return logging_runtime_policy_from_native_policy(
+        build_native_logging_runtime_policy(diagnostics_config, telemetry_paths)
+    )
+
+
+def logging_runtime_policy_from_native_policy(native_policy: _core.NativeLoggingRuntimePolicy) -> LoggingRuntimePolicy:
+    """Adapt a typed native logging-runtime policy to the Python dataclass."""
+    return LoggingRuntimePolicy(
+        log_filter=native_policy.log_filter,
+        log_file=None if native_policy.log_file is None else Path(native_policy.log_file),
+        log_stderr=native_policy.log_stderr,
+        log_queue_size=native_policy.log_queue_size,
+        log_lossy=native_policy.log_lossy,
+        include_source_location=native_policy.include_source_location,
+        include_span_events=native_policy.include_span_events,
+        trace_file=None if native_policy.trace_file is None else Path(native_policy.trace_file),
+        trace_filter=native_policy.trace_filter,
+        trace_event_cap=native_policy.trace_event_cap,
+    )
 
 
 def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
@@ -366,6 +392,22 @@ def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> di
         "trace_filter": policy.trace_filter,
         "trace_event_cap": policy.trace_event_cap,
     }
+
+
+def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _core.NativeLoggingRuntimePolicy:
+    """Adapt a Python logging runtime policy view to a typed native handle."""
+    return PROCESS_RUNTIME_STATE.build_logging_runtime_policy_from_values(
+        policy.log_filter,
+        None if policy.log_file is None else str(policy.log_file),
+        policy.log_stderr,
+        policy.log_queue_size,
+        policy.log_lossy,
+        policy.include_source_location,
+        policy.include_span_events,
+        None if policy.trace_file is None else str(policy.trace_file),
+        policy.trace_filter,
+        policy.trace_event_cap,
+    )
 
 
 def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_models.JaxRuntimePolicy:
@@ -411,13 +453,13 @@ def build_runtime_policy(
     telemetry_paths: events.TelemetryPaths,
 ) -> RuntimePolicy:
     """Build the process-global runtime policy requested by a run."""
-    logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
+    native_logging_policy = build_native_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
     jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
     return RuntimePolicy(
         native_policy=PROCESS_RUNTIME_STATE.build_runtime_policy_handle(
-            logging_runtime_policy_to_native_payload(logging_policy),
+            native_logging_policy,
             regenie_config.trait.threads,
-            jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
+            jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
         )
     )
 
@@ -425,7 +467,7 @@ def build_runtime_policy(
 def require_compatible_logging_runtime_policy(logging_policy: LoggingRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global logging settings."""
     PROCESS_RUNTIME_STATE.require_compatible_logging_runtime_policy(
-        logging_runtime_policy_to_native_payload(logging_policy)
+        logging_runtime_policy_to_native_policy(logging_policy)
     )
 
 
@@ -437,14 +479,14 @@ def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
 def require_compatible_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global JAX settings."""
     PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
     )
 
 
 def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Record the process-global JAX runtime policy configured in this process."""
     PROCESS_RUNTIME_STATE.record_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
     )
 
 
@@ -460,17 +502,15 @@ def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
 
 def describe_runtime_state() -> RuntimeState:
     """Return the process-global runtime state known to this Python process."""
-    runtime_state_payload = native_mapping_payload(PROCESS_RUNTIME_STATE.runtime_state_payload())
-    logging_policy_payload = runtime_state_payload["logging_policy"]
-    jax_policy_payload = runtime_state_payload["jax_policy"]
+    native_snapshot = PROCESS_RUNTIME_STATE.runtime_state()
     return RuntimeState(
         logging_policy=None
-        if logging_policy_payload is None
-        else logging_runtime_policy_from_native_payload(logging_policy_payload),
-        rayon_thread_count=None
-        if runtime_state_payload["rayon_thread_count"] is None
-        else native_int_payload(runtime_state_payload["rayon_thread_count"]),
-        jax_policy=None if jax_policy_payload is None else jax_runtime_policy_from_native_payload(jax_policy_payload),
+        if native_snapshot.logging_policy is None
+        else logging_runtime_policy_from_native_policy(native_snapshot.logging_policy),
+        rayon_thread_count=native_snapshot.rayon_thread_count,
+        jax_policy=None
+        if native_snapshot.jax_policy is None
+        else jax_runtime_resolution.jax_runtime_policy_from_native_policy(native_snapshot.jax_policy),
     )
 
 
@@ -537,5 +577,5 @@ def initialize_logging(
     telemetry_paths: events.TelemetryPaths | None,
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
-    logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
-    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
+    native_logging_policy = build_native_logging_runtime_policy(diagnostics_config, telemetry_paths)
+    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(native_logging_policy)

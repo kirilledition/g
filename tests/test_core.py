@@ -1634,6 +1634,20 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         telemetry_mode="off",
         telemetry_stream_file=None,
     )
+    logging_policy = runtime_state.build_logging_runtime_policy(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
     jax_policy_payload: dict[str, object] = {
         "device": "cpu",
         "cache_directory": None,
@@ -1644,6 +1658,16 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         "xla_autotune_cache": False,
         "transfer_guard": False,
     }
+    jax_policy = runtime_state.build_jax_runtime_policy(
+        device="cpu",
+        cache_directory=None,
+        matmul_precision=None,
+        persistent_cache=True,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_autotune_cache=False,
+        transfer_guard=False,
+    )
 
     runtime_token = runtime_state.require_compatible_runtime_policy(
         logging_policy_payload,
@@ -1651,18 +1675,28 @@ def test_native_runtime_state_issues_compatibility_token() -> None:
         jax_policy_payload,
     )
     runtime_policy = runtime_state.build_runtime_policy_handle(logging_policy_payload, None, jax_policy_payload)
+    typed_runtime_policy = runtime_state.build_runtime_policy_handle(logging_policy, None, jax_policy)
     runtime_token_from_policy_handle = runtime_state.require_compatible_runtime_policy_handle(runtime_policy)
     run_runtime = runtime_state.build_run_runtime(runtime_policy)
 
     assert isinstance(runtime_token, _core.NativeRuntimeCompatibilityToken)
     assert isinstance(runtime_policy, _core.NativeRuntimePolicy)
+    assert isinstance(typed_runtime_policy, _core.NativeRuntimePolicy)
     assert isinstance(runtime_token_from_policy_handle, _core.NativeRuntimeCompatibilityToken)
     assert isinstance(run_runtime, _core.NativeRunRuntime)
     assert isinstance(run_runtime.runtime_compatibility_token(), _core.NativeRuntimeCompatibilityToken)
     assert runtime_policy.rayon_thread_count is None
+    assert isinstance(runtime_policy.logging_runtime_policy(), _core.NativeLoggingRuntimePolicy)
+    assert isinstance(runtime_policy.jax_runtime_policy(), _core.NativeJaxRuntimePolicy)
+    assert runtime_policy.logging_runtime_policy().log_filter == "info"
+    assert runtime_policy.jax_runtime_policy().device == "cpu"
     assert runtime_policy.logging_runtime_policy_payload() == logging_policy_payload
     assert runtime_policy.jax_runtime_policy_payload() == jax_policy_payload
+    assert typed_runtime_policy.logging_runtime_policy_payload() == logging_policy_payload
+    assert typed_runtime_policy.jax_runtime_policy_payload() == jax_policy_payload
     assert run_runtime.rayon_thread_count is None
+    assert isinstance(run_runtime.logging_runtime_policy(), _core.NativeLoggingRuntimePolicy)
+    assert isinstance(run_runtime.jax_runtime_policy(), _core.NativeJaxRuntimePolicy)
     assert run_runtime.logging_runtime_policy_payload() == logging_policy_payload
     assert run_runtime.jax_runtime_policy_payload() == jax_policy_payload
     assert not hasattr(_core, "build_runtime_policy_handle")
@@ -2155,27 +2189,53 @@ def test_native_runtime_state_returns_snapshot_payload() -> None:
     }
 
     empty_payload = runtime_state.runtime_state_payload()
+    empty_snapshot = runtime_state.runtime_state()
     runtime_state.record_logging_runtime_policy(logging_policy_payload)
     runtime_state.record_rayon_thread_count(4)
     runtime_state.record_jax_runtime_policy(jax_policy_payload)
     configured_payload = runtime_state.runtime_state_payload()
+    configured_snapshot = runtime_state.runtime_state()
 
     assert empty_payload == {
         "logging_policy": None,
         "rayon_thread_count": None,
         "jax_policy": None,
     }
+    assert isinstance(empty_snapshot, _core.NativeRuntimeStateSnapshot)
+    assert empty_snapshot.logging_policy is None
+    assert empty_snapshot.rayon_thread_count is None
+    assert empty_snapshot.jax_policy is None
     assert configured_payload == {
         "logging_policy": logging_policy_payload,
         "rayon_thread_count": 4,
         "jax_policy": jax_policy_payload,
     }
+    assert configured_snapshot.logging_policy is not None
+    assert configured_snapshot.logging_policy.log_filter == "info"
+    assert configured_snapshot.rayon_thread_count == 4
+    assert configured_snapshot.jax_policy is not None
+    assert configured_snapshot.jax_policy.cache_directory == "/tmp/g-jax-cache"
+    assert configured_snapshot.runtime_state_payload() == configured_payload
     assert not hasattr(_core, "build_logging_runtime_policy_payload")
 
 
 def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
     runtime_state_builder = _core.NativeRuntimeState()
     logging_policy_payload = runtime_state_builder.build_logging_runtime_policy_payload(
+        log_filter="info",
+        log_file=None,
+        log_stderr=False,
+        log_queue_size=1024,
+        log_lossy=True,
+        include_source_location=False,
+        include_span_events=False,
+        trace_file=None,
+        trace_filter="info",
+        trace_event_cap=None,
+        telemetry_mode="off",
+        telemetry_stream_file=None,
+    )
+    logging_policy = runtime_state_builder.build_logging_runtime_policy(
         log_filter="info",
         log_file=None,
         log_stderr=False,
@@ -2199,13 +2259,29 @@ def test_native_process_runtime_state_handle_seeds_snapshot_payload() -> None:
         "xla_autotune_cache": False,
         "transfer_guard": False,
     }
+    jax_policy = runtime_state_builder.build_jax_runtime_policy(
+        device="cpu",
+        cache_directory="/tmp/g-jax-cache",
+        matmul_precision=None,
+        persistent_cache=True,
+        persistent_cache_min_entry_size_bytes=0,
+        persistent_cache_min_compile_time_seconds=0,
+        xla_autotune_cache=False,
+        transfer_guard=False,
+    )
 
     runtime_state = runtime_state_builder.build_process_runtime_state_handle(
         logging_policy_payload, 4, jax_policy_payload
     )
+    typed_runtime_state = runtime_state_builder.build_process_runtime_state_handle(logging_policy, 4, jax_policy)
     empty_runtime_state = runtime_state_builder.build_process_runtime_state_handle(None, None, None)
 
     assert runtime_state.runtime_state_payload() == {
+        "logging_policy": logging_policy_payload,
+        "rayon_thread_count": 4,
+        "jax_policy": jax_policy_payload,
+    }
+    assert typed_runtime_state.runtime_state_payload() == {
         "logging_policy": logging_policy_payload,
         "rayon_thread_count": 4,
         "jax_policy": jax_policy_payload,

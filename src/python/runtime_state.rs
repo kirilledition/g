@@ -33,6 +33,21 @@ pub(crate) struct NativeJaxRuntimeSetupLifecyclePlan {
 }
 
 #[pyclass]
+pub(crate) struct NativeLoggingRuntimePolicy {
+    policy: native_runtime_policy::LoggingRuntimePolicyPayload,
+}
+
+#[pyclass]
+pub(crate) struct NativeJaxRuntimePolicy {
+    policy: native_runtime_state::JaxRuntimePolicyPayload,
+}
+
+#[pyclass]
+pub(crate) struct NativeRuntimeStateSnapshot {
+    snapshot: native_runtime_state::RuntimeStateSnapshotPayload,
+}
+
+#[pyclass]
 pub(crate) struct NativeRuntimePolicy {
     policy: native_runtime_state::RuntimePolicyPayload,
 }
@@ -80,14 +95,148 @@ impl NativeJaxRuntimeSetupLifecyclePlan {
 }
 
 #[pymethods]
+impl NativeLoggingRuntimePolicy {
+    #[getter]
+    fn log_filter(&self) -> &str {
+        &self.policy.log_filter
+    }
+
+    #[getter]
+    fn log_file(&self) -> Option<&str> {
+        self.policy.log_file.as_deref()
+    }
+
+    #[getter]
+    fn log_stderr(&self) -> bool {
+        self.policy.log_stderr
+    }
+
+    #[getter]
+    fn log_queue_size(&self) -> i64 {
+        self.policy.log_queue_size
+    }
+
+    #[getter]
+    fn log_lossy(&self) -> bool {
+        self.policy.log_lossy
+    }
+
+    #[getter]
+    fn include_source_location(&self) -> bool {
+        self.policy.include_source_location
+    }
+
+    #[getter]
+    fn include_span_events(&self) -> bool {
+        self.policy.include_span_events
+    }
+
+    #[getter]
+    fn trace_file(&self) -> Option<&str> {
+        self.policy.trace_file.as_deref()
+    }
+
+    #[getter]
+    fn trace_filter(&self) -> &str {
+        &self.policy.trace_filter
+    }
+
+    #[getter]
+    fn trace_event_cap(&self) -> Option<i64> {
+        self.policy.trace_event_cap
+    }
+
+    fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        logging_runtime_policy_payload_to_dict(py, &self.policy)
+    }
+}
+
+#[pymethods]
+impl NativeJaxRuntimePolicy {
+    #[getter]
+    fn device(&self) -> &str {
+        &self.policy.device
+    }
+
+    #[getter]
+    fn cache_directory(&self) -> Option<&str> {
+        self.policy.cache_directory.as_deref()
+    }
+
+    #[getter]
+    fn matmul_precision(&self) -> Option<&str> {
+        self.policy.matmul_precision.as_deref()
+    }
+
+    #[getter]
+    fn persistent_cache(&self) -> bool {
+        self.policy.persistent_cache
+    }
+
+    #[getter]
+    fn persistent_cache_min_entry_size_bytes(&self) -> i64 {
+        self.policy.persistent_cache_min_entry_size_bytes
+    }
+
+    #[getter]
+    fn persistent_cache_min_compile_time_seconds(&self) -> i64 {
+        self.policy.persistent_cache_min_compile_time_seconds
+    }
+
+    #[getter]
+    fn xla_autotune_cache(&self) -> bool {
+        self.policy.xla_autotune_cache
+    }
+
+    #[getter]
+    fn transfer_guard(&self) -> bool {
+        self.policy.transfer_guard
+    }
+
+    fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        jax_runtime_policy_payload_to_dict(py, &self.policy)
+    }
+}
+
+#[pymethods]
+impl NativeRuntimeStateSnapshot {
+    #[getter]
+    fn logging_policy(&self) -> Option<NativeLoggingRuntimePolicy> {
+        self.snapshot.logging_policy.as_ref().map(|policy| NativeLoggingRuntimePolicy { policy: policy.clone() })
+    }
+
+    #[getter]
+    fn rayon_thread_count(&self) -> Option<i64> {
+        self.snapshot.rayon_thread_count
+    }
+
+    #[getter]
+    fn jax_policy(&self) -> Option<NativeJaxRuntimePolicy> {
+        self.snapshot.jax_policy.as_ref().map(|policy| NativeJaxRuntimePolicy { policy: policy.clone() })
+    }
+
+    fn runtime_state_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        runtime_state_snapshot_payload_to_dict(py, &self.snapshot)
+    }
+}
+
+#[pymethods]
 impl NativeRuntimePolicy {
     #[getter]
     fn rayon_thread_count(&self) -> Option<i64> {
         self.policy.rayon_thread_count
     }
 
+    fn logging_runtime_policy(&self) -> NativeLoggingRuntimePolicy {
+        NativeLoggingRuntimePolicy { policy: self.policy.logging_policy.clone() }
+    }
+
     fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         logging_runtime_policy_payload_to_dict(py, &self.policy.logging_policy)
+    }
+
+    fn jax_runtime_policy(&self) -> NativeJaxRuntimePolicy {
+        NativeJaxRuntimePolicy { policy: self.policy.jax_policy.clone() }
     }
 
     fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -102,8 +251,16 @@ impl NativeRunRuntime {
         self.runtime.runtime_policy.rayon_thread_count
     }
 
+    fn logging_runtime_policy(&self) -> NativeLoggingRuntimePolicy {
+        NativeLoggingRuntimePolicy { policy: self.runtime.runtime_policy.logging_policy.clone() }
+    }
+
     fn logging_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         logging_runtime_policy_payload_to_dict(py, &self.runtime.runtime_policy.logging_policy)
+    }
+
+    fn jax_runtime_policy(&self) -> NativeJaxRuntimePolicy {
+        NativeJaxRuntimePolicy { policy: self.runtime.runtime_policy.jax_policy.clone() }
     }
 
     fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -137,9 +294,19 @@ impl NativeRuntimeState {
         state.logging_policy.as_ref().map(|policy| logging_runtime_policy_payload_to_dict(py, policy)).transpose()
     }
 
+    fn logging_runtime_policy(&self) -> PyResult<Option<NativeLoggingRuntimePolicy>> {
+        let state = self.lock_state()?;
+        Ok(state.logging_policy.as_ref().map(|policy| NativeLoggingRuntimePolicy { policy: policy.clone() }))
+    }
+
     fn jax_runtime_policy_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         let state = self.lock_state()?;
         state.jax_policy.as_ref().map(|policy| jax_runtime_policy_payload_to_dict(py, policy)).transpose()
+    }
+
+    fn jax_runtime_policy(&self) -> PyResult<Option<NativeJaxRuntimePolicy>> {
+        let state = self.lock_state()?;
+        Ok(state.jax_policy.as_ref().map(|policy| NativeJaxRuntimePolicy { policy: policy.clone() }))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -218,6 +385,73 @@ impl NativeRuntimeState {
 
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
+    fn build_logging_runtime_policy(
+        &self,
+        log_filter: String,
+        log_file: Option<String>,
+        log_stderr: bool,
+        log_queue_size: i64,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: Option<String>,
+        trace_filter: String,
+        trace_event_cap: Option<i64>,
+        telemetry_mode: String,
+        telemetry_stream_file: Option<String>,
+    ) -> PyResult<NativeLoggingRuntimePolicy> {
+        let _state = self.lock_state()?;
+        let payload = native_runtime_policy::build_logging_runtime_policy(
+            log_filter,
+            log_file,
+            log_stderr,
+            log_queue_size,
+            log_lossy,
+            include_source_location,
+            include_span_events,
+            trace_file,
+            trace_filter,
+            trace_event_cap,
+            &telemetry_mode,
+            telemetry_stream_file,
+        );
+        Ok(NativeLoggingRuntimePolicy { policy: payload })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_logging_runtime_policy_from_values(
+        &self,
+        log_filter: String,
+        log_file: Option<String>,
+        log_stderr: bool,
+        log_queue_size: i64,
+        log_lossy: bool,
+        include_source_location: bool,
+        include_span_events: bool,
+        trace_file: Option<String>,
+        trace_filter: String,
+        trace_event_cap: Option<i64>,
+    ) -> PyResult<NativeLoggingRuntimePolicy> {
+        let _state = self.lock_state()?;
+        Ok(NativeLoggingRuntimePolicy {
+            policy: native_runtime_policy::LoggingRuntimePolicyPayload {
+                log_filter,
+                log_file,
+                log_stderr,
+                log_queue_size,
+                log_lossy,
+                include_source_location,
+                include_span_events,
+                trace_file,
+                trace_filter,
+                trace_event_cap,
+            },
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
     fn build_jax_runtime_policy_payload<'py>(
         &self,
         py: Python<'py>,
@@ -242,6 +476,33 @@ impl NativeRuntimeState {
             transfer_guard,
         );
         jax_runtime_policy_payload_to_dict(py, &payload)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn build_jax_runtime_policy(
+        &self,
+        device: String,
+        cache_directory: Option<String>,
+        matmul_precision: Option<String>,
+        persistent_cache: bool,
+        persistent_cache_min_entry_size_bytes: i64,
+        persistent_cache_min_compile_time_seconds: i64,
+        xla_autotune_cache: bool,
+        transfer_guard: bool,
+    ) -> PyResult<NativeJaxRuntimePolicy> {
+        let _state = self.lock_state()?;
+        let payload = native_runtime_state::build_jax_runtime_policy_payload(
+            &device,
+            cache_directory.as_deref(),
+            matmul_precision.as_deref(),
+            persistent_cache,
+            persistent_cache_min_entry_size_bytes,
+            persistent_cache_min_compile_time_seconds,
+            xla_autotune_cache,
+            transfer_guard,
+        );
+        Ok(NativeJaxRuntimePolicy { policy: payload })
     }
 
     fn build_runtime_policy_handle(
@@ -283,6 +544,11 @@ impl NativeRuntimeState {
     fn runtime_state_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let state = self.lock_state()?;
         runtime_state_snapshot_payload_to_dict(py, &state.snapshot())
+    }
+
+    fn runtime_state(&self) -> PyResult<NativeRuntimeStateSnapshot> {
+        let state = self.lock_state()?;
+        Ok(NativeRuntimeStateSnapshot { snapshot: state.snapshot() })
     }
 
     fn require_compatible_runtime_policy(
@@ -499,10 +765,13 @@ impl NativeRuntimeState {
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
+    module.add_class::<NativeJaxRuntimePolicy>()?;
+    module.add_class::<NativeLoggingRuntimePolicy>()?;
     module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRunRuntime>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;
+    module.add_class::<NativeRuntimeStateSnapshot>()?;
     module.add_class::<NativeRuntimeState>()?;
     Ok(())
 }
@@ -510,6 +779,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 fn parse_logging_runtime_policy_payload(
     payload: &Bound<'_, PyAny>,
 ) -> PyResult<native_runtime_policy::LoggingRuntimePolicyPayload> {
+    if let Ok(native_policy) = payload.extract::<PyRef<'_, NativeLoggingRuntimePolicy>>() {
+        return Ok(native_policy.policy.clone());
+    }
     Ok(native_runtime_policy::LoggingRuntimePolicyPayload {
         log_filter: payload.get_item("log_filter")?.extract::<String>()?,
         log_file: extract_optional_string(&payload.get_item("log_file")?)?,
@@ -559,6 +831,9 @@ fn optional_non_negative_i64_to_usize(value: Option<i64>, field_name: &str) -> P
 fn parse_jax_runtime_policy_payload(
     payload: &Bound<'_, PyAny>,
 ) -> PyResult<native_runtime_state::JaxRuntimePolicyPayload> {
+    if let Ok(native_policy) = payload.extract::<PyRef<'_, NativeJaxRuntimePolicy>>() {
+        return Ok(native_policy.policy.clone());
+    }
     Ok(native_runtime_state::JaxRuntimePolicyPayload {
         device: payload.get_item("device")?.extract::<String>()?,
         cache_directory: extract_optional_string(&payload.get_item("cache_directory")?)?,

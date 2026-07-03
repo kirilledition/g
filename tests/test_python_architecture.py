@@ -2282,6 +2282,84 @@ def test_runner_timing_policy_rejects_snapshot_payload_method(tmp_path: Path) ->
     ]
 
 
+def test_runner_runtime_policy_rejects_runtime_payload_methods(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    runner_directory = package_root / "runner"
+    runner_directory.mkdir(parents=True)
+    (runner_directory / "runtime.py").write_text(
+        "\n".join(
+            (
+                "def build(native_policy, runtime_state, policy):",
+                "    native_policy.logging_runtime_policy_payload()",
+                "    native_policy.jax_runtime_policy_payload()",
+                "    runtime_state.build_logging_runtime_policy_payload()",
+                "    runtime_state.build_jax_runtime_policy_payload()",
+                "    runtime_state.runtime_state_payload()",
+                "    logging_runtime_policy_to_native_payload(policy)",
+                "    resolution.jax_runtime_policy_to_native_payload(policy)",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/runner/runtime.py"),
+            2,
+            "runner_runtime_policy_payload_isolation",
+            "native_policy.logging_runtime_policy_payload",
+            "logging_runtime_policy_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            3,
+            "runner_runtime_policy_payload_isolation",
+            "native_policy.jax_runtime_policy_payload",
+            "jax_runtime_policy_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            4,
+            "runner_runtime_policy_payload_isolation",
+            "runtime_state.build_logging_runtime_policy_payload",
+            "build_logging_runtime_policy_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            5,
+            "runner_runtime_policy_payload_isolation",
+            "runtime_state.build_jax_runtime_policy_payload",
+            "build_jax_runtime_policy_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            6,
+            "runner_runtime_policy_payload_isolation",
+            "runtime_state.runtime_state_payload",
+            "runtime_state_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            7,
+            "runner_runtime_policy_payload_isolation",
+            "logging_runtime_policy_to_native_payload",
+            "logging_runtime_policy_to_native_payload",
+        ),
+        (
+            Path("g/runner/runtime.py"),
+            8,
+            "runner_runtime_policy_payload_isolation",
+            "resolution.jax_runtime_policy_to_native_payload",
+            "jax_runtime_policy_to_native_payload",
+        ),
+    ]
+
+
 def test_run_metadata_policy_rejects_direct_native_metadata_helpers(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     runner_directory = package_root / "runner"

@@ -157,9 +157,9 @@ def build_test_process_runtime_state(
 ) -> object:
     """Build a native process runtime state handle for isolated tests."""
     return _core.NativeRuntimeState().build_process_runtime_state_handle(
-        None if logging_policy is None else runner_runtime.logging_runtime_policy_to_native_payload(logging_policy),
+        None if logging_policy is None else runner_runtime.logging_runtime_policy_to_native_policy(logging_policy),
         rayon_thread_count,
-        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
+        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
     )
 
 
@@ -192,7 +192,7 @@ class FakeLoggingProcessRuntimeState:
         """Initialize the fake with a shared call sink."""
         self.calls = calls
 
-    def build_logging_runtime_policy_payload(self, *arguments: object) -> dict[str, object]:
+    def build_logging_runtime_policy(self, *arguments: object) -> dict[str, object]:
         """Build the resolved native logging policy payload."""
         if len(arguments) != 12:
             message = "Expected the native logging policy builder argument shape."
@@ -227,9 +227,9 @@ class FakeLoggingProcessRuntimeState:
             "trace_event_cap": trace_event_cap if telemetry_mode == types.TelemetryMode.TRACE.value else None,
         }
 
-    def initialize_logging_runtime_policy(self, payload: dict[str, object]) -> bool:
+    def initialize_logging_runtime_policy(self, payload: object) -> bool:
         """Capture the initialized logging policy payload."""
-        self.calls.append(payload)
+        self.calls.append(typing.cast("dict[str, object]", payload))
         return True
 
 

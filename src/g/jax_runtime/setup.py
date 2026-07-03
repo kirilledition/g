@@ -91,7 +91,7 @@ def validate_gpu_device() -> models.JaxGpuValidationReport:
 def _build_gpu_validation_setup_session() -> _core.NativeJaxRuntimeSetupSession:
     """Build the native standalone GPU validation session."""
     return _core.NativeRuntimeState().build_jax_runtime_setup_session_resolving_cache_directory(
-        resolution.build_native_jax_runtime_policy_payload(
+        resolution.build_native_jax_runtime_policy(
             device="gpu",
             cache_directory="",
             matmul_precision=None,

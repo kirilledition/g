@@ -752,6 +752,21 @@ PYTHON_CALL_POLICIES = (
         message="runner timing snapshots must consume typed native snapshot handles",
     ),
     PythonCallPolicy(
+        name="runner_runtime_policy_payload_isolation",
+        source_directory=Path("runner/runtime.py"),
+        forbidden_calls=(
+            "logging_runtime_policy_payload",
+            "jax_runtime_policy_payload",
+            "build_logging_runtime_policy_payload",
+            "build_jax_runtime_policy_payload",
+            "runtime_state_payload",
+            "logging_runtime_policy_to_native_payload",
+            "jax_runtime_policy_to_native_payload",
+        ),
+        allowed_paths=(),
+        message="runner runtime policy/state paths must consume typed native policy handles",
+    ),
+    PythonCallPolicy(
         name="native_run_start_metadata_side_effect_isolation",
         source_directory=Path("runner"),
         forbidden_calls=("write_toml",),
