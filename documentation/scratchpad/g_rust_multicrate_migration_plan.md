@@ -2545,6 +2545,9 @@ Current guardrail notes:
   Pipeline output initialization remains responsible for resume diagnostics,
   and the Python architecture checker rejects `g.io` imports of engine
   orchestration modules.
+- BGEN source configuration now lives in the execution-plan contract instead
+  of `g.io.source`; the obsolete source module was removed, and the Python
+  architecture checker rejects imports of `g.io.source`.
 
 ### Exit criteria
 
@@ -2790,6 +2793,7 @@ g.jax_runtime must not import public API, CLI, compute, engine, execution-plan,
 interface/config, output, or runner orchestration packages.
 g.io must not import JAX runtime setup packages.
 g.io must not import engine orchestration packages.
+Production Python must not import the obsolete `g.io.source` module.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

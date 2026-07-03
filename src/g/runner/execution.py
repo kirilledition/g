@@ -14,7 +14,7 @@ from g.runner import metadata, runtime
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.io import output, source
+    from g.io import output
 
 RunArtifacts = run_events.RunArtifacts
 
@@ -53,7 +53,7 @@ class CommonEngineDispatchRequest:
 
     """
 
-    genotype_source_config: source.GenotypeSourceConfig
+    genotype_source_config: execution_plan.GenotypeSourceConfig
     phenotype_path: Path
     prediction_list_path: Path
     covariate_path: Path | None

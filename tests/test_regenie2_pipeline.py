@@ -51,7 +51,7 @@ from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import state as regenie2_linear_state
 from g.engine import shutdown, timing
 from g.interface import config as interface_config
-from g.io import output, source
+from g.io import output
 
 type NonBatchPreprocessedDosageWorkItem = (
     callback_shared.PreprocessedDosageChunkWorkItem
@@ -210,9 +210,9 @@ def test_intersect_committed_chunk_identifier_sets_preserves_pipeline_helper_con
 def build_test_genotype_source_config(
     source_path: Path,
     sample_path: Path | None = None,
-) -> source.GenotypeSourceConfig:
+) -> execution_plan.GenotypeSourceConfig:
     """Build genotype source config with an explicit sample path field."""
-    return source.GenotypeSourceConfig(source_path=source_path, sample_path=sample_path)
+    return execution_plan.GenotypeSourceConfig(source_path=source_path, sample_path=sample_path)
 
 
 def build_test_output_writer_settings(

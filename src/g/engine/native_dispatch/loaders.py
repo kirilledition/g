@@ -10,8 +10,6 @@ from g.engine.native_dispatch import groups, models
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.io import source
-
 
 def load_native_aligned_sample_data(
     *,
@@ -61,7 +59,7 @@ def load_native_multi_aligned_sample_data(
 
 def load_native_bgen_run_input(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_name: str,
@@ -91,7 +89,7 @@ def load_native_bgen_run_input(
 
 def load_native_bgen_multi_run_input(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
@@ -116,7 +114,7 @@ def load_native_bgen_multi_run_input(
 
 def load_native_bgen_grouped_run_inputs(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     engine: _core.Regenie2RunEngine,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],

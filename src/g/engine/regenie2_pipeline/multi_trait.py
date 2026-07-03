@@ -19,12 +19,11 @@ if typing.TYPE_CHECKING:
 
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.compute.regenie2_linear import config as regenie2_linear_config
-    from g.io import source
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,
@@ -106,7 +105,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,
@@ -187,7 +186,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     prediction_list_path: Path,

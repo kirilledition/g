@@ -113,7 +113,7 @@ def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path
                 "from g.io import output",
                 "from g import jax_runtime",
                 "from g.runner import execution",
-                "from ..io import source",
+                "from ..io import helpers",
                 "from g.io import *",
             )
         ),
@@ -135,7 +135,7 @@ def test_compute_import_policy_rejects_host_orchestration_imports(tmp_path: Path
         (Path("g/compute/kernel.py"), 7, "g.io.output", "g.io"),
         (Path("g/compute/kernel.py"), 8, "g.jax_runtime", "g.jax_runtime"),
         (Path("g/compute/kernel.py"), 9, "g.runner.execution", "g.runner"),
-        (Path("g/compute/kernel.py"), 10, "g.io.source", "g.io"),
+        (Path("g/compute/kernel.py"), 10, "g.io.helpers", "g.io"),
         (Path("g/compute/kernel.py"), 11, "g.io", "g.io"),
     ]
 
@@ -187,6 +187,31 @@ def test_output_import_policy_rejects_engine_imports(tmp_path: Path) -> None:
     ] == [
         (Path("g/io/output.py"), 1, "g.engine.run_events", "g.engine"),
         (Path("g/io/output.py"), 2, "g.engine.telemetry", "g.engine"),
+    ]
+
+
+def test_obsolete_io_source_import_policy_rejects_source_module_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    engine_directory = package_root / "engine"
+    engine_directory.mkdir(parents=True)
+    (engine_directory / "pipeline.py").write_text(
+        "\n".join(
+            (
+                "from g.io import source",
+                "import g.io.source",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (Path("g/engine/pipeline.py"), 1, "g.io.source", "g.io.source"),
+        (Path("g/engine/pipeline.py"), 2, "g.io.source", "g.io.source"),
     ]
 
 

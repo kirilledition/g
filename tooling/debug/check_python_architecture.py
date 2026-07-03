@@ -274,6 +274,12 @@ PYTHON_IMPORT_POLICIES = (
         message="output helpers must not import engine orchestration or diagnostics packages",
     ),
     PythonImportPolicy(
+        name="obsolete_io_source_module_isolation",
+        source_directory=Path(),
+        forbidden_imports=("g.io.source",),
+        message="BGEN source configuration is part of the execution-plan contract, not the output package",
+    ),
+    PythonImportPolicy(
         name="runner_jax_import_boundary",
         source_directory=Path("runner"),
         forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),

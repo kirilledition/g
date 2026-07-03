@@ -9,10 +9,30 @@ from pathlib import Path
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.io import output, source
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from g.interface import config
+
+
+@dataclass(frozen=True)
+class GenotypeSourceConfig:
+    """Configuration describing one resolved BGEN input source.
+
+    Attributes:
+        source_path: BGEN genotype file path.
+        sample_path: Explicit Oxford sample file path, or None to use embedded BGEN sample identifiers.
+
+    """
+
+    source_path: Path
+    sample_path: Path | None
+
+    def __post_init__(self) -> None:
+        """Validate the configured BGEN source path."""
+        if self.source_path.suffix != ".bgen":
+            message = f"Expected a .bgen source path, found '{self.source_path}'."
+            raise ValueError(message)
 
 
 @dataclass(frozen=True)
@@ -154,7 +174,7 @@ class RegenieExecutionPlan:
     """
 
     association_mode: types.AssociationMode
-    genotype_source_config: source.GenotypeSourceConfig
+    genotype_source_config: GenotypeSourceConfig
     phenotype_path: Path
     prediction_list_path: Path
     covariate_path: Path | None
@@ -250,7 +270,7 @@ def build_regenie_execution_plan(
     )
     return RegenieExecutionPlan(
         association_mode=association_mode,
-        genotype_source_config=source.GenotypeSourceConfig(
+        genotype_source_config=GenotypeSourceConfig(
             source_path=Path(typing.cast("str", input_request["bgen_path"])),
             sample_path=optional_path_from_request(input_request["sample_path"]),
         ),

@@ -8,12 +8,12 @@ from g import _core, types
 from g.engine import run_events, trusted_validation
 
 if typing.TYPE_CHECKING:
-    from g.io import source
+    from g import execution_plan
 
 
 def open_bgen_run_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool,
@@ -36,7 +36,7 @@ def open_bgen_run_engine(
 def validate_trusted_bgen_run_engine(
     *,
     engine: _core.Regenie2RunEngine,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
     trusted_bgen_validator: typing.Callable[..., None] | None,
 ) -> None:
@@ -55,7 +55,7 @@ def validate_trusted_bgen_run_engine(
 
 def build_bgen_run_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_no_missing_diploid: bool,

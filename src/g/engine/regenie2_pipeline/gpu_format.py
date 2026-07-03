@@ -12,8 +12,8 @@ from g.engine import run_events, timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 
 if typing.TYPE_CHECKING:
+    from g import execution_plan
     from g.engine import telemetry
-    from g.io import source
 
 MANIFEST_GPU_GENOTYPE_FORMAT_FIELD = "gpu_genotype_format"
 MANIFEST_ASSOCIATION_BACKEND_FIELD = "association_backend"
@@ -188,7 +188,7 @@ def build_resolution_from_native_plan(
 
 def validate_auto_packed8_bgen_engine(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
@@ -218,7 +218,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     jax_device: types.Device,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode,

@@ -16,7 +16,6 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.engine.callbacks import shared as callback_shared
     from g.engine.native_dispatch import models as native_dispatch_models
-    from g.io import source
 
 
 def require_binary_kernel_config(
@@ -74,7 +73,7 @@ class Regenie2PipelineContext:
     """
 
     association_mode: types.AssociationMode
-    genotype_source_config: source.GenotypeSourceConfig
+    genotype_source_config: execution_plan.GenotypeSourceConfig
     phenotype_path: Path
     prediction_list_path: Path
     covariate_path: Path | None
@@ -153,7 +152,7 @@ class PreparedMultiPhenotypeGroupDelivery:
 def build_regenie2_pipeline_context(
     *,
     association_mode: types.AssociationMode,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     prediction_list_path: Path,
     covariate_path: Path | None,

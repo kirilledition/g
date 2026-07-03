@@ -24,7 +24,7 @@ from g.engine.regenie2_pipeline import gpu_format as pipeline_gpu_format
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.io import source
+    from g import execution_plan
 
 
 @dataclass(frozen=True)
@@ -269,7 +269,7 @@ def build_synthetic_native_stats(genotype_matrix_by_variant: jax.Array) -> WarmC
 
 def warm_regenie2_linear_bgen_cache(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_name: str,
     prediction_list_path: Path,
@@ -384,7 +384,7 @@ def warm_regenie2_linear_bgen_cache(
 
 def warm_regenie2_binary_bgen_cache(
     *,
-    genotype_source_config: source.GenotypeSourceConfig,
+    genotype_source_config: execution_plan.GenotypeSourceConfig,
     phenotype_path: Path,
     phenotype_name: str,
     prediction_list_path: Path,
