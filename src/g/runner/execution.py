@@ -73,7 +73,7 @@ class CommonEngineDispatchRequest:
     firth_dtype: types.FloatingPointDtype
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: events.TelemetrySession | None
-    alignment_config: typing.Any
+    alignment_config: config.GComputeConfig
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 

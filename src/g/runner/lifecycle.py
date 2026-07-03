@@ -101,15 +101,20 @@ def shutdown_signal_from_native_payload(payload: object) -> ShutdownSignal:
     """Adapt native shutdown signal metadata to the public Python dataclass."""
     signal_payload = native_mapping_payload(payload)
     return ShutdownSignal(
-        number=int(signal_payload["number"]),
+        number=native_int_payload(signal_payload["number"]),
         name=str(signal_payload["name"]),
-        exit_code=int(signal_payload["exit_code"]),
+        exit_code=native_int_payload(signal_payload["exit_code"]),
     )
 
 
-def native_mapping_payload(payload: object) -> typing.Mapping[str, typing.Any]:
+def native_int_payload(payload: object) -> int:
+    """Adapt a native integer-like payload to `int`."""
+    return int(typing.cast("int | str", payload))
+
+
+def native_mapping_payload(payload: object) -> typing.Mapping[str, object]:
     """Adapt a native mapping payload to a Python mapping."""
-    return typing.cast("typing.Mapping[str, typing.Any]", payload)
+    return typing.cast("typing.Mapping[str, object]", payload)
 
 
 def install_graceful_shutdown_handlers() -> GracefulShutdownController:

@@ -434,6 +434,6 @@ def optional_path_from_native_payload(path_payload: object) -> Path | None:
     return Path(typing.cast("str", path_payload))
 
 
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+def native_mapping_payload(payload: object) -> dict[str, object]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+    return dict(typing.cast("typing.Mapping[str, object]", payload))

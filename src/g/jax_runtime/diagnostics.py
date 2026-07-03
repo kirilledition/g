@@ -36,9 +36,9 @@ def diagnostic_field_from_native_payload(payload: object) -> models.JaxRuntimeDi
     return models.JaxRuntimeDiagnosticField(name=str(field_payload["name"]), value=field_payload["value"])
 
 
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+def native_mapping_payload(payload: object) -> dict[str, object]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+    return dict(typing.cast("typing.Mapping[str, object]", payload))
 
 
 def diagnostic_events_from_native_setup_session(

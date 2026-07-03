@@ -200,17 +200,18 @@ def build_logging_runtime_policy(
 def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
     """Adapt a native logging-runtime policy payload to the Python dataclass."""
     policy_payload = native_mapping_payload(payload)
+    trace_event_cap_payload = policy_payload["trace_event_cap"]
     return LoggingRuntimePolicy(
         log_filter=str(policy_payload["log_filter"]),
         log_file=optional_path_from_native_payload(policy_payload["log_file"]),
         log_stderr=bool(policy_payload["log_stderr"]),
-        log_queue_size=int(policy_payload["log_queue_size"]),
+        log_queue_size=native_int_payload(policy_payload["log_queue_size"]),
         log_lossy=bool(policy_payload["log_lossy"]),
         include_source_location=bool(policy_payload["include_source_location"]),
         include_span_events=bool(policy_payload["include_span_events"]),
         trace_file=optional_path_from_native_payload(policy_payload["trace_file"]),
         trace_filter=str(policy_payload["trace_filter"]),
-        trace_event_cap=None if policy_payload["trace_event_cap"] is None else int(policy_payload["trace_event_cap"]),
+        trace_event_cap=None if trace_event_cap_payload is None else native_int_payload(trace_event_cap_payload),
     )
 
 
@@ -240,8 +241,12 @@ def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_model
         if policy_payload["matmul_precision"] is None
         else types.JaxMatmulPrecision(str(policy_payload["matmul_precision"])),
         persistent_cache=bool(policy_payload["persistent_cache"]),
-        persistent_cache_min_entry_size_bytes=int(policy_payload["persistent_cache_min_entry_size_bytes"]),
-        persistent_cache_min_compile_time_seconds=int(policy_payload["persistent_cache_min_compile_time_seconds"]),
+        persistent_cache_min_entry_size_bytes=native_int_payload(
+            policy_payload["persistent_cache_min_entry_size_bytes"]
+        ),
+        persistent_cache_min_compile_time_seconds=native_int_payload(
+            policy_payload["persistent_cache_min_compile_time_seconds"]
+        ),
         xla_autotune_cache=bool(policy_payload["xla_autotune_cache"]),
         transfer_guard=bool(policy_payload["transfer_guard"]),
     )
@@ -254,9 +259,14 @@ def optional_path_from_native_payload(path_payload: object) -> Path | None:
     return Path(str(path_payload))
 
 
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
+def native_mapping_payload(payload: object) -> dict[str, object]:
     """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+    return dict(typing.cast("typing.Mapping[str, object]", payload))
+
+
+def native_int_payload(payload: object) -> int:
+    """Adapt a native integer-like payload to `int`."""
+    return int(typing.cast("int | str", payload))
 
 
 def build_runtime_policy(
@@ -322,7 +332,7 @@ def describe_runtime_state() -> RuntimeState:
         else logging_runtime_policy_from_native_payload(logging_policy_payload),
         rayon_thread_count=None
         if runtime_state_payload["rayon_thread_count"] is None
-        else int(runtime_state_payload["rayon_thread_count"]),
+        else native_int_payload(runtime_state_payload["rayon_thread_count"]),
         jax_policy=None if jax_policy_payload is None else jax_runtime_policy_from_native_payload(jax_policy_payload),
     )
 

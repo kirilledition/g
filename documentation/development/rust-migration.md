@@ -426,6 +426,10 @@ transfer, runtime timing, and chromosome-state helpers use the shared
 chunk-metadata protocol. Callback diagnostics now use generic object payloads
 for JAX synchronization inputs, and single-result write dispatch resolves the
 owned writer session through an explicit protocol instead of a dynamic cast.
+Runner dispatch requests now carry the concrete compute-config alignment
+settings instead of an untyped object. Runner, lifecycle, event, and JAX
+diagnostic native payload adapters now expose object-valued maps with explicit
+integer adaptation instead of generic `typing.Any` maps.
 Test-only runner runtime construction/description helpers were also removed;
 isolated tests build native runtime-state handles directly.
 The test-only `execution_plan.build_kernel_config()` wrapper was removed; tests
