@@ -11,9 +11,8 @@ import numpy.typing as npt
 import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
 from g import _core, types
-from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import inputs, multi_group, outputs, telemetry_events, timing
+from g.engine.regenie2_pipeline import delivery, inputs, multi_group, outputs, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -337,7 +336,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         for prepared_delivery in prepared_deliveries
         for committed_chunk_identifier_set in prepared_delivery.committed_chunk_identifier_sets
     )
-    final_parquet_paths = native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
+    final_parquet_paths = delivery.run_bgen_engine_with_writer_sessions(
         engine=engine,
         run_input=union_run_input,
         committed_chunk_identifiers=multi_group.intersect_committed_chunk_identifier_sets(

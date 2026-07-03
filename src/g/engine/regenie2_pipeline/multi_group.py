@@ -8,9 +8,8 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import inputs, outputs, preflight, telemetry_events, timing
+from g.engine.regenie2_pipeline import delivery, inputs, outputs, preflight, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -238,7 +237,7 @@ def run_bgen_engine_with_multi_callback(
     variant_major_packed8_probability_pairs: bool,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery once and close all per-phenotype writers."""
-    return native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
+    return delivery.run_bgen_engine_with_writer_sessions(
         engine=engine,
         run_input=run_input,
         committed_chunk_identifiers=committed_chunk_identifiers,

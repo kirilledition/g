@@ -346,6 +346,13 @@ PYTHON_IMPORT_POLICIES = (
         message="REGENIE pipeline modules must route native input and group access through pipeline input helpers",
         allowed_paths=(Path("engine/regenie2_pipeline/inputs.py"),),
     ),
+    PythonImportPolicy(
+        name="pipeline_native_delivery_adapter_isolation",
+        source_directory=Path("engine/regenie2_pipeline"),
+        forbidden_imports=("g.engine.native_dispatch.delivery",),
+        message="REGENIE pipeline modules must route native delivery access through pipeline delivery helpers",
+        allowed_paths=(Path("engine/regenie2_pipeline/delivery.py"),),
+    ),
 )
 
 PYTHON_CALL_POLICIES = (

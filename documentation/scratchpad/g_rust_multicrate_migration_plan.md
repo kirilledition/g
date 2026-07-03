@@ -2584,6 +2584,10 @@ Current guardrail notes:
   Python architecture checker rejects direct
   `g.engine.native_dispatch.loaders`, `g.engine.native_dispatch.groups`, and
   `g.engine.native_dispatch.models` imports from sibling pipeline modules.
+- REGENIE pipeline orchestration now routes native BGEN delivery entrypoints
+  through `g.engine.regenie2_pipeline.delivery`; the Python architecture
+  checker rejects direct `g.engine.native_dispatch.delivery` imports from
+  sibling pipeline modules.
 
 ### Exit criteria
 
@@ -2838,6 +2842,7 @@ g.engine.regenie2_pipeline modules must not import timing packages directly, exc
 g.engine.regenie2_pipeline modules must not import preflight packages directly, except the pipeline preflight helper.
 g.engine.regenie2_pipeline modules must not import native-dispatch BGEN engine helpers directly, except the pipeline BGEN engine helper.
 g.engine.regenie2_pipeline modules must not import native-dispatch input loaders, group helpers, or input models directly, except the pipeline input helper.
+g.engine.regenie2_pipeline modules must not import native-dispatch delivery helpers directly, except the pipeline delivery helper.
 g.runner must not import JAX-facing pipeline, callback, compute, JAX, or JAXLIB modules at module scope.
 Production Python must not write run manifests after Phase 10.
 Production Python must not create native worker queues after Phase 10.

@@ -624,6 +624,60 @@ def test_pipeline_import_policy_allows_pipeline_input_adapter(tmp_path: Path) ->
     assert violations == ()
 
 
+def test_pipeline_import_policy_rejects_native_delivery_imports(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "single_trait.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import delivery",
+                "import g.engine.native_dispatch.delivery",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            1,
+            "g.engine.native_dispatch.delivery",
+            "g.engine.native_dispatch.delivery",
+        ),
+        (
+            Path("g/engine/regenie2_pipeline/single_trait.py"),
+            2,
+            "g.engine.native_dispatch.delivery",
+            "g.engine.native_dispatch.delivery",
+        ),
+    ]
+
+
+def test_pipeline_import_policy_allows_pipeline_delivery_adapter(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    pipeline_directory = package_root / "engine" / "regenie2_pipeline"
+    pipeline_directory.mkdir(parents=True)
+    (pipeline_directory / "delivery.py").write_text(
+        "\n".join(
+            (
+                "from g.engine.native_dispatch import delivery",
+                "import g.engine.native_dispatch.delivery",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_import_policy_violations(package_root)
+
+    assert violations == ()
+
+
 def test_python_cli_shim_policy_rejects_public_python_process_ownership(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     package_root.mkdir()

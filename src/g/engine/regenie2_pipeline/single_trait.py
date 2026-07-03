@@ -8,9 +8,8 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 from g import _core, execution_plan, types
-from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.engine.regenie2_pipeline import gpu_format, inputs, outputs, preflight, telemetry_events, timing
+from g.engine.regenie2_pipeline import delivery, gpu_format, inputs, outputs, preflight, telemetry_events, timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -285,7 +284,7 @@ def run_single_trait_bgen_pipeline(
         dosage_buffer_limit=dosage_buffer_limit,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
     )
-    return native_dispatch_delivery.run_bgen_engine_with_callback(
+    return delivery.run_bgen_engine_with_callback(
         engine=engine,
         run_input=run_input,
         committed_chunk_identifiers=initialized_outputs.committed_chunk_identifiers(0),
