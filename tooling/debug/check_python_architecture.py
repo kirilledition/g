@@ -614,6 +614,15 @@ PYTHON_IMPORT_POLICIES = (
 
 PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
+        name="dynamic_python_fallback_isolation",
+        source_directory=Path(),
+        forbidden_calls=("getattr", "hasattr", "setattr", "json.dumps", "json.loads"),
+        allowed_paths=(),
+        message=(
+            "production Python must not use dynamic attribute probes or Python JSON serialization for host contracts"
+        ),
+    ),
+    PythonCallPolicy(
         name="production_manifest_write_isolation",
         source_directory=Path(),
         forbidden_calls=(

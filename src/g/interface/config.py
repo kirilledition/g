@@ -88,10 +88,7 @@ NATIVE_CONFIG_SECTION_NAMES = frozenset(("input", "trait", "binary", "compute", 
 
 def from_options(raw_options: typing.Mapping[str, object]) -> RegenieConfig:
     """Build a normalized config from Python option dictionaries."""
-    return g._core.config_from_options(raw_options)
-
-
-setattr(RegenieConfig, "from_options", staticmethod(from_options))
+    return RegenieConfig.from_options(raw_options)
 
 
 @functools.cache

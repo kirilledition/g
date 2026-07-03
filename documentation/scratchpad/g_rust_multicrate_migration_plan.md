@@ -2812,8 +2812,9 @@ Current guardrail notes:
   transfer metadata now uses read-only array shape/dtype protocols, and
   callback writer materialization uses typed extra-code and compact-trait
   selection adapters instead of `typing.Any` casts. Public config
-  `from_options` adapters now accept object-valued option maps and attach the
-  compatibility constructor without an `Any` cast. Runner late-import pipeline
+  `from_options` adapters now accept object-valued option maps and use the
+  native `RegenieConfig.from_options` static method instead of mutating the
+  PyO3 class from Python. Runner late-import pipeline
   dispatch wrappers now use typed keyword contracts, with binary dispatch
   making the required binary kernel-config invariant explicit before crossing
   the runtime boundary, and those contracts preserve concrete output path,
@@ -2830,6 +2831,8 @@ Current guardrail notes:
   checker rejects direct `write_toml` calls from runner metadata paths.
 - The public package lazy-export shim now resolves each supported export
   explicitly instead of using `typing.Any` and dynamic `getattr` probes.
+- The Python architecture checker now rejects production `getattr`, `hasattr`,
+  `setattr`, and Python `json.dumps`/`json.loads` host contract handling.
 - Test-only runner runtime construction/description helpers were also removed;
   isolated tests build native runtime-state handles directly.
 - The test-only `execution_plan.build_kernel_config()` wrapper was removed;

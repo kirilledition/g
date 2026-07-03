@@ -217,6 +217,37 @@ def test_python_call_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_call_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
 
+def test_call_policy_rejects_dynamic_python_fallbacks(tmp_path: Path) -> None:
+    package_root = tmp_path / "g"
+    package_root.mkdir()
+    (package_root / "dynamic.py").write_text(
+        "\n".join(
+            (
+                "import json",
+                "def bad(value):",
+                "    getattr(value, 'field')",
+                "    hasattr(value, 'field')",
+                "    setattr(value, 'field', 1)",
+                "    json.dumps({'field': 1})",
+                "    json.loads('{\"field\": 1}')",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [
+        (violation.path, violation.line_number, violation.policy_name, violation.call_name) for violation in violations
+    ] == [
+        (Path("g/dynamic.py"), 3, "dynamic_python_fallback_isolation", "getattr"),
+        (Path("g/dynamic.py"), 4, "dynamic_python_fallback_isolation", "hasattr"),
+        (Path("g/dynamic.py"), 5, "dynamic_python_fallback_isolation", "setattr"),
+        (Path("g/dynamic.py"), 6, "dynamic_python_fallback_isolation", "json.dumps"),
+        (Path("g/dynamic.py"), 7, "dynamic_python_fallback_isolation", "json.loads"),
+    ]
+
+
 def test_python_parameter_policy_allows_current_production_tree() -> None:
     assert check_python_architecture.collect_python_parameter_policy_violations(PRODUCTION_PACKAGE_ROOT) == ()
 
@@ -256,6 +287,13 @@ def test_public_package_lazy_exports_are_explicit() -> None:
 
     assert "typing.Any" not in source
     assert "getattr(" not in source
+
+
+def test_interface_config_uses_native_static_constructor() -> None:
+    source = (PRODUCTION_PACKAGE_ROOT / "interface" / "config.py").read_text(encoding="utf-8")
+
+    assert "setattr(RegenieConfig" not in source
+    assert "return RegenieConfig.from_options(raw_options)" in source
 
 
 def test_public_api_import_policy_rejects_backend_bypass_imports(tmp_path: Path) -> None:
