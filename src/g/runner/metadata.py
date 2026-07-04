@@ -13,8 +13,6 @@ if typing.TYPE_CHECKING:
 
     from g.runner import outputs
 
-RunArtifacts = events.RunArtifacts
-
 
 def build_output_initialized_metadata_callback(
     *,
@@ -53,11 +51,11 @@ def log_writer_finished(
     final_output_path: Path | None,
 ) -> None:
     """Record output writer completion."""
-    events.native_run_event_telemetry_policy().record_writer_finished_telemetry_event(
+    events.record_writer_finished(
         telemetry_session,
-        association_mode.value,
-        phenotype,
-        None if final_output_path is None else str(final_output_path),
+        association_mode=association_mode,
+        phenotype=phenotype,
+        final_output_path=final_output_path,
     )
 
 
@@ -74,12 +72,12 @@ def write_run_start_metadata(
         plan=plan,
         phenotype_run_plan=phenotype_run_plan,
     )
-    events.native_run_event_telemetry_policy().record_effective_config_written_telemetry_event(
+    events.record_effective_config_written(
         telemetry_session,
-        plan.association_mode.value,
-        phenotype_run_plan.phenotype_name,
-        str(phenotype_run_plan.effective_config_path),
-        str(phenotype_run_plan.output_run_paths.run_directory),
+        association_mode=plan.association_mode,
+        phenotype=phenotype_run_plan.phenotype_name,
+        effective_config_path=phenotype_run_plan.effective_config_path,
+        output_run_directory=phenotype_run_plan.output_run_paths.run_directory,
     )
 
 
@@ -89,7 +87,7 @@ def finalize_execution_plan(
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plans: tuple[outputs.PreparedPhenotypeRunPlan, ...],
     final_output_paths: tuple[Path | None, ...],
-) -> RunArtifacts:
+) -> events.RunArtifacts:
     """Build user-facing artifacts after native execution."""
     del regenie_config
     native_metadata_builder = _core.NativeRunMetadataBuilder()
@@ -110,8 +108,8 @@ def finalize_execution_plan(
             ),
         )
     )
-    events.native_runner_diagnostic_policy().record_runner_metadata_artifacts_finalized_diagnostic_event(
-        association_mode=plan.association_mode.value,
+    events.record_runner_metadata_artifacts_finalized(
+        association_mode=plan.association_mode,
         phenotype_count=len(phenotype_run_plans),
     )
     return artifacts

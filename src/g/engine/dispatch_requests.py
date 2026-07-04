@@ -1,4 +1,4 @@
-"""Typed pipeline dispatch requests for REGENIE step 2."""
+"""Typed engine dispatch requests for REGENIE step 2."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g import _core, execution_plan, types
-    from g.engine.regenie2_pipeline import compute_config, inputs, outputs, telemetry_events, timing
+    from g.engine import timing
+    from g.engine.native_dispatch import models as native_dispatch_models
+    from g.engine.regenie2_pipeline import compute_config, outputs, telemetry_events
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,7 @@ class PipelineCommonRequest:
     firth_dtype: types.FloatingPointDtype
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: telemetry_events.TelemetrySession | None
-    alignment_config: inputs.SampleAlignmentConfigProtocol | None
+    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
     output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
 

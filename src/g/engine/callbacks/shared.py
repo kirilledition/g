@@ -6,7 +6,6 @@ import typing
 from dataclasses import dataclass
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -235,28 +234,3 @@ class CallbackChunkMetadataProtocol(typing.Protocol):
 def get_metadata_chromosome(metadata: CallbackChunkMetadataProtocol) -> str:
     """Return the native scalar chromosome label for one chunk."""
     return str(metadata.chromosome_label)
-
-
-__all__ = [
-    "BinaryChunkStatsArrays",
-    "CallbackChunkMetadataProtocol",
-    "HostGenotypeBuffer",
-    "HostOrDeviceFloatArray",
-    "LinearChunkStatsArrays",
-    "MultiPhenotypeGroupCallbackProtocol",
-    "MultiPhenotypeGroupFanout",
-    "MultiRegeniePredictionSourceProtocol",
-    "NativeBgenMultiRunInputProtocol",
-    "NativeBgenRunInputProtocol",
-    "NativeBgenWorkerShutdownError",
-    "PreprocessedDosageChunkWorkItem",
-    "PreprocessedVariantMajorDosageChunkBatchWorkItem",
-    "PreprocessedVariantMajorDosageChunkWorkItem",
-    "PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem",
-    "Regenie2MultiResultWriteWorkItem",
-    "Regenie2ResultWriteWorkItem",
-    "RegeniePredictionSourceProtocol",
-    "get_metadata_chromosome",
-    "jax",
-    "jnp",
-]

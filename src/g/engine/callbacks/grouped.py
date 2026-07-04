@@ -11,14 +11,11 @@ import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 from g import _core
 
-MultiPhenotypeGroupFanout = shared.MultiPhenotypeGroupFanout
-build_projected_variant_major_dosage_chunk_stats = transfers.build_projected_variant_major_dosage_chunk_stats
-
 
 class GroupedMultiPhenotypeFanoutCallback:
     """Fan out one union-sample native decode to compatible phenotype-group callbacks."""
 
-    def __init__(self, group_fanouts: tuple[MultiPhenotypeGroupFanout, ...]) -> None:
+    def __init__(self, group_fanouts: tuple[shared.MultiPhenotypeGroupFanout, ...]) -> None:
         """Initialize fanout callback state."""
         if not group_fanouts:
             message = "At least one phenotype group callback is required for fanout delivery."
@@ -91,7 +88,7 @@ class GroupedMultiPhenotypeFanoutCallback:
                 axis=1,
                 out=group_genotype_matrix,
             )
-            group_chunk_stats = build_projected_variant_major_dosage_chunk_stats(group_genotype_matrix)
+            group_chunk_stats = transfers.build_projected_variant_major_dosage_chunk_stats(group_genotype_matrix)
             group_callback.compute_preprocessed_variant_major_dosage_chunk(
                 metadata,
                 group_genotype_matrix,
@@ -108,6 +105,3 @@ class GroupedMultiPhenotypeFanoutCallback:
         del metadata, packed_probability_pairs_by_variant, chunk_stats
         message = "Union grouped packed8 delivery requires projected packed8 chunk statistics."
         raise RuntimeError(message)
-
-
-__all__ = ["GroupedMultiPhenotypeFanoutCallback"]

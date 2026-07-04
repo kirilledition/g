@@ -13,7 +13,6 @@ from g.engine.regenie2_pipeline import (
     inputs,
     multi_group,
     outputs,
-    requests,
     telemetry_events,
     timing,
 )
@@ -22,23 +21,25 @@ from g.engine.regenie2_pipeline import context as pipeline_context
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+    from g.engine import dispatch_requests
+
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
-    request: requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple quantitative phenotypes."""
     return run_regenie2_multi_phenotype_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
-    request: requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
     return run_regenie2_multi_phenotype_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
-    request: requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
     common_request = request.common
@@ -103,11 +104,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     if request.sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
-    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_started_diagnostic_event(
-        association_mode=context.association_mode.value,
+    telemetry_events.record_pipeline_multi_trait_started(
+        association_mode=context.association_mode,
         phenotype_count=len(request.phenotype_names),
-        sample_mode=request.sample_mode.value,
+        sample_mode=request.sample_mode,
     )
     existing_manifests = request.existing_manifests_by_phenotype or tuple(None for _ in request.phenotype_names)
     planned_compute_group = pipeline_context.require_complete_case_compute_group(context.phenotype_compute_groups)
@@ -118,9 +118,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_input_load_started_diagnostic_event(
-        phenotype_count=len(planned_compute_group.phenotype_names),
-    )
+    telemetry_events.record_pipeline_multi_trait_input_load_started(len(planned_compute_group.phenotype_names))
     run_input = inputs.load_native_bgen_multi_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
@@ -143,7 +141,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_count = int(run_input.sample_indices.shape[0])
     phenotype_count = len(run_input.phenotype_names)
     covariate_count = len(run_input.native_multi_aligned_sample_data.covariate_names)
-    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_input_aligned_diagnostic_event(
+    telemetry_events.record_pipeline_multi_trait_input_aligned(
         covariate_count=covariate_count,
         phenotype_count=phenotype_count,
         sample_count=sample_count,
@@ -166,9 +164,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_group_count=1,
     )
     prediction_start_time = time.perf_counter()
-    native_pipeline_diagnostic_policy.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
-        phenotype_count=phenotype_count,
-    )
+    telemetry_events.record_pipeline_multi_trait_prediction_source_load_started(phenotype_count)
     prediction_source = inputs.build_multi_regenie_prediction_source(
         prediction_list_path=context.prediction_list_path,
         run_input=run_input,

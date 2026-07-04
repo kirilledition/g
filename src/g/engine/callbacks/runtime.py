@@ -25,33 +25,19 @@ if typing.TYPE_CHECKING:
     from g.compute.regenie2_binary import api as regenie2_binary
     from g.engine.callbacks import events
 
-HostGenotypeBuffer = shared.HostGenotypeBuffer
-PreprocessedDosageChunkWorkItem = shared.PreprocessedDosageChunkWorkItem
-PreprocessedVariantMajorDosageChunkBatchWorkItem = shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
-PreprocessedVariantMajorDosageChunkWorkItem = shared.PreprocessedVariantMajorDosageChunkWorkItem
-PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem = (
-    shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-)
 type PreprocessedDosageWorkItem = (
-    PreprocessedDosageChunkWorkItem
-    | PreprocessedVariantMajorDosageChunkWorkItem
-    | PreprocessedVariantMajorDosageChunkBatchWorkItem
-    | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+    shared.PreprocessedDosageChunkWorkItem
+    | shared.PreprocessedVariantMajorDosageChunkWorkItem
+    | shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
+    | shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
 )
 type QueuedPreprocessedDosageWorkItem = PreprocessedDosageWorkItem | None
-Regenie2ResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem
-Regenie2MultiResultWriteWorkItem = shared.Regenie2MultiResultWriteWorkItem
-type QueuedResultWriteWorkItem = Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem | None
-NativeBgenWorkerShutdownError = shared.NativeBgenWorkerShutdownError
-record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
-build_native_callback_chunk_identity = transfers.build_native_callback_chunk_identity
-write_regenie2_native_chunk_with_optional_timing = writers.write_regenie2_native_chunk_with_optional_timing
-materialize_regenie2_native_chunk_with_optional_timing = writers.materialize_regenie2_native_chunk_with_optional_timing
-write_materialized_regenie2_native_chunk_with_optional_timing = (
-    writers.write_materialized_regenie2_native_chunk_with_optional_timing
-)
-record_binary_chunk_diagnostics_from_count = diagnostics.record_binary_chunk_diagnostics_from_count
-binary_chunk_diagnostics_to_summary_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts
+type QueuedResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem | None
+DOSAGE_BUFFER_POOL_REUSE_OPERATION = "reuse"
+DOSAGE_BUFFER_POOL_RETURN_OPERATION = "return"
+DOSAGE_BUFFER_POOL_ALLOCATE_OPERATION = "allocate"
+DOSAGE_BUFFER_POOL_DISCARD_OPERATION = "discard"
+DOSAGE_BUFFER_POOL_CONSUMER_WAIT_OPERATION = "consumer_wait"
 
 
 def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
@@ -88,9 +74,9 @@ def classify_result_write_item(
     """Classify one result write item for native scheduler dispatch."""
     if work_item is None:
         return ResultWriteItemKind.STOP_SIGNAL
-    if isinstance(work_item, Regenie2MultiResultWriteWorkItem):
+    if isinstance(work_item, shared.Regenie2MultiResultWriteWorkItem):
         return ResultWriteItemKind.MULTI_RESULT
-    if isinstance(work_item, Regenie2ResultWriteWorkItem):
+    if isinstance(work_item, shared.Regenie2ResultWriteWorkItem):
         return ResultWriteItemKind.SINGLE_RESULT
     message = f"Unsupported result write work item type: {type(work_item).__name__}"
     raise TypeError(message)
@@ -102,13 +88,13 @@ def classify_dosage_work_item(
     """Classify one dosage work item for native scheduler dispatch."""
     if work_item is None:
         return DosageWorkItemKind.STOP_SIGNAL
-    if isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+    if isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
         return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH
-    if isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+    if isinstance(work_item, shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
         return DosageWorkItemKind.VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
-    if isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+    if isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkWorkItem):
         return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE
-    if isinstance(work_item, PreprocessedDosageChunkWorkItem):
+    if isinstance(work_item, shared.PreprocessedDosageChunkWorkItem):
         return DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE
     message = f"Unsupported preprocessed dosage work item type: {type(work_item).__name__}"
     raise TypeError(message)
@@ -320,7 +306,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_chunk_stage_duration(self, metadata: typing.Any, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage for a specific native chunk."""
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=self.stage_timing_recorder,
             stage_name=stage_name,
             start_time=start_time,
@@ -345,10 +331,10 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_work_item_stage_elapsed_duration(
         self,
         work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            shared.PreprocessedDosageChunkWorkItem
+            | shared.PreprocessedVariantMajorDosageChunkWorkItem
+            | shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
         ),
         stage_name: str,
         elapsed_seconds: float,
@@ -539,22 +525,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked,
         )
 
-    def plan_dosage_queue_put_observation(self, *, queued: bool) -> _core.NativeCallbackQueuePutObservationPlan:
-        """Plan dosage queue put observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_queue_put_observation(queued)
-
-    def plan_dosage_queue_get_observation(self) -> _core.NativeCallbackQueueGetObservationPlan:
-        """Plan dosage queue get observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_queue_get_observation()
-
-    def plan_result_queue_put_observation(self, *, queued: bool) -> _core.NativeCallbackQueuePutObservationPlan:
-        """Plan result queue put observation through the active native owner."""
-        return self.callback_runtime_resources.plan_result_queue_put_observation(queued)
-
-    def plan_result_queue_get_observation(self) -> _core.NativeCallbackQueueGetObservationPlan:
-        """Plan result queue get observation through the active native owner."""
-        return self.callback_runtime_resources.plan_result_queue_get_observation()
-
     def record_dosage_buffer_pool_stage_duration(
         self,
         *,
@@ -615,72 +585,48 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked,
         )
 
-    def plan_dosage_buffer_pool_reuse_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
-        """Plan dosage-buffer reuse observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_reuse_observation()
-
-    def plan_dosage_buffer_pool_return_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
-        """Plan dosage-buffer return observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_return_observation()
-
-    def plan_dosage_buffer_pool_allocate_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
-        """Plan dosage-buffer allocation observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_allocate_observation()
-
-    def plan_dosage_buffer_pool_discard_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
-        """Plan dosage-buffer discard observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_discard_observation()
-
-    def plan_dosage_buffer_pool_consumer_wait_observation(self) -> _core.NativeDosageBufferPoolObservationPlan:
-        """Plan dosage-buffer consumer-wait observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_consumer_wait_observation()
-
     def record_dosage_buffer_pool_reuse_operation(self, *, free_buffer_count: int) -> None:
         """Record native dosage-buffer reuse accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.plan_dosage_buffer_pool_reuse_observation()
         self.record_dosage_buffer_pool_operation(
-            operation_name=observation_plan.operation_name,
+            operation_name=DOSAGE_BUFFER_POOL_REUSE_OPERATION,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=0.0,
-            blocked=observation_plan.blocked,
+            blocked=False,
         )
 
     def record_dosage_buffer_pool_return_operation(self, *, free_buffer_count: int) -> None:
         """Record native dosage-buffer return accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.plan_dosage_buffer_pool_return_observation()
         self.record_dosage_buffer_pool_operation(
-            operation_name=observation_plan.operation_name,
+            operation_name=DOSAGE_BUFFER_POOL_RETURN_OPERATION,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=0.0,
-            blocked=observation_plan.blocked,
+            blocked=False,
         )
 
     def record_dosage_buffer_pool_allocate_operation(self, *, free_buffer_count: int) -> None:
         """Record native dosage-buffer allocation accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.plan_dosage_buffer_pool_allocate_observation()
         self.record_dosage_buffer_pool_operation(
-            operation_name=observation_plan.operation_name,
+            operation_name=DOSAGE_BUFFER_POOL_ALLOCATE_OPERATION,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=0.0,
-            blocked=observation_plan.blocked,
+            blocked=False,
         )
 
     def record_dosage_buffer_pool_discard_operation(self, *, free_buffer_count: int) -> None:
         """Record native dosage-buffer discard accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.plan_dosage_buffer_pool_discard_observation()
         self.record_dosage_buffer_pool_operation(
-            operation_name=observation_plan.operation_name,
+            operation_name=DOSAGE_BUFFER_POOL_DISCARD_OPERATION,
             free_buffer_count=free_buffer_count,
             elapsed_seconds=0.0,
-            blocked=observation_plan.blocked,
+            blocked=False,
         )
 
     def record_dosage_buffer_pool_consumer_wait_stage_duration(
@@ -692,12 +638,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Record native dosage-buffer consumer wait accounting."""
         if self.stage_timing_recorder is None:
             return
-        observation_plan = self.plan_dosage_buffer_pool_consumer_wait_observation()
         self.record_dosage_buffer_pool_stage_duration(
-            operation_name=observation_plan.operation_name,
+            operation_name=DOSAGE_BUFFER_POOL_CONSUMER_WAIT_OPERATION,
             free_buffer_count=free_buffer_count,
             start_time=start_time,
-            blocked=observation_plan.blocked,
+            blocked=True,
         )
 
     def record_dosage_buffer_pool_operation_outcome(
@@ -800,7 +745,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed dosage chunk for JAX association."""
-        work_item = PreprocessedDosageChunkWorkItem(
+        work_item = shared.PreprocessedDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix=genotype_matrix,
             chunk_stats=chunk_stats,
@@ -818,7 +763,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed variant-major dosage chunk for JAX association."""
-        work_item = PreprocessedVariantMajorDosageChunkWorkItem(
+        work_item = shared.PreprocessedVariantMajorDosageChunkWorkItem(
             metadata=metadata,
             genotype_matrix_by_variant=genotype_matrix_by_variant,
             chunk_stats=chunk_stats,
@@ -842,7 +787,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             chunk_stats_batch,
         )
         work_items = tuple(
-            PreprocessedVariantMajorDosageChunkWorkItem(
+            shared.PreprocessedVariantMajorDosageChunkWorkItem(
                 metadata=metadata,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
                 chunk_stats=chunk_stats,
@@ -854,7 +799,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 strict=True,
             )
         )
-        work_item = PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=work_items)
+        work_item = shared.PreprocessedVariantMajorDosageChunkBatchWorkItem(work_items=work_items)
         dosage_handoff_plan = self.plan_dosage_work_handoff_for_object(work_item)
         if dosage_handoff_plan.chunk_count != batch_handoff_plan.chunk_count:
             message = "Native dosage work handoff plan disagrees with prepared batch work items."
@@ -868,7 +813,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         chunk_stats: _core.ChunkStats,
     ) -> None:
         """Enqueue one Rust-preprocessed packed8 chunk for JAX association."""
-        work_item = PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
+        work_item = shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem(
             metadata=metadata,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             chunk_stats=chunk_stats,
@@ -914,22 +859,22 @@ class NativeBgenCallbackRunner(abc.ABC):
     def process_dosage_work_item_with_dispatch_outcome(
         self,
         work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
+            shared.PreprocessedDosageChunkWorkItem
+            | shared.PreprocessedVariantMajorDosageChunkWorkItem
+            | shared.PreprocessedVariantMajorDosageChunkBatchWorkItem
+            | shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
         ),
         dispatch_outcome: _core.NativeCallbackQueueOperationOutcome,
     ) -> None:
         """Run one preprocessed dosage work item using native dispatch outcome."""
         if dispatch_outcome.should_process_variant_major_dosage_batch:
-            if not isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
+            if not isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched variant-major batch item."
                 raise RuntimeError(message)
             self.process_variant_major_dosage_batch_work_item(work_item)
             return
         if dispatch_outcome.should_process_variant_major_packed8_probability_pair:
-            if not isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
+            if not isinstance(work_item, shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched packed8 item."
                 raise RuntimeError(message)
             self.compute_preprocessed_variant_major_packed8_chunk(
@@ -938,7 +883,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 chunk_stats=work_item.chunk_stats,
             )
         elif dispatch_outcome.should_process_variant_major_dosage:
-            if not isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
+            if not isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched variant-major item."
                 raise RuntimeError(message)
             self.compute_preprocessed_variant_major_chunk(
@@ -947,7 +892,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 chunk_stats=work_item.chunk_stats,
             )
         elif dispatch_outcome.should_process_sample_major_dosage:
-            if not isinstance(work_item, PreprocessedDosageChunkWorkItem):
+            if not isinstance(work_item, shared.PreprocessedDosageChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched sample-major item."
                 raise RuntimeError(message)
             self.compute_preprocessed_chunk(
@@ -962,7 +907,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def process_variant_major_dosage_batch_work_item(
         self,
-        work_item: PreprocessedVariantMajorDosageChunkBatchWorkItem,
+        work_item: shared.PreprocessedVariantMajorDosageChunkBatchWorkItem,
     ) -> None:
         """Run one native-planned variant-major dosage batch work item."""
         for chunk_work_item in work_item.work_items:
@@ -1036,7 +981,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         pending_diagnostics = tuple(self.binary_correction_pending_diagnostics)
         if not pending_diagnostics:
             return
-        diagnostics_counts = binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
+        diagnostics_counts = diagnostics.binary_chunk_diagnostics_to_summary_counts(pending_diagnostics)
         self.binary_correction_pending_diagnostics.clear()
         self.add_binary_correction_summary_counts(diagnostics_counts)
 
@@ -1100,7 +1045,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.record_queue_stage_backpressure_observation(work_item_outcome.stage_backpressure_observation)
             self.apply_result_write_item_dispatch_outcome(work_item_outcome)
             if work_item_outcome.should_process_result_write_item:
-                result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
+                result_work_item = typing.cast("shared.Regenie2ResultWriteWorkItem", work_item)
                 self.process_result_write_item(result_work_item)
                 continue
             message = "Native result write dispatch plan did not select a single-result processing path."
@@ -1117,7 +1062,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.record_queue_stage_backpressure_observation(work_item_outcome.stage_backpressure_observation)
             self.apply_result_write_item_dispatch_outcome(work_item_outcome)
             if work_item_outcome.should_process_multi_result_write_item:
-                multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
+                multi_work_item = typing.cast("shared.Regenie2MultiResultWriteWorkItem", work_item)
                 self.process_multi_result_write_item(multi_work_item)
                 continue
             message = "Native result write dispatch plan did not select a multi-result processing path."
@@ -1125,12 +1070,12 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def process_result_write_item(
         self,
-        work_item: Regenie2ResultWriteWorkItem,
+        work_item: shared.Regenie2ResultWriteWorkItem,
     ) -> None:
         """Materialize and write one computed result work item."""
         host_dosage_buffer_released = False
         try:
-            materialized_chunk = materialize_regenie2_native_chunk_with_optional_timing(
+            materialized_chunk = writers.materialize_regenie2_native_chunk_with_optional_timing(
                 metadata=work_item.metadata,
                 beta=work_item.beta,
                 standard_error=work_item.standard_error,
@@ -1141,7 +1086,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
             host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
-            write_materialized_regenie2_native_chunk_with_optional_timing(
+            writers.write_materialized_regenie2_native_chunk_with_optional_timing(
                 writer_session=typing.cast("typing.Any", self).writer_session,
                 metadata=work_item.metadata,
                 chunk_stats=work_item.chunk_stats,
@@ -1149,7 +1094,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 stage_timing_recorder=self.stage_timing_recorder,
                 output_statistic_dtype=self.output_statistic_dtype,
             )
-            record_binary_chunk_diagnostics_from_count(
+            diagnostics.record_binary_chunk_diagnostics_from_count(
                 stage_timing_recorder=self.stage_timing_recorder,
                 diagnostics=work_item.binary_chunk_diagnostics,
             )
@@ -1160,7 +1105,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 host_dosage_buffer_released=host_dosage_buffer_released,
             )
 
-    def process_multi_result_write_item(self, multi_work_item: Regenie2MultiResultWriteWorkItem) -> None:
+    def process_multi_result_write_item(self, multi_work_item: shared.Regenie2MultiResultWriteWorkItem) -> None:
         """Materialize and write one multi-result work item."""
         del multi_work_item
         raise NotImplementedError
@@ -1171,17 +1116,22 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put work into the bounded worker queue while surfacing worker errors."""
         self.start()
-        while True:
-            self.raise_worker_error_if_present()
-            put_outcome = self.callback_runtime_resources.put_dosage_work_item_outcome(work_item)
-            self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
-            if put_outcome.should_retry:
-                continue
-            return
+        put_outcome = self.callback_runtime_resources.put_dosage_work_item_until_accepted_outcome(work_item)
+        self.raise_worker_error_from_plan(put_outcome.worker_error_raise_plan)
+        self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
         error_raise_plan = self.callback_runtime_resources.plan_worker_error_raise()
+        self.raise_worker_error_from_plan(error_raise_plan)
+
+    def raise_worker_error_from_plan(
+        self,
+        error_raise_plan: _core.NativeCallbackWorkerErrorRaisePlan | None,
+    ) -> None:
+        """Raise an asynchronous worker failure selected by a native plan."""
+        if error_raise_plan is None:
+            return
         if not error_raise_plan.should_raise:
             return
         error_message = error_raise_plan.error_message
@@ -1201,22 +1151,15 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> None:
         """Put a computed result into the bounded materialization/write queue."""
         self.start()
-        while True:
-            self.raise_worker_error_if_present()
-            put_outcome = self.callback_runtime_resources.put_result_write_item_outcome(work_item)
-            self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
-            if put_outcome.should_retry:
-                continue
-            return
+        put_outcome = self.callback_runtime_resources.put_result_write_item_until_accepted_outcome(work_item)
+        self.raise_worker_error_from_plan(put_outcome.worker_error_raise_plan)
+        self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
-        while True:
-            self.raise_worker_error_if_present()
-            acquire_outcome = self.callback_runtime_resources.acquire_result_in_flight_slot_outcome()
-            self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
-            if not acquire_outcome.should_retry:
-                return
+        acquire_outcome = self.callback_runtime_resources.acquire_result_in_flight_slot_until_available_outcome()
+        self.raise_worker_error_from_plan(acquire_outcome.worker_error_raise_plan)
+        self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
@@ -1234,7 +1177,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             if worker_name is None or timeout_seconds is None:
                 message = "Native callback worker finish result omitted shutdown timeout details."
                 raise RuntimeError(message)
-            raise NativeBgenWorkerShutdownError(
+            raise shared.NativeBgenWorkerShutdownError(
                 worker_name=worker_name,
                 timeout_seconds=timeout_seconds,
             )
@@ -1266,7 +1209,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_result = self.callback_runtime_resources.stop_dosage_worker(timeout_seconds)
         if timeout_result is None:
             return
-        raise NativeBgenWorkerShutdownError(
+        raise shared.NativeBgenWorkerShutdownError(
             worker_name=self.dosage_worker_name,
             timeout_seconds=timeout_result,
         )
@@ -1276,7 +1219,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_result = self.callback_runtime_resources.join_dosage_worker(timeout_seconds)
         if timeout_result is None:
             return
-        raise NativeBgenWorkerShutdownError(
+        raise shared.NativeBgenWorkerShutdownError(
             worker_name=self.dosage_worker_name,
             timeout_seconds=timeout_result,
         )
@@ -1286,7 +1229,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_result = self.callback_runtime_resources.stop_result_worker(timeout_seconds)
         if timeout_result is None:
             return
-        raise NativeBgenWorkerShutdownError(
+        raise shared.NativeBgenWorkerShutdownError(
             worker_name=self.result_worker_name,
             timeout_seconds=timeout_result,
         )
@@ -1296,7 +1239,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         timeout_result = self.callback_runtime_resources.join_result_worker(timeout_seconds)
         if timeout_result is None:
             return
-        raise NativeBgenWorkerShutdownError(
+        raise shared.NativeBgenWorkerShutdownError(
             worker_name=self.result_worker_name,
             timeout_seconds=timeout_result,
         )
@@ -1333,38 +1276,31 @@ class NativeBgenCallbackRunner(abc.ABC):
         self,
         expected_shape: tuple[int, ...],
         dtype: npt.DTypeLike,
-    ) -> HostGenotypeBuffer:
+    ) -> shared.HostGenotypeBuffer:
         """Acquire a host dosage buffer using native resource-owner waits and storage."""
-        while True:
-            self.raise_worker_error_if_present()
-            acquire_outcome = self.callback_runtime_resources.acquire_dosage_buffer_outcome()
-            if acquire_outcome.should_allocate:
-                return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
-            if acquire_outcome.dosage_buffer is not None:
-                dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_outcome.dosage_buffer)
-                reuse_selection_outcome = (
-                    self.callback_runtime_resources.select_reusable_dosage_buffer_or_discard_outcome(
-                        dosage_buffer,
-                        expected_shape,
-                        dtype,
-                    )
-                )
-                self.record_dosage_buffer_pool_operation_outcome(reuse_selection_outcome)
-                reused_dosage_buffer = reuse_selection_outcome.dosage_buffer
-                if reused_dosage_buffer is not None:
-                    return typing.cast("HostGenotypeBuffer", reused_dosage_buffer)
-                continue
-            self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
+        acquire_outcome = self.callback_runtime_resources.acquire_reusable_dosage_buffer_or_allocate_outcome(
+            expected_shape,
+            dtype,
+        )
+        self.raise_worker_error_from_plan(acquire_outcome.worker_error_raise_plan)
+        self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
+        self.record_dosage_buffer_pool_operation_outcome(acquire_outcome)
+        if acquire_outcome.should_allocate:
+            return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
+        if acquire_outcome.dosage_buffer is not None:
+            return typing.cast("shared.HostGenotypeBuffer", acquire_outcome.dosage_buffer)
+        message = "Native callback runtime returned no reusable dosage buffer and did not request allocation."
+        raise RuntimeError(message)
 
     def acquire_dosage_buffer_with_shape(
         self,
         expected_shape: tuple[int, ...],
         dtype: npt.DTypeLike,
-    ) -> HostGenotypeBuffer:
+    ) -> shared.HostGenotypeBuffer:
         """Return a reusable host dosage buffer with the requested shape."""
         return self.acquire_dosage_buffer_from_native_resources(expected_shape, dtype)
 
-    def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
+    def release_dosage_buffer(self, dosage_buffer: shared.HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
         operation_outcome = self.callback_runtime_resources.release_dosage_buffer_outcome(
             dosage_buffer,
@@ -1375,23 +1311,19 @@ class NativeBgenCallbackRunner(abc.ABC):
         self,
         expected_shape: tuple[int, ...],
         dtype: npt.DTypeLike,
-    ) -> HostGenotypeBuffer:
+    ) -> shared.HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
-        dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        operation_outcome = self.callback_runtime_resources.register_dosage_buffer_outcome(
-            dosage_buffer
-        )
+        dosage_buffer = typing.cast("shared.HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
+        operation_outcome = self.callback_runtime_resources.register_dosage_buffer_outcome(dosage_buffer)
         self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
         return dosage_buffer
 
-    def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
+    def discard_dosage_buffer_slot(self, dosage_buffer: shared.HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
-        operation_outcome = self.callback_runtime_resources.discard_dosage_buffer_outcome(
-            dosage_buffer
-        )
+        operation_outcome = self.callback_runtime_resources.discard_dosage_buffer_outcome(dosage_buffer)
         self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
 
-    def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
+    def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | shared.HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
         operation_outcome = self.callback_runtime_resources.release_numpy_dosage_buffer_outcome(
             dosage_buffer,
@@ -1400,11 +1332,11 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def get_releasable_dosage_buffer(
         self,
-        dosage_buffer: jax.Array | HostGenotypeBuffer,
-    ) -> HostGenotypeBuffer | None:
+        dosage_buffer: jax.Array | shared.HostGenotypeBuffer,
+    ) -> shared.HostGenotypeBuffer | None:
         """Return a host dosage buffer reference when it belongs to the reusable pool."""
         return typing.cast(
-            "HostGenotypeBuffer | None",
+            "shared.HostGenotypeBuffer | None",
             self.callback_runtime_resources.get_releasable_dosage_buffer_owner(dosage_buffer),
         )
 
@@ -1422,7 +1354,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_result_work_item_buffer(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release resources after a dependent JAX result is materialized."""
         host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
@@ -1457,47 +1389,34 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_result_work_item_host_buffer(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
     ) -> bool:
         """Release the host genotype buffer associated with one result."""
-        host_dosage_buffer_released = False
-        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
+        release_outcome = self.callback_runtime_resources.release_result_work_item_pre_write_resources_outcome(
             work_item,
-            "pre_write",
-            host_dosage_buffer_released,
         )
         self.record_result_work_item_resource_release_result(release_outcome)
         return release_outcome.released_host_buffer
 
     def release_result_work_item_final_resources(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
         *,
         host_dosage_buffer_released: bool,
     ) -> None:
         """Release final resources associated with one result work item."""
-        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
+        release_outcome = self.callback_runtime_resources.release_result_work_item_final_resources_outcome(
             work_item,
-            "final",
             host_dosage_buffer_released,
         )
         self.record_result_work_item_resource_release_result(release_outcome)
 
     def release_result_work_item_in_flight_slot(
         self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
+        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release the in-flight result slot associated with one result."""
-        host_dosage_buffer_released = False
-        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
+        release_outcome = self.callback_runtime_resources.release_result_work_item_in_flight_slot_outcome(
             work_item,
-            "in_flight_slot",
-            host_dosage_buffer_released,
         )
         self.record_result_work_item_resource_release_result(release_outcome)
-
-
-__all__ = [
-    "NativeBgenCallbackRunner",
-    "require_current_chromosome_state",
-]

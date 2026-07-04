@@ -15,13 +15,7 @@ import g.engine.callbacks.shared as shared
 from g import _core, types
 from g.engine.callbacks import timing
 
-HostGenotypeBuffer = shared.HostGenotypeBuffer
-HostOrDeviceFloatArray = shared.HostOrDeviceFloatArray
-LinearChunkStatsArrays = shared.LinearChunkStatsArrays
-BinaryChunkStatsArrays = shared.BinaryChunkStatsArrays
 PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
-block_until_ready = diagnostics.block_until_ready
-get_metadata_chromosome = shared.get_metadata_chromosome
 
 
 class TransferMetadataArrayProtocol(typing.Protocol):
@@ -43,7 +37,7 @@ class ChunkStatsComputeArraysProtocol(typing.Protocol):
         """Return chunk-stat arrays needed by JAX compute paths."""
 
 
-def put_compute_array_on_device(array: HostOrDeviceFloatArray) -> jax.Array:
+def put_compute_array_on_device(array: shared.HostOrDeviceFloatArray) -> jax.Array:
     """Place an aligned host/JAX input array on the active JAX device."""
     return typing.cast("jax.Array", jax.device_put(array))
 
@@ -73,7 +67,7 @@ def record_transfer_metadata_for_array(
 
 
 def put_genotype_matrix_on_device(
-    genotype_matrix: jax.Array | HostGenotypeBuffer,
+    genotype_matrix: jax.Array | shared.HostGenotypeBuffer,
     stage_timing_recorder: timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any | None,
     *,
@@ -85,7 +79,7 @@ def put_genotype_matrix_on_device(
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(genotype_device_array)
+        diagnostics.block_until_ready(genotype_device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -114,7 +108,7 @@ def put_chunk_array_on_device(
     start_time = time.perf_counter()
     device_array = jax.device_put(array)
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(device_array)
+        diagnostics.block_until_ready(device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -141,7 +135,7 @@ def block_compute_result_for_timing(
     if stage_timing_recorder is None:
         return
     if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        block_until_ready(result_ready_value)
+        diagnostics.block_until_ready(result_ready_value)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="jax_compute",
@@ -165,7 +159,7 @@ def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdent
 def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
     """Build the native callback chunk identity from metadata attributes."""
     return native_callback_progress_policy().build_callback_chunk_identity(
-        chromosome=get_metadata_chromosome(metadata),
+        chromosome=shared.get_metadata_chromosome(metadata),
         variant_start_index=int(metadata.variant_start_index),
         variant_stop_index=int(metadata.variant_stop_index),
     )
@@ -274,14 +268,14 @@ def get_chunk_stats_compute_arrays(
     )
 
 
-def get_linear_chunk_stats_arrays(chunk_stats: ChunkStatsComputeArraysProtocol) -> LinearChunkStatsArrays:
+def get_linear_chunk_stats_arrays(chunk_stats: ChunkStatsComputeArraysProtocol) -> shared.LinearChunkStatsArrays:
     """Return the native stat arrays needed by linear variant-major compute."""
     compute_arrays = get_chunk_stats_compute_arrays(
         chunk_stats,
         include_imputed_dosage_square_sum=True,
         include_sparse_firth_candidate=False,
     )
-    return LinearChunkStatsArrays(
+    return shared.LinearChunkStatsArrays(
         dosage_sum=typing.cast("npt.NDArray[np.float32]", compute_arrays["dosage_sum"]),
         observation_count=typing.cast("npt.NDArray[np.int32]", compute_arrays["observation_count"]),
         imputed_dosage_square_sum=typing.cast(
@@ -295,7 +289,7 @@ def get_binary_chunk_stats_arrays(
     chunk_stats: _core.ChunkStats,
     *,
     include_sparse_firth_candidate: bool,
-) -> BinaryChunkStatsArrays:
+) -> shared.BinaryChunkStatsArrays:
     """Return the native stat arrays needed by binary variant-major compute."""
     compute_arrays = get_chunk_stats_compute_arrays(
         chunk_stats,
@@ -308,7 +302,7 @@ def get_binary_chunk_stats_arrays(
             "npt.NDArray[np.bool_]",
             compute_arrays["is_rare_sparse_firth_candidate"],
         )
-    return BinaryChunkStatsArrays(
+    return shared.BinaryChunkStatsArrays(
         dosage_sum=typing.cast("npt.NDArray[np.float32]", compute_arrays["dosage_sum"]),
         observation_count=typing.cast("npt.NDArray[np.int32]", compute_arrays["observation_count"]),
         sparse_candidate_mask=sparse_candidate_mask,
@@ -322,24 +316,3 @@ def build_projected_variant_major_dosage_chunk_stats(
     return _core.summarize_variant_major_dosage_chunk_stats(
         np.ascontiguousarray(genotype_matrix_by_variant, dtype=np.float32)
     )
-
-
-__all__ = [
-    "block_compute_result_for_timing",
-    "build_chunk_timing_identity",
-    "build_native_callback_chunk_identity",
-    "build_projected_variant_major_dosage_chunk_stats",
-    "cast_statistic_array_for_native_writer",
-    "cast_statistic_array_for_native_writer_float32",
-    "cast_statistic_array_for_native_writer_float64",
-    "get_binary_chunk_stats_arrays",
-    "get_chunk_stats_compute_arrays",
-    "get_linear_chunk_stats_arrays",
-    "narrow_public_statistic_array_on_device",
-    "put_chunk_array_on_device",
-    "put_compute_array_on_device",
-    "put_genotype_matrix_on_device",
-    "record_stage_duration_with_optional_chunk",
-    "record_transfer_metadata_for_array",
-    "select_active_trait_rows_on_device",
-]

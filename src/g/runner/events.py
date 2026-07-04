@@ -293,6 +293,239 @@ def native_run_event_payload_policy() -> _core.NativeRunEventPayloadPolicy:
     return _core.NativeRunEventPayloadPolicy()
 
 
+def record_runner_run_started(
+    telemetry_session: TelemetrySession | None,
+    *,
+    association_mode: types.AssociationMode,
+    trait_type: types.RegenieTraitType,
+    phenotype_count: int,
+    output_run_root: Path,
+) -> None:
+    """Record runner run-start telemetry and diagnostics."""
+    native_run_event_telemetry_policy().record_runner_run_started_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        trait_type.value,
+        phenotype_count,
+        str(output_run_root),
+    )
+    native_runner_diagnostic_policy().record_runner_run_started_diagnostic_event(
+        association_mode=association_mode.value,
+        trait_type=trait_type.value,
+        phenotype_count=phenotype_count,
+    )
+
+
+def record_runner_run_interrupted(
+    telemetry_session: TelemetrySession | None,
+    interrupted_event: RunInterruptedEvent,
+) -> None:
+    """Record runner interruption telemetry and diagnostics."""
+    native_run_event_telemetry_policy().record_runner_run_interrupted_telemetry_event(
+        telemetry_session, interrupted_event
+    )
+    native_runner_diagnostic_policy().record_runner_run_interrupted_diagnostic_event(interrupted_event)
+
+
+def record_runner_run_failed(
+    telemetry_session: TelemetrySession | None,
+    failed_event: RunFailedEvent,
+) -> None:
+    """Record runner failure telemetry and diagnostics."""
+    native_run_event_telemetry_policy().record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
+    native_runner_diagnostic_policy().record_runner_run_failed_diagnostic_event(failed_event)
+
+
+def record_runner_run_completed(
+    telemetry_session: TelemetrySession | None,
+    completed_event: RunCompletedEvent,
+) -> None:
+    """Record runner completion telemetry and diagnostics."""
+    native_run_event_telemetry_policy().record_runner_run_completed_telemetry_event(
+        telemetry_session, completed_event
+    )
+    native_runner_diagnostic_policy().record_runner_run_completed_diagnostic_event(completed_event)
+
+
+def record_runner_jax_runtime_configuration_started() -> None:
+    """Record that runner JAX runtime configuration has started."""
+    native_runner_diagnostic_policy().record_runner_jax_runtime_configuration_started_diagnostic_event()
+
+
+def record_runner_execution_plan_build_started() -> None:
+    """Record that runner execution-plan construction has started."""
+    native_runner_diagnostic_policy().record_runner_execution_plan_build_started_diagnostic_event()
+
+
+def record_execution_plan_prepared(
+    telemetry_session: TelemetrySession | None,
+    *,
+    association_mode: types.AssociationMode,
+    trait_type: types.RegenieTraitType,
+    phenotype_count: int,
+    chunk_size: int,
+    variant_limit: int | None,
+    device: types.Device,
+) -> None:
+    """Record that execution-plan output preparation completed."""
+    native_run_event_telemetry_policy().record_execution_plan_prepared_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        trait_type.value,
+        phenotype_count,
+        chunk_size,
+        variant_limit,
+        device.value,
+    )
+    native_runner_diagnostic_policy().record_runner_execution_plan_prepared_diagnostic_event(
+        association_mode=association_mode.value,
+        phenotype_count=phenotype_count,
+        chunk_size=chunk_size,
+        variant_limit=variant_limit,
+        device=device.value,
+    )
+
+
+def record_runner_execution_plan_dispatch_started(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> None:
+    """Record that execution-plan dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_execution_plan_dispatch_started_diagnostic_event(
+        phenotype_count=phenotype_count,
+        association_mode=association_mode.value,
+    )
+
+
+def record_runner_execution_plan_finalization_started(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> None:
+    """Record that execution-plan finalization has started."""
+    native_runner_diagnostic_policy().record_runner_execution_plan_finalization_started_diagnostic_event(
+        phenotype_count=phenotype_count,
+        association_mode=association_mode.value,
+    )
+
+
+def record_runner_multi_phenotype_dispatch_started(
+    *,
+    phenotype_count: int,
+    association_mode: types.AssociationMode,
+) -> None:
+    """Record that multi-phenotype dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+        phenotype_count=phenotype_count,
+        association_mode=association_mode.value,
+    )
+
+
+def record_runner_single_phenotype_dispatch_started(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype: str,
+) -> None:
+    """Record that single-phenotype dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_single_phenotype_dispatch_started_diagnostic_event(
+        association_mode=association_mode.value,
+        phenotype=phenotype,
+    )
+
+
+def record_runner_binary_engine_dispatch_started(phenotype: str) -> None:
+    """Record that binary engine dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_binary_engine_dispatch_started_diagnostic_event(
+        phenotype=phenotype
+    )
+
+
+def record_runner_linear_engine_dispatch_started(phenotype: str) -> None:
+    """Record that linear engine dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_linear_engine_dispatch_started_diagnostic_event(
+        phenotype=phenotype
+    )
+
+
+def record_runner_multi_phenotype_binary_engine_dispatch_started(phenotype_count: int) -> None:
+    """Record that binary multi-phenotype engine dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
+        phenotype_count=phenotype_count
+    )
+
+
+def record_runner_multi_phenotype_linear_engine_dispatch_started(phenotype_count: int) -> None:
+    """Record that linear multi-phenotype engine dispatch has started."""
+    native_runner_diagnostic_policy().record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
+        phenotype_count=phenotype_count
+    )
+
+
+def record_writer_finished(
+    telemetry_session: TelemetrySession | None,
+    *,
+    association_mode: types.AssociationMode,
+    phenotype: str,
+    final_output_path: Path | None,
+) -> None:
+    """Record single-phenotype writer completion."""
+    native_run_event_telemetry_policy().record_writer_finished_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        phenotype,
+        None if final_output_path is None else str(final_output_path),
+    )
+
+
+def record_multi_writer_finished(
+    telemetry_session: TelemetrySession | None,
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+    final_output_paths: tuple[Path | None, ...],
+) -> None:
+    """Record multi-phenotype writer completion."""
+    native_run_event_telemetry_policy().record_multi_writer_finished_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        phenotype_count,
+        tuple(
+            None if final_output_path is None else str(final_output_path) for final_output_path in final_output_paths
+        ),
+    )
+
+
+def record_effective_config_written(
+    telemetry_session: TelemetrySession | None,
+    *,
+    association_mode: types.AssociationMode,
+    phenotype: str,
+    effective_config_path: Path,
+    output_run_directory: Path,
+) -> None:
+    """Record effective config materialization."""
+    native_run_event_telemetry_policy().record_effective_config_written_telemetry_event(
+        telemetry_session,
+        association_mode.value,
+        phenotype,
+        str(effective_config_path),
+        str(output_run_directory),
+    )
+
+
+def record_runner_metadata_artifacts_finalized(
+    *,
+    association_mode: types.AssociationMode,
+    phenotype_count: int,
+) -> None:
+    """Record that user-facing run artifacts were finalized."""
+    native_runner_diagnostic_policy().record_runner_metadata_artifacts_finalized_diagnostic_event(
+        association_mode=association_mode.value,
+        phenotype_count=phenotype_count,
+    )
+
+
 def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
     return run_interrupted_event_from_native_payload(

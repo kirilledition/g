@@ -538,11 +538,11 @@ def test_native_dispatch_import_policy_allows_event_lifecycle_timing_adapters(tm
         ),
         encoding="utf-8",
     )
-    (native_dispatch_directory / "lifecycle.py").write_text(
+    (native_dispatch_directory / "delivery.py").write_text(
         "\n".join(
             (
-                "from g.runner import lifecycle as runner_lifecycle",
-                "GracefulShutdownRequested = runner_lifecycle.GracefulShutdownRequested",
+                "from g.runner import lifecycle",
+                "lifecycle.GracefulShutdownRequested",
             )
         ),
         encoding="utf-8",
@@ -1170,20 +1170,19 @@ def test_pipeline_import_policy_rejects_jax_runtime_policy_imports(tmp_path: Pat
         (violation.path, violation.line_number, violation.import_name, violation.forbidden_import)
         for violation in violations
     ] == [
-        (Path("g/engine/regenie2_pipeline/outputs.py"), 1, "g.jax_runtime.models", "g.jax_runtime"),
-        (Path("g/engine/regenie2_pipeline/outputs.py"), 2, "g.jax_runtime.setup", "g.jax_runtime"),
+        (Path("g/engine/regenie2_pipeline/outputs.py"), 2, "g.jax_runtime.setup", "g.jax_runtime.setup"),
     ]
 
 
-def test_pipeline_import_policy_allows_pipeline_runtime_policy_adapter(tmp_path: Path) -> None:
+def test_pipeline_import_policy_allows_pipeline_jax_runtime_models(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
     pipeline_directory.mkdir(parents=True)
-    (pipeline_directory / "runtime_policy.py").write_text(
+    (pipeline_directory / "outputs.py").write_text(
         "\n".join(
             (
                 "from g.jax_runtime import models",
-                "import g.jax_runtime.setup",
+                "models.JAX_ENABLE_X64",
             )
         ),
         encoding="utf-8",
@@ -1364,7 +1363,7 @@ def test_pipeline_call_policy_rejects_native_schedule_policy_construction(tmp_pa
     ]
 
 
-def test_pipeline_call_policy_allows_pipeline_schedule_adapter(tmp_path: Path) -> None:
+def test_pipeline_call_policy_rejects_native_schedule_policy_in_pipeline_schedule_adapter(tmp_path: Path) -> None:
     package_root = tmp_path / "g"
     pipeline_directory = package_root / "engine" / "regenie2_pipeline"
     pipeline_directory.mkdir(parents=True)
@@ -1381,7 +1380,17 @@ def test_pipeline_call_policy_allows_pipeline_schedule_adapter(tmp_path: Path) -
 
     violations = check_python_architecture.collect_python_call_policy_violations(package_root)
 
-    assert violations == ()
+    assert [
+        (violation.path, violation.line_number, violation.call_name, violation.forbidden_call)
+        for violation in violations
+    ] == [
+        (
+            Path("g/engine/regenie2_pipeline/schedule.py"),
+            3,
+            "_core.NativeSchedulePolicy",
+            "_core.NativeSchedulePolicy",
+        ),
+    ]
 
 
 def test_event_policy_factory_rejects_direct_native_construction(tmp_path: Path) -> None:

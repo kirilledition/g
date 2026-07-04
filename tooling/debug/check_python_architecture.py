@@ -432,9 +432,8 @@ PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="pipeline_jax_runtime_policy_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.jax_runtime",),
-        message="REGENIE pipeline modules must route JAX runtime policy access through pipeline helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/runtime_policy.py"),),
+        forbidden_imports=("g.jax_runtime.resolution", "g.jax_runtime.setup"),
+        message="REGENIE pipeline modules must not import JAX runtime setup or resolution orchestration",
     ),
     PythonImportPolicy(
         name="obsolete_backend_planner_module_isolation",
@@ -598,8 +597,8 @@ PYTHON_CALL_POLICIES = (
         name="pipeline_native_schedule_adapter_isolation",
         source_directory=Path("engine/regenie2_pipeline"),
         forbidden_calls=("_core.NativeSchedulePolicy",),
-        allowed_paths=(Path("engine/regenie2_pipeline/schedule.py"),),
-        message="REGENIE pipeline modules must route native scheduling policy access through pipeline schedule helpers",
+        allowed_paths=(),
+        message="production Python must use native scheduling functions instead of constructing NativeSchedulePolicy",
     ),
     PythonCallPolicy(
         name="native_event_policy_factory_isolation",

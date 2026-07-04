@@ -43,11 +43,10 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
-    native_pipeline_diagnostic_policy = telemetry_events.native_pipeline_diagnostic_policy()
-    native_pipeline_diagnostic_policy.record_pipeline_grouped_per_phenotype_started_diagnostic_event(
-        association_mode=context.association_mode.value,
+    telemetry_events.record_pipeline_grouped_per_phenotype_started(
+        association_mode=context.association_mode,
         phenotype_count=len(phenotype_names),
-        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
+        sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
     )
     existing_manifests = existing_manifests_by_phenotype or tuple(None for _ in phenotype_names)
     engine = outputs.open_pipeline_bgen_engine(
@@ -72,7 +71,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
-    native_pipeline_diagnostic_policy.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+    telemetry_events.record_pipeline_grouped_per_phenotype_groups_prepared(
         phenotype_count=len(phenotype_names),
         phenotype_group_count=len(grouped_run_inputs),
     )
@@ -285,7 +284,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
     )
     union_sample_count = int(union_sample_indices.shape[0])
-    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+    telemetry_events.record_pipeline_grouped_union_delivery_selected(
         grouped_sample_count=grouped_sample_count,
         phenotype_group_count=len(grouped_run_inputs),
         union_sample_count=union_sample_count,

@@ -12,7 +12,7 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 
 if typing.TYPE_CHECKING:
-    from g.engine.regenie2_pipeline import requests as pipeline_requests
+    from g.engine import dispatch_requests
     from g.interface import config
     from g.runner import events
 
@@ -364,20 +364,20 @@ def describe_runtime_state() -> RuntimeState:
     )
 
 
-def run_regenie2_linear_bgen_pipeline(request: pipeline_requests.SingleTraitPipelineRequest) -> Path | None:
+def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitPipelineRequest) -> Path | None:
     """Run the linear native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
     return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(request)
 
 
-def run_regenie2_binary_bgen_pipeline(request: pipeline_requests.SingleTraitPipelineRequest) -> Path | None:
+def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitPipelineRequest) -> Path | None:
     """Run the binary native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
     return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
-    request: pipeline_requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
@@ -385,7 +385,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
-    request: pipeline_requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")

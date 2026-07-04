@@ -408,10 +408,6 @@ impl NativeCallbackObjectQueueGetResult {
         self.item.is_some()
     }
 
-    pub(crate) fn has_non_none_item_value(&self, py: Python<'_>) -> bool {
-        self.item.as_ref().is_some_and(|item| !item.bind(py).is_none())
-    }
-
     pub(crate) fn into_item_value(self) -> Option<Py<PyAny>> {
         self.item
     }

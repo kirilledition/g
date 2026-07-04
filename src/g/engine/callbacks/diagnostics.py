@@ -117,7 +117,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    events.native_pipeline_diagnostic_policy().record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
+    events.record_callback_null_logistic_nonconvergence_warning(
         message=warning_message,
         chromosome=chromosome,
         nonconverged_count=native_policy_plan.nonconverged_count,
@@ -271,15 +271,3 @@ def collect_binary_chunk_diagnostics_if_needed(
     """Collect binary chunk diagnostics for summary telemetry and optional exact timings."""
     del stage_timing_recorder
     return regenie2_binary.count_binary_chunk_diagnostics(result)
-
-
-__all__ = [
-    "binary_chunk_diagnostics_to_mapping",
-    "binary_chunk_diagnostics_to_summary_counts",
-    "block_until_ready",
-    "collect_binary_chunk_diagnostics_if_needed",
-    "enforce_null_logistic_nonconvergence_policy",
-    "record_binary_chunk_diagnostics",
-    "record_binary_chunk_diagnostics_from_count",
-    "record_null_logistic_chromosome_diagnostics",
-]

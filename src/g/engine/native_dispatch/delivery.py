@@ -8,7 +8,8 @@ import typing
 from dataclasses import dataclass
 
 from g import _core
-from g.engine.native_dispatch import events, lifecycle, models, timing, writers
+from g.engine.native_dispatch import events, models, timing, writers
+from g.runner import lifecycle
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -256,8 +257,7 @@ def run_bgen_engine_with_writer_sessions(
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        native_dispatch_diagnostic_policy = events.native_dispatch_diagnostic_policy()
-        native_dispatch_diagnostic_policy.record_native_dispatch_delivery_started_diagnostic_event(
+        events.record_delivery_started(
             committed_chunk_count=len(committed_chunk_identifier_list),
             pipeline_label=pipeline_label,
             variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
@@ -278,7 +278,7 @@ def run_bgen_engine_with_writer_sessions(
                 committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
         timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        native_dispatch_diagnostic_policy.record_native_dispatch_delivery_finished_diagnostic_event(
+        events.record_delivery_finished(
             pipeline_label=pipeline_label,
             processed_chunk_count=processed_chunk_count,
         )
@@ -300,11 +300,9 @@ def run_bgen_engine_with_writer_sessions(
         callback_finished = cleanup_execution.callback_finished
         final_parquet_paths = cleanup_execution.final_parquet_paths
     except lifecycle.GracefulShutdownRequested as shutdown_request:
-        events.native_dispatch_diagnostic_policy().record_native_dispatch_delivery_interrupted_diagnostic_event(
+        events.record_delivery_interrupted(
             pipeline_label=pipeline_label,
-            signal_exit_code=shutdown_request.exit_code,
-            signal_name=shutdown_request.signal_name,
-            signal_number=shutdown_request.shutdown_signal.number,
+            shutdown_request=shutdown_request,
         )
         cleanup_plan = plan_bgen_delivery_cleanup(
             cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED,
@@ -338,9 +336,8 @@ def run_bgen_engine_with_writer_sessions(
             raise
         raise
     except BaseException as exception:
-        events.native_dispatch_diagnostic_policy().record_native_dispatch_delivery_failed_diagnostic_event(
-            exception_message=str(exception),
-            exception_type=type(exception).__name__,
+        events.record_delivery_failed(
+            exception=exception,
             pipeline_label=pipeline_label,
         )
         cleanup_plan = plan_bgen_delivery_cleanup(
@@ -357,7 +354,7 @@ def run_bgen_engine_with_writer_sessions(
             shutdown_request=None,
         )
         raise
-    events.native_dispatch_diagnostic_policy().record_native_dispatch_pipeline_finished_diagnostic_event(
+    events.record_pipeline_finished(
         final_parquet_path_count=len(final_parquet_paths),
         pipeline_label=pipeline_label,
     )

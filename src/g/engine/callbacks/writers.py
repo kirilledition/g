@@ -8,21 +8,11 @@ from dataclasses import dataclass
 
 import jax
 
-import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 from g import _core, types
 
 if typing.TYPE_CHECKING:
     from g.engine.callbacks import timing
-
-cast_statistic_array_for_native_writer = transfers.cast_statistic_array_for_native_writer
-cast_statistic_array_for_native_writer_float32 = transfers.cast_statistic_array_for_native_writer_float32
-cast_statistic_array_for_native_writer_float64 = transfers.cast_statistic_array_for_native_writer_float64
-narrow_public_statistic_array_on_device = transfers.narrow_public_statistic_array_on_device
-record_stage_duration_with_optional_chunk = transfers.record_stage_duration_with_optional_chunk
-record_transfer_metadata_for_array = transfers.record_transfer_metadata_for_array
-select_active_trait_rows_on_device = transfers.select_active_trait_rows_on_device
-get_metadata_chromosome = shared.get_metadata_chromosome
 
 
 @dataclass(frozen=True)
@@ -107,37 +97,43 @@ def materialize_regenie2_native_chunk_with_optional_timing(
 ) -> MaterializedRegenie2NativeChunk:
     """Materialize one single-trait REGENIE result chunk on host."""
     materialization_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
-    beta_device_array = narrow_public_statistic_array_on_device(beta, output_statistic_dtype)
-    standard_error_device_array = narrow_public_statistic_array_on_device(standard_error, output_statistic_dtype)
-    chi_squared_device_array = narrow_public_statistic_array_on_device(chi_squared, output_statistic_dtype)
-    log10_p_value_device_array = narrow_public_statistic_array_on_device(log10_p_value, output_statistic_dtype)
+    beta_device_array = transfers.narrow_public_statistic_array_on_device(beta, output_statistic_dtype)
+    standard_error_device_array = transfers.narrow_public_statistic_array_on_device(
+        standard_error,
+        output_statistic_dtype,
+    )
+    chi_squared_device_array = transfers.narrow_public_statistic_array_on_device(chi_squared, output_statistic_dtype)
+    log10_p_value_device_array = transfers.narrow_public_statistic_array_on_device(
+        log10_p_value,
+        output_statistic_dtype,
+    )
     if stage_timing_recorder is not None:
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="beta",
             array=beta_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="standard_error",
             array=standard_error_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="chi_squared",
             array=chi_squared_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="log10_p_value",
             array=log10_p_value_device_array,
         )
         if extra_code is not None:
-            record_transfer_metadata_for_array(
+            transfers.record_transfer_metadata_for_array(
                 stage_timing_recorder=stage_timing_recorder,
                 transfer_name="device_to_host_materialization",
                 array_role="extra_code",
@@ -153,7 +149,7 @@ def materialize_regenie2_native_chunk_with_optional_timing(
         }
     )
     if stage_timing_recorder is not None:
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="device_to_host_materialization",
             start_time=materialization_start_time,
@@ -189,36 +185,39 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
         native_writer_session.write_regenie2_native_chunk_f64(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer_float64(materialized_chunk.beta),
-            standard_error=cast_statistic_array_for_native_writer_float64(materialized_chunk.standard_error),
-            chi_squared=cast_statistic_array_for_native_writer_float64(materialized_chunk.chi_squared),
-            log10_p_value=cast_statistic_array_for_native_writer_float64(materialized_chunk.log10_p_value),
+            beta=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.beta),
+            standard_error=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.standard_error),
+            chi_squared=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.chi_squared),
+            log10_p_value=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.log10_p_value),
             extra_code=native_extra_code,
         )
     else:
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
-            standard_error=cast_statistic_array_for_native_writer(
+            beta=transfers.cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
+            standard_error=transfers.cast_statistic_array_for_native_writer(
                 materialized_chunk.standard_error,
                 output_statistic_dtype,
             ),
-            chi_squared=cast_statistic_array_for_native_writer(materialized_chunk.chi_squared, output_statistic_dtype),
-            log10_p_value=cast_statistic_array_for_native_writer(
+            chi_squared=transfers.cast_statistic_array_for_native_writer(
+                materialized_chunk.chi_squared,
+                output_statistic_dtype,
+            ),
+            log10_p_value=transfers.cast_statistic_array_for_native_writer(
                 materialized_chunk.log10_p_value,
                 output_statistic_dtype,
             ),
             extra_code=materialized_chunk.extra_code,
         )
     if stage_timing_recorder is not None:
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="output_write",
             start_time=write_start_time,
             chunk_metadata=metadata,
         )
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="single_trait_output_write",
             start_time=write_start_time,
@@ -307,39 +306,39 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
     total_trait_count = write_plan.total_trait_count
     active_extra_code = None
     if extra_code is not None:
-        active_extra_code = select_active_trait_rows_on_device(
+        active_extra_code = transfers.select_active_trait_rows_on_device(
             extra_code,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
         )
 
     materialization_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
-    beta_device_array = narrow_public_statistic_array_on_device(
-        select_active_trait_rows_on_device(
+    beta_device_array = transfers.narrow_public_statistic_array_on_device(
+        transfers.select_active_trait_rows_on_device(
             beta,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
         ),
         output_statistic_dtype,
     )
-    standard_error_device_array = narrow_public_statistic_array_on_device(
-        select_active_trait_rows_on_device(
+    standard_error_device_array = transfers.narrow_public_statistic_array_on_device(
+        transfers.select_active_trait_rows_on_device(
             standard_error,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
         ),
         output_statistic_dtype,
     )
-    chi_squared_device_array = narrow_public_statistic_array_on_device(
-        select_active_trait_rows_on_device(
+    chi_squared_device_array = transfers.narrow_public_statistic_array_on_device(
+        transfers.select_active_trait_rows_on_device(
             chi_squared,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
         ),
         output_statistic_dtype,
     )
-    log10_p_value_device_array = narrow_public_statistic_array_on_device(
-        select_active_trait_rows_on_device(
+    log10_p_value_device_array = transfers.narrow_public_statistic_array_on_device(
+        transfers.select_active_trait_rows_on_device(
             log10_p_value,
             active_trait_indices=active_trait_indices,
             total_trait_count=total_trait_count,
@@ -347,32 +346,32 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
         output_statistic_dtype,
     )
     if stage_timing_recorder is not None:
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="beta",
             array=beta_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="standard_error",
             array=standard_error_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="chi_squared",
             array=chi_squared_device_array,
         )
-        record_transfer_metadata_for_array(
+        transfers.record_transfer_metadata_for_array(
             stage_timing_recorder=stage_timing_recorder,
             transfer_name="device_to_host_materialization",
             array_role="log10_p_value",
             array=log10_p_value_device_array,
         )
         if active_extra_code is not None:
-            record_transfer_metadata_for_array(
+            transfers.record_transfer_metadata_for_array(
                 stage_timing_recorder=stage_timing_recorder,
                 transfer_name="device_to_host_materialization",
                 array_role="extra_code",
@@ -388,7 +387,7 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
         }
     )
     if stage_timing_recorder is not None:
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="device_to_host_materialization",
             start_time=materialization_start_time,
@@ -418,13 +417,13 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
     active_writer_sessions = materialized_chunk.active_writer_sessions
     if not active_writer_sessions:
         if stage_timing_recorder is not None:
-            record_stage_duration_with_optional_chunk(
+            transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,
                 stage_name="output_write",
                 start_time=write_start_time,
                 chunk_metadata=metadata,
             )
-            record_stage_duration_with_optional_chunk(
+            transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,
                 stage_name="multi_trait_output_write_total",
                 start_time=write_start_time,
@@ -451,10 +450,10 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
                 active_trait_indices=active_trait_indices,
                 metadata=metadata,
                 chunk_stats=chunk_stats,
-                beta=cast_statistic_array_for_native_writer_float64(beta),
-                standard_error=cast_statistic_array_for_native_writer_float64(standard_error),
-                chi_squared=cast_statistic_array_for_native_writer_float64(chi_squared),
-                log10_p_value=cast_statistic_array_for_native_writer_float64(log10_p_value),
+                beta=transfers.cast_statistic_array_for_native_writer_float64(beta),
+                standard_error=transfers.cast_statistic_array_for_native_writer_float64(standard_error),
+                chi_squared=transfers.cast_statistic_array_for_native_writer_float64(chi_squared),
+                log10_p_value=transfers.cast_statistic_array_for_native_writer_float64(log10_p_value),
                 extra_code=native_extra_code,
             )
         else:
@@ -463,20 +462,20 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
                 active_trait_indices=active_trait_indices,
                 metadata=metadata,
                 chunk_stats=chunk_stats,
-                beta=cast_statistic_array_for_native_writer_float32(beta),
-                standard_error=cast_statistic_array_for_native_writer_float32(standard_error),
-                chi_squared=cast_statistic_array_for_native_writer_float32(chi_squared),
-                log10_p_value=cast_statistic_array_for_native_writer_float32(log10_p_value),
+                beta=transfers.cast_statistic_array_for_native_writer_float32(beta),
+                standard_error=transfers.cast_statistic_array_for_native_writer_float32(standard_error),
+                chi_squared=transfers.cast_statistic_array_for_native_writer_float32(chi_squared),
+                log10_p_value=transfers.cast_statistic_array_for_native_writer_float32(log10_p_value),
                 extra_code=native_extra_code,
             )
         if stage_timing_recorder is not None:
-            record_stage_duration_with_optional_chunk(
+            transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,
                 stage_name="output_write",
                 start_time=write_start_time,
                 chunk_metadata=metadata,
             )
-            record_stage_duration_with_optional_chunk(
+            transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,
                 stage_name="multi_trait_output_write_total",
                 start_time=write_start_time,
@@ -496,36 +495,36 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
         writer_session.write_regenie2_native_chunk(
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=cast_statistic_array_for_native_writer(beta[compact_trait_index], output_statistic_dtype),
-            standard_error=cast_statistic_array_for_native_writer(
+            beta=transfers.cast_statistic_array_for_native_writer(beta[compact_trait_index], output_statistic_dtype),
+            standard_error=transfers.cast_statistic_array_for_native_writer(
                 standard_error[compact_trait_index],
                 output_statistic_dtype,
             ),
-            chi_squared=cast_statistic_array_for_native_writer(
+            chi_squared=transfers.cast_statistic_array_for_native_writer(
                 chi_squared[compact_trait_index],
                 output_statistic_dtype,
             ),
-            log10_p_value=cast_statistic_array_for_native_writer(
+            log10_p_value=transfers.cast_statistic_array_for_native_writer(
                 log10_p_value[compact_trait_index],
                 output_statistic_dtype,
             ),
             extra_code=extra_code_slice,
         )
         if stage_timing_recorder is not None:
-            record_stage_duration_with_optional_chunk(
+            transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,
                 stage_name="multi_trait_output_write_per_trait",
                 start_time=per_trait_write_start_time,
                 chunk_metadata=metadata,
             )
     if stage_timing_recorder is not None:
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="output_write",
             start_time=write_start_time,
             chunk_metadata=metadata,
         )
-        record_stage_duration_with_optional_chunk(
+        transfers.record_stage_duration_with_optional_chunk(
             stage_timing_recorder=stage_timing_recorder,
             stage_name="multi_trait_output_write_total",
             start_time=write_start_time,
@@ -567,14 +566,3 @@ def write_regenie2_multi_native_chunk_with_optional_timing(
         stage_timing_recorder=stage_timing_recorder,
         output_statistic_dtype=output_statistic_dtype,
     )
-
-
-__all__ = [
-    "get_metadata_chromosome",
-    "materialize_regenie2_multi_native_chunk_with_optional_timing",
-    "materialize_regenie2_native_chunk_with_optional_timing",
-    "write_materialized_regenie2_multi_native_chunk_with_optional_timing",
-    "write_materialized_regenie2_native_chunk_with_optional_timing",
-    "write_regenie2_multi_native_chunk_with_optional_timing",
-    "write_regenie2_native_chunk_with_optional_timing",
-]

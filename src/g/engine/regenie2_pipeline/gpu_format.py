@@ -59,18 +59,12 @@ def log_auto_resolution(
     fallback_error: str | None,
 ) -> None:
     """Emit logging and telemetry for an auto GPU genotype format decision."""
-    telemetry_events.native_pipeline_diagnostic_policy().record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
-        requested_gpu_genotype_format=requested_gpu_genotype_format.value,
-        resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
+    telemetry_events.record_gpu_genotype_format_resolved(
+        telemetry_session,
+        requested_gpu_genotype_format=requested_gpu_genotype_format,
+        resolved_gpu_genotype_format=resolved_gpu_genotype_format,
         resolution_reason=resolution_reason,
         fallback_error=fallback_error,
-    )
-    telemetry_events.native_run_event_telemetry_policy().record_gpu_genotype_format_resolved_telemetry_event(
-        telemetry_session,
-        requested_gpu_genotype_format.value,
-        resolved_gpu_genotype_format.value,
-        resolution_reason,
-        fallback_error,
     )
 
 

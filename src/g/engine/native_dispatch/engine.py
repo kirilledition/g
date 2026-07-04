@@ -21,9 +21,9 @@ def open_bgen_run_engine(
     trusted_no_missing_diploid: bool,
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN run engine without running trusted validation."""
-    events.native_dispatch_diagnostic_policy().record_native_dispatch_bgen_engine_constructing_diagnostic_event(
+    events.record_bgen_engine_constructing(
         chunk_size=chunk_size,
-        source_path=str(genotype_source_config.source_path),
+        source_path=genotype_source_config.source_path,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
         variant_limit=variant_limit,
     )
@@ -43,9 +43,9 @@ def validate_trusted_bgen_run_engine(
     trusted_bgen_validator: typing.Callable[..., None] | None,
 ) -> None:
     """Validate trusted no-missing diploid BGEN mode for an open engine."""
-    events.native_dispatch_diagnostic_policy().record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
-        source_path=str(genotype_source_config.source_path),
-        trusted_bgen_validation_mode=trusted_bgen_validation_mode.value,
+    events.record_trusted_bgen_validation_started(
+        source_path=genotype_source_config.source_path,
+        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
     )
     resolved_trusted_bgen_validator = trusted_bgen_validator or validate_trusted_bgen_with_cache
     resolved_trusted_bgen_validator(

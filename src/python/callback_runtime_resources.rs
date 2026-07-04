@@ -22,12 +22,11 @@ use super::schedule::{
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
     NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerStartAttemptPlan,
-    NativeDosageBufferPoolObservationPlan, NativeDosageBufferReturnAttemptPlan, NativeDosageBufferReusePlan,
-    NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan, NativeDosageWorkItemDispatchPlan,
-    NativeDosageWorkItemStageDurationPlan, NativeResultInFlightAcquireObservationPlan,
-    NativeResultInFlightReleaseObservationPlan, NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan,
-    NativeResultWriteItemDispatchPlan, NativeResultWriteItemResourceReleasePlan,
-    NativeVariantMajorDosageBatchHandoffPlan,
+    NativeDosageBufferPoolObservationPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
+    NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
+    NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
+    NativeResultWriteDrainCompletionPlan, NativeResultWriteHandoffPlan, NativeResultWriteItemDispatchPlan,
+    NativeResultWriteItemResourceReleasePlan, NativeVariantMajorDosageBatchHandoffPlan,
 };
 
 const RESULT_WRITE_ITEM_KIND_SINGLE_RESULT: &str = "single_result";
@@ -97,12 +96,6 @@ pub(crate) struct NativeDosageBufferAcquireResult {
 }
 
 #[pyclass]
-pub(crate) struct NativeDosageBufferReuseSelectionResult {
-    dosage_buffer: Option<Py<PyAny>>,
-    operation_result: Py<NativeDosageBufferPoolOperationResult>,
-}
-
-#[pyclass]
 pub(crate) struct NativeDosageBufferPoolOperationResult {
     free_buffer_count: Option<usize>,
     observation_plan: Option<Py<NativeDosageBufferPoolObservationPlan>>,
@@ -151,20 +144,6 @@ pub(crate) struct NativeResultWorkItemResourceReleaseResult {
 }
 
 #[pyclass]
-pub(crate) struct NativeCallbackQueueGetObservedResult {
-    item: Option<Py<PyAny>>,
-    observation_plan: Py<NativeCallbackQueueGetObservationPlan>,
-}
-
-#[pyclass]
-pub(crate) struct NativeDosageWorkItemDrainResult {
-    item: Option<Py<PyAny>>,
-    has_dosage_work_item: bool,
-    drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
-    should_stop: bool,
-}
-
-#[pyclass]
 pub(crate) struct NativeDosageWorkItemGetResult {
     item: Option<Py<PyAny>>,
     has_dosage_work_item: bool,
@@ -175,15 +154,6 @@ pub(crate) struct NativeDosageWorkItemGetResult {
     should_stop: bool,
     dispatch_action: NativeDosageDispatchAction,
     dispatch_error_message: Option<String>,
-}
-
-#[pyclass]
-pub(crate) struct NativeResultWriteItemDrainResult {
-    item: Option<Py<PyAny>>,
-    has_result_work_item: bool,
-    drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
-    should_stop: bool,
-    should_flush_binary_correction_diagnostics: bool,
 }
 
 #[pyclass]
@@ -208,6 +178,7 @@ pub(crate) struct NativeCallbackQueueOperationOutcome {
     should_flush_binary_correction_diagnostics: bool,
     dispatch_action: String,
     dispatch_error_message: Option<String>,
+    worker_error_raise_plan: Option<Py<NativeCallbackWorkerErrorRaisePlan>>,
     stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
 }
 
@@ -222,6 +193,7 @@ pub(crate) struct NativeCallbackResourceOperationOutcome {
     backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
     dosage_buffer_pool_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
     result_in_flight_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
+    worker_error_raise_plan: Option<Py<NativeCallbackWorkerErrorRaisePlan>>,
     stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
 }
 
@@ -375,56 +347,6 @@ impl NativeCallbackRuntimeResources {
             flush_binary_correction_diagnostics_on_result_stop,
             worker_start_lock: Mutex::new(()),
         })
-    }
-
-    #[getter]
-    fn callback_scheduler_state(&self, py: Python<'_>) -> Py<NativeCallbackSchedulerState> {
-        self.callback_scheduler_state.clone_ref(py)
-    }
-
-    #[getter]
-    fn progress_state(&self, py: Python<'_>) -> Py<NativeCallbackProgressState> {
-        self.progress_state.clone_ref(py)
-    }
-
-    #[getter]
-    fn result_in_flight_slot_signal(&self, py: Python<'_>) -> Py<NativeCallbackWaitSignal> {
-        self.result_in_flight_slot_signal.clone_ref(py)
-    }
-
-    #[getter]
-    fn dosage_buffer_pool_signal(&self, py: Python<'_>) -> Py<NativeCallbackWaitSignal> {
-        self.dosage_buffer_pool_signal.clone_ref(py)
-    }
-
-    #[getter]
-    fn dosage_queue(&self, py: Python<'_>) -> Py<NativeCallbackObjectQueue> {
-        self.dosage_queue.clone_ref(py)
-    }
-
-    #[getter]
-    fn result_queue(&self, py: Python<'_>) -> Py<NativeCallbackObjectQueue> {
-        self.result_queue.clone_ref(py)
-    }
-
-    #[getter]
-    fn free_dosage_buffers(&self, py: Python<'_>) -> Py<NativeCallbackObjectQueue> {
-        self.free_dosage_buffers.clone_ref(py)
-    }
-
-    #[getter]
-    fn binary_correction_summary(&self, py: Python<'_>) -> Py<NativeBinaryCorrectionSummary> {
-        self.binary_correction_summary.clone_ref(py)
-    }
-
-    #[getter]
-    fn worker_thread(&self, py: Python<'_>) -> Py<NativeCallbackWorkerThread> {
-        self.worker_thread.clone_ref(py)
-    }
-
-    #[getter]
-    fn result_worker_thread(&self, py: Python<'_>) -> Py<NativeCallbackWorkerThread> {
-        self.result_worker_thread.clone_ref(py)
     }
 
     #[getter]
@@ -898,6 +820,30 @@ impl NativeCallbackRuntimeResources {
         Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
     }
 
+    fn put_dosage_work_item_until_accepted_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let mut last_stage_backpressure_observation = None;
+        loop {
+            if let Some(worker_error_raise_plan) = self.plan_worker_error_raise_from_scheduler(py) {
+                return NativeCallbackQueueOperationOutcome::from_worker_error_raise_plan(py, worker_error_raise_plan);
+            }
+            let put_result = self.put_dosage_work_item_with_optional_backpressure_observation(py, work_item)?;
+            let mut outcome = NativeCallbackQueueOperationOutcome::from_put_result(put_result);
+            if !outcome.should_retry {
+                if outcome.stage_backpressure_observation.is_none() {
+                    outcome.stage_backpressure_observation = last_stage_backpressure_observation;
+                }
+                return Ok(outcome);
+            }
+            if outcome.stage_backpressure_observation.is_some() {
+                last_stage_backpressure_observation = outcome.stage_backpressure_observation;
+            }
+        }
+    }
+
     fn put_result_write_item_outcome(
         &self,
         py: Python<'_>,
@@ -905,6 +851,30 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeCallbackQueueOperationOutcome> {
         let put_result = self.put_result_write_item_with_optional_backpressure_observation(py, work_item)?;
         Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
+    }
+
+    fn put_result_write_item_until_accepted_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let mut last_stage_backpressure_observation = None;
+        loop {
+            if let Some(worker_error_raise_plan) = self.plan_worker_error_raise_from_scheduler(py) {
+                return NativeCallbackQueueOperationOutcome::from_worker_error_raise_plan(py, worker_error_raise_plan);
+            }
+            let put_result = self.put_result_write_item_with_optional_backpressure_observation(py, work_item)?;
+            let mut outcome = NativeCallbackQueueOperationOutcome::from_put_result(put_result);
+            if !outcome.should_retry {
+                if outcome.stage_backpressure_observation.is_none() {
+                    outcome.stage_backpressure_observation = last_stage_backpressure_observation;
+                }
+                return Ok(outcome);
+            }
+            if outcome.stage_backpressure_observation.is_some() {
+                last_stage_backpressure_observation = outcome.stage_backpressure_observation;
+            }
+        }
     }
 
     fn get_next_dosage_work_item_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueOperationOutcome> {
@@ -925,6 +895,33 @@ impl NativeCallbackRuntimeResources {
         Ok(NativeCallbackResourceOperationOutcome::from_result_in_flight_acquire_result(acquire_result))
     }
 
+    fn acquire_result_in_flight_slot_until_available_outcome(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let mut last_stage_backpressure_observation = None;
+        loop {
+            if let Some(worker_error_raise_plan) = self.plan_worker_error_raise_from_scheduler(py) {
+                return NativeCallbackResourceOperationOutcome::from_worker_error_raise_plan(
+                    py,
+                    worker_error_raise_plan,
+                );
+            }
+            let acquire_result = self.acquire_result_in_flight_slot_with_optional_observation(py)?;
+            let mut outcome =
+                NativeCallbackResourceOperationOutcome::from_result_in_flight_acquire_result(acquire_result);
+            if !outcome.should_retry {
+                if outcome.stage_backpressure_observation.is_none() {
+                    outcome.stage_backpressure_observation = last_stage_backpressure_observation;
+                }
+                return Ok(outcome);
+            }
+            if outcome.stage_backpressure_observation.is_some() {
+                last_stage_backpressure_observation = outcome.stage_backpressure_observation;
+            }
+        }
+    }
+
     fn release_result_in_flight_slot_outcome(
         &self,
         py: Python<'_>,
@@ -936,6 +933,81 @@ impl NativeCallbackRuntimeResources {
     fn acquire_dosage_buffer_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackResourceOperationOutcome> {
         let acquire_result = self.acquire_dosage_buffer_with_backpressure_timeout(py)?;
         Ok(NativeCallbackResourceOperationOutcome::from_dosage_buffer_acquire_result(acquire_result))
+    }
+
+    fn acquire_reusable_dosage_buffer_or_allocate_outcome(
+        &self,
+        py: Python<'_>,
+        expected_shape: Vec<usize>,
+        expected_dtype: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let mut last_stage_backpressure_observation = None;
+        let mut last_pool_backpressure_observation = None;
+        loop {
+            if let Some(worker_error_raise_plan) = self.plan_worker_error_raise_from_scheduler(py) {
+                return NativeCallbackResourceOperationOutcome::from_worker_error_raise_plan(
+                    py,
+                    worker_error_raise_plan,
+                );
+            }
+            let acquire_result = self.acquire_dosage_buffer_with_backpressure_timeout(py)?;
+            let mut acquire_outcome =
+                NativeCallbackResourceOperationOutcome::from_dosage_buffer_acquire_result(acquire_result);
+            if acquire_outcome.should_allocate {
+                if acquire_outcome.stage_backpressure_observation.is_none() {
+                    acquire_outcome.stage_backpressure_observation = last_stage_backpressure_observation;
+                }
+                if acquire_outcome.dosage_buffer_pool_backpressure_observation.is_none() {
+                    acquire_outcome.dosage_buffer_pool_backpressure_observation = last_pool_backpressure_observation;
+                }
+                return Ok(acquire_outcome);
+            }
+            let Some(dosage_buffer) = acquire_outcome.dosage_buffer.take() else {
+                if acquire_outcome.stage_backpressure_observation.is_some() {
+                    last_stage_backpressure_observation = acquire_outcome.stage_backpressure_observation;
+                }
+                continue;
+            };
+            if let Some(reusable_dosage_buffer) =
+                self.get_reusable_dosage_buffer(py, dosage_buffer.bind(py), expected_shape.clone(), expected_dtype)?
+            {
+                let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+                let observation_plan = if self.has_stage_timing_recorder {
+                    let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                    Some(scheduler_state.plan_dosage_buffer_pool_reuse_observation_value())
+                } else {
+                    None
+                };
+                let operation_result =
+                    self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), observation_plan)?;
+                let mut outcome = NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+                    py,
+                    Some(reusable_dosage_buffer),
+                    false,
+                    false,
+                    operation_result,
+                )?;
+                if outcome.stage_backpressure_observation.is_none() {
+                    outcome.stage_backpressure_observation = last_stage_backpressure_observation;
+                }
+                if outcome.dosage_buffer_pool_backpressure_observation.is_none() {
+                    outcome.dosage_buffer_pool_backpressure_observation = last_pool_backpressure_observation;
+                }
+                return Ok(outcome);
+            }
+            let operation_result =
+                self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer.bind(py))?;
+            let discard_outcome = NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+                py,
+                None,
+                true,
+                false,
+                operation_result,
+            )?;
+            if discard_outcome.dosage_buffer_pool_backpressure_observation.is_some() {
+                last_pool_backpressure_observation = discard_outcome.dosage_buffer_pool_backpressure_observation;
+            }
+        }
     }
 
     fn register_dosage_buffer_outcome(
@@ -1061,44 +1133,189 @@ impl NativeCallbackRuntimeResources {
         NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
     }
 
-    fn acquire_result_in_flight_slot_with_backpressure_timeout(
+    fn release_result_work_item_pre_write_resources_outcome(
         &self,
         py: Python<'_>,
-    ) -> PyResult<NativeResultInFlightAcquireObservationPlan> {
-        let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
-        let (attempt_plan, observation_plan) = {
-            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
-            let attempt_plan = scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt_value();
-            let observation_plan = scheduler_state.plan_result_in_flight_slot_acquire_observation_value(&attempt_plan);
-            (attempt_plan, observation_plan)
-        };
-        if !attempt_plan.should_acquire_value() && attempt_plan.should_wait_value() {
-            self.result_in_flight_slot_signal.bind(py).borrow().wait_for_change_value(
-                py,
-                observed_generation,
-                attempt_plan.wait_timeout_seconds_value(),
-            )?;
-        }
-        Ok(observation_plan)
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let release_result = self.release_result_work_item_pre_write_resources_for_object(py, work_item)?;
+        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
     }
 
-    fn acquire_result_in_flight_slot_with_backpressure_timeout_without_observation(
+    fn release_result_work_item_final_resources_outcome(
         &self,
         py: Python<'_>,
-    ) -> PyResult<NativeResultInFlightAcquireResult> {
-        let observed_generation = self.result_in_flight_slot_signal.bind(py).borrow().generation_value()?;
-        let attempt_plan = {
-            let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
-            scheduler_state.plan_result_in_flight_slot_acquire_backpressure_attempt_value()
-        };
-        if !attempt_plan.should_acquire_value() && attempt_plan.should_wait_value() {
-            self.result_in_flight_slot_signal.bind(py).borrow().wait_for_change_value(
-                py,
-                observed_generation,
-                attempt_plan.wait_timeout_seconds_value(),
-            )?;
+        work_item: &Bound<'_, PyAny>,
+        host_dosage_buffer_released: bool,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let release_result =
+            self.release_result_work_item_final_resources_for_object(py, work_item, host_dosage_buffer_released)?;
+        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
+    }
+
+    fn release_result_work_item_in_flight_slot_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let release_result = self.release_result_work_item_in_flight_slot_for_object(py, work_item)?;
+        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
+    }
+
+    #[pyo3(name = "get_releasable_dosage_buffer_owner")]
+    fn py_get_releasable_dosage_buffer_owner(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<Option<Py<PyAny>>> {
+        self.get_releasable_dosage_buffer_owner(py, dosage_buffer)
+    }
+
+    #[pyo3(name = "plan_dosage_work_item_stage_duration")]
+    fn py_plan_dosage_work_item_stage_duration(
+        &self,
+        py: Python<'_>,
+        dosage_work_item_kind: &str,
+        chunk_count: usize,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        self.plan_dosage_work_item_stage_duration(py, dosage_work_item_kind, chunk_count, elapsed_seconds)
+    }
+
+    #[pyo3(name = "plan_dosage_work_item_stage_duration_for_object")]
+    fn py_plan_dosage_work_item_stage_duration_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
+        self.plan_dosage_work_item_stage_duration_for_object(py, work_item, elapsed_seconds)
+    }
+
+    #[pyo3(name = "plan_dosage_work_item_stage_duration_attribution_for_object")]
+    fn py_plan_dosage_work_item_stage_duration_attribution_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        elapsed_seconds: f64,
+    ) -> PyResult<NativeDosageWorkItemStageDurationAttribution> {
+        self.plan_dosage_work_item_stage_duration_attribution_for_object(py, work_item, elapsed_seconds)
+    }
+
+    #[pyo3(name = "plan_current_queue_backpressure_observation")]
+    fn py_plan_current_queue_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.plan_current_queue_backpressure_observation(py, queue_name, operation_name, elapsed_seconds, blocked)
+    }
+
+    #[pyo3(name = "plan_current_queue_stage_backpressure_observation")]
+    fn py_plan_current_queue_stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        queue_name: &str,
+        operation_name: &str,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.plan_current_queue_stage_backpressure_observation(py, queue_name, operation_name, elapsed_seconds, blocked)
+    }
+
+    #[pyo3(name = "plan_dosage_buffer_pool_backpressure_observation")]
+    fn py_plan_dosage_buffer_pool_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
+        self.plan_dosage_buffer_pool_backpressure_observation(
+            py,
+            operation_name,
+            free_buffer_count,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
+    #[pyo3(name = "plan_dosage_buffer_pool_stage_backpressure_observation")]
+    fn py_plan_dosage_buffer_pool_stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+        operation_name: &str,
+        free_buffer_count: usize,
+        elapsed_seconds: f64,
+        blocked: bool,
+    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
+        self.plan_dosage_buffer_pool_stage_backpressure_observation(
+            py,
+            operation_name,
+            free_buffer_count,
+            elapsed_seconds,
+            blocked,
+        )
+    }
+
+    #[pyo3(name = "plan_variant_major_dosage_batch_handoff")]
+    fn py_plan_variant_major_dosage_batch_handoff(
+        &self,
+        py: Python<'_>,
+        metadata_count: usize,
+        genotype_matrix_by_variant_count: usize,
+        chunk_stats_count: usize,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.plan_variant_major_dosage_batch_handoff(
+            py,
+            metadata_count,
+            genotype_matrix_by_variant_count,
+            chunk_stats_count,
+        )
+    }
+
+    #[pyo3(name = "plan_variant_major_dosage_batch_handoff_for_sequences")]
+    fn py_plan_variant_major_dosage_batch_handoff_for_sequences(
+        &self,
+        py: Python<'_>,
+        metadata_batch: &Bound<'_, PyAny>,
+        genotype_matrix_by_variant_batch: &Bound<'_, PyAny>,
+        chunk_stats_batch: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
+        self.plan_variant_major_dosage_batch_handoff_for_sequences(
+            py,
+            metadata_batch,
+            genotype_matrix_by_variant_batch,
+            chunk_stats_batch,
+        )
+    }
+
+    #[pyo3(name = "plan_dosage_work_handoff")]
+    fn py_plan_dosage_work_handoff(&self, py: Python<'_>, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
+        self.plan_dosage_work_handoff(py, chunk_count)
+    }
+
+    #[pyo3(name = "plan_dosage_work_handoff_for_object")]
+    fn py_plan_dosage_work_handoff_for_object(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeDosageWorkHandoffPlan> {
+        self.plan_dosage_work_handoff_for_object(py, work_item)
+    }
+}
+
+impl NativeCallbackRuntimeResources {
+    fn plan_worker_error_raise_from_scheduler(&self, py: Python<'_>) -> Option<NativeCallbackWorkerErrorRaisePlan> {
+        let error_raise_plan = self.plan_worker_error_raise(py);
+        if !error_raise_plan.should_raise_value() {
+            return None;
         }
-        NativeResultInFlightAcquireResult::from_acquire(py, !attempt_plan.should_acquire_value(), None, None)
+        Some(error_raise_plan)
     }
 
     fn acquire_result_in_flight_slot_with_optional_observation(
@@ -1147,18 +1364,6 @@ impl NativeCallbackRuntimeResources {
         self.release_result_in_flight_slot_without_observation(py)?;
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         Ok(scheduler_state.plan_result_in_flight_slot_release_observation_value())
-    }
-
-    fn release_result_in_flight_slot_with_optional_observation(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<Option<NativeResultInFlightReleaseObservationPlan>> {
-        self.release_result_in_flight_slot_without_observation(py)?;
-        if !self.has_stage_timing_recorder {
-            return Ok(None);
-        }
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        Ok(Some(scheduler_state.plan_result_in_flight_slot_release_observation_value()))
     }
 
     fn release_result_in_flight_slot_with_optional_backpressure_observation(
@@ -1336,19 +1541,6 @@ impl NativeCallbackRuntimeResources {
         self.free_dosage_buffers.bind(py).borrow().occupied_count_value()
     }
 
-    fn register_dosage_buffer_with_observation(
-        &self,
-        py: Python<'_>,
-        buffer_identifier: usize,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        let free_buffer_count = self.register_dosage_buffer(py, buffer_identifier)?;
-        let observation_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
-        };
-        self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), Some(observation_plan))
-    }
-
     fn register_dosage_buffer_with_optional_observation(
         &self,
         py: Python<'_>,
@@ -1395,23 +1587,6 @@ impl NativeCallbackRuntimeResources {
         Ok(Some(free_buffer_count))
     }
 
-    fn return_dosage_buffer_with_observation(
-        &self,
-        py: Python<'_>,
-        buffer_identifier: usize,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        let free_buffer_count = self.return_dosage_buffer(py, buffer_identifier, dosage_buffer)?;
-        if free_buffer_count.is_none() {
-            return self.dosage_buffer_pool_operation_result(py, None, None);
-        }
-        let observation_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_buffer_pool_return_observation_value()
-        };
-        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
-    }
-
     fn return_dosage_buffer_with_optional_observation(
         &self,
         py: Python<'_>,
@@ -1427,14 +1602,6 @@ impl NativeCallbackRuntimeResources {
             scheduler_state.plan_dosage_buffer_pool_return_observation_value()
         };
         self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
-    }
-
-    fn return_dosage_buffer_object_with_optional_observation(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        self.return_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer), dosage_buffer)
     }
 
     fn return_dosage_buffer_owner_with_optional_observation(
@@ -1474,22 +1641,6 @@ impl NativeCallbackRuntimeResources {
         Ok(Some(free_buffer_count))
     }
 
-    fn discard_dosage_buffer_with_observation(
-        &self,
-        py: Python<'_>,
-        buffer_identifier: usize,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        let free_buffer_count = self.discard_dosage_buffer(py, buffer_identifier)?;
-        if free_buffer_count.is_none() {
-            return self.dosage_buffer_pool_operation_result(py, None, None);
-        }
-        let observation_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
-        };
-        self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
-    }
-
     fn discard_dosage_buffer_with_optional_observation(
         &self,
         py: Python<'_>,
@@ -1506,14 +1657,6 @@ impl NativeCallbackRuntimeResources {
         self.dosage_buffer_pool_operation_result(py, free_buffer_count, Some(observation_plan))
     }
 
-    fn discard_dosage_buffer_object_with_optional_observation(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        self.discard_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer))
-    }
-
     fn discard_dosage_buffer_owner_with_optional_observation(
         &self,
         py: Python<'_>,
@@ -1522,25 +1665,9 @@ impl NativeCallbackRuntimeResources {
         let dosage_buffer_owner = dosage_buffer_owner(py, dosage_buffer)?;
         self.discard_dosage_buffer_with_optional_observation(py, py_object_identifier(dosage_buffer_owner.bind(py)))
     }
+}
 
-    fn plan_dosage_buffer_return_attempt(
-        &self,
-        py: Python<'_>,
-        buffer_identifier: usize,
-    ) -> NativeDosageBufferReturnAttemptPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_return_attempt_value(buffer_identifier)
-    }
-
-    fn plan_dosage_buffer_object_return_attempt(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> NativeDosageBufferReturnAttemptPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_return_attempt_value(py_object_identifier(dosage_buffer))
-    }
-
+impl NativeCallbackRuntimeResources {
     fn get_releasable_dosage_buffer_owner(
         &self,
         py: Python<'_>,
@@ -1556,18 +1683,9 @@ impl NativeCallbackRuntimeResources {
         };
         if return_plan.should_return_value() { Ok(Some(dosage_buffer_owner)) } else { Ok(None) }
     }
+}
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_dosage_buffer_reuse(
-        &self,
-        py: Python<'_>,
-        buffered_shape: Vec<usize>,
-        expected_shape: Vec<usize>,
-    ) -> Option<NativeDosageBufferReusePlan> {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_reuse_value(&buffered_shape, &expected_shape)
-    }
-
+impl NativeCallbackRuntimeResources {
     fn get_reusable_dosage_buffer(
         &self,
         py: Python<'_>,
@@ -1593,35 +1711,6 @@ impl NativeCallbackRuntimeResources {
         }
         let slice_tuple = dosage_buffer_reuse_slice_tuple(py, reuse_plan.slice_dimensions_value())?;
         Ok(Some(dosage_buffer.get_item(slice_tuple)?.unbind()))
-    }
-
-    fn select_reusable_dosage_buffer_or_discard(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-        expected_shape: Vec<usize>,
-        expected_dtype: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageBufferReuseSelectionResult> {
-        let reusable_dosage_buffer =
-            self.get_reusable_dosage_buffer(py, dosage_buffer, expected_shape, expected_dtype)?;
-        if let Some(reusable_dosage_buffer) = reusable_dosage_buffer {
-            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
-            let observation_plan = if self.has_stage_timing_recorder {
-                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-                Some(scheduler_state.plan_dosage_buffer_pool_reuse_observation_value())
-            } else {
-                None
-            };
-            let reuse_operation_result =
-                self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), observation_plan)?;
-            return NativeDosageBufferReuseSelectionResult::from_reusable_dosage_buffer(
-                py,
-                reusable_dosage_buffer,
-                reuse_operation_result,
-            );
-        }
-        let discard_operation_result = self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
-        NativeDosageBufferReuseSelectionResult::from_discard(py, discard_operation_result)
     }
 
     fn try_put_dosage_work_item(
@@ -1681,16 +1770,6 @@ impl NativeCallbackRuntimeResources {
                 .borrow()
                 .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
         }
-    }
-
-    fn put_dosage_work_item_with_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackQueuePutObservationPlan> {
-        let queued = self.try_put_dosage_work_item_with_backpressure_timeout(py, work_item)?;
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        Ok(scheduler_state.plan_dosage_queue_put_observation_value(queued))
     }
 
     fn put_dosage_work_item_with_optional_backpressure_observation(
@@ -1755,120 +1834,6 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
-    fn get_dosage_work_item_with_observation(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueGetObservedResult> {
-        let get_result = self.get_dosage_work_item(py)?;
-        let observation_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_queue_get_observation_value()
-        };
-        NativeCallbackQueueGetObservedResult::from_get_result(py, get_result, observation_plan)
-    }
-
-    fn get_dosage_work_item_with_drain_completion(&self, py: Python<'_>) -> PyResult<NativeDosageWorkItemDrainResult> {
-        let get_result = self.get_dosage_work_item(py)?;
-        let has_dosage_work_item = get_result.has_non_none_item_value(py);
-        let drain_completion_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
-        };
-        NativeDosageWorkItemDrainResult::from_get_result(py, get_result, has_dosage_work_item, drain_completion_plan)
-    }
-
-    fn get_dosage_work_item_with_observation_and_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeDosageWorkItemGetResult> {
-        let get_start_time = Instant::now();
-        let get_result = self.get_dosage_work_item(py)?;
-        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
-        let has_dosage_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = scheduler_state.plan_dosage_queue_get_observation_value();
-            let stage_backpressure_observation = scheduler_state
-                .plan_current_queue_stage_backpressure_observation_value(
-                    observation_plan.queue_name_value(),
-                    observation_plan.operation_name_value(),
-                    elapsed_seconds,
-                    observation_plan.blocked_value(),
-                )?;
-            let drain_completion_plan = scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item);
-            (observation_plan, stage_backpressure_observation, drain_completion_plan)
-        };
-        NativeDosageWorkItemGetResult::from_get_result(
-            py,
-            get_result,
-            has_dosage_work_item,
-            Some(observation_plan),
-            Some(stage_backpressure_observation),
-            drain_completion_plan,
-            None,
-        )
-    }
-
-    fn get_dosage_work_item_with_optional_observation_and_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeDosageWorkItemGetResult> {
-        let get_start_time = Instant::now();
-        let get_result = self.get_dosage_work_item(py)?;
-        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
-        let has_dosage_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
-                let observation_plan = scheduler_state.plan_dosage_queue_get_observation_value();
-                let stage_backpressure_observation = scheduler_state
-                    .plan_current_queue_stage_backpressure_observation_value(
-                        observation_plan.queue_name_value(),
-                        observation_plan.operation_name_value(),
-                        elapsed_seconds,
-                        observation_plan.blocked_value(),
-                    )?;
-                (Some(observation_plan), Some(stage_backpressure_observation))
-            } else {
-                (None, None)
-            };
-            (
-                observation_plan,
-                stage_backpressure_observation,
-                scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item),
-            )
-        };
-        NativeDosageWorkItemGetResult::from_get_result(
-            py,
-            get_result,
-            has_dosage_work_item,
-            observation_plan,
-            stage_backpressure_observation,
-            drain_completion_plan,
-            None,
-        )
-    }
-
-    fn get_validated_dosage_work_item_with_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeDosageWorkItemGetResult> {
-        let get_result = self.get_dosage_work_item(py)?;
-        let item = get_result.into_item_value();
-        let has_dosage_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
-        let drain_completion_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
-        };
-        let dispatch_plan = self.dosage_work_dispatch_plan_for_optional_item(py, item.as_ref())?;
-        NativeDosageWorkItemGetResult::from_item(
-            py,
-            item,
-            has_dosage_work_item,
-            None,
-            None,
-            drain_completion_plan,
-            dispatch_plan,
-        )
-    }
-
     fn get_validated_dosage_work_item_with_optional_observation_and_drain_completion(
         &self,
         py: Python<'_>,
@@ -1910,41 +1875,9 @@ impl NativeCallbackRuntimeResources {
             dispatch_plan,
         )
     }
+}
 
-    fn plan_dosage_work_drain_completion(
-        &self,
-        py: Python<'_>,
-        has_dosage_work_item: bool,
-    ) -> NativeDosageWorkDrainCompletionPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_work_drain_completion_value(has_dosage_work_item)
-    }
-
-    fn plan_dosage_work_drain_completion_for_object(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> NativeDosageWorkDrainCompletionPlan {
-        self.plan_dosage_work_drain_completion(py, !work_item.is_none())
-    }
-
-    fn plan_validated_dosage_work_item_dispatch(
-        &self,
-        py: Python<'_>,
-        dosage_work_item_kind: &str,
-    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-        self.dosage_work_dispatch_plan_for_kind(py, dosage_work_item_kind)
-    }
-
-    fn plan_validated_dosage_work_item_dispatch_for_object(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-        let dosage_work_item_kind = classify_dosage_work_item_kind(work_item)?;
-        self.plan_validated_dosage_work_item_dispatch(py, dosage_work_item_kind)
-    }
-
+impl NativeCallbackRuntimeResources {
     fn plan_dosage_work_item_stage_duration(
         &self,
         py: Python<'_>,
@@ -2015,54 +1948,6 @@ impl NativeCallbackRuntimeResources {
             elapsed_seconds,
             blocked,
         )
-    }
-
-    fn plan_dosage_queue_put_observation(&self, py: Python<'_>, queued: bool) -> NativeCallbackQueuePutObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_queue_put_observation_value(queued)
-    }
-
-    fn plan_dosage_queue_get_observation(&self, py: Python<'_>) -> NativeCallbackQueueGetObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_queue_get_observation_value()
-    }
-
-    fn plan_result_queue_put_observation(&self, py: Python<'_>, queued: bool) -> NativeCallbackQueuePutObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_result_queue_put_observation_value(queued)
-    }
-
-    fn plan_result_queue_get_observation(&self, py: Python<'_>) -> NativeCallbackQueueGetObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_result_queue_get_observation_value()
-    }
-
-    fn plan_dosage_buffer_pool_reuse_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_reuse_observation_value()
-    }
-
-    fn plan_dosage_buffer_pool_return_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_return_observation_value()
-    }
-
-    fn plan_dosage_buffer_pool_allocate_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_allocate_observation_value()
-    }
-
-    fn plan_dosage_buffer_pool_discard_observation(&self, py: Python<'_>) -> NativeDosageBufferPoolObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_discard_observation_value()
-    }
-
-    fn plan_dosage_buffer_pool_consumer_wait_observation(
-        &self,
-        py: Python<'_>,
-    ) -> NativeDosageBufferPoolObservationPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_consumer_wait_observation_value()
     }
 
     fn plan_dosage_buffer_pool_backpressure_observation(
@@ -2142,7 +2027,9 @@ impl NativeCallbackRuntimeResources {
         let descriptor = classify_dosage_work_item(work_item)?;
         self.plan_dosage_work_handoff(py, descriptor.chunk_count)
     }
+}
 
+impl NativeCallbackRuntimeResources {
     fn try_put_result_write_item(
         &self,
         py: Python<'_>,
@@ -2202,16 +2089,6 @@ impl NativeCallbackRuntimeResources {
                 .borrow()
                 .wait_for_available_slot_value(py, attempt_plan.wait_timeout_seconds_value())?;
         }
-    }
-
-    fn put_result_write_item_with_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackQueuePutObservationPlan> {
-        let queued = self.try_put_result_write_item_with_backpressure_timeout(py, work_item)?;
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        Ok(scheduler_state.plan_result_queue_put_observation_value(queued))
     }
 
     fn put_result_write_item_with_optional_backpressure_observation(
@@ -2276,123 +2153,6 @@ impl NativeCallbackRuntimeResources {
         }
     }
 
-    fn get_result_write_item_with_observation(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueGetObservedResult> {
-        let get_result = self.get_result_write_item(py)?;
-        let observation_plan = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            scheduler_state.plan_result_queue_get_observation_value()
-        };
-        NativeCallbackQueueGetObservedResult::from_get_result(py, get_result, observation_plan)
-    }
-
-    fn get_result_write_item_with_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeResultWriteItemDrainResult> {
-        let get_result = self.get_result_write_item(py)?;
-        let has_result_work_item = get_result.has_non_none_item_value(py);
-        let drain_completion_plan = self.plan_result_write_drain_completion_value(py, has_result_work_item);
-        NativeResultWriteItemDrainResult::from_get_result(py, get_result, has_result_work_item, drain_completion_plan)
-    }
-
-    fn get_result_write_item_with_observation_and_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeResultWriteItemGetResult> {
-        let get_start_time = Instant::now();
-        let get_result = self.get_result_write_item(py)?;
-        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
-        let has_result_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let observation_plan = scheduler_state.plan_result_queue_get_observation_value();
-            let stage_backpressure_observation = scheduler_state
-                .plan_current_queue_stage_backpressure_observation_value(
-                    observation_plan.queue_name_value(),
-                    observation_plan.operation_name_value(),
-                    elapsed_seconds,
-                    observation_plan.blocked_value(),
-                )?;
-            let drain_completion_plan = scheduler_state.plan_result_write_drain_completion_value(
-                has_result_work_item,
-                self.flush_binary_correction_diagnostics_on_result_stop,
-            );
-            (observation_plan, stage_backpressure_observation, drain_completion_plan)
-        };
-        NativeResultWriteItemGetResult::from_get_result(
-            py,
-            get_result,
-            has_result_work_item,
-            Some(observation_plan),
-            Some(stage_backpressure_observation),
-            drain_completion_plan,
-            None,
-        )
-    }
-
-    fn get_result_write_item_with_optional_observation_and_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeResultWriteItemGetResult> {
-        let get_start_time = Instant::now();
-        let get_result = self.get_result_write_item(py)?;
-        let elapsed_seconds = get_start_time.elapsed().as_secs_f64();
-        let has_result_work_item = get_result.has_non_none_item_value(py);
-        let (observation_plan, stage_backpressure_observation, drain_completion_plan) = {
-            let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-            let (observation_plan, stage_backpressure_observation) = if self.has_stage_timing_recorder {
-                let observation_plan = scheduler_state.plan_result_queue_get_observation_value();
-                let stage_backpressure_observation = scheduler_state
-                    .plan_current_queue_stage_backpressure_observation_value(
-                        observation_plan.queue_name_value(),
-                        observation_plan.operation_name_value(),
-                        elapsed_seconds,
-                        observation_plan.blocked_value(),
-                    )?;
-                (Some(observation_plan), Some(stage_backpressure_observation))
-            } else {
-                (None, None)
-            };
-            (
-                observation_plan,
-                stage_backpressure_observation,
-                scheduler_state.plan_result_write_drain_completion_value(
-                    has_result_work_item,
-                    self.flush_binary_correction_diagnostics_on_result_stop,
-                ),
-            )
-        };
-        NativeResultWriteItemGetResult::from_get_result(
-            py,
-            get_result,
-            has_result_work_item,
-            observation_plan,
-            stage_backpressure_observation,
-            drain_completion_plan,
-            None,
-        )
-    }
-
-    fn get_validated_result_write_item_with_drain_completion(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeResultWriteItemGetResult> {
-        let get_result = self.get_result_write_item(py)?;
-        let item = get_result.into_item_value();
-        let has_result_work_item = item.as_ref().is_some_and(|queued_item| !queued_item.bind(py).is_none());
-        let drain_completion_plan = self.plan_result_write_drain_completion_value(py, has_result_work_item);
-        let dispatch_plan = self.result_write_dispatch_plan_for_optional_item(py, item.as_ref())?;
-        NativeResultWriteItemGetResult::from_item(
-            py,
-            item,
-            has_result_work_item,
-            None,
-            None,
-            drain_completion_plan,
-            dispatch_plan,
-        )
-    }
-
     fn get_validated_result_write_item_with_optional_observation_and_drain_completion(
         &self,
         py: Python<'_>,
@@ -2436,39 +2196,6 @@ impl NativeCallbackRuntimeResources {
             drain_completion_plan,
             dispatch_plan,
         )
-    }
-
-    fn plan_result_write_drain_completion(
-        &self,
-        py: Python<'_>,
-        has_result_work_item: bool,
-    ) -> NativeResultWriteDrainCompletionPlan {
-        self.plan_result_write_drain_completion_value(py, has_result_work_item)
-    }
-
-    fn plan_result_write_drain_completion_for_object(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> NativeResultWriteDrainCompletionPlan {
-        self.plan_result_write_drain_completion_value(py, !work_item.is_none())
-    }
-
-    fn plan_validated_result_write_item_dispatch(
-        &self,
-        py: Python<'_>,
-        result_work_item_kind: &str,
-    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
-        self.result_write_dispatch_plan_for_kind(py, result_work_item_kind)
-    }
-
-    fn plan_validated_result_write_item_dispatch_for_object(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
-        let result_work_item_kind = classify_result_write_item_kind(work_item)?;
-        self.plan_validated_result_write_item_dispatch(py, result_work_item_kind)
     }
 }
 
@@ -2630,43 +2357,6 @@ impl NativeDosageBufferPoolOperationResult {
     }
 }
 
-#[pymethods]
-impl NativeDosageBufferReuseSelectionResult {
-    #[getter]
-    fn dosage_buffer(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.dosage_buffer.as_ref().map(|dosage_buffer| dosage_buffer.clone_ref(py))
-    }
-
-    #[getter]
-    fn operation_result(&self, py: Python<'_>) -> Py<NativeDosageBufferPoolOperationResult> {
-        self.operation_result.clone_ref(py)
-    }
-
-    #[getter]
-    fn reuse_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
-        self.dosage_buffer.as_ref().map(|_| self.operation_result.clone_ref(py))
-    }
-
-    #[getter]
-    fn discard_operation_result(&self, py: Python<'_>) -> Option<Py<NativeDosageBufferPoolOperationResult>> {
-        if self.dosage_buffer.is_some() { None } else { Some(self.operation_result.clone_ref(py)) }
-    }
-}
-
-impl NativeDosageBufferReuseSelectionResult {
-    fn from_reusable_dosage_buffer(
-        py: Python<'_>,
-        dosage_buffer: Py<PyAny>,
-        reuse_operation_result: NativeDosageBufferPoolOperationResult,
-    ) -> PyResult<Self> {
-        Ok(Self { dosage_buffer: Some(dosage_buffer), operation_result: Py::new(py, reuse_operation_result)? })
-    }
-
-    fn from_discard(py: Python<'_>, discard_operation_result: NativeDosageBufferPoolOperationResult) -> PyResult<Self> {
-        Ok(Self { dosage_buffer: None, operation_result: Py::new(py, discard_operation_result)? })
-    }
-}
-
 impl NativeResultInFlightAcquireResult {
     fn from_acquire(
         py: Python<'_>,
@@ -2780,8 +2470,25 @@ impl NativeCallbackQueueOperationOutcome {
             should_flush_binary_correction_diagnostics: false,
             dispatch_action: "none".to_owned(),
             dispatch_error_message: None,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: put_result.stage_backpressure_observation,
         }
+    }
+
+    fn from_worker_error_raise_plan(
+        py: Python<'_>,
+        worker_error_raise_plan: NativeCallbackWorkerErrorRaisePlan,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            item: None,
+            should_retry: false,
+            should_stop: false,
+            should_flush_binary_correction_diagnostics: false,
+            dispatch_action: "none".to_owned(),
+            dispatch_error_message: None,
+            worker_error_raise_plan: Some(Py::new(py, worker_error_raise_plan)?),
+            stage_backpressure_observation: None,
+        })
     }
 
     fn from_dosage_work_item_result(get_result: NativeDosageWorkItemGetResult) -> Self {
@@ -2792,6 +2499,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_flush_binary_correction_diagnostics: false,
             dispatch_action: get_result.dispatch_action.as_str().to_owned(),
             dispatch_error_message: get_result.dispatch_error_message,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: get_result.stage_backpressure_observation,
         }
     }
@@ -2804,6 +2512,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_flush_binary_correction_diagnostics: get_result.should_flush_binary_correction_diagnostics,
             dispatch_action: get_result.dispatch_action.as_str().to_owned(),
             dispatch_error_message: get_result.dispatch_error_message,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: get_result.stage_backpressure_observation,
         }
     }
@@ -2877,6 +2586,11 @@ impl NativeCallbackQueueOperationOutcome {
     }
 
     #[getter]
+    fn worker_error_raise_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackWorkerErrorRaisePlan>> {
+        self.worker_error_raise_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
     fn stage_backpressure_observation(
         &self,
         py: Python<'_>,
@@ -2897,8 +2611,18 @@ impl NativeCallbackResourceOperationOutcome {
             backpressure_observation: None,
             dosage_buffer_pool_backpressure_observation: None,
             result_in_flight_backpressure_observation: None,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: None,
         }
+    }
+
+    fn from_worker_error_raise_plan(
+        py: Python<'_>,
+        worker_error_raise_plan: NativeCallbackWorkerErrorRaisePlan,
+    ) -> PyResult<Self> {
+        let mut outcome = Self::empty();
+        outcome.worker_error_raise_plan = Some(Py::new(py, worker_error_raise_plan)?);
+        Ok(outcome)
     }
 
     fn from_result_in_flight_acquire_result(acquire_result: NativeResultInFlightAcquireResult) -> Self {
@@ -2944,6 +2668,7 @@ impl NativeCallbackResourceOperationOutcome {
             backpressure_observation,
             dosage_buffer_pool_backpressure_observation: operation_result.backpressure_observation,
             result_in_flight_backpressure_observation: None,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: None,
         })
     }
@@ -2975,6 +2700,7 @@ impl NativeCallbackResourceOperationOutcome {
             backpressure_observation,
             dosage_buffer_pool_backpressure_observation: release_result.dosage_buffer_pool_backpressure_observation,
             result_in_flight_backpressure_observation: release_result.result_in_flight_backpressure_observation,
+            worker_error_raise_plan: None,
             stage_backpressure_observation: None,
         })
     }
@@ -3034,39 +2760,16 @@ impl NativeCallbackResourceOperationOutcome {
     }
 
     #[getter]
+    fn worker_error_raise_plan(&self, py: Python<'_>) -> Option<Py<NativeCallbackWorkerErrorRaisePlan>> {
+        self.worker_error_raise_plan.as_ref().map(|plan| plan.clone_ref(py))
+    }
+
+    #[getter]
     fn stage_backpressure_observation(
         &self,
         py: Python<'_>,
     ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
         self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
-    }
-}
-
-#[pymethods]
-impl NativeCallbackQueueGetObservedResult {
-    #[getter]
-    fn has_item(&self) -> bool {
-        self.item.is_some()
-    }
-
-    #[getter]
-    fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.item.as_ref().map(|item| item.clone_ref(py))
-    }
-
-    #[getter]
-    fn observation_plan(&self, py: Python<'_>) -> Py<NativeCallbackQueueGetObservationPlan> {
-        self.observation_plan.clone_ref(py)
-    }
-}
-
-impl NativeCallbackQueueGetObservedResult {
-    fn from_get_result(
-        py: Python<'_>,
-        get_result: NativeCallbackObjectQueueGetResult,
-        observation_plan: NativeCallbackQueueGetObservationPlan,
-    ) -> PyResult<Self> {
-        Ok(Self { item: get_result.into_item_value(), observation_plan: Py::new(py, observation_plan)? })
     }
 }
 
@@ -3090,46 +2793,6 @@ impl NativeDosageWorkItemStageDurationAttribution {
     #[getter]
     fn stage_duration_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkItemStageDurationPlan> {
         self.stage_duration_plan.clone_ref(py)
-    }
-}
-
-#[pymethods]
-impl NativeDosageWorkItemDrainResult {
-    #[getter]
-    fn has_dosage_work_item(&self) -> bool {
-        self.has_dosage_work_item
-    }
-
-    #[getter]
-    fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.item.as_ref().map(|item| item.clone_ref(py))
-    }
-
-    #[getter]
-    fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkDrainCompletionPlan> {
-        self.drain_completion_plan.clone_ref(py)
-    }
-
-    #[getter]
-    fn should_stop(&self) -> bool {
-        self.should_stop
-    }
-}
-
-impl NativeDosageWorkItemDrainResult {
-    fn from_get_result(
-        py: Python<'_>,
-        get_result: NativeCallbackObjectQueueGetResult,
-        has_dosage_work_item: bool,
-        drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
-    ) -> PyResult<Self> {
-        let should_stop = drain_completion_plan.should_stop_value();
-        Ok(Self {
-            item: get_result.into_item_value(),
-            has_dosage_work_item,
-            drain_completion_plan: Py::new(py, drain_completion_plan)?,
-            should_stop,
-        })
     }
 }
 
@@ -3205,26 +2868,6 @@ impl NativeDosageWorkItemGetResult {
 }
 
 impl NativeDosageWorkItemGetResult {
-    fn from_get_result(
-        py: Python<'_>,
-        get_result: NativeCallbackObjectQueueGetResult,
-        has_dosage_work_item: bool,
-        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
-        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
-        drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
-        dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
-    ) -> PyResult<Self> {
-        Self::from_item(
-            py,
-            get_result.into_item_value(),
-            has_dosage_work_item,
-            observation_plan,
-            stage_backpressure_observation,
-            drain_completion_plan,
-            dispatch_plan,
-        )
-    }
-
     fn from_item(
         py: Python<'_>,
         item: Option<Py<PyAny>>,
@@ -3250,54 +2893,6 @@ impl NativeDosageWorkItemGetResult {
             should_stop,
             dispatch_action,
             dispatch_error_message,
-        })
-    }
-}
-
-#[pymethods]
-impl NativeResultWriteItemDrainResult {
-    #[getter]
-    fn has_result_work_item(&self) -> bool {
-        self.has_result_work_item
-    }
-
-    #[getter]
-    fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.item.as_ref().map(|item| item.clone_ref(py))
-    }
-
-    #[getter]
-    fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeResultWriteDrainCompletionPlan> {
-        self.drain_completion_plan.clone_ref(py)
-    }
-
-    #[getter]
-    fn should_stop(&self) -> bool {
-        self.should_stop
-    }
-
-    #[getter]
-    fn should_flush_binary_correction_diagnostics(&self) -> bool {
-        self.should_flush_binary_correction_diagnostics
-    }
-}
-
-impl NativeResultWriteItemDrainResult {
-    fn from_get_result(
-        py: Python<'_>,
-        get_result: NativeCallbackObjectQueueGetResult,
-        has_result_work_item: bool,
-        drain_completion_plan: NativeResultWriteDrainCompletionPlan,
-    ) -> PyResult<Self> {
-        let should_stop = drain_completion_plan.should_stop_value();
-        let should_flush_binary_correction_diagnostics =
-            drain_completion_plan.should_flush_binary_correction_diagnostics_value();
-        Ok(Self {
-            item: get_result.into_item_value(),
-            has_result_work_item,
-            drain_completion_plan: Py::new(py, drain_completion_plan)?,
-            should_stop,
-            should_flush_binary_correction_diagnostics,
         })
     }
 }
@@ -3369,26 +2964,6 @@ impl NativeResultWriteItemGetResult {
 }
 
 impl NativeResultWriteItemGetResult {
-    fn from_get_result(
-        py: Python<'_>,
-        get_result: NativeCallbackObjectQueueGetResult,
-        has_result_work_item: bool,
-        observation_plan: Option<NativeCallbackQueueGetObservationPlan>,
-        stage_backpressure_observation: Option<NativeCallbackQueueStageBackpressureObservation>,
-        drain_completion_plan: NativeResultWriteDrainCompletionPlan,
-        dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
-    ) -> PyResult<Self> {
-        Self::from_item(
-            py,
-            get_result.into_item_value(),
-            has_result_work_item,
-            observation_plan,
-            stage_backpressure_observation,
-            drain_completion_plan,
-            dispatch_plan,
-        )
-    }
-
     fn from_item(
         py: Python<'_>,
         item: Option<Py<PyAny>>,
@@ -3666,18 +3241,6 @@ impl NativeCallbackRuntimeResources {
         Ok(())
     }
 
-    fn plan_result_write_drain_completion_value(
-        &self,
-        py: Python<'_>,
-        has_result_work_item: bool,
-    ) -> NativeResultWriteDrainCompletionPlan {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_result_write_drain_completion_value(
-            has_result_work_item,
-            self.flush_binary_correction_diagnostics_on_result_stop,
-        )
-    }
-
     fn put_dosage_work_item_after_slot_acquisition(
         &self,
         py: Python<'_>,
@@ -3859,22 +3422,10 @@ fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usi
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueOperationOutcome>()?;
-    module.add_class::<NativeCallbackQueueGetObservedResult>()?;
-    module.add_class::<NativeCallbackQueuePutResult>()?;
     module.add_class::<NativeCallbackResourceOperationOutcome>()?;
     module.add_class::<NativeCallbackRuntimeResources>()?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
-    module.add_class::<NativeDosageBufferAcquireResult>()?;
-    module.add_class::<NativeDosageBufferPoolOperationResult>()?;
-    module.add_class::<NativeDosageBufferReuseSelectionResult>()?;
-    module.add_class::<NativeDosageWorkItemDrainResult>()?;
-    module.add_class::<NativeDosageWorkItemGetResult>()?;
     module.add_class::<NativeDosageWorkItemStageDurationAttribution>()?;
-    module.add_class::<NativeResultInFlightAcquireResult>()?;
-    module.add_class::<NativeResultInFlightSlotReleaseResult>()?;
-    module.add_class::<NativeResultWorkItemResourceReleaseResult>()?;
-    module.add_class::<NativeResultWriteItemDrainResult>()?;
-    module.add_class::<NativeResultWriteItemGetResult>()?;
     Ok(())
 }
 

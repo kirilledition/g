@@ -27,3 +27,6 @@ src/g/_core*.so
 
 .symphony/
 .env.symphony
+
+skills-lock.json
+.agents/*
