@@ -64,7 +64,7 @@ cache-keys = [
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-exclude = ["reference/", "scripts/", ".git/"]
+exclude = ["reference/", "scripts/", ".git/", ".agents/"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]

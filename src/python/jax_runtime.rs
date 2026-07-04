@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyAttributeError, PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
+use pyo3::types::{PyAny, PyBool, PyDict, PyModule};
 
 use g_runtime::jax_runtime as native_jax_runtime;
 
@@ -18,6 +18,26 @@ pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
 
 #[pyclass]
 pub(crate) struct NativeJaxRuntimeDiagnosticPolicy;
+
+#[pyclass]
+pub(crate) struct NativeJaxRuntimeSetupReport {
+    setup: native_jax_runtime::JaxRuntimeSetupPayload,
+}
+
+#[pyclass]
+pub(crate) struct NativeNvidiaDriverProbePaths {
+    paths: native_jax_runtime::NvidiaDriverProbePathsPayload,
+}
+
+#[pyclass]
+pub(crate) struct NativeJaxRuntimeDiagnosticEvent {
+    event: native_jax_runtime::JaxRuntimeDiagnosticEventPayload,
+}
+
+#[pyclass]
+pub(crate) struct NativeJaxRuntimeDiagnosticField {
+    field: native_jax_runtime::JaxRuntimeDiagnosticFieldPayload,
+}
 
 #[pymethods]
 impl NativeJaxRuntimeDiagnosticRecordPlan {
@@ -34,6 +54,133 @@ impl NativeJaxRuntimeDiagnosticRecordPlan {
     #[getter]
     fn telemetry_level(&self) -> &str {
         &self.plan.telemetry_level
+    }
+}
+
+#[pymethods]
+impl NativeJaxRuntimeSetupReport {
+    #[getter]
+    fn requested_device(&self) -> &str {
+        &self.setup.requested_device
+    }
+
+    #[getter]
+    fn platform_name(&self) -> &str {
+        &self.setup.platform_name
+    }
+
+    #[getter]
+    fn cache_directory(&self) -> &str {
+        &self.setup.cache_directory
+    }
+
+    #[getter]
+    fn matmul_precision(&self) -> &str {
+        &self.setup.matmul_precision
+    }
+
+    #[getter]
+    fn persistent_cache_enabled(&self) -> bool {
+        self.setup.persistent_cache_enabled
+    }
+
+    #[getter]
+    fn persistent_cache_min_entry_size_bytes(&self) -> i64 {
+        self.setup.persistent_cache_min_entry_size_bytes
+    }
+
+    #[getter]
+    fn persistent_cache_min_compile_time_seconds(&self) -> i64 {
+        self.setup.persistent_cache_min_compile_time_seconds
+    }
+
+    #[getter]
+    fn xla_auxiliary_cache_mode(&self) -> &str {
+        &self.setup.xla_auxiliary_cache_mode
+    }
+
+    #[getter]
+    fn xla_auxiliary_cache_reason(&self) -> &str {
+        &self.setup.xla_auxiliary_cache_reason
+    }
+
+    #[getter]
+    fn transfer_guard_enabled(&self) -> bool {
+        self.setup.transfer_guard_enabled
+    }
+
+    #[getter]
+    fn gpu_validation_status(&self) -> &str {
+        &self.setup.gpu_validation_status
+    }
+
+    #[getter]
+    fn gpu_validation_message(&self) -> Option<String> {
+        self.setup.gpu_validation_message.clone()
+    }
+}
+
+#[pymethods]
+impl NativeNvidiaDriverProbePaths {
+    #[getter]
+    fn control_device_path(&self) -> &str {
+        &self.paths.control_device_path
+    }
+
+    #[getter]
+    fn uvm_device_path(&self) -> &str {
+        &self.paths.uvm_device_path
+    }
+
+    #[getter]
+    fn driver_directory_path(&self) -> &str {
+        &self.paths.driver_directory_path
+    }
+}
+
+#[pymethods]
+impl NativeJaxRuntimeDiagnosticEvent {
+    #[getter]
+    fn event_name(&self) -> &str {
+        &self.event.event_name
+    }
+
+    #[getter]
+    fn level(&self) -> &str {
+        &self.event.level
+    }
+
+    #[getter]
+    fn message(&self) -> &str {
+        &self.event.message
+    }
+
+    #[getter]
+    fn fields(&self) -> Vec<NativeJaxRuntimeDiagnosticField> {
+        self.event.fields.iter().cloned().map(|field| NativeJaxRuntimeDiagnosticField { field }).collect()
+    }
+}
+
+#[pymethods]
+impl NativeJaxRuntimeDiagnosticField {
+    #[getter]
+    fn name(&self) -> &str {
+        &self.field.name
+    }
+
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.field.value {
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Boolean(value) => {
+                Ok(PyBool::new(py, *value).to_owned().into_any().unbind())
+            }
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Integer(value) => {
+                Ok(value.into_pyobject(py)?.into_any().unbind())
+            }
+            native_jax_runtime::JaxRuntimeDiagnosticValue::Text(value) => {
+                Ok(value.into_pyobject(py)?.into_any().unbind())
+            }
+        }
     }
 }
 
@@ -78,9 +225,9 @@ impl NativeJaxRuntimeSetupSession {
         Ok(self.lock_session()?.side_effect_plan().should_validate_gpu)
     }
 
-    fn setup_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn setup_report(&self) -> PyResult<NativeJaxRuntimeSetupReport> {
         let session = self.lock_session()?;
-        jax_runtime_setup_payload_to_dict(py, session.setup())
+        Ok(NativeJaxRuntimeSetupReport { setup: session.setup().clone() })
     }
 
     fn apply_config_updates(&self, py: Python<'_>) -> PyResult<usize> {
@@ -103,25 +250,19 @@ impl NativeJaxRuntimeSetupSession {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn complete_validation_payload<'py>(
+    fn complete_validation_report(
         &self,
-        py: Python<'py>,
         gpu_validation_status: String,
         gpu_validation_message: Option<String>,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeJaxRuntimeSetupReport> {
         let mut session = self.lock_session()?;
         let completed_setup = session.complete_validation(&gpu_validation_status, gpu_validation_message.as_deref());
-        jax_runtime_setup_payload_to_dict(py, &completed_setup)
+        Ok(NativeJaxRuntimeSetupReport { setup: completed_setup })
     }
 
-    fn diagnostic_event_payloads<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+    fn diagnostic_events(&self) -> PyResult<Vec<NativeJaxRuntimeDiagnosticEvent>> {
         let session = self.lock_session()?;
-        let event_payloads = session
-            .diagnostic_events()
-            .iter()
-            .map(|event| jax_runtime_diagnostic_event_payload_to_dict(py, event))
-            .collect::<PyResult<Vec<_>>>()?;
-        PyTuple::new(py, &event_payloads)
+        Ok(session.diagnostic_events().iter().cloned().map(|event| NativeJaxRuntimeDiagnosticEvent { event }).collect())
     }
 
     fn create_cache_directory_if_configured(&self) -> PyResult<bool> {
@@ -135,10 +276,10 @@ impl NativeJaxRuntimeSetupSession {
         control_device_path: String,
         uvm_device_path: String,
         driver_directory_path: String,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeJaxRuntimeSetupReport> {
         if !self.lock_session()?.side_effect_plan().should_validate_gpu {
             let session = self.lock_session()?;
-            return jax_runtime_setup_payload_to_dict(py, session.setup());
+            return Ok(NativeJaxRuntimeSetupReport { setup: session.setup().clone() });
         }
         let nvidia_driver_visible = native_jax_runtime::nvidia_driver_files_are_visible(
             Path::new(&control_device_path),
@@ -158,7 +299,7 @@ impl NativeJaxRuntimeSetupSession {
     fn validate_gpu_if_configured_with_default_probe_paths<'py>(
         &self,
         py: Python<'py>,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeJaxRuntimeSetupReport> {
         let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
         self.validate_gpu_if_configured(
             py,
@@ -193,9 +334,9 @@ impl NativeJaxRuntimeSetupSession {
         ))
     }
 
-    fn default_nvidia_driver_probe_paths_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn default_nvidia_driver_probe_paths(&self) -> PyResult<NativeNvidiaDriverProbePaths> {
         let _session = self.lock_session()?;
-        nvidia_driver_probe_paths_payload_to_dict(py, &native_jax_runtime::default_nvidia_driver_probe_paths())
+        Ok(NativeNvidiaDriverProbePaths { paths: native_jax_runtime::default_nvidia_driver_probe_paths() })
     }
 }
 
@@ -214,11 +355,11 @@ impl NativeJaxRuntimeSetupSession {
 
     fn complete_gpu_validation_or_raise<'py>(
         &self,
-        py: Python<'py>,
+        _py: Python<'py>,
         nvidia_driver_visible: bool,
         backend_initialization_failed: bool,
         devices: &[native_jax_runtime::JaxDeviceObservation],
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeJaxRuntimeSetupReport> {
         let validation_plan =
             native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, devices);
         let validation_message = validation_plan.message.clone();
@@ -227,7 +368,7 @@ impl NativeJaxRuntimeSetupSession {
         if validation_plan.should_raise {
             return Err(PyRuntimeError::new_err(validation_message));
         }
-        jax_runtime_setup_payload_to_dict(py, &completed_setup)
+        Ok(NativeJaxRuntimeSetupReport { setup: completed_setup })
     }
 }
 
@@ -285,54 +426,6 @@ fn record_jax_runtime_diagnostic_log_plan(
     Ok(plan)
 }
 
-fn jax_runtime_setup_payload_to_dict<'py>(
-    py: Python<'py>,
-    setup: &native_jax_runtime::JaxRuntimeSetupPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("requested_device", &setup.requested_device)?;
-    payload.set_item("platform_name", &setup.platform_name)?;
-    payload.set_item("cache_directory", &setup.cache_directory)?;
-    payload.set_item("matmul_precision", &setup.matmul_precision)?;
-    payload.set_item("persistent_cache_enabled", setup.persistent_cache_enabled)?;
-    payload.set_item("persistent_cache_min_entry_size_bytes", setup.persistent_cache_min_entry_size_bytes)?;
-    payload.set_item("persistent_cache_min_compile_time_seconds", setup.persistent_cache_min_compile_time_seconds)?;
-    payload.set_item("xla_auxiliary_cache_mode", &setup.xla_auxiliary_cache_mode)?;
-    payload.set_item("xla_auxiliary_cache_reason", &setup.xla_auxiliary_cache_reason)?;
-    payload.set_item("transfer_guard_enabled", setup.transfer_guard_enabled)?;
-    payload.set_item("gpu_validation_status", &setup.gpu_validation_status)?;
-    set_optional_string(py, &payload, "gpu_validation_message", setup.gpu_validation_message.as_deref())?;
-    Ok(payload)
-}
-
-fn nvidia_driver_probe_paths_payload_to_dict<'py>(
-    py: Python<'py>,
-    paths: &native_jax_runtime::NvidiaDriverProbePathsPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("control_device_path", &paths.control_device_path)?;
-    payload.set_item("uvm_device_path", &paths.uvm_device_path)?;
-    payload.set_item("driver_directory_path", &paths.driver_directory_path)?;
-    Ok(payload)
-}
-
-fn jax_runtime_diagnostic_event_payload_to_dict<'py>(
-    py: Python<'py>,
-    event: &native_jax_runtime::JaxRuntimeDiagnosticEventPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("event_name", &event.event_name)?;
-    payload.set_item("level", &event.level)?;
-    payload.set_item("message", &event.message)?;
-    let field_payloads = event
-        .fields
-        .iter()
-        .map(|field| jax_runtime_diagnostic_field_payload_to_dict(py, field))
-        .collect::<PyResult<Vec<_>>>()?;
-    payload.set_item("fields", PyTuple::new(py, &field_payloads)?)?;
-    Ok(payload)
-}
-
 fn jax_runtime_diagnostic_event_fields_to_native(
     event: &Bound<'_, PyAny>,
 ) -> PyResult<(String, Vec<native_jax_runtime::JaxRuntimeDiagnosticFieldPayload>)> {
@@ -388,9 +481,13 @@ fn jax_runtime_diagnostic_value_from_py(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeJaxRuntimeDiagnosticEvent>()?;
+    module.add_class::<NativeJaxRuntimeDiagnosticField>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticPolicy>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
+    module.add_class::<NativeJaxRuntimeSetupReport>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
+    module.add_class::<NativeNvidiaDriverProbePaths>()?;
     Ok(())
 }
 
@@ -400,27 +497,6 @@ fn jax_runtime_diagnostic_event_level(event: &Bound<'_, PyAny>) -> PyResult<Stri
         return level_value.extract::<String>();
     }
     level.extract::<String>()
-}
-
-fn jax_runtime_diagnostic_field_payload_to_dict<'py>(
-    py: Python<'py>,
-    field: &native_jax_runtime::JaxRuntimeDiagnosticFieldPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("name", &field.name)?;
-    match &field.value {
-        native_jax_runtime::JaxRuntimeDiagnosticValue::Boolean(value) => payload.set_item("value", *value)?,
-        native_jax_runtime::JaxRuntimeDiagnosticValue::Integer(value) => payload.set_item("value", *value)?,
-        native_jax_runtime::JaxRuntimeDiagnosticValue::Text(value) => payload.set_item("value", value)?,
-    }
-    Ok(payload)
-}
-
-fn set_optional_string(py: Python<'_>, payload: &Bound<'_, PyDict>, key: &str, value: Option<&str>) -> PyResult<()> {
-    match value {
-        Some(text) => payload.set_item(key, text),
-        None => payload.set_item(key, py.None()),
-    }
 }
 
 fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDeviceObservation>> {

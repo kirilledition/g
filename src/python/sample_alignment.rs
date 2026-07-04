@@ -1,16 +1,14 @@
 //! PyO3 adapters for sample alignment and phenotype compute groups.
 
-use std::path::Path;
-
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use g_input::sample::{
-    self, AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
-    MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
+    self, AlignedPhenotypeGroup, AlignedSampleData, GroupedAlignedSampleData, MultiAlignedSampleData,
+    ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
 
 #[pyclass]
@@ -229,218 +227,6 @@ impl NativeResolvedPhenotypeComputeGroup {
 }
 
 #[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    sample_indices,
-    family_identifiers,
-    individual_identifiers,
-    phenotype_path,
-    phenotype_name,
-    covariate_path=None,
-    covariate_names=None,
-    is_binary_trait=false,
-    sample_key_mode="iid".to_string()
-))]
-fn align_sample_data<'py>(
-    py: Python<'py>,
-    sample_indices: PyReadonlyArray1<'py, i64>,
-    family_identifiers: Vec<String>,
-    individual_identifiers: Vec<String>,
-    phenotype_path: String,
-    phenotype_name: String,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: String,
-) -> PyResult<NativeAlignedSampleData> {
-    let sample_index_values = sample_indices.as_slice()?.to_vec();
-    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    let inputs = AlignmentInputs {
-        sample_indices: sample_index_values,
-        family_identifiers,
-        individual_identifiers,
-        phenotype_path,
-        phenotype_name,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode: parsed_sample_key_mode,
-    };
-    py.detach(|| sample::align_sample_data(inputs)).map(NativeAlignedSampleData::new).map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    sample_indices,
-    family_identifiers,
-    individual_identifiers,
-    phenotype_path,
-    phenotype_names,
-    covariate_path=None,
-    covariate_names=None,
-    is_binary_trait=false,
-    sample_key_mode="iid".to_string()
-))]
-fn align_multi_sample_data<'py>(
-    py: Python<'py>,
-    sample_indices: PyReadonlyArray1<'py, i64>,
-    family_identifiers: Vec<String>,
-    individual_identifiers: Vec<String>,
-    phenotype_path: String,
-    phenotype_names: Vec<String>,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: String,
-) -> PyResult<NativeMultiAlignedSampleData> {
-    let sample_index_values = sample_indices.as_slice()?.to_vec();
-    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    let inputs = MultiAlignmentInputs {
-        sample_indices: sample_index_values,
-        family_identifiers,
-        individual_identifiers,
-        phenotype_path,
-        phenotype_names,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode: parsed_sample_key_mode,
-    };
-    py.detach(|| sample::align_multi_sample_data(inputs))
-        .map(NativeMultiAlignedSampleData::new)
-        .map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    sample_indices,
-    family_identifiers,
-    individual_identifiers,
-    phenotype_path,
-    phenotype_names,
-    covariate_path=None,
-    covariate_names=None,
-    is_binary_trait=false,
-    sample_key_mode="iid".to_string()
-))]
-fn align_grouped_sample_data<'py>(
-    py: Python<'py>,
-    sample_indices: PyReadonlyArray1<'py, i64>,
-    family_identifiers: Vec<String>,
-    individual_identifiers: Vec<String>,
-    phenotype_path: String,
-    phenotype_names: Vec<String>,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: String,
-) -> PyResult<NativeGroupedAlignedSampleData> {
-    let sample_index_values = sample_indices.as_slice()?.to_vec();
-    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    let inputs = MultiAlignmentInputs {
-        sample_indices: sample_index_values,
-        family_identifiers,
-        individual_identifiers,
-        phenotype_path,
-        phenotype_names,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode: parsed_sample_key_mode,
-    };
-    py.detach(|| sample::align_grouped_sample_data(&inputs))
-        .map(NativeGroupedAlignedSampleData::new)
-        .map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    sample_path,
-    expected_sample_count,
-    phenotype_path,
-    phenotype_name,
-    covariate_path=None,
-    covariate_names=None,
-    is_binary_trait=false,
-    sample_key_mode="iid".to_string()
-))]
-fn align_sample_data_from_sample_file(
-    py: Python<'_>,
-    sample_path: String,
-    expected_sample_count: usize,
-    phenotype_path: String,
-    phenotype_name: String,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: String,
-) -> PyResult<NativeAlignedSampleData> {
-    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    py.detach(move || {
-        sample::align_sample_data_from_sample_file(
-            Path::new(&sample_path),
-            expected_sample_count,
-            phenotype_path,
-            phenotype_name,
-            covariate_path,
-            covariate_names,
-            is_binary_trait,
-            parsed_sample_key_mode,
-        )
-    })
-    .map(NativeAlignedSampleData::new)
-    .map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (
-    sample_path,
-    expected_sample_count,
-    phenotype_path,
-    phenotype_names,
-    covariate_path=None,
-    covariate_names=None,
-    is_binary_trait=false,
-    sample_key_mode="iid".to_string()
-))]
-fn align_multi_sample_data_from_sample_file(
-    py: Python<'_>,
-    sample_path: String,
-    expected_sample_count: usize,
-    phenotype_path: String,
-    phenotype_names: Vec<String>,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: String,
-) -> PyResult<NativeMultiAlignedSampleData> {
-    let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    py.detach(move || {
-        sample::align_multi_sample_data_from_sample_file(
-            Path::new(&sample_path),
-            expected_sample_count,
-            phenotype_path,
-            phenotype_names,
-            covariate_path,
-            covariate_names,
-            is_binary_trait,
-            parsed_sample_key_mode,
-        )
-    })
-    .map(NativeMultiAlignedSampleData::new)
-    .map_err(PyValueError::new_err)
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn resolve_single_phenotype_compute_group(
     aligned_sample_data: PyRef<'_, NativeAlignedSampleData>,
@@ -511,11 +297,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
-    module.add_function(wrap_pyfunction!(align_sample_data, module)?)?;
-    module.add_function(wrap_pyfunction!(align_grouped_sample_data, module)?)?;
-    module.add_function(wrap_pyfunction!(align_multi_sample_data, module)?)?;
-    module.add_function(wrap_pyfunction!(align_sample_data_from_sample_file, module)?)?;
-    module.add_function(wrap_pyfunction!(align_multi_sample_data_from_sample_file, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_complete_case_compute_group, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_per_phenotype_compute_group, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_single_phenotype_compute_group, module)?)?;

@@ -19,7 +19,7 @@ Validation baseline: `uv run pytest --collect-only -q tests -m "not phase0_data 
 | `tests/test_core.py` | keep | Covers native bridge behavior, BGEN chunk delivery, and prediction source alignment contracts. | 16 collected tests. | N/A | High. |
 | `tests/test_interface.py` | rewrite | Removed old dataclass helper skips and rewrote stale TOML/schema placeholders against native config APIs. | 103 collected tests. | N/A | High. |
 | `tests/test_io_output.py` | keep | Owns output schema, native writer, manifest, resume, strict validation, and finalization contracts. | 113 collected tests. | N/A | High. |
-| `tests/test_io_sample.py` | keep | Covers sample parsing and sample contract edge cases. | 5 collected tests. | N/A | Medium. |
+| `tests/test_io_sample.py` | delete | Covered only removed module-level sample-file PyO3 wrappers. | 0 collected tests after deletion. | `cargo test -p g-input`, engine-owned alignment coverage in `tests/test_regenie2_pipeline.py`. | Low. |
 | `tests/test_execution_plan_source.py` | keep | Covers execution-plan BGEN source-path contract helpers. | 4 collected tests. | N/A | Medium. |
 | `tests/test_jax_runtime.py` | keep | Protects JAX runtime policy resolution and diagnostics. | 17 collected tests. | N/A | High. |
 | `tests/test_preflight.py` | keep | Covers execution preflight validation and native chromosome API use. | 17 collected tests. | N/A | High. |
@@ -34,7 +34,7 @@ Validation baseline: `uv run pytest --collect-only -q tests -m "not phase0_data 
 | `tests/parity/test_regenie_parity_harness.py` | keep | Validates parity metadata and harness drift detection without external data. | 5 collected tests. | N/A | Medium. |
 | `tests/test_regenie2_pipeline.py` | keep | Large but current: native engine dispatch, callbacks, grouping, resume, shutdown, and trusted BGEN validation. | 92 collected tests. | N/A | High. |
 | `tests/test_regenie_binary_correction_contract.py` | rewrite | Rebuilt old dataclass-era skipped contract around `RegenieConfig.from_options` and current binary correction normalization. | 8 collected tests after removing obsolete SPA-only duplicate cases. | API/interface tests cover broader config validation. | Medium. |
-| `tests/test_tabular.py` | keep | Covers native sample alignment, repeated IID policy, grouping, and binary encoding. | 18 collected tests. | N/A | High. |
+| `tests/test_tabular.py` | delete | Covered removed module-level sample-alignment PyO3 wrappers. | 0 collected tests after deletion. | `cargo test -p g-input`, prediction-source aligned-handle coverage in `tests/test_core.py`, grouped/complete-case alignment coverage in `tests/test_regenie2_pipeline.py`. | Medium. |
 | `tests/test_telemetry.py` | keep | Covers telemetry path resolution, stream ownership, event schema, caps, and close counters. | 15 collected tests. | N/A | High. |
 | `tests/test_timing.py` | keep | Covers stage timing aggregation and persistence contracts. | 10 collected tests. | N/A | Medium. |
 | `tests/test_warm_cache.py` | keep | Covers warm-cache planning and native-dispatch cache execution paths. | 8 collected tests. | N/A | Medium. |

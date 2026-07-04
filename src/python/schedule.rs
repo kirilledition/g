@@ -2686,6 +2686,14 @@ impl NativeResultWriteHandoffPlan {
 }
 
 impl NativeResultWriteItemDispatchPlan {
+    pub(crate) fn should_process_result_write_item_value(&self) -> bool {
+        self.inner.should_process_result_write_item
+    }
+
+    pub(crate) fn should_process_multi_result_write_item_value(&self) -> bool {
+        self.inner.should_process_multi_result_write_item
+    }
+
     pub(crate) fn has_dispatch_error_value(&self) -> bool {
         self.inner.has_dispatch_error
     }
@@ -2696,12 +2704,44 @@ impl NativeResultWriteItemDispatchPlan {
 }
 
 impl NativeDosageWorkItemDispatchPlan {
+    pub(crate) fn should_process_sample_major_dosage_value(&self) -> bool {
+        self.inner.should_process_sample_major_dosage()
+    }
+
+    pub(crate) fn should_process_variant_major_dosage_value(&self) -> bool {
+        self.inner.should_process_variant_major_dosage()
+    }
+
+    pub(crate) fn should_process_variant_major_dosage_batch_value(&self) -> bool {
+        self.inner.should_process_variant_major_dosage_batch()
+    }
+
+    pub(crate) fn should_process_variant_major_packed8_probability_pair_value(&self) -> bool {
+        self.inner.should_process_variant_major_packed8_probability_pair()
+    }
+
     pub(crate) fn has_dispatch_error_value(&self) -> bool {
         self.inner.has_dispatch_error()
     }
 
     pub(crate) fn error_message_value(&self) -> Option<&str> {
         self.inner.error_message.as_deref()
+    }
+}
+
+impl NativeResultWriteDrainCompletionPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
+    }
+
+    pub(crate) fn should_flush_binary_correction_diagnostics_value(&self) -> bool {
+        self.inner.should_flush_binary_correction_diagnostics
+    }
+}
+
+impl NativeDosageWorkDrainCompletionPlan {
+    pub(crate) fn should_stop_value(&self) -> bool {
+        self.inner.should_stop
     }
 }
 
@@ -3200,7 +3240,187 @@ fn native_committed_chunk_identifier_sets_from_sequences(
         .collect()
 }
 
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets: Vec<Vec<usize>>) -> Vec<usize> {
+    let native_committed_chunk_identifier_sets =
+        native_committed_chunk_identifier_sets_from_sequences(committed_chunk_identifier_sets);
+    native_schedule::intersect_committed_chunk_identifier_sets(&native_committed_chunk_identifier_sets)
+        .into_iter()
+        .collect()
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn resolve_manifest_gpu_genotype_format(
+    resume: bool,
+    manifest_gpu_genotype_format: Option<String>,
+    association_backend_genotype_format: Option<String>,
+) -> Option<String> {
+    native_schedule::resolve_manifest_gpu_genotype_format(
+        resume,
+        manifest_gpu_genotype_format.as_deref(),
+        association_backend_genotype_format.as_deref(),
+    )
+    .map(str::to_string)
+}
+
+#[pyfunction]
+fn resolve_effective_trusted_no_missing_diploid(
+    requested_trusted_no_missing_diploid: bool,
+    variant_major_packed8_probability_pairs: bool,
+) -> bool {
+    native_schedule::resolve_effective_trusted_no_missing_diploid(
+        requested_trusted_no_missing_diploid,
+        variant_major_packed8_probability_pairs,
+    )
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_gpu_genotype_format_auto_to_dosage(
+    requested_gpu_genotype_format: String,
+    resolution_reason: String,
+) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
+    native_schedule::plan_gpu_genotype_format_auto_to_dosage(&requested_gpu_genotype_format, &resolution_reason)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_single_trait_binary_gpu_genotype_format_resolution(
+    requested_gpu_genotype_format: String,
+    manifest_gpu_genotype_format: Option<String>,
+    association_backend_genotype_format: Option<String>,
+    resume: bool,
+    jax_device: String,
+) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
+    native_schedule::plan_single_trait_binary_gpu_genotype_format_resolution(
+        &requested_gpu_genotype_format,
+        manifest_gpu_genotype_format.as_deref(),
+        association_backend_genotype_format.as_deref(),
+        resume,
+        &jax_device,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_auto_gpu_genotype_format_after_trusted_validation(
+    fallback_error: Option<String>,
+) -> NativeGpuGenotypeFormatResolutionPlan {
+    native_schedule::plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error.as_deref()).into()
+}
+
+#[pyfunction]
+fn resolve_grouped_union_callback_batch_size(native_callback_batch_size: i64) -> PyResult<usize> {
+    native_schedule::resolve_grouped_union_callback_batch_size(native_callback_batch_size)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+fn resolve_delivery_callback_batch_size(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+) -> PyResult<usize> {
+    native_schedule::resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_multi_trait_chunk_write(
+    writer_session_count: usize,
+    chunk_identifier: usize,
+    committed_chunk_identifier_sets: Vec<Vec<usize>>,
+) -> PyResult<NativeMultiTraitChunkWritePlan> {
+    let native_committed_chunk_identifier_sets =
+        native_committed_chunk_identifier_sets_from_sequences(committed_chunk_identifier_sets);
+    native_schedule::plan_multi_trait_chunk_write(
+        writer_session_count,
+        chunk_identifier,
+        &native_committed_chunk_identifier_sets,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+fn resolve_writer_finish_thread_count(writer_session_count: i64, requested_thread_count: i64) -> PyResult<usize> {
+    native_schedule::resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+fn plan_writer_finish_execution(
+    writer_session_count: i64,
+    requested_thread_count: i64,
+) -> PyResult<NativeWriterFinishExecutionPlan> {
+    native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_bgen_delivery_cleanup(
+    cleanup_outcome: String,
+    callback_finished: bool,
+) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+    native_schedule::plan_bgen_delivery_cleanup(&cleanup_outcome, callback_finished)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+fn plan_bgen_delivery_invocation(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+) -> PyResult<NativeBgenDeliveryInvocationPlan> {
+    native_schedule::plan_bgen_delivery_invocation(
+        callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_single_trait_output_write(
+    is_native_writer_session: bool,
+    output_statistic_dtype: String,
+) -> PyResult<NativeSingleTraitOutputWritePlan> {
+    native_schedule::plan_single_trait_output_write(is_native_writer_session, &output_statistic_dtype)
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+fn plan_multi_trait_output_write(
+    active_trait_count: usize,
+    all_writer_sessions_native: bool,
+    output_statistic_dtype: String,
+) -> PyResult<NativeMultiTraitOutputWritePlan> {
+    native_schedule::plan_multi_trait_output_write(
+        active_trait_count,
+        all_writer_sessions_native,
+        &output_statistic_dtype,
+    )
+    .map(Into::into)
+    .map_err(|error| schedule_error_to_py(&error))
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_schedule_function_exports(module)?;
     register_callback_queue_exports(module)?;
     register_callback_worker_exports(module)?;
     register_dosage_buffer_exports(module)?;
@@ -3208,6 +3428,25 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_result_write_exports(module)?;
     register_output_and_delivery_exports(module)?;
     register_gpu_format_exports(module)?;
+    Ok(())
+}
+
+fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_auto_gpu_genotype_format_after_trusted_validation, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
     Ok(())
 }
 
@@ -3252,9 +3491,7 @@ fn register_dosage_buffer_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
 }
 
 fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeDosageWorkDrainCompletionPlan>()?;
     module.add_class::<NativeDosageWorkHandoffPlan>()?;
-    module.add_class::<NativeDosageWorkItemDispatchPlan>()?;
     module.add_class::<NativeDosageWorkItemStageDurationPlan>()?;
     module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
     Ok(())
@@ -3266,9 +3503,7 @@ fn register_result_write_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeResultInFlightReleaseAttemptPlan>()?;
     module.add_class::<NativeResultInFlightReleaseObservationPlan>()?;
     module.add_class::<NativeResultInFlightSlotState>()?;
-    module.add_class::<NativeResultWriteDrainCompletionPlan>()?;
     module.add_class::<NativeResultWriteHandoffPlan>()?;
-    module.add_class::<NativeResultWriteItemDispatchPlan>()?;
     module.add_class::<NativeResultWriteItemResourceReleasePlan>()?;
     Ok(())
 }

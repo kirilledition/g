@@ -49,11 +49,6 @@ class MaterializedRegenie2MultiNativeChunk:
     extra_code: object | None
 
 
-def native_schedule_policy() -> _core.NativeSchedulePolicy:
-    """Build the native schedule policy handle."""
-    return _core.NativeSchedulePolicy()
-
-
 def native_output_chunk_write_policy() -> _core.NativeOutputChunkWritePolicy:
     """Build the native output chunk-write policy handle."""
     return _core.NativeOutputChunkWritePolicy()
@@ -65,7 +60,7 @@ def plan_single_trait_output_write(
     output_statistic_dtype: types.FloatingPointDtype,
 ) -> _core.NativeSingleTraitOutputWritePlan:
     """Return the native output-write plan for one single-trait chunk."""
-    return native_schedule_policy().plan_single_trait_output_write(
+    return _core.plan_single_trait_output_write(
         is_native_writer_session=is_native_writer_session,
         output_statistic_dtype=output_statistic_dtype.value,
     )
@@ -78,7 +73,7 @@ def plan_multi_trait_chunk_write(
     committed_chunk_identifier_sets: tuple[tuple[int, ...], ...],
 ) -> _core.NativeMultiTraitChunkWritePlan:
     """Return the native multi-trait committed-chunk selection plan."""
-    return native_schedule_policy().plan_multi_trait_chunk_write(
+    return _core.plan_multi_trait_chunk_write(
         writer_session_count=writer_session_count,
         chunk_identifier=chunk_identifier,
         committed_chunk_identifier_sets=committed_chunk_identifier_sets,
@@ -92,7 +87,7 @@ def plan_multi_trait_output_write(
     output_statistic_dtype: types.FloatingPointDtype,
 ) -> _core.NativeMultiTraitOutputWritePlan:
     """Return the native output-write plan for one multi-trait chunk."""
-    return native_schedule_policy().plan_multi_trait_output_write(
+    return _core.plan_multi_trait_output_write(
         active_trait_count=active_trait_count,
         all_writer_sessions_native=all_writer_sessions_native,
         output_statistic_dtype=output_statistic_dtype.value,

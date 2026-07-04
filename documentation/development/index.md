@@ -42,6 +42,11 @@ just lint
 just typecheck
 ```
 
+CI checks the README code-size summary but does not push refresh commits to
+protected `main`. After changing tracked files under `crates/`, `src/`, or
+`README.md`, run `scripts/update_readme_code_summary.py` with `cloc` available
+and commit the updated README in the same branch.
+
 Full CPU validation, GPU validation, large test suites, and native builds should
 run through the appropriate local or SLURM workflow for the current host. See
 [Testing and Parity](testing-and-parity.md) and [Server Gauss SLURM](server-gauss-slurm.md).

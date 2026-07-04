@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import itertools
 import typing
 from dataclasses import dataclass
 
@@ -110,17 +111,15 @@ def build_warm_cache_shapes(
     sample_count: int,
 ) -> tuple[WarmCacheShape, ...]:
     """Build unique production chunk shapes that should be warmed."""
-    chunk_specs = _core.plan_genotype_chunks(
-        engine.variant_count,
-        chunk_size,
-        engine.chromosome_boundary_indices(),
-        variant_limit=variant_limit,
-        committed_chunk_identifiers=None,
-    )
+    planned_variant_count = engine.variant_count if variant_limit is None else min(engine.variant_count, variant_limit)
+    chunk_boundaries = set(engine.chromosome_boundary_indices())
+    chunk_boundaries.update(range(0, planned_variant_count + chunk_size, chunk_size))
+    chunk_boundaries.add(planned_variant_count)
+    sorted_boundaries = sorted(boundary for boundary in chunk_boundaries if 0 <= boundary <= planned_variant_count)
     shapes: list[WarmCacheShape] = []
     seen_shapes: set[WarmCacheShape] = set()
-    for chunk_spec in chunk_specs:
-        variant_count = int(chunk_spec.variant_stop_index - chunk_spec.variant_start_index)
+    for variant_start, variant_stop in itertools.pairwise(sorted_boundaries):
+        variant_count = variant_stop - variant_start
         shape = WarmCacheShape(sample_count=sample_count, variant_count=variant_count)
         if variant_count > 0 and shape not in seen_shapes:
             shapes.append(shape)

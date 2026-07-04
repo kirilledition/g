@@ -38,6 +38,9 @@ const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE: &str = "variant_major_dosage";
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_dosage_batch";
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
 const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
+const RESULT_WORK_ITEM_RESOURCE_PHASE_PRE_WRITE: &str = "pre_write";
+const RESULT_WORK_ITEM_RESOURCE_PHASE_FINAL: &str = "final";
+const RESULT_WORK_ITEM_RESOURCE_PHASE_IN_FLIGHT_SLOT: &str = "in_flight_slot";
 
 fn pending_diagnostics_count_from_object(pending_diagnostics: &Bound<'_, PyAny>) -> PyResult<i64> {
     let pending_diagnostics_count = pending_diagnostics.len()?;
@@ -158,6 +161,7 @@ pub(crate) struct NativeDosageWorkItemDrainResult {
     item: Option<Py<PyAny>>,
     has_dosage_work_item: bool,
     drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
+    should_stop: bool,
 }
 
 #[pyclass]
@@ -168,6 +172,9 @@ pub(crate) struct NativeDosageWorkItemGetResult {
     stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
     drain_completion_plan: Py<NativeDosageWorkDrainCompletionPlan>,
     dispatch_plan: Option<Py<NativeDosageWorkItemDispatchPlan>>,
+    should_stop: bool,
+    dispatch_action: NativeDosageDispatchAction,
+    dispatch_error_message: Option<String>,
 }
 
 #[pyclass]
@@ -175,6 +182,8 @@ pub(crate) struct NativeResultWriteItemDrainResult {
     item: Option<Py<PyAny>>,
     has_result_work_item: bool,
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
+    should_stop: bool,
+    should_flush_binary_correction_diagnostics: bool,
 }
 
 #[pyclass]
@@ -185,6 +194,105 @@ pub(crate) struct NativeResultWriteItemGetResult {
     stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
     drain_completion_plan: Py<NativeResultWriteDrainCompletionPlan>,
     dispatch_plan: Option<Py<NativeResultWriteItemDispatchPlan>>,
+    should_stop: bool,
+    should_flush_binary_correction_diagnostics: bool,
+    dispatch_action: NativeResultWriteDispatchAction,
+    dispatch_error_message: Option<String>,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackQueueOperationOutcome {
+    item: Option<Py<PyAny>>,
+    should_retry: bool,
+    should_stop: bool,
+    should_flush_binary_correction_diagnostics: bool,
+    dispatch_action: String,
+    dispatch_error_message: Option<String>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
+}
+
+#[pyclass]
+pub(crate) struct NativeCallbackResourceOperationOutcome {
+    dosage_buffer: Option<Py<PyAny>>,
+    should_retry: bool,
+    should_allocate: bool,
+    released_host_buffer: bool,
+    released_result_in_flight_slot: bool,
+    free_buffer_count: Option<usize>,
+    backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
+    dosage_buffer_pool_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
+    result_in_flight_backpressure_observation: Option<Py<NativeCallbackQueueBackpressureObservation>>,
+    stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeDosageDispatchAction {
+    None,
+    SampleMajorDosage,
+    VariantMajorDosage,
+    VariantMajorDosageBatch,
+    VariantMajorPacked8ProbabilityPair,
+}
+
+impl NativeDosageDispatchAction {
+    fn from_dispatch_plan(dispatch_plan: Option<&NativeDosageWorkItemDispatchPlan>) -> Self {
+        let Some(dispatch_plan) = dispatch_plan else {
+            return Self::None;
+        };
+        if dispatch_plan.should_process_sample_major_dosage_value() {
+            return Self::SampleMajorDosage;
+        }
+        if dispatch_plan.should_process_variant_major_dosage_value() {
+            return Self::VariantMajorDosage;
+        }
+        if dispatch_plan.should_process_variant_major_dosage_batch_value() {
+            return Self::VariantMajorDosageBatch;
+        }
+        if dispatch_plan.should_process_variant_major_packed8_probability_pair_value() {
+            return Self::VariantMajorPacked8ProbabilityPair;
+        }
+        Self::None
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::SampleMajorDosage => DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE,
+            Self::VariantMajorDosage => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE,
+            Self::VariantMajorDosageBatch => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH,
+            Self::VariantMajorPacked8ProbabilityPair => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeResultWriteDispatchAction {
+    None,
+    SingleResult,
+    MultiResult,
+}
+
+impl NativeResultWriteDispatchAction {
+    fn from_dispatch_plan(dispatch_plan: Option<&NativeResultWriteItemDispatchPlan>) -> Self {
+        let Some(dispatch_plan) = dispatch_plan else {
+            return Self::None;
+        };
+        if dispatch_plan.should_process_result_write_item_value() {
+            return Self::SingleResult;
+        }
+        if dispatch_plan.should_process_multi_result_write_item_value() {
+            return Self::MultiResult;
+        }
+        Self::None
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::SingleResult => RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
+            Self::MultiResult => RESULT_WRITE_ITEM_KIND_MULTI_RESULT,
+        }
+    }
 }
 
 #[pyclass]
@@ -779,6 +887,178 @@ impl NativeCallbackRuntimeResources {
     ) -> NativeCallbackWorkerErrorUpdatePlan {
         let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
         scheduler_state.update_result_worker_error_value(error_message)
+    }
+
+    fn put_dosage_work_item_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let put_result = self.put_dosage_work_item_with_optional_backpressure_observation(py, work_item)?;
+        Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
+    }
+
+    fn put_result_write_item_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let put_result = self.put_result_write_item_with_optional_backpressure_observation(py, work_item)?;
+        Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
+    }
+
+    fn get_next_dosage_work_item_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let get_result = self.get_validated_dosage_work_item_with_optional_observation_and_drain_completion(py)?;
+        Ok(NativeCallbackQueueOperationOutcome::from_dosage_work_item_result(get_result))
+    }
+
+    fn get_next_result_write_item_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueOperationOutcome> {
+        let get_result = self.get_validated_result_write_item_with_optional_observation_and_drain_completion(py)?;
+        Ok(NativeCallbackQueueOperationOutcome::from_result_write_item_result(get_result))
+    }
+
+    fn acquire_result_in_flight_slot_outcome(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let acquire_result = self.acquire_result_in_flight_slot_with_optional_observation(py)?;
+        Ok(NativeCallbackResourceOperationOutcome::from_result_in_flight_acquire_result(acquire_result))
+    }
+
+    fn release_result_in_flight_slot_outcome(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let release_result = self.release_result_in_flight_slot_with_optional_backpressure_observation(py)?;
+        Ok(NativeCallbackResourceOperationOutcome::from_result_in_flight_release_result(release_result))
+    }
+
+    fn acquire_dosage_buffer_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let acquire_result = self.acquire_dosage_buffer_with_backpressure_timeout(py)?;
+        Ok(NativeCallbackResourceOperationOutcome::from_dosage_buffer_acquire_result(acquire_result))
+    }
+
+    fn register_dosage_buffer_outcome(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let operation_result = self.register_dosage_buffer_object_with_optional_observation(py, dosage_buffer)?;
+        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+            py,
+            None,
+            false,
+            false,
+            operation_result,
+        )
+    }
+
+    fn release_dosage_buffer_outcome(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let operation_result = self.return_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
+        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+            py,
+            None,
+            false,
+            true,
+            operation_result,
+        )
+    }
+
+    fn release_numpy_dosage_buffer_outcome(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let operation_result = self.release_numpy_dosage_buffer_with_optional_observation(py, dosage_buffer)?;
+        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+            py,
+            None,
+            false,
+            true,
+            operation_result,
+        )
+    }
+
+    fn discard_dosage_buffer_outcome(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let operation_result = self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
+        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+            py,
+            None,
+            true,
+            false,
+            operation_result,
+        )
+    }
+
+    fn select_reusable_dosage_buffer_or_discard_outcome(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+        expected_shape: Vec<usize>,
+        expected_dtype: &Bound<'_, PyAny>,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let reusable_dosage_buffer =
+            self.get_reusable_dosage_buffer(py, dosage_buffer, expected_shape, expected_dtype)?;
+        if let Some(reusable_dosage_buffer) = reusable_dosage_buffer {
+            let free_buffer_count = self.free_dosage_buffers.bind(py).borrow().occupied_count_value()?;
+            let observation_plan = if self.has_stage_timing_recorder {
+                let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
+                Some(scheduler_state.plan_dosage_buffer_pool_reuse_observation_value())
+            } else {
+                None
+            };
+            let operation_result =
+                self.dosage_buffer_pool_operation_result(py, Some(free_buffer_count), observation_plan)?;
+            return NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+                py,
+                Some(reusable_dosage_buffer),
+                false,
+                false,
+                operation_result,
+            );
+        }
+        let operation_result = self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
+        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
+            py,
+            None,
+            true,
+            false,
+            operation_result,
+        )
+    }
+
+    fn release_result_work_item_resources_outcome(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        phase: &str,
+        host_dosage_buffer_released: bool,
+    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
+        let release_result = match phase {
+            RESULT_WORK_ITEM_RESOURCE_PHASE_PRE_WRITE => {
+                self.release_result_work_item_pre_write_resources_for_object(py, work_item)?
+            }
+            RESULT_WORK_ITEM_RESOURCE_PHASE_FINAL => {
+                self.release_result_work_item_final_resources_for_object(py, work_item, host_dosage_buffer_released)?
+            }
+            RESULT_WORK_ITEM_RESOURCE_PHASE_IN_FLIGHT_SLOT => {
+                self.release_result_work_item_in_flight_slot_for_object(py, work_item)?
+            }
+            _ => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Unsupported result work-item resource release phase: {phase}"
+                )));
+            }
+        };
+        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
     }
 
     fn acquire_result_in_flight_slot_with_backpressure_timeout(
@@ -2491,6 +2771,277 @@ impl NativeCallbackQueuePutResult {
     }
 }
 
+impl NativeCallbackQueueOperationOutcome {
+    fn from_put_result(put_result: NativeCallbackQueuePutResult) -> Self {
+        Self {
+            item: None,
+            should_retry: put_result.should_retry_put,
+            should_stop: false,
+            should_flush_binary_correction_diagnostics: false,
+            dispatch_action: "none".to_owned(),
+            dispatch_error_message: None,
+            stage_backpressure_observation: put_result.stage_backpressure_observation,
+        }
+    }
+
+    fn from_dosage_work_item_result(get_result: NativeDosageWorkItemGetResult) -> Self {
+        Self {
+            item: get_result.item,
+            should_retry: false,
+            should_stop: get_result.should_stop,
+            should_flush_binary_correction_diagnostics: false,
+            dispatch_action: get_result.dispatch_action.as_str().to_owned(),
+            dispatch_error_message: get_result.dispatch_error_message,
+            stage_backpressure_observation: get_result.stage_backpressure_observation,
+        }
+    }
+
+    fn from_result_write_item_result(get_result: NativeResultWriteItemGetResult) -> Self {
+        Self {
+            item: get_result.item,
+            should_retry: false,
+            should_stop: get_result.should_stop,
+            should_flush_binary_correction_diagnostics: get_result.should_flush_binary_correction_diagnostics,
+            dispatch_action: get_result.dispatch_action.as_str().to_owned(),
+            dispatch_error_message: get_result.dispatch_error_message,
+            stage_backpressure_observation: get_result.stage_backpressure_observation,
+        }
+    }
+}
+
+#[pymethods]
+impl NativeCallbackQueueOperationOutcome {
+    #[getter]
+    fn item(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.item.as_ref().map(|item| item.clone_ref(py))
+    }
+
+    #[getter]
+    fn should_retry(&self) -> bool {
+        self.should_retry
+    }
+
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.should_stop
+    }
+
+    #[getter]
+    fn should_flush_binary_correction_diagnostics(&self) -> bool {
+        self.should_flush_binary_correction_diagnostics
+    }
+
+    #[getter]
+    fn dispatch_action(&self) -> &str {
+        &self.dispatch_action
+    }
+
+    #[getter]
+    fn should_process_sample_major_dosage(&self) -> bool {
+        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage(&self) -> bool {
+        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage_batch(&self) -> bool {
+        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH
+    }
+
+    #[getter]
+    fn should_process_variant_major_packed8_probability_pair(&self) -> bool {
+        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
+    }
+
+    #[getter]
+    fn should_process_result_write_item(&self) -> bool {
+        self.dispatch_action == RESULT_WRITE_ITEM_KIND_SINGLE_RESULT
+    }
+
+    #[getter]
+    fn should_process_multi_result_write_item(&self) -> bool {
+        self.dispatch_action == RESULT_WRITE_ITEM_KIND_MULTI_RESULT
+    }
+
+    #[getter]
+    fn has_dispatch_error(&self) -> bool {
+        self.dispatch_error_message.is_some()
+    }
+
+    #[getter]
+    fn dispatch_error_message(&self) -> Option<&str> {
+        self.dispatch_error_message.as_deref()
+    }
+
+    #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+}
+
+impl NativeCallbackResourceOperationOutcome {
+    fn empty() -> Self {
+        Self {
+            dosage_buffer: None,
+            should_retry: false,
+            should_allocate: false,
+            released_host_buffer: false,
+            released_result_in_flight_slot: false,
+            free_buffer_count: None,
+            backpressure_observation: None,
+            dosage_buffer_pool_backpressure_observation: None,
+            result_in_flight_backpressure_observation: None,
+            stage_backpressure_observation: None,
+        }
+    }
+
+    fn from_result_in_flight_acquire_result(acquire_result: NativeResultInFlightAcquireResult) -> Self {
+        let mut outcome = Self::empty();
+        outcome.should_retry = acquire_result.should_retry_acquisition;
+        outcome.stage_backpressure_observation = acquire_result.stage_backpressure_observation;
+        outcome
+    }
+
+    fn from_result_in_flight_release_result(release_result: NativeResultInFlightSlotReleaseResult) -> Self {
+        let mut outcome = Self::empty();
+        outcome.released_result_in_flight_slot = true;
+        outcome.backpressure_observation = release_result.backpressure_observation;
+        outcome
+    }
+
+    fn from_dosage_buffer_acquire_result(acquire_result: NativeDosageBufferAcquireResult) -> Self {
+        let mut outcome = Self::empty();
+        outcome.should_retry = !acquire_result.should_allocate && acquire_result.dosage_buffer.is_none();
+        outcome.should_allocate = acquire_result.should_allocate;
+        outcome.dosage_buffer = acquire_result.dosage_buffer;
+        outcome.free_buffer_count = Some(acquire_result.free_buffer_count);
+        outcome.stage_backpressure_observation = acquire_result.stage_backpressure_observation;
+        outcome
+    }
+
+    fn from_dosage_buffer_pool_operation(
+        py: Python<'_>,
+        dosage_buffer: Option<Py<PyAny>>,
+        should_retry: bool,
+        released_host_buffer: bool,
+        operation_result: NativeDosageBufferPoolOperationResult,
+    ) -> PyResult<Self> {
+        let backpressure_observation =
+            operation_result.backpressure_observation.as_ref().map(|observation| observation.clone_ref(py));
+        Ok(Self {
+            dosage_buffer,
+            should_retry,
+            should_allocate: false,
+            released_host_buffer,
+            released_result_in_flight_slot: false,
+            free_buffer_count: operation_result.free_buffer_count,
+            backpressure_observation,
+            dosage_buffer_pool_backpressure_observation: operation_result.backpressure_observation,
+            result_in_flight_backpressure_observation: None,
+            stage_backpressure_observation: None,
+        })
+    }
+
+    fn from_result_work_item_release_result(
+        py: Python<'_>,
+        release_result: NativeResultWorkItemResourceReleaseResult,
+    ) -> PyResult<Self> {
+        let dosage_backpressure = release_result
+            .dosage_buffer_pool_backpressure_observation
+            .as_ref()
+            .map(|observation| observation.clone_ref(py));
+        let result_backpressure = release_result
+            .result_in_flight_backpressure_observation
+            .as_ref()
+            .map(|observation| observation.clone_ref(py));
+        let backpressure_observation = match (dosage_backpressure, result_backpressure) {
+            (Some(observation), _) => Some(observation),
+            (None, Some(observation)) => Some(observation),
+            (None, None) => None,
+        };
+        Ok(Self {
+            dosage_buffer: None,
+            should_retry: false,
+            should_allocate: false,
+            released_host_buffer: release_result.released_host_buffer,
+            released_result_in_flight_slot: release_result.released_result_in_flight_slot,
+            free_buffer_count: release_result.free_buffer_count,
+            backpressure_observation,
+            dosage_buffer_pool_backpressure_observation: release_result.dosage_buffer_pool_backpressure_observation,
+            result_in_flight_backpressure_observation: release_result.result_in_flight_backpressure_observation,
+            stage_backpressure_observation: None,
+        })
+    }
+}
+
+#[pymethods]
+impl NativeCallbackResourceOperationOutcome {
+    #[getter]
+    fn dosage_buffer(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        self.dosage_buffer.as_ref().map(|dosage_buffer| dosage_buffer.clone_ref(py))
+    }
+
+    #[getter]
+    fn should_retry(&self) -> bool {
+        self.should_retry
+    }
+
+    #[getter]
+    fn should_allocate(&self) -> bool {
+        self.should_allocate
+    }
+
+    #[getter]
+    fn released_host_buffer(&self) -> bool {
+        self.released_host_buffer
+    }
+
+    #[getter]
+    fn released_result_in_flight_slot(&self) -> bool {
+        self.released_result_in_flight_slot
+    }
+
+    #[getter]
+    fn free_buffer_count(&self) -> Option<usize> {
+        self.free_buffer_count
+    }
+
+    #[getter]
+    fn backpressure_observation(&self, py: Python<'_>) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
+    fn dosage_buffer_pool_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.dosage_buffer_pool_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
+    fn result_in_flight_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueBackpressureObservation>> {
+        self.result_in_flight_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+
+    #[getter]
+    fn stage_backpressure_observation(
+        &self,
+        py: Python<'_>,
+    ) -> Option<Py<NativeCallbackQueueStageBackpressureObservation>> {
+        self.stage_backpressure_observation.as_ref().map(|observation| observation.clone_ref(py))
+    }
+}
+
 #[pymethods]
 impl NativeCallbackQueueGetObservedResult {
     #[getter]
@@ -2558,6 +3109,11 @@ impl NativeDosageWorkItemDrainResult {
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeDosageWorkDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
+
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.should_stop
+    }
 }
 
 impl NativeDosageWorkItemDrainResult {
@@ -2567,10 +3123,12 @@ impl NativeDosageWorkItemDrainResult {
         has_dosage_work_item: bool,
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
     ) -> PyResult<Self> {
+        let should_stop = drain_completion_plan.should_stop_value();
         Ok(Self {
             item: get_result.into_item_value(),
             has_dosage_work_item,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
+            should_stop,
         })
     }
 }
@@ -2609,6 +3167,41 @@ impl NativeDosageWorkItemGetResult {
     fn dispatch_plan(&self, py: Python<'_>) -> Option<Py<NativeDosageWorkItemDispatchPlan>> {
         self.dispatch_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
+
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.should_stop
+    }
+
+    #[getter]
+    fn should_process_sample_major_dosage(&self) -> bool {
+        self.dispatch_action == NativeDosageDispatchAction::SampleMajorDosage
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage(&self) -> bool {
+        self.dispatch_action == NativeDosageDispatchAction::VariantMajorDosage
+    }
+
+    #[getter]
+    fn should_process_variant_major_dosage_batch(&self) -> bool {
+        self.dispatch_action == NativeDosageDispatchAction::VariantMajorDosageBatch
+    }
+
+    #[getter]
+    fn should_process_variant_major_packed8_probability_pair(&self) -> bool {
+        self.dispatch_action == NativeDosageDispatchAction::VariantMajorPacked8ProbabilityPair
+    }
+
+    #[getter]
+    fn has_dispatch_error(&self) -> bool {
+        self.dispatch_error_message.is_some()
+    }
+
+    #[getter]
+    fn dispatch_error_message(&self) -> Option<&str> {
+        self.dispatch_error_message.as_deref()
+    }
 }
 
 impl NativeDosageWorkItemGetResult {
@@ -2641,6 +3234,10 @@ impl NativeDosageWorkItemGetResult {
         drain_completion_plan: NativeDosageWorkDrainCompletionPlan,
         dispatch_plan: Option<NativeDosageWorkItemDispatchPlan>,
     ) -> PyResult<Self> {
+        let should_stop = drain_completion_plan.should_stop_value();
+        let dispatch_action = NativeDosageDispatchAction::from_dispatch_plan(dispatch_plan.as_ref());
+        let dispatch_error_message =
+            dispatch_plan.as_ref().and_then(NativeDosageWorkItemDispatchPlan::error_message_value).map(str::to_owned);
         Ok(Self {
             item,
             has_dosage_work_item,
@@ -2650,6 +3247,9 @@ impl NativeDosageWorkItemGetResult {
                 .transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
             dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            should_stop,
+            dispatch_action,
+            dispatch_error_message,
         })
     }
 }
@@ -2670,6 +3270,16 @@ impl NativeResultWriteItemDrainResult {
     fn drain_completion_plan(&self, py: Python<'_>) -> Py<NativeResultWriteDrainCompletionPlan> {
         self.drain_completion_plan.clone_ref(py)
     }
+
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.should_stop
+    }
+
+    #[getter]
+    fn should_flush_binary_correction_diagnostics(&self) -> bool {
+        self.should_flush_binary_correction_diagnostics
+    }
 }
 
 impl NativeResultWriteItemDrainResult {
@@ -2679,10 +3289,15 @@ impl NativeResultWriteItemDrainResult {
         has_result_work_item: bool,
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
     ) -> PyResult<Self> {
+        let should_stop = drain_completion_plan.should_stop_value();
+        let should_flush_binary_correction_diagnostics =
+            drain_completion_plan.should_flush_binary_correction_diagnostics_value();
         Ok(Self {
             item: get_result.into_item_value(),
             has_result_work_item,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
+            should_stop,
+            should_flush_binary_correction_diagnostics,
         })
     }
 }
@@ -2721,6 +3336,36 @@ impl NativeResultWriteItemGetResult {
     fn dispatch_plan(&self, py: Python<'_>) -> Option<Py<NativeResultWriteItemDispatchPlan>> {
         self.dispatch_plan.as_ref().map(|plan| plan.clone_ref(py))
     }
+
+    #[getter]
+    fn should_stop(&self) -> bool {
+        self.should_stop
+    }
+
+    #[getter]
+    fn should_flush_binary_correction_diagnostics(&self) -> bool {
+        self.should_flush_binary_correction_diagnostics
+    }
+
+    #[getter]
+    fn should_process_result_write_item(&self) -> bool {
+        self.dispatch_action == NativeResultWriteDispatchAction::SingleResult
+    }
+
+    #[getter]
+    fn should_process_multi_result_write_item(&self) -> bool {
+        self.dispatch_action == NativeResultWriteDispatchAction::MultiResult
+    }
+
+    #[getter]
+    fn has_dispatch_error(&self) -> bool {
+        self.dispatch_error_message.is_some()
+    }
+
+    #[getter]
+    fn dispatch_error_message(&self) -> Option<&str> {
+        self.dispatch_error_message.as_deref()
+    }
 }
 
 impl NativeResultWriteItemGetResult {
@@ -2753,6 +3398,12 @@ impl NativeResultWriteItemGetResult {
         drain_completion_plan: NativeResultWriteDrainCompletionPlan,
         dispatch_plan: Option<NativeResultWriteItemDispatchPlan>,
     ) -> PyResult<Self> {
+        let should_stop = drain_completion_plan.should_stop_value();
+        let should_flush_binary_correction_diagnostics =
+            drain_completion_plan.should_flush_binary_correction_diagnostics_value();
+        let dispatch_action = NativeResultWriteDispatchAction::from_dispatch_plan(dispatch_plan.as_ref());
+        let dispatch_error_message =
+            dispatch_plan.as_ref().and_then(NativeResultWriteItemDispatchPlan::error_message_value).map(str::to_owned);
         Ok(Self {
             item,
             has_result_work_item,
@@ -2762,6 +3413,10 @@ impl NativeResultWriteItemGetResult {
                 .transpose()?,
             drain_completion_plan: Py::new(py, drain_completion_plan)?,
             dispatch_plan: dispatch_plan.map(|plan| Py::new(py, plan)).transpose()?,
+            should_stop,
+            should_flush_binary_correction_diagnostics,
+            dispatch_action,
+            dispatch_error_message,
         })
     }
 }
@@ -3203,8 +3858,10 @@ fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usi
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeCallbackQueueOperationOutcome>()?;
     module.add_class::<NativeCallbackQueueGetObservedResult>()?;
     module.add_class::<NativeCallbackQueuePutResult>()?;
+    module.add_class::<NativeCallbackResourceOperationOutcome>()?;
     module.add_class::<NativeCallbackRuntimeResources>()?;
     module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
     module.add_class::<NativeDosageBufferAcquireResult>()?;

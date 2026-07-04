@@ -54,6 +54,9 @@ from g.interface import config as interface_config
 from g.io import output
 from g.runner import lifecycle as shutdown
 
+TEST_DATA_DIRECTORY = Path(__file__).parent / "data" / "bgen"
+HAPLOTYPES_BGEN_PATH = TEST_DATA_DIRECTORY / "haplotypes.bgen"
+
 type NonBatchPreprocessedDosageWorkItem = (
     callback_shared.PreprocessedDosageChunkWorkItem
     | callback_shared.PreprocessedVariantMajorDosageChunkWorkItem
@@ -2607,19 +2610,17 @@ def build_native_aligned_sample_data_from_arrays(
     covariate_values: tuple[tuple[float, ...], ...],
 ) -> _core.NativeAlignedSampleData:
     """Build a native aligned sample handle from in-memory test arrays."""
-    family_identifiers = [f"family{sample_index}" for sample_index in sample_indices]
-    individual_identifiers = [f"sample{sample_index}" for sample_index in sample_indices]
+    individual_identifiers = [f"sample_{sample_index}" for sample_index in sample_indices]
     with tempfile.TemporaryDirectory() as temporary_directory_name:
         temporary_directory = Path(temporary_directory_name)
         phenotype_path = temporary_directory / "phenotypes.tsv"
         phenotype_lines = [f"FID\tIID\t{phenotype_name}"]
-        for family_identifier, individual_identifier, phenotype_value in zip(
-            family_identifiers,
+        for individual_identifier, phenotype_value in zip(
             individual_identifiers,
             phenotype_values,
             strict=True,
         ):
-            phenotype_lines.append(f"{family_identifier}\t{individual_identifier}\t{phenotype_value}")
+            phenotype_lines.append(f"{individual_identifier}\t{individual_identifier}\t{phenotype_value}")
         phenotype_path.write_text("\n".join(phenotype_lines) + "\n", encoding="utf-8")
 
         covariate_path: Path | None = None
@@ -2628,27 +2629,26 @@ def build_native_aligned_sample_data_from_arrays(
             covariate_path = temporary_directory / "covariates.tsv"
             covariate_names = [f"covariate_{covariate_index}" for covariate_index in range(1, len(covariate_values[0]))]
             covariate_lines = ["FID\tIID\t" + "\t".join(covariate_names)]
-            for family_identifier, individual_identifier, covariate_row in zip(
-                family_identifiers,
+            for individual_identifier, covariate_row in zip(
                 individual_identifiers,
                 covariate_values,
                 strict=True,
             ):
                 covariate_lines.append(
-                    f"{family_identifier}\t{individual_identifier}\t"
+                    f"{individual_identifier}\t{individual_identifier}\t"
                     + "\t".join(str(covariate_value) for covariate_value in covariate_row[1:])
                 )
             covariate_path.write_text("\n".join(covariate_lines) + "\n", encoding="utf-8")
 
-        return _core.align_sample_data(
-            np.asarray(sample_indices, dtype=np.int64),
-            family_identifiers,
-            individual_identifiers,
+        engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), 2)
+        return engine.align_sample_data(
+            None,
             str(phenotype_path),
             phenotype_name,
             None if covariate_path is None else str(covariate_path),
             covariate_names,
             is_binary_trait=False,
+            sample_key_mode="fid_iid",
         )
 
 
@@ -2660,17 +2660,14 @@ def build_native_multi_aligned_sample_data_from_arrays(
     covariate_values: tuple[tuple[float, ...], ...],
 ) -> _core.NativeMultiAlignedSampleData:
     """Build a native multi-phenotype aligned sample handle from test arrays."""
-    family_identifiers = [f"family{sample_index}" for sample_index in sample_indices]
-    individual_identifiers = [f"sample{sample_index}" for sample_index in sample_indices]
+    individual_identifiers = [f"sample_{sample_index}" for sample_index in sample_indices]
     with tempfile.TemporaryDirectory() as temporary_directory_name:
         temporary_directory = Path(temporary_directory_name)
         phenotype_path = temporary_directory / "phenotypes.tsv"
         phenotype_lines = ["FID\tIID\t" + "\t".join(phenotype_names)]
-        for sample_position, (family_identifier, individual_identifier) in enumerate(
-            zip(family_identifiers, individual_identifiers, strict=True)
-        ):
+        for sample_position, individual_identifier in enumerate(individual_identifiers):
             phenotype_lines.append(
-                f"{family_identifier}\t{individual_identifier}\t"
+                f"{individual_identifier}\t{individual_identifier}\t"
                 + "\t".join(str(phenotype_values[sample_position]) for phenotype_values in phenotype_matrix)
             )
         phenotype_path.write_text("\n".join(phenotype_lines) + "\n", encoding="utf-8")
@@ -2681,27 +2678,26 @@ def build_native_multi_aligned_sample_data_from_arrays(
             covariate_path = temporary_directory / "covariates.tsv"
             covariate_names = [f"covariate_{covariate_index}" for covariate_index in range(1, len(covariate_values[0]))]
             covariate_lines = ["FID\tIID\t" + "\t".join(covariate_names)]
-            for family_identifier, individual_identifier, covariate_row in zip(
-                family_identifiers,
+            for individual_identifier, covariate_row in zip(
                 individual_identifiers,
                 covariate_values,
                 strict=True,
             ):
                 covariate_lines.append(
-                    f"{family_identifier}\t{individual_identifier}\t"
+                    f"{individual_identifier}\t{individual_identifier}\t"
                     + "\t".join(str(covariate_value) for covariate_value in covariate_row[1:])
                 )
             covariate_path.write_text("\n".join(covariate_lines) + "\n", encoding="utf-8")
 
-        return _core.align_multi_sample_data(
-            np.asarray(sample_indices, dtype=np.int64),
-            family_identifiers,
-            individual_identifiers,
+        engine = _core.Regenie2RunEngine(str(HAPLOTYPES_BGEN_PATH), 2)
+        return engine.align_multi_sample_data(
+            None,
             str(phenotype_path),
             list(phenotype_names),
             None if covariate_path is None else str(covariate_path),
             covariate_names,
             is_binary_trait=False,
+            sample_key_mode="fid_iid",
         )
 
 

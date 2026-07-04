@@ -73,7 +73,7 @@ the current Python public API and test behavior.
 
 - Config: `uv run pytest tests/test_interface.py tests/test_api.py tests/test_regenie_binary_correction_contract.py -q`
 - Output: `uv run pytest tests/test_io_output.py tests/test_regenie2_pipeline.py -q`
-- Groups: `uv run pytest tests/test_regenie2_pipeline.py tests/test_tabular.py -q`
+- Groups: `uv run pytest tests/test_regenie2_pipeline.py -q` plus `cargo test -p g-input`
 - Telemetry: `uv run pytest tests/test_telemetry.py tests/test_cli_bridge.py tests/test_api.py tests/test_callback_lifecycle.py -q`
 - Shared native checks: `just check-core-stub`, `cargo test --workspace`
 - Final: `uv run --no-sync ty check src tests scripts tooling`
@@ -131,7 +131,7 @@ the current Python public API and test behavior.
 
 - `uv run pytest tests/test_interface.py tests/test_api.py tests/test_regenie_binary_correction_contract.py -q` passed: 154 tests.
 - `uv run pytest tests/test_io_output.py tests/test_regenie2_pipeline.py -q` passed: 205 tests.
-- `uv run pytest tests/test_regenie2_pipeline.py tests/test_tabular.py -q` passed: 110 tests.
+- `uv run pytest tests/test_regenie2_pipeline.py -q` and `cargo test -p g-input` covered grouped alignment after module-level sample wrappers were removed.
 - `uv run pytest tests/test_telemetry.py tests/test_cli_bridge.py tests/test_api.py tests/test_callback_lifecycle.py -q` passed: 74 tests.
 - `just check-core-stub` passed.
 - `LD_LIBRARY_PATH=/home/kirill/.local/share/uv/python/cpython-3.14.3-linux-x86_64-gnu/lib cargo test --workspace` passed.
@@ -354,7 +354,7 @@ the current Python public API and test behavior.
 - Moved deterministic logging runtime policy payload construction and concise
   policy description formatting to Rust/PyO3. Python still owns
   `LoggingRuntimePolicy`, `RuntimePolicy`, process-global compatibility state,
-  Rayon/JAX runtime setup, and `_core.initialize_logging` side effects.
+  Rayon/JAX runtime setup, and `NativeRuntimeState.initialize_logging_runtime_policy` side effects.
 - `uv run pytest tests/test_api.py::test_initialize_logging_passes_diagnostics_to_core tests/test_api.py::test_initialize_logging_uses_unified_telemetry_stream tests/test_api.py::test_initialize_logging_applies_trace_cap_only_in_trace_mode tests/test_api.py::test_initialize_logging_uses_trace_file_alias_as_unified_stream tests/test_api.py::test_initialize_logging_rejects_incompatible_process_global_policy tests/test_api.py::test_describe_runtime_state_reports_process_global_state -q` passed: 6 tests.
 - `uv run pytest tests/test_api.py tests/test_cli_bridge.py tests/test_telemetry.py -q` passed: 65 tests.
 - `uv run --no-sync ruff check src/g/runner/runtime.py src/g/_core.pyi` passed.

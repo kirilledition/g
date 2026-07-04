@@ -7,10 +7,10 @@ use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
 use g_input::regenie::{PredictionError, resolve_prediction_loco_paths as resolve_native_prediction_loco_paths};
 use g_output::{
-    CurrentRunManifestHeaderInput, ManifestFileFingerprint as NativeManifestFileFingerprint,
-    ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
-    NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterError,
-    OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
+    CurrentRunManifestHeaderInput, ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState,
+    NativeChunkHandle, NativeChunkStats as NativeOutputChunkStats, OutputFileFormat, OutputResumeMode,
+    OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
+    VariantMetadataColumns as NativeOutputVariantMetadataColumns,
     build_current_run_manifest_header_json_with_cache as build_native_current_run_manifest_header_json_with_cache,
     build_manifest_json_sha256 as build_native_manifest_json_sha256,
     build_prepared_run_plan_json_from_current_header_json as build_native_prepared_run_plan_json_from_current_header_json,
@@ -28,7 +28,7 @@ use g_output::{
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyModule};
+use pyo3::types::{PyAny, PyModule};
 use serde_json::Value as JsonValue;
 
 use super::{
@@ -89,6 +89,17 @@ pub(crate) struct NativeManifestFileFingerprintCache {
     inner: Mutex<NativeManifestFileFingerprintCacheState>,
 }
 
+#[pyclass]
+pub(crate) struct NativeManifestFileFingerprint {
+    fingerprint: g_output::ManifestFileFingerprint,
+}
+
+#[pyclass]
+pub(crate) struct NativePredictionLocoFileFingerprint {
+    phenotype: String,
+    fingerprint: g_output::ManifestFileFingerprint,
+}
+
 struct Regenie2StatisticArrays {
     beta: ArrayRef,
     standard_error: ArrayRef,
@@ -100,6 +111,67 @@ struct Regenie2StatisticArrays {
 enum PredictionLocoFingerprintBuildError {
     Prediction(PredictionError),
     Output(OutputWriterError),
+}
+
+#[pymethods]
+impl NativeManifestFileFingerprint {
+    #[getter]
+    fn path(&self) -> &str {
+        &self.fingerprint.path
+    }
+
+    #[getter]
+    fn size(&self) -> u64 {
+        self.fingerprint.size
+    }
+
+    #[getter]
+    fn mtime_ns(&self) -> i64 {
+        self.fingerprint.mtime_ns
+    }
+
+    #[getter]
+    fn content_hash_algorithm(&self) -> &str {
+        &self.fingerprint.content_hash_algorithm
+    }
+
+    #[getter]
+    fn content_sha256(&self) -> Option<String> {
+        self.fingerprint.content_sha256.clone()
+    }
+}
+
+#[pymethods]
+impl NativePredictionLocoFileFingerprint {
+    #[getter]
+    fn phenotype(&self) -> &str {
+        &self.phenotype
+    }
+
+    #[getter]
+    fn path(&self) -> &str {
+        &self.fingerprint.path
+    }
+
+    #[getter]
+    fn size(&self) -> u64 {
+        self.fingerprint.size
+    }
+
+    #[getter]
+    fn mtime_ns(&self) -> i64 {
+        self.fingerprint.mtime_ns
+    }
+
+    #[getter]
+    fn content_hash_algorithm(&self) -> &str {
+        &self.fingerprint.content_hash_algorithm
+    }
+
+    #[getter]
+    fn content_sha256(&self) -> Option<String> {
+        self.fingerprint.content_sha256.clone()
+    }
 }
 
 #[pymethods]
@@ -300,12 +372,12 @@ impl NativeManifestFileFingerprintCache {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn build_file_fingerprint_payload<'py>(
+    fn build_file_fingerprint(
         &self,
-        py: Python<'py>,
+        py: Python<'_>,
         path: String,
         include_content_hash: bool,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeManifestFileFingerprint> {
         let file_fingerprint = py
             .detach(|| {
                 let mut fingerprint_cache = self.inner.lock().map_err(|_| {
@@ -314,7 +386,7 @@ impl NativeManifestFileFingerprintCache {
                 fingerprint_cache.build_file_fingerprint(Path::new(&path), include_content_hash)
             })
             .map_err(|error| output_writer_error_to_py(error, "build_cached_manifest_file_fingerprint_payload"))?;
-        manifest_file_fingerprint_to_dict(py, &file_fingerprint)
+        Ok(NativeManifestFileFingerprint { fingerprint: file_fingerprint })
     }
 
     fn build_current_run_manifest_header_payload_from_input(
@@ -335,27 +407,25 @@ impl NativeManifestFileFingerprintCache {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn build_prediction_loco_file_fingerprints_payload(
+    fn build_prediction_loco_file_fingerprints(
         &self,
         py: Python<'_>,
         prediction_list_path: String,
         phenotype_names: Vec<String>,
-    ) -> PyResult<Py<PyAny>> {
-        let loco_file_payload_json = py
-            .detach(|| {
-                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                    PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
-                        "Manifest file fingerprint cache mutex was poisoned.".to_string(),
-                    ))
-                })?;
-                build_prediction_loco_file_fingerprints_json_with_cache(
-                    &prediction_list_path,
-                    &phenotype_names,
-                    &mut fingerprint_cache,
-                )
-            })
-            .map_err(prediction_loco_fingerprint_build_error_to_py)?;
-        json_bridge::json_text_to_py_object(py, &loco_file_payload_json, "prediction LOCO file fingerprints")
+    ) -> PyResult<Vec<NativePredictionLocoFileFingerprint>> {
+        py.detach(|| {
+            let mut fingerprint_cache = self.inner.lock().map_err(|_| {
+                PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(
+                    "Manifest file fingerprint cache mutex was poisoned.".to_string(),
+                ))
+            })?;
+            build_prediction_loco_file_fingerprints_with_cache(
+                &prediction_list_path,
+                &phenotype_names,
+                &mut fingerprint_cache,
+            )
+        })
+        .map_err(prediction_loco_fingerprint_build_error_to_py)
     }
 }
 
@@ -845,11 +915,13 @@ pub(crate) fn repair_strict_manifest_chunk_commits_from_value(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeInitializedOutputRun>()?;
+    module.add_class::<NativeManifestFileFingerprint>()?;
     module.add_class::<NativeManifestFileFingerprintCache>()?;
     module.add_class::<NativeOutputChunkWritePolicy>()?;
     module.add_class::<NativeOutputLifecyclePolicy>()?;
     module.add_class::<NativeOutputRunPaths>()?;
     module.add_class::<NativePreparedOutputRun>()?;
+    module.add_class::<NativePredictionLocoFileFingerprint>()?;
     module.add_class::<OutputWriterSession>()?;
     Ok(())
 }
@@ -912,51 +984,33 @@ fn write_regenie2_chunk_arrays_detached(
     .map_err(|error| output_writer_error_to_py(error, operation))
 }
 
-fn manifest_file_fingerprint_to_dict<'py>(
-    py: Python<'py>,
-    file_fingerprint: &NativeManifestFileFingerprint,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("path", &file_fingerprint.path)?;
-    payload.set_item("size", file_fingerprint.size)?;
-    payload.set_item("mtime_ns", file_fingerprint.mtime_ns)?;
-    payload.set_item("content_hash_algorithm", &file_fingerprint.content_hash_algorithm)?;
-    payload.set_item("content_sha256", &file_fingerprint.content_sha256)?;
-    Ok(payload)
-}
-
-fn build_prediction_loco_file_fingerprints_json_with_cache(
+fn build_prediction_loco_file_fingerprints_with_cache(
     prediction_list_path: &str,
     phenotype_names: &[String],
     fingerprint_cache: &mut NativeManifestFileFingerprintCacheState,
-) -> Result<String, PredictionLocoFingerprintBuildError> {
+) -> Result<Vec<NativePredictionLocoFileFingerprint>, PredictionLocoFingerprintBuildError> {
     let resolved_loco_paths = resolve_native_prediction_loco_paths(Path::new(prediction_list_path), phenotype_names)
         .map_err(PredictionLocoFingerprintBuildError::Prediction)?;
-    let mut loco_file_payloads = Vec::with_capacity(resolved_loco_paths.len());
+    let mut loco_file_fingerprints = Vec::with_capacity(resolved_loco_paths.len());
     for resolved_loco_path in resolved_loco_paths {
         let file_fingerprint = fingerprint_cache
             .build_file_fingerprint(&resolved_loco_path.loco_file_path, true)
             .map_err(PredictionLocoFingerprintBuildError::Output)?;
-        loco_file_payloads.push(serde_json::json!({
-            "phenotype": resolved_loco_path.phenotype_name,
-            "path": file_fingerprint.path,
-            "size": file_fingerprint.size,
-            "mtime_ns": file_fingerprint.mtime_ns,
-            "content_hash_algorithm": file_fingerprint.content_hash_algorithm,
-            "content_sha256": file_fingerprint.content_sha256,
-        }));
+        loco_file_fingerprints.push(NativePredictionLocoFileFingerprint {
+            phenotype: resolved_loco_path.phenotype_name,
+            fingerprint: file_fingerprint,
+        });
     }
-    serde_json::to_string(&loco_file_payloads)
-        .map_err(|error| PredictionLocoFingerprintBuildError::Output(OutputWriterError::Runtime(error.to_string())))
+    Ok(loco_file_fingerprints)
 }
 
 fn prediction_loco_fingerprint_build_error_to_py(error: PredictionLocoFingerprintBuildError) -> PyErr {
     match error {
         PredictionLocoFingerprintBuildError::Prediction(prediction_error) => {
-            convert_prediction_error("build_prediction_loco_file_fingerprints_json", &prediction_error)
+            convert_prediction_error("build_prediction_loco_file_fingerprints", &prediction_error)
         }
         PredictionLocoFingerprintBuildError::Output(output_error) => {
-            output_writer_error_to_py(output_error, "build_prediction_loco_file_fingerprints_json")
+            output_writer_error_to_py(output_error, "build_prediction_loco_file_fingerprints")
         }
     }
 }

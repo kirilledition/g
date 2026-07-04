@@ -65,7 +65,7 @@ def plan_bgen_delivery_cleanup(
     callback_finished: bool,
 ) -> _core.NativeBgenDeliveryCleanupPlan:
     """Return the native cleanup plan for one delivery outcome."""
-    return native_schedule_policy().plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
+    return _core.plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
 
 
 def resolve_native_callback_batch_size(
@@ -75,7 +75,7 @@ def resolve_native_callback_batch_size(
 ) -> int:
     """Return the validated native callback batch size for one callback object."""
     return int(
-        native_schedule_policy().resolve_delivery_callback_batch_size(
+        _core.resolve_delivery_callback_batch_size(
             callback.native_callback_batch_size,
             variant_major_packed8_probability_pairs,
         )
@@ -89,17 +89,12 @@ def plan_bgen_delivery_invocation(
     variant_major_packed8_probability_pairs: bool,
 ) -> _core.NativeBgenDeliveryInvocationPlan:
     """Return the native delivery invocation plan for one run input."""
-    return native_schedule_policy().plan_bgen_delivery_invocation(
+    return _core.plan_bgen_delivery_invocation(
         callback.native_callback_batch_size,
         variant_major_packed8_probability_pairs,
         run_input.native_multi_aligned_sample_data is not None,
         run_input.native_aligned_sample_data is not None,
     )
-
-
-def native_schedule_policy() -> _core.NativeSchedulePolicy:
-    """Build the native schedule policy handle."""
-    return _core.NativeSchedulePolicy()
 
 
 def execute_bgen_delivery_cleanup_plan(

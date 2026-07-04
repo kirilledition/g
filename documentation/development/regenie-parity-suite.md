@@ -50,9 +50,9 @@ GWAS_ENGINE_CPU_MEMORY=32G \
 just slurm-cpu-run 'uv run pytest \
   tests/parity \
   tests/test_regenie2_parity.py \
-  tests/test_tabular.py::test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix \
-  tests/test_tabular.py::test_native_grouped_alignment_batches_traits_with_identical_sample_sets \
-  tests/test_tabular.py::test_native_alignment_matches_iid_only_and_sorts_by_sample_order \
+  tests/test_core.py::test_regenie_prediction_source_loads_from_native_aligned_sample_data \
+  tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints \
+  tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_batches_identical_alignments \
   tests/test_regenie2_binary.py::test_score_only_plan_produces_no_fallback_candidates \
   tests/test_regenie2_binary.py::test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes \
   tests/test_regenie2_binary.py::test_variant_major_approximate_firth_matches_sample_major_with_covariates_loco_and_edge_genotypes \

@@ -16,7 +16,6 @@ if typing.TYPE_CHECKING:
     import omegaconf
 
 RUST_EXPORT_FILES = (
-    Path("src/python/association_backend.rs"),
     Path("src/python/callback_diagnostics.rs"),
     Path("src/python/callback_progress.rs"),
     Path("src/python/callback_queue.rs"),

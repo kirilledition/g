@@ -25,12 +25,6 @@ const PYTHON_LOGGING_TARGET: &str = "g.python";
 static PYTHON_LOGGING_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 #[pyclass]
-pub struct NativeTelemetryProgressThrottle {
-    start_time: Instant,
-    state: Mutex<native_telemetry_session::TelemetryProgressThrottleState>,
-}
-
-#[pyclass]
 pub struct NativeTelemetryRunSession {
     progress_start_time: Instant,
     state: Mutex<native_telemetry_session::TelemetryRunSessionState>,
@@ -39,27 +33,6 @@ pub struct NativeTelemetryRunSession {
 
 #[pyclass]
 pub struct NativeTelemetryClosePolicy;
-
-#[pymethods]
-impl NativeTelemetryProgressThrottle {
-    #[new]
-    pub fn new(progress_interval_seconds: f64, progress_interval_chunks: i64) -> Self {
-        Self {
-            start_time: Instant::now(),
-            state: Mutex::new(native_telemetry_session::TelemetryProgressThrottleState::new(
-                progress_interval_seconds,
-                progress_interval_chunks,
-            )),
-        }
-    }
-
-    pub fn should_emit_progress(&self, processed_chunk_count: i64) -> PyResult<bool> {
-        let current_time_seconds = self.start_time.elapsed().as_secs_f64();
-        let mut state =
-            self.state.lock().map_err(|_| PyRuntimeError::new_err("Telemetry progress mutex was poisoned."))?;
-        Ok(state.should_emit_progress_at(processed_chunk_count, current_time_seconds))
-    }
-}
 
 #[pymethods]
 impl NativeTelemetryRunSession {
@@ -636,16 +609,12 @@ impl NativeTelemetryClosePolicy {
     }
 }
 
-#[pyclass]
-pub struct NativeTelemetrySession {
+struct NativeTelemetrySession {
     writer: Mutex<native_telemetry_writer::TelemetrySessionWriter>,
 }
 
-#[pymethods]
 impl NativeTelemetrySession {
-    #[new]
-    #[pyo3(signature = (stream_file, queue_size=65536, lossy=true, event_cap=None))]
-    pub fn new(stream_file: &str, queue_size: usize, lossy: bool, event_cap: Option<usize>) -> PyResult<Self> {
+    fn new(stream_file: &str, queue_size: usize, lossy: bool, event_cap: Option<usize>) -> PyResult<Self> {
         let writer = native_telemetry_writer::TelemetrySessionWriter::new(
             Path::new(stream_file).to_path_buf(),
             queue_size,
@@ -656,42 +625,17 @@ impl NativeTelemetrySession {
         Ok(Self { writer: Mutex::new(writer) })
     }
 
-    pub fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
+    fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
         self.lock_writer()?.write_json_line(json_line).map_err(telemetry_writer_error_to_py)?;
         Ok(())
     }
 
-    pub fn emit_payload(&self, _py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn emit_payload(&self, _py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<()> {
         let json_line = serialize_telemetry_payload_json_line(payload)?;
         self.emit_json_line(&json_line)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn emit_event<'py>(
-        &self,
-        py: Python<'py>,
-        run_id: &str,
-        event: &str,
-        level: &str,
-        timestamp: &str,
-        process_identifier: u32,
-        thread_name: &str,
-        fields: &Bound<'py, PyDict>,
-    ) -> PyResult<()> {
-        let payload = build_telemetry_event_payload(
-            py,
-            run_id,
-            event,
-            level,
-            timestamp,
-            process_identifier,
-            thread_name,
-            fields,
-        )?;
-        self.emit_payload(py, &payload)
-    }
-
-    pub fn emit_current_event<'py>(
+    fn emit_current_event<'py>(
         &self,
         py: Python<'py>,
         run_id: &str,
@@ -703,73 +647,23 @@ impl NativeTelemetrySession {
         self.emit_payload(py, &payload)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::unused_self)]
-    pub fn build_event_payload<'py>(
-        &self,
-        py: Python<'py>,
-        run_id: &str,
-        event: &str,
-        level: &str,
-        timestamp: &str,
-        process_identifier: u32,
-        thread_name: &str,
-        fields: &Bound<'py, PyDict>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        build_telemetry_event_payload(py, run_id, event, level, timestamp, process_identifier, thread_name, fields)
-    }
-
-    pub fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn counters<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         telemetry_writer_counter_snapshot_to_py_dict(py, &self.counter_snapshot()?)
     }
 
-    pub fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+    fn close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         self.lock_writer()?
             .close_metadata()
             .map(|metadata| telemetry_close_metadata_to_py_dict(py, &metadata))
             .transpose()
     }
 
-    pub fn finish<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let counter_snapshot = self.finish_counter_snapshot()?;
-        telemetry_writer_counter_snapshot_to_py_dict(py, &counter_snapshot)
-    }
-
-    pub fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let metadata = self.lock_writer()?.finish_close_metadata().map_err(telemetry_writer_error_to_py)?;
         telemetry_close_metadata_to_py_dict(py, &metadata)
     }
 
-    pub fn finish_with_close_event<'py>(
-        &self,
-        py: Python<'py>,
-        run_id: &str,
-        timestamp: &str,
-        process_identifier: u32,
-        thread_name: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let _ = self.emit_close_event(py, run_id, timestamp, process_identifier, thread_name);
-        self.finish(py)
-    }
-
-    pub fn finish_with_close_event_metadata<'py>(
-        &self,
-        py: Python<'py>,
-        run_id: &str,
-        timestamp: &str,
-        process_identifier: u32,
-        thread_name: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let _ = self.emit_close_event(py, run_id, timestamp, process_identifier, thread_name);
-        self.finish_close_metadata(py)
-    }
-
-    pub fn finish_with_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<Bound<'py, PyDict>> {
-        let _ = self.emit_current_close_event(py, run_id);
-        self.finish(py)
-    }
-
-    pub fn finish_with_current_close_event_metadata<'py>(
+    fn finish_with_current_close_event_metadata<'py>(
         &self,
         py: Python<'py>,
         run_id: &str,
@@ -777,34 +671,9 @@ impl NativeTelemetrySession {
         let _ = self.emit_current_close_event(py, run_id);
         self.finish_close_metadata(py)
     }
-}
 
-impl NativeTelemetrySession {
     fn counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
         Ok(self.lock_writer()?.counter_snapshot())
-    }
-
-    fn emit_close_event<'py>(
-        &self,
-        py: Python<'py>,
-        run_id: &str,
-        timestamp: &str,
-        process_identifier: u32,
-        thread_name: &str,
-    ) -> PyResult<()> {
-        let close_event_payload =
-            native_telemetry_session::build_telemetry_close_event_payload(self.counter_snapshot()?);
-        let fields = telemetry_close_event_fields_to_py_dict(py, &close_event_payload)?;
-        self.emit_event(
-            py,
-            run_id,
-            &close_event_payload.event_name,
-            &close_event_payload.level,
-            timestamp,
-            process_identifier,
-            thread_name,
-            &fields,
-        )
     }
 
     fn emit_current_close_event<'py>(&self, py: Python<'py>, run_id: &str) -> PyResult<()> {
@@ -812,10 +681,6 @@ impl NativeTelemetrySession {
             native_telemetry_session::build_telemetry_close_event_payload(self.counter_snapshot()?);
         let fields = telemetry_close_event_fields_to_py_dict(py, &close_event_payload)?;
         self.emit_current_event(py, run_id, &close_event_payload.event_name, &close_event_payload.level, &fields)
-    }
-
-    fn finish_counter_snapshot(&self) -> PyResult<native_telemetry_session::TelemetryWriterCounterSnapshot> {
-        self.lock_writer()?.finish_counter_snapshot().map_err(telemetry_writer_error_to_py)
     }
 
     fn lock_writer(&self) -> PyResult<std::sync::MutexGuard<'_, native_telemetry_writer::TelemetrySessionWriter>> {
@@ -882,28 +747,6 @@ fn optional_native_telemetry_session<'py>(
         )),
         Err(error) => Err(error),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_telemetry_event_payload<'py>(
-    py: Python<'py>,
-    run_id: &str,
-    event: &str,
-    level: &str,
-    timestamp: &str,
-    process_identifier: u32,
-    thread_name: &str,
-    fields: &Bound<'py, PyDict>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let envelope = native_telemetry_session::build_telemetry_event_envelope(
-        run_id,
-        event,
-        level,
-        timestamp,
-        process_identifier,
-        thread_name,
-    );
-    telemetry_event_envelope_to_py_dict(py, &envelope, fields)
 }
 
 fn build_current_telemetry_event_payload<'py>(
@@ -1100,26 +943,13 @@ pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_jso
     Ok(())
 }
 
-#[pyfunction]
 #[expect(
     clippy::too_many_arguments,
     clippy::fn_params_excessive_bools,
     clippy::needless_pass_by_value,
-    reason = "PyO3 exposes documented Python logging keyword arguments directly."
+    reason = "Runtime logging policy forwards concrete sink fields directly."
 )]
-#[pyo3(signature = (
-    log_filter=None,
-    log_file=None,
-    log_stderr=true,
-    log_queue_size=65536,
-    log_lossy=true,
-    include_source_location=false,
-    include_span_events=false,
-    trace_file=None,
-    trace_filter=None,
-    trace_event_cap=None
-))]
-pub fn initialize_logging(
+pub(crate) fn initialize_logging(
     py: Python<'_>,
     log_filter: Option<String>,
     log_file: Option<String>,
@@ -1148,18 +978,13 @@ pub fn initialize_logging(
         .map_err(logging_sink_initialization_error_to_py)
 }
 
-#[pyfunction]
-pub fn shutdown_logging() -> PyResult<()> {
+pub(crate) fn shutdown_logging() -> PyResult<()> {
     native_logging_sink::shutdown_logging_sinks().map_err(logging_sink_error_to_py)
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeTelemetryProgressThrottle>()?;
     module.add_class::<NativeTelemetryRunSession>()?;
     module.add_class::<NativeTelemetryClosePolicy>()?;
-    module.add_class::<NativeTelemetrySession>()?;
-    module.add_function(wrap_pyfunction!(initialize_logging, module)?)?;
-    module.add_function(wrap_pyfunction!(shutdown_logging, module)?)?;
     Ok(())
 }
 
@@ -1201,7 +1026,9 @@ root_logger.setLevel(NOTSET)
 
 fn register_shutdown_logging(py: Python<'_>) -> PyResult<()> {
     let core_module = py.import("g._core")?;
-    let shutdown_logging_function = core_module.getattr("shutdown_logging")?;
+    let runtime_state_type = core_module.getattr("NativeRuntimeState")?;
+    let runtime_state = runtime_state_type.call_method0("global_process_runtime_state")?;
+    let shutdown_logging_function = runtime_state.getattr("shutdown_logging_runtime")?;
     let atexit = py.import("atexit")?;
     atexit.call_method1("register", (shutdown_logging_function,))?;
     Ok(())

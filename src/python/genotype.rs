@@ -8,32 +8,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use g_genotype::common::{ChunkSpec as NativeChunkSpec, ChunkStats as NativeChunkStats, VariantMetadataColumns};
-use g_genotype::planner;
+use g_genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 use g_genotype::preprocess;
 
-use super::errors::convert_genotype_error;
-
 pub(crate) type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
-
-#[pyclass(skip_from_py_object)]
-#[derive(Clone)]
-struct ChunkSpec {
-    chunk_spec: NativeChunkSpec,
-}
-
-#[pymethods]
-impl ChunkSpec {
-    #[getter]
-    fn variant_start_index(&self) -> usize {
-        self.chunk_spec.variant_start_index
-    }
-
-    #[getter]
-    fn variant_stop_index(&self) -> usize {
-        self.chunk_spec.variant_stop_index
-    }
-}
 
 #[pyclass]
 pub(crate) struct ChunkStats {
@@ -223,28 +201,6 @@ impl VariantMetadata {
     }
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-#[pyo3(signature = (variant_count, chunk_size, chromosome_boundary_indices, variant_limit=None, committed_chunk_identifiers=None))]
-fn plan_genotype_chunks(
-    variant_count: usize,
-    chunk_size: usize,
-    chromosome_boundary_indices: Vec<usize>,
-    variant_limit: Option<usize>,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-) -> PyResult<Vec<ChunkSpec>> {
-    let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
-    let chunk_specs = planner::plan_chromosome_homogeneous_chunks(
-        variant_count,
-        chunk_size,
-        variant_limit,
-        &chromosome_boundary_indices,
-        &committed_identifier_set,
-    )
-    .map_err(|error| convert_genotype_error("plan_chromosome_homogeneous_chunks", error))?;
-    Ok(chunk_specs.into_iter().map(|chunk_spec| ChunkSpec { chunk_spec }).collect())
-}
-
 pub(crate) fn convert_variant_metadata_columns_to_tuple(
     variant_metadata: VariantMetadataColumns,
 ) -> VariantMetadataTuple {
@@ -262,10 +218,8 @@ pub(crate) fn build_committed_identifier_set(committed_chunk_identifiers: Option
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<ChunkSpec>()?;
     module.add_class::<ChunkStats>()?;
     module.add_class::<VariantMetadata>()?;
     module.add_function(wrap_pyfunction!(summarize_variant_major_dosage_chunk_stats, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_genotype_chunks, module)?)?;
     Ok(())
 }

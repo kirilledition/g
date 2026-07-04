@@ -9,6 +9,15 @@ use g_plan as native_host_policy;
 #[pyclass]
 pub(crate) struct NativeHostPlanningPolicy;
 
+#[pyclass]
+pub(crate) struct NativeAssociationBackendPlan {
+    backend_kind: String,
+    association_mode: String,
+    jax_device: String,
+    genotype_format: String,
+    uses_variant_major_packed8_delivery: bool,
+}
+
 #[pymethods]
 impl NativeHostPlanningPolicy {
     #[new]
@@ -18,22 +27,21 @@ impl NativeHostPlanningPolicy {
 
     #[allow(clippy::unused_self)]
     #[allow(clippy::needless_pass_by_value)]
-    fn plan_association_backend_payload<'py>(
+    fn plan_association_backend(
         &self,
-        py: Python<'py>,
         association_mode: String,
         jax_device: String,
         gpu_genotype_format: String,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeAssociationBackendPlan> {
         let plan = native_host_policy::plan_association_backend(&association_mode, &jax_device, &gpu_genotype_format)
             .map_err(host_policy_error_to_py)?;
-        let payload = PyDict::new(py);
-        payload.set_item("backend_kind", plan.backend_kind)?;
-        payload.set_item("association_mode", plan.association_mode)?;
-        payload.set_item("jax_device", plan.jax_device)?;
-        payload.set_item("genotype_format", plan.genotype_format)?;
-        payload.set_item("uses_variant_major_packed8_delivery", plan.uses_variant_major_packed8_delivery)?;
-        Ok(payload)
+        Ok(NativeAssociationBackendPlan {
+            backend_kind: plan.backend_kind.to_string(),
+            association_mode: plan.association_mode,
+            jax_device: plan.jax_device,
+            genotype_format: plan.genotype_format,
+            uses_variant_major_packed8_delivery: plan.uses_variant_major_packed8_delivery,
+        })
     }
 
     #[allow(clippy::unused_self)]
@@ -109,7 +117,36 @@ impl NativeHostPlanningPolicy {
     }
 }
 
+#[pymethods]
+impl NativeAssociationBackendPlan {
+    #[getter]
+    fn backend_kind(&self) -> &str {
+        &self.backend_kind
+    }
+
+    #[getter]
+    fn association_mode(&self) -> &str {
+        &self.association_mode
+    }
+
+    #[getter]
+    fn jax_device(&self) -> &str {
+        &self.jax_device
+    }
+
+    #[getter]
+    fn genotype_format(&self) -> &str {
+        &self.genotype_format
+    }
+
+    #[getter]
+    fn uses_variant_major_packed8_delivery(&self) -> bool {
+        self.uses_variant_major_packed8_delivery
+    }
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeAssociationBackendPlan>()?;
     module.add_class::<NativeHostPlanningPolicy>()?;
     Ok(())
 }

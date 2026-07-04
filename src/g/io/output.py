@@ -11,15 +11,10 @@ from pathlib import Path
 
 from g import _core, types
 
-OUTPUT_COMPRESSION_CODEC = "zstd"
 CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
 PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
 REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 RUN_MANIFEST_FILENAME = "run_manifest.json"
-RUN_MANIFEST_SCHEMA_VERSION = 9
-OUTPUT_SCHEMA_VERSION = 2
-RESUME_POLICY = "manifest_committed_chunks"
-DEFAULT_RESULT_STATISTIC_OUTPUT_DTYPE = types.FloatingPointDtype.FLOAT32
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -73,13 +68,6 @@ class PreparedOutputRun:
 
 
 @dataclass(frozen=True)
-class InitializedOutputRun:
-    """Validated output run state for chunk persistence."""
-
-    committed_chunk_identifiers: frozenset[int]
-
-
-@dataclass(frozen=True)
 class ManifestFileFingerprint:
     """Stable fingerprint for an input file recorded in a run manifest.
 
@@ -115,8 +103,8 @@ class ManifestFileFingerprintCache:
         """Build or reuse a fingerprint for the observed input file state."""
         if path is None:
             return None
-        return manifest_file_fingerprint_from_native_payload(
-            self.native_cache.build_file_fingerprint_payload(str(path), include_content_hash)
+        return manifest_file_fingerprint_from_native(
+            self.native_cache.build_file_fingerprint(str(path), include_content_hash)
         )
 
 
@@ -172,34 +160,10 @@ def resolve_output_run_paths(
     )
 
 
-def build_chunk_file_name(chunk_identifier: int) -> str:
-    """Build a deterministic chunk file name from a chunk identifier."""
-    return f"chunk_{chunk_identifier:09d}.arrow"
-
-
 def scan_committed_chunk_identifiers(chunks_directory: Path) -> frozenset[int]:
     """Scan a chunks directory and return identifiers of completed chunks."""
     chunk_identifiers = native_output_lifecycle_policy().scan_committed_chunk_identifiers(str(chunks_directory))
     return frozenset(int(chunk_identifier) for chunk_identifier in chunk_identifiers)
-
-
-def load_run_manifest(output_run_paths: OutputRunPaths) -> dict[str, typing.Any] | None:
-    """Load a run manifest when present."""
-    manifest_payload = native_output_lifecycle_policy().load_run_manifest_payload(str(output_run_paths.run_directory))
-    if manifest_payload is None:
-        return None
-    return require_native_mapping_payload(
-        manifest_payload,
-        f"Run manifest '{get_run_manifest_path(output_run_paths)}' must contain a JSON object.",
-    )
-
-
-def write_run_manifest(output_run_paths: OutputRunPaths, manifest: dict[str, typing.Any]) -> None:
-    """Atomically write a run manifest."""
-    native_output_lifecycle_policy().write_run_manifest(
-        str(output_run_paths.run_directory),
-        manifest,
-    )
 
 
 def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> ManifestFileFingerprint | None:
@@ -207,15 +171,16 @@ def build_file_fingerprint(path: Path | None, *, include_content_hash: bool) -> 
     return ManifestFileFingerprintCache().build_file_fingerprint(path, include_content_hash=include_content_hash)
 
 
-def manifest_file_fingerprint_from_native_payload(payload: object) -> ManifestFileFingerprint:
-    """Adapt a native file-fingerprint payload to the public Python dataclass."""
-    fingerprint_payload = native_mapping_payload(payload)
+def manifest_file_fingerprint_from_native(
+    native_fingerprint: _core.NativeManifestFileFingerprint,
+) -> ManifestFileFingerprint:
+    """Adapt a native file fingerprint to the public Python dataclass."""
     return ManifestFileFingerprint(
-        path=typing.cast("str", fingerprint_payload["path"]),
-        size=typing.cast("int", fingerprint_payload["size"]),
-        mtime_ns=typing.cast("int", fingerprint_payload["mtime_ns"]),
-        content_hash_algorithm=typing.cast("str", fingerprint_payload["content_hash_algorithm"]),
-        content_sha256=typing.cast("str | None", fingerprint_payload["content_sha256"]),
+        path=native_fingerprint.path,
+        size=native_fingerprint.size,
+        mtime_ns=native_fingerprint.mtime_ns,
+        content_hash_algorithm=native_fingerprint.content_hash_algorithm,
+        content_sha256=native_fingerprint.content_sha256,
     )
 
 
@@ -253,29 +218,30 @@ def build_prediction_loco_file_fingerprints(
 ) -> tuple[PredictionLocoFileFingerprint, ...]:
     """Build content fingerprints for LOCO files selected from a prediction list."""
     resolved_fingerprint_cache = fingerprint_cache if fingerprint_cache is not None else ManifestFileFingerprintCache()
-    loco_file_payloads = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints_payload(
+    native_loco_file_fingerprints = resolved_fingerprint_cache.native_cache.build_prediction_loco_file_fingerprints(
         str(prediction_list_path),
         list(phenotype_names),
     )
-    if not isinstance(loco_file_payloads, tuple):
-        message = "Native LOCO fingerprint payload must contain a JSON array."
-        raise ValueError(message)
-    return tuple(prediction_loco_file_fingerprint_from_native_payload(payload) for payload in loco_file_payloads)
+    return tuple(
+        prediction_loco_file_fingerprint_from_native(native_fingerprint)
+        for native_fingerprint in native_loco_file_fingerprints
+    )
 
 
-def prediction_loco_file_fingerprint_from_native_payload(payload: object) -> PredictionLocoFileFingerprint:
-    """Adapt a native LOCO file fingerprint payload."""
-    loco_file_payload = native_mapping_payload(payload)
-    content_sha256 = typing.cast("str | None", loco_file_payload["content_sha256"])
+def prediction_loco_file_fingerprint_from_native(
+    native_fingerprint: _core.NativePredictionLocoFileFingerprint,
+) -> PredictionLocoFileFingerprint:
+    """Adapt a native LOCO file fingerprint."""
+    content_sha256 = native_fingerprint.content_sha256
     if content_sha256 is None:
         message = "LOCO prediction file fingerprint must include a content hash."
         raise ValueError(message)
     return PredictionLocoFileFingerprint(
-        phenotype=typing.cast("str", loco_file_payload["phenotype"]),
-        path=typing.cast("str", loco_file_payload["path"]),
-        size=typing.cast("int", loco_file_payload["size"]),
-        mtime_ns=typing.cast("int", loco_file_payload["mtime_ns"]),
-        content_hash_algorithm=typing.cast("str", loco_file_payload["content_hash_algorithm"]),
+        phenotype=native_fingerprint.phenotype,
+        path=native_fingerprint.path,
+        size=native_fingerprint.size,
+        mtime_ns=native_fingerprint.mtime_ns,
+        content_hash_algorithm=native_fingerprint.content_hash_algorithm,
         content_sha256=content_sha256,
     )
 
@@ -477,31 +443,6 @@ def build_native_pipeline_output_preparation_batch(
     )
 
 
-def initialize_output_run(
-    *,
-    output_run_paths: OutputRunPaths,
-    existing_manifest: dict[str, typing.Any] | None,
-    current_header: RunManifestHeaderInput,
-    resume: bool,
-    resume_mode: types.ResumeMode,
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> InitializedOutputRun:
-    """Validate/write the manifest header and return accepted committed chunks."""
-    native_initialized_output_run = native_output_lifecycle_policy().initialize_output_run_from_values(
-        str(output_run_paths.run_directory),
-        str(output_run_paths.chunks_directory),
-        existing_manifest,
-        current_header,
-        resume,
-        resume_mode.value,
-        runtime_compatibility_token,
-    )
-    committed_chunk_identifiers = frozenset(
-        int(chunk_identifier) for chunk_identifier in native_initialized_output_run.committed_chunk_identifiers
-    )
-    return InitializedOutputRun(committed_chunk_identifiers=committed_chunk_identifiers)
-
-
 def prepare_output_run(
     *,
     output_root: Path,
@@ -581,18 +522,3 @@ def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
             or REGENIE_PART_FILENAME_PATTERN.match(child_path.name) is not None
         )
     )
-
-
-def finalize_chunks_to_parquet(
-    output_run_paths: OutputRunPaths,
-    association_mode: types.AssociationMode,
-    output_format: types.OutputFormat,
-) -> Path:
-    """Compact committed chunk files into one compressed Parquet file in Rust."""
-    final_parquet_path = native_output_lifecycle_policy().finalize_output_run_chunks(
-        str(output_run_paths.run_directory),
-        str(output_run_paths.chunks_directory),
-        str(association_mode),
-        output_format.value,
-    )
-    return Path(final_parquet_path)

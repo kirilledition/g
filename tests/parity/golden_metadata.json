@@ -80,8 +80,7 @@
         "tests/test_regenie2_pipeline.py::test_build_phenotype_compute_groups_distinguishes_sample_modes",
         "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_batches_identical_alignments",
         "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_splits_different_alignments",
-        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignments",
-        "tests/test_tabular.py::test_native_grouped_alignment_batches_traits_with_identical_sample_sets"
+        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_uses_union_decode_for_overlapping_alignments"
       ],
       "documentation_paths": [
         "documentation/public/input-files.md",
@@ -105,8 +104,7 @@
       "validation_nodes": [
         "tests/test_regenie2_pipeline.py::test_build_phenotype_compute_groups_distinguishes_sample_modes",
         "tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints",
-        "tests/test_regenie2_pipeline.py::test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifests",
-        "tests/test_tabular.py::test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix"
+        "tests/test_regenie2_pipeline.py::test_multi_linear_complete_case_packed8_forces_trusted_delivery_and_manifests"
       ],
       "documentation_paths": [
         "documentation/public/input-files.md",
@@ -211,9 +209,9 @@
       "expected_output_path": null,
       "g_command_options": {},
       "validation_nodes": [
-        "tests/test_tabular.py::test_native_alignment_matches_iid_only_and_sorts_by_sample_order",
-        "tests/test_tabular.py::test_native_multi_alignment_is_explicit_complete_case_trait_major_matrix",
-        "tests/test_tabular.py::test_native_grouped_alignment_batches_traits_with_identical_sample_sets"
+        "tests/test_core.py::test_regenie_prediction_source_loads_from_native_aligned_sample_data",
+        "tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints",
+        "tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_batches_identical_alignments"
       ],
       "documentation_paths": [
         "documentation/public/input-files.md",

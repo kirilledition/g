@@ -82,19 +82,6 @@ class DosageWorkItemKind(enum.StrEnum):
     STOP_SIGNAL = "stop_signal"
 
 
-class CallbackWorkerThreadHandle(typing.Protocol):
-    """Thread-like callback worker handle used by callback runner adapters."""
-
-    @property
-    def name(self) -> str: ...
-
-    def start(self) -> None: ...
-
-    def join(self, timeout: float | None) -> None: ...
-
-    def is_alive(self) -> bool: ...
-
-
 def classify_result_write_item(
     work_item: QueuedResultWriteWorkItem,
 ) -> ResultWriteItemKind:
@@ -212,60 +199,6 @@ class NativeBgenCallbackRunner(abc.ABC):
     def worker_threads_started(self) -> bool:
         """Return whether callback worker threads have been started."""
         return self.callback_runtime_resources.has_started
-
-    def worker_threads_have_started(self) -> bool:
-        """Return whether callback worker threads have been started."""
-        return self.worker_threads_started
-
-    @property
-    def callback_scheduler_state(self) -> _core.NativeCallbackSchedulerState:
-        """Return the active native callback scheduler state."""
-        return self.callback_runtime_resources.callback_scheduler_state
-
-    @property
-    def progress_state(self) -> _core.NativeCallbackProgressState:
-        """Return the active native callback progress state."""
-        return self.callback_runtime_resources.progress_state
-
-    @property
-    def binary_correction_summary(self) -> _core.NativeBinaryCorrectionSummary:
-        """Return the active native binary correction summary."""
-        return self.callback_runtime_resources.binary_correction_summary
-
-    @property
-    def result_in_flight_slot_signal(self) -> _core.NativeCallbackWaitSignal:
-        """Return the active native result in-flight wait signal."""
-        return self.callback_runtime_resources.result_in_flight_slot_signal
-
-    @property
-    def dosage_buffer_pool_signal(self) -> _core.NativeCallbackWaitSignal:
-        """Return the active native dosage-buffer pool wait signal."""
-        return self.callback_runtime_resources.dosage_buffer_pool_signal
-
-    @property
-    def dosage_queue(self) -> _core.NativeCallbackObjectQueue:
-        """Return the active native dosage work queue."""
-        return self.callback_runtime_resources.dosage_queue
-
-    @property
-    def result_queue(self) -> _core.NativeCallbackObjectQueue:
-        """Return the active native result write queue."""
-        return self.callback_runtime_resources.result_queue
-
-    @property
-    def free_dosage_buffers(self) -> _core.NativeCallbackObjectQueue:
-        """Return the active native free dosage-buffer queue."""
-        return self.callback_runtime_resources.free_dosage_buffers
-
-    @property
-    def worker_thread(self) -> CallbackWorkerThreadHandle:
-        """Return the active dosage worker thread handle."""
-        return self.callback_runtime_resources.worker_thread
-
-    @property
-    def result_worker_thread(self) -> CallbackWorkerThreadHandle:
-        """Return the active result worker thread handle."""
-        return self.callback_runtime_resources.result_worker_thread
 
     @property
     def dosage_worker_name(self) -> str:
@@ -767,12 +700,12 @@ class NativeBgenCallbackRunner(abc.ABC):
             blocked=observation_plan.blocked,
         )
 
-    def record_dosage_buffer_pool_operation_result(
+    def record_dosage_buffer_pool_operation_outcome(
         self,
-        operation_result: _core.NativeDosageBufferPoolOperationResult,
+        operation_outcome: _core.NativeCallbackResourceOperationOutcome,
     ) -> None:
-        """Record a native dosage-buffer pool operation result."""
-        self.record_queue_backpressure_observation(operation_result.backpressure_observation)
+        """Record a native dosage-buffer pool operation outcome."""
+        self.record_queue_backpressure_observation(operation_outcome.dosage_buffer_pool_backpressure_observation)
 
     @abc.abstractmethod
     def compute_preprocessed_chunk(
@@ -957,50 +890,28 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native dosage chunks with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            work_item_get_result = (
-                runtime_resources.get_validated_dosage_work_item_with_optional_observation_and_drain_completion()
-            )
-            work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
-            stage_backpressure_observation = work_item_get_result.stage_backpressure_observation
-            drain_completion_plan = work_item_get_result.drain_completion_plan
-            if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
+            work_item_outcome = runtime_resources.get_next_dosage_work_item_outcome()
+            work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_outcome.item)
+            stage_backpressure_observation = work_item_outcome.stage_backpressure_observation
+            if work_item_outcome.should_stop:
                 return
-            dispatch_plan = self.require_dosage_work_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
-            self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
+            self.apply_dosage_work_item_dispatch_outcome(work_item_outcome)
             dosage_work_item = typing.cast(
                 "PreprocessedDosageWorkItem",
                 work_item,
             )
             if stage_backpressure_observation is None:
-                self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+                self.process_dosage_work_item_with_dispatch_outcome(dosage_work_item, work_item_outcome)
                 continue
             self.record_queue_stage_backpressure_observation(stage_backpressure_observation)
             python_callback_start_time = time.perf_counter()
             try:
-                self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
+                self.process_dosage_work_item_with_dispatch_outcome(dosage_work_item, work_item_outcome)
             finally:
                 elapsed_seconds = time.perf_counter() - python_callback_start_time
                 self.record_work_item_stage_elapsed_duration(dosage_work_item, "python_callback", elapsed_seconds)
 
-    def consume_dosage_chunks_without_timing(self) -> None:
-        """Consume native queued dosage chunks without diagnostic timing overhead."""
-        while True:
-            work_item_get_result = (
-                self.callback_runtime_resources.get_validated_dosage_work_item_with_drain_completion()
-            )
-            work_item = typing.cast("QueuedPreprocessedDosageWorkItem", work_item_get_result.item)
-            drain_completion_plan = work_item_get_result.drain_completion_plan
-            if self.apply_dosage_work_drain_completion_plan(drain_completion_plan):
-                return
-            dispatch_plan = self.require_dosage_work_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
-            self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
-            dosage_work_item = typing.cast(
-                "PreprocessedDosageWorkItem",
-                work_item,
-            )
-            self.process_dosage_work_item_with_dispatch_plan(dosage_work_item, dispatch_plan)
-
-    def process_dosage_work_item(
+    def process_dosage_work_item_with_dispatch_outcome(
         self,
         work_item: (
             PreprocessedDosageChunkWorkItem
@@ -1008,30 +919,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             | PreprocessedVariantMajorDosageChunkBatchWorkItem
             | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
         ),
+        dispatch_outcome: _core.NativeCallbackQueueOperationOutcome,
     ) -> None:
-        """Run one preprocessed dosage work item."""
-        dispatch_plan = self.plan_dosage_work_item_dispatch(work_item)
-        self.apply_dosage_work_item_dispatch_plan(dispatch_plan)
-        self.process_dosage_work_item_with_dispatch_plan(work_item, dispatch_plan)
-
-    def process_dosage_work_item_with_dispatch_plan(
-        self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-        ),
-        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan,
-    ) -> None:
-        """Run one preprocessed dosage work item using native dispatch policy."""
-        if dispatch_plan.should_process_variant_major_dosage_batch:
+        """Run one preprocessed dosage work item using native dispatch outcome."""
+        if dispatch_outcome.should_process_variant_major_dosage_batch:
             if not isinstance(work_item, PreprocessedVariantMajorDosageChunkBatchWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched variant-major batch item."
                 raise RuntimeError(message)
             self.process_variant_major_dosage_batch_work_item(work_item)
             return
-        if dispatch_plan.should_process_variant_major_packed8_probability_pair:
+        if dispatch_outcome.should_process_variant_major_packed8_probability_pair:
             if not isinstance(work_item, PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched packed8 item."
                 raise RuntimeError(message)
@@ -1040,7 +937,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 packed_probability_pairs_by_variant=work_item.packed_probability_pairs_by_variant,
                 chunk_stats=work_item.chunk_stats,
             )
-        elif dispatch_plan.should_process_variant_major_dosage:
+        elif dispatch_outcome.should_process_variant_major_dosage:
             if not isinstance(work_item, PreprocessedVariantMajorDosageChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched variant-major item."
                 raise RuntimeError(message)
@@ -1049,7 +946,7 @@ class NativeBgenCallbackRunner(abc.ABC):
                 genotype_matrix_by_variant=work_item.genotype_matrix_by_variant,
                 chunk_stats=work_item.chunk_stats,
             )
-        elif dispatch_plan.should_process_sample_major_dosage:
+        elif dispatch_outcome.should_process_sample_major_dosage:
             if not isinstance(work_item, PreprocessedDosageChunkWorkItem):
                 message = "Native dosage work dispatch plan selected a mismatched sample-major item."
                 raise RuntimeError(message)
@@ -1076,61 +973,20 @@ class NativeBgenCallbackRunner(abc.ABC):
             )
             self.record_progress(chunk_work_item.metadata)
 
-    def plan_dosage_work_drain_completion(
+    def apply_dosage_work_item_dispatch_outcome(
         self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ),
-    ) -> _core.NativeDosageWorkDrainCompletionPlan:
-        """Plan dosage work queue drain completion from native scheduler policy."""
-        return self.callback_runtime_resources.plan_dosage_work_drain_completion_for_object(work_item)
-
-    def apply_dosage_work_drain_completion_plan(
-        self,
-        drain_completion_plan: _core.NativeDosageWorkDrainCompletionPlan,
-    ) -> bool:
-        """Apply native dosage work drain completion side effects."""
-        return drain_completion_plan.should_stop
-
-    def plan_dosage_work_item_dispatch(
-        self,
-        work_item: (
-            PreprocessedDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkWorkItem
-            | PreprocessedVariantMajorDosageChunkBatchWorkItem
-            | PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem
-            | None
-        ),
-    ) -> _core.NativeDosageWorkItemDispatchPlan:
-        """Plan which dosage processing path should consume one item."""
-        return self.callback_runtime_resources.plan_validated_dosage_work_item_dispatch_for_object(work_item)
-
-    def apply_dosage_work_item_dispatch_plan(
-        self,
-        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan,
+        dispatch_outcome: _core.NativeCallbackQueueOperationOutcome,
     ) -> None:
         """Raise native dosage work dispatch errors before processing."""
-        if not dispatch_plan.has_dispatch_error:
+        if not dispatch_outcome.has_dispatch_error:
             return
-        error_message = dispatch_plan.error_message
+        error_message = getattr(dispatch_outcome, "dispatch_error_message", None)
+        if error_message is None:
+            error_message = getattr(dispatch_outcome, "error_message", None)
         if error_message is None:
             message = "Native dosage work dispatch plan omitted the error message."
             raise RuntimeError(message)
         raise RuntimeError(error_message)
-
-    @staticmethod
-    def require_dosage_work_item_get_dispatch_plan(
-        dispatch_plan: _core.NativeDosageWorkItemDispatchPlan | None,
-    ) -> _core.NativeDosageWorkItemDispatchPlan:
-        """Return the native dispatch plan selected by a validated dosage queue get."""
-        if dispatch_plan is not None:
-            return dispatch_plan
-        message = "Native dosage work item get result omitted a dispatch plan."
-        raise RuntimeError(message)
 
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
@@ -1237,17 +1093,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native result write items with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            work_item_get_result = (
-                runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
-            )
-            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-            drain_completion_plan = work_item_get_result.drain_completion_plan
-            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+            work_item_outcome = runtime_resources.get_next_result_write_item_outcome()
+            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_outcome.item)
+            if self.apply_result_write_drain_completion_outcome(work_item_outcome):
                 return
-            self.record_queue_stage_backpressure_observation(work_item_get_result.stage_backpressure_observation)
-            dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
-            self.apply_result_write_item_dispatch_plan(dispatch_plan)
-            if dispatch_plan.should_process_result_write_item:
+            self.record_queue_stage_backpressure_observation(work_item_outcome.stage_backpressure_observation)
+            self.apply_result_write_item_dispatch_outcome(work_item_outcome)
+            if work_item_outcome.should_process_result_write_item:
                 result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
                 self.process_result_write_item(result_work_item)
                 continue
@@ -1258,40 +1110,17 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Consume queued native multi-result write items with optional timing observations."""
         runtime_resources = self.callback_runtime_resources
         while True:
-            work_item_get_result = (
-                runtime_resources.get_validated_result_write_item_with_optional_observation_and_drain_completion()
-            )
-            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-            drain_completion_plan = work_item_get_result.drain_completion_plan
-            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
+            work_item_outcome = runtime_resources.get_next_result_write_item_outcome()
+            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_outcome.item)
+            if self.apply_result_write_drain_completion_outcome(work_item_outcome):
                 return
-            self.record_queue_stage_backpressure_observation(work_item_get_result.stage_backpressure_observation)
-            dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
-            self.apply_result_write_item_dispatch_plan(dispatch_plan)
-            if dispatch_plan.should_process_multi_result_write_item:
+            self.record_queue_stage_backpressure_observation(work_item_outcome.stage_backpressure_observation)
+            self.apply_result_write_item_dispatch_outcome(work_item_outcome)
+            if work_item_outcome.should_process_multi_result_write_item:
                 multi_work_item = typing.cast("Regenie2MultiResultWriteWorkItem", work_item)
                 self.process_multi_result_write_item(multi_work_item)
                 continue
             message = "Native result write dispatch plan did not select a multi-result processing path."
-            raise RuntimeError(message)
-
-    def consume_result_write_items_without_timing(self) -> None:
-        """Consume native result write items without diagnostic queue timing overhead."""
-        while True:
-            work_item_get_result = (
-                self.callback_runtime_resources.get_validated_result_write_item_with_drain_completion()
-            )
-            work_item = typing.cast("QueuedResultWriteWorkItem", work_item_get_result.item)
-            drain_completion_plan = work_item_get_result.drain_completion_plan
-            if self.apply_result_write_drain_completion_plan(drain_completion_plan):
-                return
-            dispatch_plan = self.require_result_write_item_get_dispatch_plan(work_item_get_result.dispatch_plan)
-            self.apply_result_write_item_dispatch_plan(dispatch_plan)
-            if dispatch_plan.should_process_result_write_item:
-                result_work_item = typing.cast("Regenie2ResultWriteWorkItem", work_item)
-                self.process_result_write_item(result_work_item)
-                continue
-            message = "Native result write dispatch plan did not select a single-result processing path."
             raise RuntimeError(message)
 
     def process_result_write_item(
@@ -1344,36 +1173,11 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.start()
         while True:
             self.raise_worker_error_if_present()
-            put_result = self.callback_runtime_resources.put_dosage_work_item_with_optional_backpressure_observation(
-                work_item
-            )
-            self.record_queue_stage_backpressure_observation(put_result.stage_backpressure_observation)
-            if put_result.should_retry_put:
+            put_outcome = self.callback_runtime_resources.put_dosage_work_item_outcome(work_item)
+            self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
+            if put_outcome.should_retry:
                 continue
             return
-
-    def try_put_dosage_work_item(
-        self,
-        work_item: QueuedPreprocessedDosageWorkItem,
-        *,
-        timeout_seconds: float,
-    ) -> bool:
-        """Try to enqueue one dosage item under native dosage-queue capacity."""
-        return self.callback_runtime_resources.try_put_dosage_work_item(work_item, timeout_seconds)
-
-    def try_put_dosage_work_item_with_backpressure_timeout(
-        self,
-        work_item: QueuedPreprocessedDosageWorkItem,
-    ) -> bool:
-        """Try to enqueue one dosage item using native backpressure policy."""
-        return self.callback_runtime_resources.try_put_dosage_work_item_with_backpressure_timeout(work_item)
-
-    def get_dosage_work_item(
-        self,
-    ) -> QueuedPreprocessedDosageWorkItem:
-        """Wait for and return one dosage queue item while releasing native queue capacity."""
-        get_result = self.callback_runtime_resources.get_dosage_work_item()
-        return typing.cast("QueuedPreprocessedDosageWorkItem", get_result.item)
 
     def raise_worker_error_if_present(self) -> None:
         """Raise an asynchronous worker failure on the producer thread."""
@@ -1399,50 +1203,25 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.start()
         while True:
             self.raise_worker_error_if_present()
-            put_result = self.callback_runtime_resources.put_result_write_item_with_optional_backpressure_observation(
-                work_item
-            )
-            self.record_queue_stage_backpressure_observation(put_result.stage_backpressure_observation)
-            if put_result.should_retry_put:
+            put_outcome = self.callback_runtime_resources.put_result_write_item_outcome(work_item)
+            self.record_queue_stage_backpressure_observation(put_outcome.stage_backpressure_observation)
+            if put_outcome.should_retry:
                 continue
             return
-
-    def try_put_result_write_item(
-        self,
-        work_item: QueuedResultWriteWorkItem,
-        *,
-        timeout_seconds: float,
-    ) -> bool:
-        """Try to enqueue one result item under native result-queue capacity."""
-        return self.callback_runtime_resources.try_put_result_write_item(work_item, timeout_seconds)
-
-    def try_put_result_write_item_with_backpressure_timeout(
-        self,
-        work_item: QueuedResultWriteWorkItem,
-    ) -> bool:
-        """Try to enqueue one result item using native backpressure policy."""
-        return self.callback_runtime_resources.try_put_result_write_item_with_backpressure_timeout(work_item)
-
-    def get_result_write_item(self) -> QueuedResultWriteWorkItem:
-        """Wait for and return one result queue item while releasing native queue capacity."""
-        get_result = self.callback_runtime_resources.get_result_write_item()
-        return typing.cast("QueuedResultWriteWorkItem", get_result.item)
 
     def acquire_result_in_flight_slot(self) -> None:
         """Reserve capacity for one chunk of pending GPU result work."""
         while True:
             self.raise_worker_error_if_present()
-            acquire_result = self.callback_runtime_resources.acquire_result_in_flight_slot_with_optional_observation()
-            self.record_queue_stage_backpressure_observation(acquire_result.stage_backpressure_observation)
-            if not acquire_result.should_retry_acquisition:
+            acquire_outcome = self.callback_runtime_resources.acquire_result_in_flight_slot_outcome()
+            self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
+            if not acquire_outcome.should_retry:
                 return
 
     def release_result_in_flight_slot(self) -> None:
         """Release capacity for one completed chunk of GPU result work."""
-        release_result = (
-            self.callback_runtime_resources.release_result_in_flight_slot_with_optional_backpressure_observation()
-        )
-        self.record_queue_backpressure_observation(release_result.backpressure_observation)
+        release_outcome = self.callback_runtime_resources.release_result_in_flight_slot_outcome()
+        self.record_queue_backpressure_observation(release_outcome.backpressure_observation)
 
     def finish(self) -> None:
         """Wait until all queued JAX work has been written."""
@@ -1550,53 +1329,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.acquire_dosage_buffer_with_shape(expected_shape, np.uint8),
         )
 
-    @staticmethod
-    def _dosage_buffer_owner(dosage_buffer: HostGenotypeBuffer) -> HostGenotypeBuffer:
-        """Return the base owner array for a dosage buffer view."""
-        dosage_buffer_owner = dosage_buffer
-        dosage_buffer_base = dosage_buffer_owner.base
-        while isinstance(dosage_buffer_base, np.ndarray):
-            dosage_buffer_owner = dosage_buffer_base
-            dosage_buffer_base = dosage_buffer_owner.base
-        return dosage_buffer_owner
-
-    def plan_dosage_buffer_reuse(
-        self,
-        *,
-        buffered_shape: tuple[int, ...],
-        expected_shape: tuple[int, ...],
-    ) -> _core.NativeDosageBufferReusePlan | None:
-        """Plan host dosage-buffer reuse through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_reuse(buffered_shape, expected_shape)
-
-    def plan_dosage_buffer_return_attempt(
-        self,
-        *,
-        buffer_identifier: int,
-    ) -> _core.NativeDosageBufferReturnAttemptPlan:
-        """Plan host dosage-buffer return eligibility through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_return_attempt(buffer_identifier)
-
-    def _acquire_reused_dosage_buffer(
-        self,
-        dosage_buffer: HostGenotypeBuffer,
-        expected_shape: tuple[int, ...],
-        dtype: npt.DTypeLike,
-    ) -> HostGenotypeBuffer | None:
-        """Return a reused buffer if dtype/shape constraints are met, else None."""
-        if dosage_buffer.dtype != dtype:
-            return None
-        reuse_plan = self.plan_dosage_buffer_reuse(
-            buffered_shape=dosage_buffer.shape,
-            expected_shape=expected_shape,
-        )
-        if reuse_plan is None:
-            return None
-        if not reuse_plan.requires_slice:
-            return dosage_buffer
-        slices = tuple(slice(0, dimension_size) for dimension_size in reuse_plan.slice_dimensions)
-        return dosage_buffer[slices]
-
     def acquire_dosage_buffer_from_native_resources(
         self,
         expected_shape: tuple[int, ...],
@@ -1605,22 +1337,24 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Acquire a host dosage buffer using native resource-owner waits and storage."""
         while True:
             self.raise_worker_error_if_present()
-            acquire_result = self.callback_runtime_resources.acquire_dosage_buffer_with_backpressure_timeout()
-            if acquire_result.should_allocate:
+            acquire_outcome = self.callback_runtime_resources.acquire_dosage_buffer_outcome()
+            if acquire_outcome.should_allocate:
                 return self.allocate_dosage_buffer_with_shape(expected_shape, dtype)
-            if acquire_result.dosage_buffer is not None:
-                dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_result.dosage_buffer)
-                reuse_selection_result = self.callback_runtime_resources.select_reusable_dosage_buffer_or_discard(
-                    dosage_buffer,
-                    expected_shape,
-                    dtype,
+            if acquire_outcome.dosage_buffer is not None:
+                dosage_buffer = typing.cast("HostGenotypeBuffer", acquire_outcome.dosage_buffer)
+                reuse_selection_outcome = (
+                    self.callback_runtime_resources.select_reusable_dosage_buffer_or_discard_outcome(
+                        dosage_buffer,
+                        expected_shape,
+                        dtype,
+                    )
                 )
-                self.record_dosage_buffer_pool_operation_result(reuse_selection_result.operation_result)
-                reused_dosage_buffer = reuse_selection_result.dosage_buffer
+                self.record_dosage_buffer_pool_operation_outcome(reuse_selection_outcome)
+                reused_dosage_buffer = reuse_selection_outcome.dosage_buffer
                 if reused_dosage_buffer is not None:
                     return typing.cast("HostGenotypeBuffer", reused_dosage_buffer)
                 continue
-            self.record_queue_stage_backpressure_observation(acquire_result.stage_backpressure_observation)
+            self.record_queue_stage_backpressure_observation(acquire_outcome.stage_backpressure_observation)
 
     def acquire_dosage_buffer_with_shape(
         self,
@@ -1632,10 +1366,10 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def release_dosage_buffer(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Return a processed host dosage buffer to the reusable pool."""
-        operation_result = self.callback_runtime_resources.return_dosage_buffer_owner_with_optional_observation(
+        operation_outcome = self.callback_runtime_resources.release_dosage_buffer_outcome(
             dosage_buffer,
         )
-        self.record_dosage_buffer_pool_operation_result(operation_result)
+        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
 
     def allocate_dosage_buffer_with_shape(
         self,
@@ -1644,25 +1378,25 @@ class NativeBgenCallbackRunner(abc.ABC):
     ) -> HostGenotypeBuffer:
         """Allocate and register one host genotype buffer slot."""
         dosage_buffer = typing.cast("HostGenotypeBuffer", np.empty(expected_shape, dtype=dtype, order="C"))
-        operation_result = self.callback_runtime_resources.register_dosage_buffer_object_with_optional_observation(
+        operation_outcome = self.callback_runtime_resources.register_dosage_buffer_outcome(
             dosage_buffer
         )
-        self.record_dosage_buffer_pool_operation_result(operation_result)
+        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
         return dosage_buffer
 
     def discard_dosage_buffer_slot(self, dosage_buffer: HostGenotypeBuffer) -> None:
         """Remove one discarded host genotype buffer slot from pool accounting."""
-        operation_result = self.callback_runtime_resources.discard_dosage_buffer_owner_with_optional_observation(
+        operation_outcome = self.callback_runtime_resources.discard_dosage_buffer_outcome(
             dosage_buffer
         )
-        self.record_dosage_buffer_pool_operation_result(operation_result)
+        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
 
     def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | HostGenotypeBuffer) -> None:
         """Return a NumPy host dosage buffer to the pool after device transfer."""
-        operation_result = self.callback_runtime_resources.release_numpy_dosage_buffer_with_optional_observation(
+        operation_outcome = self.callback_runtime_resources.release_numpy_dosage_buffer_outcome(
             dosage_buffer,
         )
-        self.record_dosage_buffer_pool_operation_result(operation_result)
+        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
 
     def get_releasable_dosage_buffer(
         self,
@@ -1674,25 +1408,16 @@ class NativeBgenCallbackRunner(abc.ABC):
             self.callback_runtime_resources.get_releasable_dosage_buffer_owner(dosage_buffer),
         )
 
-    def result_work_item_host_buffer_owner(
-        self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
-    ) -> HostGenotypeBuffer | None:
-        """Return the reusable host buffer owner referenced by one result work item."""
-        if work_item.host_dosage_buffer is None:
-            return None
-        return self._dosage_buffer_owner(work_item.host_dosage_buffer)
-
     def record_result_work_item_resource_release_result(
         self,
-        release_result: _core.NativeResultWorkItemResourceReleaseResult,
+        release_outcome: _core.NativeCallbackResourceOperationOutcome,
     ) -> None:
         """Record Python-side telemetry from native result work item resource cleanup."""
         self.record_queue_backpressure_observation(
-            release_result.dosage_buffer_pool_backpressure_observation,
+            release_outcome.dosage_buffer_pool_backpressure_observation,
         )
         self.record_queue_backpressure_observation(
-            release_result.result_in_flight_backpressure_observation,
+            release_outcome.result_in_flight_backpressure_observation,
         )
 
     def release_result_work_item_buffer(
@@ -1706,76 +1431,43 @@ class NativeBgenCallbackRunner(abc.ABC):
             host_dosage_buffer_released=host_dosage_buffer_released,
         )
 
-    def plan_result_write_drain_completion(
+    def apply_result_write_drain_completion_outcome(
         self,
-        work_item: QueuedResultWriteWorkItem,
-    ) -> _core.NativeResultWriteDrainCompletionPlan:
-        """Plan result write queue drain completion from native scheduler policy."""
-        return self.callback_runtime_resources.plan_result_write_drain_completion_for_object(work_item)
-
-    def apply_result_write_drain_completion_plan(
-        self,
-        drain_completion_plan: _core.NativeResultWriteDrainCompletionPlan,
+        drain_outcome: _core.NativeCallbackQueueOperationOutcome,
     ) -> bool:
-        """Apply native result write drain completion side effects."""
-        if drain_completion_plan.should_flush_binary_correction_diagnostics:
+        """Apply native result write drain outcome side effects."""
+        if drain_outcome.should_flush_binary_correction_diagnostics:
             self.flush_binary_correction_diagnostics()
-        return drain_completion_plan.should_stop
+        return drain_outcome.should_stop
 
-    def plan_result_write_item_dispatch(
+    def apply_result_write_item_dispatch_outcome(
         self,
-        work_item: QueuedResultWriteWorkItem,
-    ) -> _core.NativeResultWriteItemDispatchPlan:
-        """Plan which result write processing path should consume one item."""
-        return self.callback_runtime_resources.plan_validated_result_write_item_dispatch_for_object(work_item)
-
-    def apply_result_write_item_dispatch_plan(
-        self,
-        dispatch_plan: _core.NativeResultWriteItemDispatchPlan,
+        dispatch_outcome: _core.NativeCallbackQueueOperationOutcome,
     ) -> None:
         """Raise native result write dispatch errors before processing."""
-        if not dispatch_plan.has_dispatch_error:
+        if not dispatch_outcome.has_dispatch_error:
             return
-        error_message = dispatch_plan.error_message
+        error_message = getattr(dispatch_outcome, "dispatch_error_message", None)
+        if error_message is None:
+            error_message = getattr(dispatch_outcome, "error_message", None)
         if error_message is None:
             message = "Native result write dispatch plan omitted the error message."
             raise RuntimeError(message)
         raise RuntimeError(error_message)
-
-    @staticmethod
-    def require_result_write_item_get_dispatch_plan(
-        dispatch_plan: _core.NativeResultWriteItemDispatchPlan | None,
-    ) -> _core.NativeResultWriteItemDispatchPlan:
-        """Return the native dispatch plan selected by a validated result queue get."""
-        if dispatch_plan is not None:
-            return dispatch_plan
-        message = "Native result write item get result omitted a dispatch plan."
-        raise RuntimeError(message)
-
-    def release_result_work_item_resources(
-        self,
-        work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
-        resource_release_plan: _core.NativeResultWriteItemResourceReleasePlan,
-    ) -> None:
-        """Release result work item resources selected by native scheduler policy."""
-        if resource_release_plan.should_release_host_buffer:
-            if work_item.host_dosage_buffer is None:
-                message = "Native result work item resource release plan selected a missing host buffer."
-                raise RuntimeError(message)
-            self.release_dosage_buffer(work_item.host_dosage_buffer)
-        if resource_release_plan.should_release_result_in_flight_slot:
-            self.release_result_in_flight_slot()
 
     def release_result_work_item_host_buffer(
         self,
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> bool:
         """Release the host genotype buffer associated with one result."""
-        release_result = self.callback_runtime_resources.release_result_work_item_pre_write_resources_for_object(
+        host_dosage_buffer_released = False
+        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
             work_item,
+            "pre_write",
+            host_dosage_buffer_released,
         )
-        self.record_result_work_item_resource_release_result(release_result)
-        return release_result.released_host_buffer
+        self.record_result_work_item_resource_release_result(release_outcome)
+        return release_outcome.released_host_buffer
 
     def release_result_work_item_final_resources(
         self,
@@ -1784,21 +1476,25 @@ class NativeBgenCallbackRunner(abc.ABC):
         host_dosage_buffer_released: bool,
     ) -> None:
         """Release final resources associated with one result work item."""
-        release_result = self.callback_runtime_resources.release_result_work_item_final_resources_for_object(
+        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
             work_item,
+            "final",
             host_dosage_buffer_released,
         )
-        self.record_result_work_item_resource_release_result(release_result)
+        self.record_result_work_item_resource_release_result(release_outcome)
 
     def release_result_work_item_in_flight_slot(
         self,
         work_item: Regenie2ResultWriteWorkItem | Regenie2MultiResultWriteWorkItem,
     ) -> None:
         """Release the in-flight result slot associated with one result."""
-        release_result = self.callback_runtime_resources.release_result_work_item_in_flight_slot_for_object(
+        host_dosage_buffer_released = False
+        release_outcome = self.callback_runtime_resources.release_result_work_item_resources_outcome(
             work_item,
+            "in_flight_slot",
+            host_dosage_buffer_released,
         )
-        self.record_result_work_item_resource_release_result(release_result)
+        self.record_result_work_item_resource_release_result(release_outcome)
 
 
 __all__ = [

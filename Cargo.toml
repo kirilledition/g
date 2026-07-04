@@ -86,7 +86,6 @@ nalgebra = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 pyo3-pylogger = { workspace = true }
-serde = { workspace = true }
 toml = { workspace = true }
 
 [features]

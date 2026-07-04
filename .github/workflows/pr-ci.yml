@@ -398,10 +398,14 @@ jobs:
           set -euo pipefail
           python - <<'PY' >> "${GITHUB_ENV}"
           import os
+          import sys
           import sysconfig
 
           library_dir = sysconfig.get_config_var("LIBDIR")
           previous_path = os.environ.get("LD_LIBRARY_PATH", "")
+          print(f"PYO3_PYTHON={sys.executable}")
+          print(f"PYTHON_SYS_EXECUTABLE={sys.executable}")
+          print(f"PYTHON_LIBDIR={library_dir}")
           print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
           PY
 
@@ -416,6 +420,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
 
       - name: Install Python dependencies for Rust integration tests
         run: uv sync --group dev --frozen
@@ -501,10 +507,14 @@ jobs:
           set -euo pipefail
           python - <<'PY' >> "${GITHUB_ENV}"
           import os
+          import sys
           import sysconfig
 
           library_dir = sysconfig.get_config_var("LIBDIR")
           previous_path = os.environ.get("LD_LIBRARY_PATH", "")
+          print(f"PYO3_PYTHON={sys.executable}")
+          print(f"PYTHON_SYS_EXECUTABLE={sys.executable}")
+          print(f"PYTHON_LIBDIR={library_dir}")
           print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
           PY
 
@@ -519,6 +529,8 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

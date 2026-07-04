@@ -3,7 +3,6 @@
 
 use pyo3::prelude::*;
 
-mod association_backend;
 mod callback_diagnostics;
 mod callback_progress;
 mod callback_queue;
@@ -37,7 +36,6 @@ mod timing;
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
     genotype::register_module(module)?;
-    association_backend::register_module(module)?;
     sample_alignment::register_module(module)?;
     callback_summary::register_module(module)?;
     callback_progress::register_module(module)?;

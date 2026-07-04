@@ -91,7 +91,6 @@ Native I/O changes usually need tests in:
 
 - `tests/test_io_output.py`;
 - `tests/test_io_source.py`;
-- `tests/test_io_sample.py`;
 - Rust unit tests under `crates/genotype/src/`, `crates/input/src/`, or `crates/output/src/`;
 - pipeline tests when callback delivery or writer sessions change.
 

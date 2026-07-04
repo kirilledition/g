@@ -12,6 +12,7 @@ from g.jax_runtime import models as jax_runtime_models
 from g.jax_runtime import resolution as jax_runtime_resolution
 
 if typing.TYPE_CHECKING:
+    from g.engine.regenie2_pipeline import requests as pipeline_requests
     from g.interface import config
     from g.runner import events
 
@@ -60,7 +61,7 @@ class RuntimePolicy:
     @property
     def logging_policy(self) -> LoggingRuntimePolicy:
         """Return the requested logging and tracing sink policy view."""
-        return logging_runtime_policy_from_native_payload(self.native_policy.logging_runtime_policy_payload())
+        return logging_runtime_policy_from_native_policy(self.native_policy.logging_runtime_policy())
 
     @property
     def rayon_thread_count(self) -> int | None:
@@ -70,7 +71,7 @@ class RuntimePolicy:
     @property
     def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
         """Return the requested JAX runtime policy view."""
-        return jax_runtime_policy_from_native_payload(self.native_policy.jax_runtime_policy_payload())
+        return jax_runtime_policy_from_native_policy(self.native_policy.jax_runtime_policy())
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ class RunRuntime:
     @property
     def logging_policy(self) -> LoggingRuntimePolicy:
         """Return the checked logging and tracing sink policy view."""
-        return logging_runtime_policy_from_native_payload(self.native_runtime.logging_runtime_policy_payload())
+        return logging_runtime_policy_from_native_policy(self.native_runtime.logging_runtime_policy())
 
     @property
     def rayon_thread_count(self) -> int | None:
@@ -102,7 +103,7 @@ class RunRuntime:
     @property
     def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
         """Return the checked JAX runtime policy view."""
-        return jax_runtime_policy_from_native_payload(self.native_runtime.jax_runtime_policy_payload())
+        return jax_runtime_policy_from_native_policy(self.native_runtime.jax_runtime_policy())
 
 
 @dataclass(frozen=True)
@@ -138,9 +139,9 @@ def build_process_runtime_state(
 
     """
     return _core.NativeRuntimeState().build_process_runtime_state_handle(
-        None if logging_policy is None else logging_runtime_policy_to_native_payload(logging_policy),
+        None if logging_policy is None else logging_runtime_policy_to_native_policy(logging_policy),
         rayon_thread_count,
-        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
+        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
     )
 
 
@@ -177,7 +178,7 @@ def configure_runtime_before_jax_import(
     """Configure JAX platform and runtime before compute modules are imported."""
     requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
     native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session_resolving_cache_directory(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(requested_policy),
     )
     if not native_setup_session.should_configure:
         return None
@@ -191,7 +192,7 @@ def configure_runtime_before_jax_import(
         diagnostic_sink=record_diagnostic_event,
     )
     PROCESS_RUNTIME_STATE.complete_jax_runtime_setup_session(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(requested_policy),
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(requested_policy),
         native_setup_session,
     )
     return setup_report
@@ -203,7 +204,7 @@ def build_logging_runtime_policy(
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
     telemetry_stream_file = None if telemetry_paths is None else telemetry_paths.stream_file
-    native_payload = PROCESS_RUNTIME_STATE.build_logging_runtime_policy_payload(
+    native_policy = PROCESS_RUNTIME_STATE.build_logging_runtime_policy(
         diagnostics_config.log_filter,
         None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
         diagnostics_config.log_stderr,
@@ -217,69 +218,66 @@ def build_logging_runtime_policy(
         diagnostics_config.telemetry.value,
         None if telemetry_stream_file is None else str(telemetry_stream_file),
     )
-    return logging_runtime_policy_from_native_payload(native_payload)
+    return logging_runtime_policy_from_native_policy(native_policy)
 
 
-def logging_runtime_policy_from_native_payload(payload: object) -> LoggingRuntimePolicy:
-    """Adapt a native logging-runtime policy payload to the Python dataclass."""
-    policy_payload = native_mapping_payload(payload)
+def logging_runtime_policy_from_native_policy(native_policy: _core.NativeLoggingRuntimePolicy) -> LoggingRuntimePolicy:
+    """Adapt a native logging-runtime policy to the Python dataclass."""
     return LoggingRuntimePolicy(
-        log_filter=str(policy_payload["log_filter"]),
-        log_file=optional_path_from_native_payload(policy_payload["log_file"]),
-        log_stderr=bool(policy_payload["log_stderr"]),
-        log_queue_size=int(policy_payload["log_queue_size"]),
-        log_lossy=bool(policy_payload["log_lossy"]),
-        include_source_location=bool(policy_payload["include_source_location"]),
-        include_span_events=bool(policy_payload["include_span_events"]),
-        trace_file=optional_path_from_native_payload(policy_payload["trace_file"]),
-        trace_filter=str(policy_payload["trace_filter"]),
-        trace_event_cap=None if policy_payload["trace_event_cap"] is None else int(policy_payload["trace_event_cap"]),
+        log_filter=native_policy.log_filter,
+        log_file=optional_path_from_native_value(native_policy.log_file),
+        log_stderr=native_policy.log_stderr,
+        log_queue_size=native_policy.log_queue_size,
+        log_lossy=native_policy.log_lossy,
+        include_source_location=native_policy.include_source_location,
+        include_span_events=native_policy.include_span_events,
+        trace_file=optional_path_from_native_value(native_policy.trace_file),
+        trace_filter=native_policy.trace_filter,
+        trace_event_cap=native_policy.trace_event_cap,
     )
 
 
-def logging_runtime_policy_to_native_payload(policy: LoggingRuntimePolicy) -> dict[str, object]:
-    """Adapt a Python logging runtime policy view to the native payload shape."""
-    return {
-        "log_filter": policy.log_filter,
-        "log_file": None if policy.log_file is None else str(policy.log_file),
-        "log_stderr": policy.log_stderr,
-        "log_queue_size": policy.log_queue_size,
-        "log_lossy": policy.log_lossy,
-        "include_source_location": policy.include_source_location,
-        "include_span_events": policy.include_span_events,
-        "trace_file": None if policy.trace_file is None else str(policy.trace_file),
-        "trace_filter": policy.trace_filter,
-        "trace_event_cap": policy.trace_event_cap,
-    }
+def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _core.NativeLoggingRuntimePolicy:
+    """Adapt a Python logging runtime policy view to a native policy handle."""
+    return PROCESS_RUNTIME_STATE.build_logging_runtime_policy(
+        policy.log_filter,
+        None if policy.log_file is None else str(policy.log_file),
+        policy.log_stderr,
+        policy.log_queue_size,
+        policy.log_lossy,
+        policy.include_source_location,
+        policy.include_span_events,
+        None if policy.trace_file is None else str(policy.trace_file),
+        policy.trace_filter,
+        policy.trace_event_cap,
+        "trace",
+        None,
+    )
 
 
-def jax_runtime_policy_from_native_payload(payload: object) -> jax_runtime_models.JaxRuntimePolicy:
-    """Adapt a native JAX runtime policy payload to the Python dataclass."""
-    policy_payload = native_mapping_payload(payload)
+def jax_runtime_policy_from_native_policy(
+    native_policy: _core.NativeJaxRuntimePolicy,
+) -> jax_runtime_models.JaxRuntimePolicy:
+    """Adapt a native JAX runtime policy to the Python dataclass."""
     return jax_runtime_models.JaxRuntimePolicy(
-        device=types.Device(str(policy_payload["device"])),
-        cache_directory=optional_path_from_native_payload(policy_payload["cache_directory"]),
+        device=types.Device(native_policy.device),
+        cache_directory=optional_path_from_native_value(native_policy.cache_directory),
         matmul_precision=None
-        if policy_payload["matmul_precision"] is None
-        else types.JaxMatmulPrecision(str(policy_payload["matmul_precision"])),
-        persistent_cache=bool(policy_payload["persistent_cache"]),
-        persistent_cache_min_entry_size_bytes=int(policy_payload["persistent_cache_min_entry_size_bytes"]),
-        persistent_cache_min_compile_time_seconds=int(policy_payload["persistent_cache_min_compile_time_seconds"]),
-        xla_autotune_cache=bool(policy_payload["xla_autotune_cache"]),
-        transfer_guard=bool(policy_payload["transfer_guard"]),
+        if native_policy.matmul_precision is None
+        else types.JaxMatmulPrecision(native_policy.matmul_precision),
+        persistent_cache=native_policy.persistent_cache,
+        persistent_cache_min_entry_size_bytes=native_policy.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=native_policy.persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=native_policy.xla_autotune_cache,
+        transfer_guard=native_policy.transfer_guard,
     )
 
 
-def optional_path_from_native_payload(path_payload: object) -> Path | None:
-    """Adapt a native optional path payload to `Path`."""
-    if path_payload is None:
+def optional_path_from_native_value(path_value: str | None) -> Path | None:
+    """Adapt a native optional path value to `Path`."""
+    if path_value is None:
         return None
-    return Path(str(path_payload))
-
-
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))
+    return Path(path_value)
 
 
 def build_runtime_policy(
@@ -291,9 +289,9 @@ def build_runtime_policy(
     jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
     return RuntimePolicy(
         native_policy=PROCESS_RUNTIME_STATE.build_runtime_policy_handle(
-            logging_runtime_policy_to_native_payload(logging_policy),
+            logging_runtime_policy_to_native_policy(logging_policy),
             regenie_config.trait.threads,
-            jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy),
+            jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
         )
     )
 
@@ -319,7 +317,7 @@ def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
 def require_compatible_logging_runtime_policy(logging_policy: LoggingRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global logging settings."""
     PROCESS_RUNTIME_STATE.require_compatible_logging_runtime_policy(
-        logging_runtime_policy_to_native_payload(logging_policy)
+        logging_runtime_policy_to_native_policy(logging_policy)
     )
 
 
@@ -331,14 +329,14 @@ def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
 def require_compatible_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global JAX settings."""
     PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
     )
 
 
 def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
     """Record the process-global JAX runtime policy configured in this process."""
     PROCESS_RUNTIME_STATE.record_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_payload(jax_policy)
+        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
     )
 
 
@@ -354,42 +352,44 @@ def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
 
 def describe_runtime_state() -> RuntimeState:
     """Return the process-global runtime state known to this Python process."""
-    runtime_state_payload = native_mapping_payload(PROCESS_RUNTIME_STATE.runtime_state_payload())
-    logging_policy_payload = runtime_state_payload["logging_policy"]
-    jax_policy_payload = runtime_state_payload["jax_policy"]
+    runtime_state_snapshot = PROCESS_RUNTIME_STATE.runtime_state_snapshot()
+    logging_policy = runtime_state_snapshot.logging_policy
+    jax_policy = runtime_state_snapshot.jax_policy
     return RuntimeState(
         logging_policy=None
-        if logging_policy_payload is None
-        else logging_runtime_policy_from_native_payload(logging_policy_payload),
-        rayon_thread_count=None
-        if runtime_state_payload["rayon_thread_count"] is None
-        else int(runtime_state_payload["rayon_thread_count"]),
-        jax_policy=None if jax_policy_payload is None else jax_runtime_policy_from_native_payload(jax_policy_payload),
+        if logging_policy is None
+        else logging_runtime_policy_from_native_policy(logging_policy),
+        rayon_thread_count=runtime_state_snapshot.rayon_thread_count,
+        jax_policy=None if jax_policy is None else jax_runtime_policy_from_native_policy(jax_policy),
     )
 
 
-def run_regenie2_linear_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
+def run_regenie2_linear_bgen_pipeline(request: pipeline_requests.SingleTraitPipelineRequest) -> Path | None:
     """Run the linear native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
-    return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(**kwargs)
+    return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(request)
 
 
-def run_regenie2_binary_bgen_pipeline(**kwargs: typing.Any) -> Path | None:
+def run_regenie2_binary_bgen_pipeline(request: pipeline_requests.SingleTraitPipelineRequest) -> Path | None:
     """Run the binary native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
-    return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(**kwargs)
+    return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(request)
 
 
-def run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+def run_regenie2_multi_phenotype_linear_bgen_pipeline(
+    request: pipeline_requests.MultiTraitPipelineRequest,
+) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
-    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_linear_bgen_pipeline(**kwargs)
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_linear_bgen_pipeline(request)
 
 
-def run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs: typing.Any) -> tuple[Path | None, ...]:
+def run_regenie2_multi_phenotype_binary_bgen_pipeline(
+    request: pipeline_requests.MultiTraitPipelineRequest,
+) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
-    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(**kwargs)
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(request)
 
 
 def configure_rayon_thread_pool(thread_count: int) -> None:
@@ -416,4 +416,4 @@ def initialize_logging(
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""
     logging_policy = build_logging_runtime_policy(diagnostics_config, telemetry_paths)
-    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(logging_runtime_policy_to_native_payload(logging_policy))
+    PROCESS_RUNTIME_STATE.initialize_logging_runtime_policy(logging_runtime_policy_to_native_policy(logging_policy))

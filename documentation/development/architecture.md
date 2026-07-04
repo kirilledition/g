@@ -32,8 +32,7 @@ src/g/
     config.py                    thin Python bridge around Rust-owned config objects
   execution_plan.py              immutable normalized run plans
   runner/                        runtime orchestration, telemetry, dispatch, artifacts
-  jax_runtime/                   JAX runtime policy, resolution, diagnostics, state, setup
-  runtime_paths.py               default runtime cache path helpers
+  jax_runtime/                   JAX runtime policy, resolution, diagnostics, setup
   engine/
     regenie2_pipeline/           native-driven BGEN pipeline wrappers
       backend.py                 association backend selection before dispatch

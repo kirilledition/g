@@ -20,7 +20,7 @@ mod tests {
         Python::attach(|py| {
             let module = PyModule::new(py, "_core_test")?;
             super::_core(&module)?;
-            assert!(module.hasattr("plan_genotype_chunks")?);
+            assert!(module.hasattr("summarize_variant_major_dosage_chunk_stats")?);
             Ok(())
         })
     }
