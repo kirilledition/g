@@ -4,6 +4,7 @@
 /results/
 /documentation_rendered_website/
 /.tools/
+.skylos/
 .direnv/
 .venv/
 .venv-hail/

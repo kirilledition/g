@@ -92,10 +92,6 @@ class GracefulShutdownController:
         )
         raise GracefulShutdownRequested(shutdown_signal)
 
-    def restore_previous_handlers(self) -> None:
-        """Restore signal handlers captured when the controller was installed."""
-        self.native_controller.restore_python_signal_handlers()
-
 
 def shutdown_signal_from_native_signal(native_signal: _core.NativeShutdownSignal) -> ShutdownSignal:
     """Adapt native shutdown signal metadata to the public Python dataclass."""

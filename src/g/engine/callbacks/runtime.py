@@ -45,49 +45,6 @@ class ResultWriteItemKind(enum.StrEnum):
 
     SINGLE_RESULT = "single_result"
     MULTI_RESULT = "multi_result"
-    STOP_SIGNAL = "stop_signal"
-
-
-class DosageWorkItemKind(enum.StrEnum):
-    """Native dosage work-item kind values."""
-
-    SAMPLE_MAJOR_DOSAGE = "sample_major_dosage"
-    VARIANT_MAJOR_DOSAGE = "variant_major_dosage"
-    VARIANT_MAJOR_DOSAGE_BATCH = "variant_major_dosage_batch"
-    VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR = "variant_major_packed8_probability_pair"
-    STOP_SIGNAL = "stop_signal"
-
-
-def classify_result_write_item(
-    work_item: QueuedResultWriteWorkItem,
-) -> ResultWriteItemKind:
-    """Classify one result write item for native scheduler dispatch."""
-    if work_item is None:
-        return ResultWriteItemKind.STOP_SIGNAL
-    if isinstance(work_item, shared.Regenie2MultiResultWriteWorkItem):
-        return ResultWriteItemKind.MULTI_RESULT
-    if isinstance(work_item, shared.Regenie2ResultWriteWorkItem):
-        return ResultWriteItemKind.SINGLE_RESULT
-    message = f"Unsupported result write work item type: {type(work_item).__name__}"
-    raise TypeError(message)
-
-
-def classify_dosage_work_item(
-    work_item: QueuedPreprocessedDosageWorkItem,
-) -> DosageWorkItemKind:
-    """Classify one dosage work item for native scheduler dispatch."""
-    if work_item is None:
-        return DosageWorkItemKind.STOP_SIGNAL
-    if isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkBatchWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE_BATCH
-    if isinstance(work_item, shared.PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
-    if isinstance(work_item, shared.PreprocessedVariantMajorDosageChunkWorkItem):
-        return DosageWorkItemKind.VARIANT_MAJOR_DOSAGE
-    if isinstance(work_item, shared.PreprocessedDosageChunkWorkItem):
-        return DosageWorkItemKind.SAMPLE_MAJOR_DOSAGE
-    message = f"Unsupported preprocessed dosage work item type: {type(work_item).__name__}"
-    raise TypeError(message)
 
 
 def require_current_chromosome_state[ChromosomeStateType](

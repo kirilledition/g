@@ -714,33 +714,22 @@ pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_e
 }
 
 #[pyfunction]
-pub fn record_native_cli_stdout_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
-    let payload = native_run_events::build_native_cli_stdout_diagnostic_payload(output_text, max_payload_chars);
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_cli_stderr_diagnostic_event(output_text: &str, max_payload_chars: i64) -> PyResult<()> {
-    let payload = native_run_events::build_native_cli_stderr_diagnostic_payload(output_text, max_payload_chars);
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_cli_interrupted_line_diagnostic_event(line: &str) -> PyResult<()> {
-    let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_cli_failed_line_diagnostic_event(line: &str) -> PyResult<()> {
-    let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_cli_completed_line_diagnostic_event(line: &str) -> PyResult<()> {
-    let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
-    emit_run_diagnostic_event_payload(&payload)
+pub fn record_native_cli_output_diagnostic_events(
+    stdout_text: &str,
+    stderr_text: &str,
+    max_payload_chars: i64,
+) -> PyResult<()> {
+    if !stdout_text.is_empty() {
+        let stdout_payload =
+            native_run_events::build_native_cli_stdout_diagnostic_payload(stdout_text, max_payload_chars);
+        emit_run_diagnostic_event_payload(&stdout_payload)?;
+    }
+    if !stderr_text.is_empty() {
+        let stderr_payload =
+            native_run_events::build_native_cli_stderr_diagnostic_payload(stderr_text, max_payload_chars);
+        emit_run_diagnostic_event_payload(&stderr_payload)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn record_native_runtime_knobs_configured_diagnostic_event(
@@ -1255,21 +1244,45 @@ pub fn record_native_dispatch_writer_sessions_interrupted_flush_started_diagnost
 }
 
 #[pyfunction]
-pub fn render_run_completed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
+pub fn render_and_record_run_completed_lines<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_completed_event_from_py(event)?;
-    PyTuple::new(py, native_run_events::render_run_completed_lines(&event_payload))
+    let lines = native_run_events::render_run_completed_lines(&event_payload);
+    for line in &lines {
+        let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
+        emit_run_diagnostic_event_payload(&payload)?;
+    }
+    PyTuple::new(py, lines)
 }
 
 #[pyfunction]
-pub fn render_run_interrupted_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
+pub fn render_and_record_run_interrupted_lines<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_interrupted_event_from_py(event)?;
-    PyTuple::new(py, native_run_events::render_run_interrupted_lines(&event_payload))
+    let lines = native_run_events::render_run_interrupted_lines(&event_payload);
+    for line in &lines {
+        let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
+        emit_run_diagnostic_event_payload(&payload)?;
+    }
+    PyTuple::new(py, lines)
 }
 
 #[pyfunction]
-pub fn render_run_failed_lines<'py>(py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
+pub fn render_and_record_run_failed_lines<'py>(
+    py: Python<'py>,
+    event: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyTuple>> {
     let event_payload = run_failed_event_from_py(event)?;
-    PyTuple::new(py, native_run_events::render_run_failed_lines(&event_payload))
+    let lines = native_run_events::render_run_failed_lines(&event_payload);
+    for line in &lines {
+        let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
+        let _ = emit_run_diagnostic_event_payload(&payload);
+    }
+    PyTuple::new(py, lines)
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1291,9 +1304,9 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(build_run_completed_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_interrupted_event, module)?)?;
     module.add_function(wrap_pyfunction!(build_run_failed_event, module)?)?;
-    module.add_function(wrap_pyfunction!(render_run_completed_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_run_interrupted_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_run_failed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_and_record_run_completed_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_and_record_run_interrupted_lines, module)?)?;
+    module.add_function(wrap_pyfunction!(render_and_record_run_failed_lines, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_started_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_interrupted_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_failed_events, module)?)?;
@@ -1335,11 +1348,7 @@ fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<
 }
 
 fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_native_cli_stdout_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_stderr_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_interrupted_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_failed_line_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_native_cli_completed_line_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_native_cli_output_diagnostic_events, module)?)?;
     Ok(())
 }
 

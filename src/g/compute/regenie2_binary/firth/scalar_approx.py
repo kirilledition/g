@@ -84,28 +84,6 @@ def build_scalar_approximate_firth_solver_parameters(
     )
 
 
-def compute_scalar_firth_components(
-    *,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_sample_mask: jax.Array,
-    non_active_deviance: jax.Array,
-    beta: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.ScalarFirthComponents:
-    """Compute REGENIE scalar approximate-Firth quantities at one beta."""
-    return compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        beta=beta,
-        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=offset_vector.dtype),
-    )
-
-
 def compute_scalar_firth_components_with_minimum_variance(
     *,
     phenotype_vector: jax.Array,
@@ -348,38 +326,6 @@ def run_scalar_pseudo_firth_iteration(
     )
 
 
-def fit_scalar_pseudo_firth(
-    *,
-    deviance_null: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_sample_mask: jax.Array,
-    non_active_deviance: jax.Array,
-    initial_beta: jax.Array,
-    maximum_iterations: int,
-    tolerance: jax.Array,
-    inner_maximum_iterations: int,
-    maximum_step_size: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-    """Run REGENIE's scalar pseudo-Firth approximate correction."""
-    return fit_scalar_pseudo_firth_with_minimum_variance(
-        deviance_null=deviance_null,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        initial_beta=initial_beta,
-        maximum_iterations=maximum_iterations,
-        tolerance=tolerance,
-        inner_maximum_iterations=inner_maximum_iterations,
-        maximum_step_size=maximum_step_size,
-        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=initial_beta.dtype),
-    )
-
-
 def fit_scalar_pseudo_firth_with_minimum_variance(
     *,
     deviance_null: jax.Array,
@@ -533,34 +479,6 @@ def run_scalar_line_search_iteration(
     )
 
 
-def run_scalar_line_search(
-    *,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_sample_mask: jax.Array,
-    non_active_deviance: jax.Array,
-    current_beta: jax.Array,
-    current_penalized_deviance: jax.Array,
-    initial_step_size: jax.Array,
-    maximum_attempts: int,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.ScalarLineSearchState:
-    """Run REGENIE scalar NR step-halving against penalized deviance."""
-    return run_scalar_line_search_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        current_beta=current_beta,
-        current_penalized_deviance=current_penalized_deviance,
-        initial_step_size=initial_step_size,
-        maximum_attempts=maximum_attempts,
-        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=current_beta.dtype),
-    )
-
-
 def run_scalar_line_search_with_minimum_variance(
     *,
     phenotype_vector: jax.Array,
@@ -691,38 +609,6 @@ def run_scalar_newton_raphson_iteration(
         maximum_step_size=carry.maximum_step_size,
         line_search_maximum_attempts=carry.line_search_maximum_attempts,
         minimum_variance=carry.minimum_variance,
-    )
-
-
-def fit_scalar_newton_raphson_firth(
-    *,
-    deviance_null: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_sample_mask: jax.Array,
-    non_active_deviance: jax.Array,
-    initial_beta: jax.Array,
-    maximum_iterations: int,
-    tolerance: jax.Array,
-    maximum_step_size: jax.Array,
-    line_search_maximum_attempts: int,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-    """Run REGENIE's scalar Newton-Raphson approximate-Firth fallback."""
-    return fit_scalar_newton_raphson_firth_with_minimum_variance(
-        deviance_null=deviance_null,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        initial_beta=initial_beta,
-        maximum_iterations=maximum_iterations,
-        tolerance=tolerance,
-        maximum_step_size=maximum_step_size,
-        line_search_maximum_attempts=line_search_maximum_attempts,
-        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=initial_beta.dtype),
     )
 
 
@@ -1256,33 +1142,6 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     )
 
 
-def fit_single_variant_regenie_approximate_firth_compact_carriers(
-    *,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_carrier_slot_mask: jax.Array,
-    full_null_deviance: jax.Array,
-    warm_start_beta: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one sparse approximate-Firth lane over fixed-capacity carrier slots."""
-    scalar_dtype = offset_vector.dtype
-    return fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_carrier_slot_mask=active_carrier_slot_mask,
-        full_null_deviance=full_null_deviance,
-        warm_start_beta=warm_start_beta,
-        skip_firth=skip_firth,
-        null_failed=null_failed,
-        solver_parameters=build_scalar_approximate_firth_solver_parameters(kernel_config, scalar_dtype),
-    )
-
-
 def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
     *,
     phenotype_vector: jax.Array,
@@ -1318,37 +1177,6 @@ def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
         skip_firth=skip_firth,
         null_failed=null_failed,
         solver_parameters=solver_parameters,
-    )
-
-
-def fit_single_variant_regenie_approximate_firth_with_active_samples(
-    *,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    active_sample_mask: jax.Array,
-    full_null_deviance: jax.Array,
-    non_active_deviance: jax.Array,
-    sparse_correction: jax.Array,
-    warm_start_beta: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one approximate-Firth candidate over caller-selected active samples."""
-    scalar_dtype = offset_vector.dtype
-    return fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_parameters(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        full_null_deviance=full_null_deviance,
-        non_active_deviance=non_active_deviance,
-        sparse_correction=sparse_correction,
-        warm_start_beta=warm_start_beta,
-        skip_firth=skip_firth,
-        null_failed=null_failed,
-        solver_parameters=build_scalar_approximate_firth_solver_parameters(kernel_config, scalar_dtype),
     )
 
 

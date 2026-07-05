@@ -35,11 +35,6 @@ pub(crate) struct NativeJaxRuntimePolicy {
 }
 
 #[pyclass]
-pub(crate) struct NativeRuntimeStateSnapshot {
-    snapshot: native_runtime_state::RuntimeStateSnapshotPayload,
-}
-
-#[pyclass]
 pub(crate) struct NativeRayonThreadPoolConfigurationPlan {
     inner: native_runtime_state::RayonThreadPoolConfigurationPlan,
 }
@@ -172,24 +167,6 @@ impl NativeJaxRuntimePolicy {
 }
 
 #[pymethods]
-impl NativeRuntimeStateSnapshot {
-    #[getter]
-    fn logging_policy(&self) -> Option<NativeLoggingRuntimePolicy> {
-        self.snapshot.logging_policy.clone().map(|policy| NativeLoggingRuntimePolicy { policy })
-    }
-
-    #[getter]
-    fn rayon_thread_count(&self) -> Option<i64> {
-        self.snapshot.rayon_thread_count
-    }
-
-    #[getter]
-    fn jax_policy(&self) -> Option<NativeJaxRuntimePolicy> {
-        self.snapshot.jax_policy.clone().map(|policy| NativeJaxRuntimePolicy { policy })
-    }
-}
-
-#[pymethods]
 impl NativeRayonThreadPoolConfigurationPlan {
     #[getter]
     fn should_configure(&self) -> bool {
@@ -281,38 +258,6 @@ impl NativeRuntimeState {
 
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
-    fn describe_logging_runtime_policy_value(
-        &self,
-        log_filter: String,
-        log_file: Option<String>,
-        log_stderr: bool,
-        log_queue_size: i64,
-        log_lossy: bool,
-        include_source_location: bool,
-        include_span_events: bool,
-        trace_file: Option<String>,
-        trace_filter: String,
-        trace_event_cap: Option<i64>,
-    ) -> PyResult<String> {
-        let _state = self.lock_state()?;
-        Ok(native_runtime_policy::describe_logging_runtime_policy(
-            &native_runtime_policy::LoggingRuntimePolicyPayload {
-                log_filter,
-                log_file,
-                log_stderr,
-                log_queue_size,
-                log_lossy,
-                include_source_location,
-                include_span_events,
-                trace_file,
-                trace_filter,
-                trace_event_cap,
-            },
-        ))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::needless_pass_by_value)]
     fn build_logging_runtime_policy(
         &self,
         log_filter: String,
@@ -389,31 +334,6 @@ impl NativeRuntimeState {
         })
     }
 
-    fn build_process_runtime_state_handle(
-        &self,
-        logging_policy: Option<PyRef<'_, NativeLoggingRuntimePolicy>>,
-        rayon_thread_count: Option<i64>,
-        jax_policy: Option<PyRef<'_, NativeJaxRuntimePolicy>>,
-    ) -> PyResult<NativeRuntimeState> {
-        let _state = self.lock_state()?;
-        let mut state = native_runtime_state::ProcessRuntimeState::default();
-        if let Some(logging_policy) = logging_policy {
-            state.record_logging_policy(logging_policy.policy.clone());
-        }
-        if let Some(thread_count) = rayon_thread_count {
-            state.record_rayon_thread_count(thread_count);
-        }
-        if let Some(jax_policy) = jax_policy {
-            state.record_jax_policy(jax_policy.policy.clone());
-        }
-        Ok(NativeRuntimeState { state: Arc::new(Mutex::new(state)) })
-    }
-
-    fn runtime_state_snapshot(&self) -> PyResult<NativeRuntimeStateSnapshot> {
-        let state = self.lock_state()?;
-        Ok(NativeRuntimeStateSnapshot { snapshot: state.snapshot() })
-    }
-
     fn require_compatible_runtime_policy(
         &self,
         logging_policy: PyRef<'_, NativeLoggingRuntimePolicy>,
@@ -444,15 +364,6 @@ impl NativeRuntimeState {
             .require_compatible_runtime_policy_payload(&runtime_policy.policy)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(NativeRuntimeCompatibilityToken { token })
-    }
-
-    fn require_compatible_logging_runtime_policy(
-        &self,
-        logging_policy: PyRef<'_, NativeLoggingRuntimePolicy>,
-    ) -> PyResult<()> {
-        self.lock_state()?
-            .require_compatible_logging_policy(&logging_policy.policy)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
     }
 
     fn record_logging_runtime_policy(&self, logging_policy: PyRef<'_, NativeLoggingRuntimePolicy>) -> PyResult<()> {
@@ -494,12 +405,6 @@ impl NativeRuntimeState {
         logging::shutdown_logging()
     }
 
-    fn require_compatible_rayon_thread_count(&self, thread_count: Option<i64>) -> PyResult<()> {
-        self.lock_state()?
-            .require_compatible_rayon_thread_count(thread_count)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-    }
-
     fn record_rayon_thread_count(&self, thread_count: i64) -> PyResult<()> {
         self.lock_state()?.record_rayon_thread_count(thread_count);
         Ok(())
@@ -513,14 +418,6 @@ impl NativeRuntimeState {
             .lock_state()?
             .plan_rayon_thread_pool_configuration(thread_count)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
-    }
-
-    fn configure_rayon_thread_pool(&self, thread_count: i64) -> PyResult<NativeRayonThreadPoolConfigurationPlan> {
-        let plan = self
-            .lock_state()?
-            .configure_rayon_thread_pool(thread_count)
-            .map_err(|error| rayon_thread_pool_configuration_error_to_py(&error))?;
         Ok(NativeRayonThreadPoolConfigurationPlan { inner: plan })
     }
 
@@ -545,21 +442,6 @@ impl NativeRuntimeState {
             .configure_rayon_thread_pool(thread_count)
             .map_err(|error| rayon_thread_pool_configuration_error_to_py(&error))?;
         Ok(Some(NativeRayonThreadPoolConfigurationPlan { inner: plan }))
-    }
-
-    fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> PyResult<Option<i64>> {
-        Ok(self.lock_state()?.effective_rayon_thread_count(requested_thread_count))
-    }
-
-    fn require_compatible_jax_runtime_policy(&self, jax_policy: PyRef<'_, NativeJaxRuntimePolicy>) -> PyResult<()> {
-        self.lock_state()?
-            .require_compatible_jax_policy(&jax_policy.policy)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-    }
-
-    fn record_jax_runtime_policy(&self, jax_policy: PyRef<'_, NativeJaxRuntimePolicy>) -> PyResult<()> {
-        self.lock_state()?.record_jax_policy(jax_policy.policy.clone());
-        Ok(())
     }
 
     fn complete_jax_runtime_setup(&self, jax_policy: PyRef<'_, NativeJaxRuntimePolicy>) -> PyResult<()> {
@@ -636,7 +518,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
-    module.add_class::<NativeRuntimeStateSnapshot>()?;
     Ok(())
 }
 

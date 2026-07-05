@@ -313,15 +313,6 @@ class NullFirthFallbackParameters:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class NullFirthFallbackOperands:
-    """Fallback cascade operands paired with the currently selected result."""
-
-    parameters: NullFirthFallbackParameters
-    attempt_result: NullFirthFitResult
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
 class NullFirthFallbackLoopCarry:
     """Loop carry for lazy null Firth fallback attempts."""
 

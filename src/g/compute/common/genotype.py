@@ -75,30 +75,6 @@ def decode_packed8_probability_pairs_to_variant_major_dosage(
     ) / EIGHT_BIT_PROBABILITY_DENOMINATOR
 
 
-def normalize_high_frequency_diploid_genotypes_sample_major(
-    genotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype,
-) -> jax.Array:
-    """Shift high-frequency diploid dosages to avoid score-kernel cancellation.
-
-    The model includes an intercept, so subtracting a per-variant constant does
-    not change the residualized genotype or score statistic. It does keep rare
-    reference-allele carriers near zero before float32 matrix products.
-
-    Args:
-        genotype_matrix: Sample-major dosage matrix.
-        score_dtype: Floating-point dtype for score-test computation.
-
-    Returns:
-        Shifted sample-major dosage matrix.
-
-    """
-    genotype_matrix_compute = jnp.asarray(genotype_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))
-    genotype_mean = jnp.mean(genotype_matrix_compute, axis=0)
-    genotype_offset = jnp.where(genotype_mean > 1.0, ALLELE_COUNT_MULTIPLIER, 0.0)
-    return genotype_matrix_compute - genotype_offset[None, :]
-
-
 def normalize_high_frequency_diploid_genotypes_variant_major(
     genotype_matrix_by_variant: jax.Array,
     score_dtype: types.FloatingPointDtype,

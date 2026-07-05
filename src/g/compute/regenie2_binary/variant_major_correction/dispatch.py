@@ -509,45 +509,6 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
     static_argnames=(
         "correction_plan",
         "kernel_config",
-        "overflow_candidate_capacity",
-    ),
-)
-def apply_device_candidate_corrections_multi_firth_variant_major_with_overflow_dispatch(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
-    correction_plan: types.BinaryCorrectionPlan,
-    overflow_candidate_capacity: int,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-    """Apply rare overflow multi-trait Firth corrections in a separate executable."""
-    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
-    fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
-    diagnostic_result = regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
-    return fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        result=diagnostic_result,
-        correction_plan=correction_plan,
-        candidate_mask=candidate_mask,
-        fallback_count=fallback_count,
-        candidate_capacity=overflow_candidate_capacity,
-        order_candidates=True,
-        kernel_config=kernel_config,
-        sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-    )
-
-
-@functools.partial(
-    jax.jit,
-    static_argnames=(
-        "correction_plan",
-        "kernel_config",
         "tiny_candidate_capacity",
         "small_candidate_capacity",
         "bounded_candidate_capacity",

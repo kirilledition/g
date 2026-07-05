@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import os
 import sys
 import typing
@@ -63,13 +62,11 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                 )
         except runner_lifecycle.GracefulShutdownRequested as shutdown_request:
             interrupted_event = g._core.build_run_interrupted_event(shutdown_request)
-            print_interrupted_lines(interrupted_event)
-            log_interrupted_lines(interrupted_event)
+            print_and_log_interrupted_lines(interrupted_event)
             exit_code = shutdown_request.exit_code
         else:
             completed_event = g._core.build_run_completed_event(artifacts)
-            print_completed_lines(completed_event)
-            log_completed_lines(completed_event)
+            print_and_log_completed_lines(completed_event)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
         exit_code = print_and_log_failed_event(
@@ -109,30 +106,14 @@ def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int
     if not outcome.stdout and not outcome.stderr:
         return
 
-    if outcome.stdout:
-        g._core.record_native_cli_stdout_diagnostic_event(
-            output_text=outcome.stdout,
-            max_payload_chars=max_payload_chars,
-        )
-    if outcome.stderr:
-        g._core.record_native_cli_stderr_diagnostic_event(
-            output_text=outcome.stderr,
-            max_payload_chars=max_payload_chars,
-        )
+    g._core.record_native_cli_output_diagnostic_events(outcome.stdout, outcome.stderr, max_payload_chars)
 
 
-def print_interrupted_lines(interrupted_event: object) -> None:
-    """Print graceful interruption details."""
-    interrupted_lines = g._core.render_run_interrupted_lines(interrupted_event)
+def print_and_log_interrupted_lines(interrupted_event: object) -> None:
+    """Print graceful interruption details and emit diagnostics."""
+    interrupted_lines = g._core.render_and_record_run_interrupted_lines(interrupted_event)
     for line in interrupted_lines:
         print(line, file=sys.stderr)
-
-
-def log_interrupted_lines(interrupted_event: object) -> None:
-    """Emit graceful interruption diagnostics."""
-    interrupted_lines = g._core.render_run_interrupted_lines(interrupted_event)
-    for line in interrupted_lines:
-        g._core.record_native_cli_interrupted_line_diagnostic_event(line=line)
 
 
 def print_and_log_failed_event(
@@ -147,38 +128,22 @@ def print_and_log_failed_event(
         telemetry_session,
         failed_event,
     )
-    print_failed_lines(failed_event)
-    log_failed_lines(failed_event)
+    print_and_log_failed_lines(failed_event)
     return RUNTIME_FAILURE_EXIT_CODE
 
 
-def print_failed_lines(failed_event: object) -> None:
-    """Print failure details."""
-    failed_lines = g._core.render_run_failed_lines(failed_event)
+def print_and_log_failed_lines(failed_event: object) -> None:
+    """Print failure details and emit best-effort diagnostics."""
+    failed_lines = g._core.render_and_record_run_failed_lines(failed_event)
     for line in failed_lines:
         print(line, file=sys.stderr)
 
 
-def log_failed_lines(failed_event: object) -> None:
-    """Emit failure diagnostics."""
-    failed_lines = g._core.render_run_failed_lines(failed_event)
-    for line in failed_lines:
-        with contextlib.suppress(Exception):
-            g._core.record_native_cli_failed_line_diagnostic_event(line=line)
-
-
-def print_completed_lines(completed_event: object) -> None:
-    """Print completion details."""
-    completed_lines = g._core.render_run_completed_lines(completed_event)
+def print_and_log_completed_lines(completed_event: object) -> None:
+    """Print completion details and emit diagnostics."""
+    completed_lines = g._core.render_and_record_run_completed_lines(completed_event)
     for line in completed_lines:
         print(line)
-
-
-def log_completed_lines(completed_event: object) -> None:
-    """Emit completion diagnostics."""
-    completed_lines = g._core.render_run_completed_lines(completed_event)
-    for line in completed_lines:
-        g._core.record_native_cli_completed_line_diagnostic_event(line=line)
 
 
 def main() -> None:

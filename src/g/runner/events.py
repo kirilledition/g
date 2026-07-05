@@ -11,10 +11,6 @@ from g import _core, types
 if typing.TYPE_CHECKING:
     from g.interface import config
 
-TelemetryCounterValue = bool | float | int | None
-TelemetryWriterCounters = dict[str, TelemetryCounterValue]
-TelemetryCloseMetadata = dict[str, TelemetryWriterCounters]
-
 
 @dataclass(frozen=True)
 class TelemetryPaths:
@@ -84,21 +80,6 @@ class TelemetrySession:
         if not self.native_session_handle.has_native_telemetry_session:
             return None
         return self.native_session_handle
-
-    @property
-    def close_metadata(self) -> TelemetryCloseMetadata | None:
-        """Return close metadata captured by the native telemetry handle."""
-        metadata = self.native_session_handle.close_metadata()
-        if metadata is None:
-            return None
-        return typing.cast("TelemetryCloseMetadata", dict(metadata))
-
-    def close(self) -> TelemetryCloseMetadata | None:
-        """Flush buffered telemetry resources."""
-        metadata = self.native_session_handle.finish_close_metadata()
-        if metadata is None:
-            return None
-        return typing.cast("TelemetryCloseMetadata", dict(metadata))
 
 
 @dataclass(frozen=True)

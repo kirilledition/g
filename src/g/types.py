@@ -155,14 +155,6 @@ class BinaryCorrectionPlan:
     firth_se: bool
 
 
-class SampleIdentifierSource(enum.StrEnum):
-    """Origin of BGEN sample identifiers."""
-
-    EMBEDDED = "embedded"
-    EXTERNAL = "external"
-    GENERATED = "generated"
-
-
 class SampleKeyMode(enum.StrEnum):
     """Sample key used for phenotype, covariate, and prediction alignment."""
 
@@ -190,12 +182,3 @@ class NullLogisticNonconvergencePolicy(enum.StrEnum):
 
     FAIL = "fail"
     WARN = "warn"
-
-
-class ArrayMemoryOrder(enum.StrEnum):
-    """NumPy array memory layout selector."""
-
-    KEEP = "K"
-    ANY = "A"
-    C_CONTIGUOUS = "C"
-    FORTRAN_CONTIGUOUS = "F"

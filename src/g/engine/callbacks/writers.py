@@ -180,45 +180,6 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
         )
 
 
-def write_regenie2_native_chunk_with_optional_timing(
-    *,
-    writer_session: typing.Any,
-    metadata: _core.VariantMetadata,
-    chunk_stats: _core.ChunkStats,
-    beta: jax.Array,
-    standard_error: jax.Array,
-    chi_squared: jax.Array,
-    log10_p_value: jax.Array,
-    extra_code: jax.Array | None,
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-    output_statistic_dtype: types.FloatingPointDtype,
-) -> None:
-    """Write one native-metadata REGENIE chunk while timing JAX result materialization.
-
-    The native Arrow/Parquet schema stores public result statistics with the
-    configured output dtype. Internal arrays are cast immediately before the
-    Rust writer call.
-    """
-    materialized_chunk = materialize_regenie2_native_chunk_with_optional_timing(
-        metadata=metadata,
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-        stage_timing_recorder=stage_timing_recorder,
-        output_statistic_dtype=output_statistic_dtype,
-    )
-    write_materialized_regenie2_native_chunk_with_optional_timing(
-        writer_session=writer_session,
-        metadata=metadata,
-        chunk_stats=chunk_stats,
-        materialized_chunk=materialized_chunk,
-        stage_timing_recorder=stage_timing_recorder,
-        output_statistic_dtype=output_statistic_dtype,
-    )
-
-
 def materialize_regenie2_multi_native_chunk_with_optional_timing(
     *,
     writer_sessions: tuple[typing.Any, ...],
@@ -484,39 +445,3 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
             start_time=write_start_time,
             chunk_metadata=metadata,
         )
-
-
-def write_regenie2_multi_native_chunk_with_optional_timing(
-    *,
-    writer_sessions: tuple[typing.Any, ...],
-    committed_chunk_identifier_sets: tuple[set[int], ...],
-    metadata: _core.VariantMetadata,
-    chunk_stats: _core.ChunkStats,
-    beta: jax.Array,
-    standard_error: jax.Array,
-    chi_squared: jax.Array,
-    log10_p_value: jax.Array,
-    extra_code: jax.Array | None,
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-    output_statistic_dtype: types.FloatingPointDtype,
-) -> None:
-    """Materialize one multi-trait result once and write missing per-trait slices."""
-    materialized_chunk = materialize_regenie2_multi_native_chunk_with_optional_timing(
-        writer_sessions=writer_sessions,
-        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
-        metadata=metadata,
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        extra_code=extra_code,
-        stage_timing_recorder=stage_timing_recorder,
-        output_statistic_dtype=output_statistic_dtype,
-    )
-    write_materialized_regenie2_multi_native_chunk_with_optional_timing(
-        metadata=metadata,
-        chunk_stats=chunk_stats,
-        materialized_chunk=materialized_chunk,
-        stage_timing_recorder=stage_timing_recorder,
-        output_statistic_dtype=output_statistic_dtype,
-    )

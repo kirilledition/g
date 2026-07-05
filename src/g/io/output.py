@@ -4,15 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import re
 import typing
 from pathlib import Path
 
 from g import _core, types
-
-CHUNK_FILENAME_PATTERN = re.compile(r"^chunk_(\d+)(?:_(\d+))?\.arrow$")
-PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.parquet$")
-REGENIE_PART_FILENAME_PATTERN = re.compile(r"^part_(\d+)(?:_(\d+))?\.regenie$")
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
@@ -148,18 +143,3 @@ def build_current_run_manifest_header(
         current_header_input
     )
     return typing.cast("dict[str, typing.Any]", prepared_header)
-
-
-def iter_sorted_chunk_file_paths(chunks_directory: Path) -> tuple[Path, ...]:
-    """Return all persisted chunk files in deterministic filename order."""
-    if not chunks_directory.exists():
-        return ()
-    return tuple(
-        sorted(
-            child_path
-            for child_path in chunks_directory.iterdir()
-            if CHUNK_FILENAME_PATTERN.match(child_path.name) is not None
-            or PART_FILENAME_PATTERN.match(child_path.name) is not None
-            or REGENIE_PART_FILENAME_PATTERN.match(child_path.name) is not None
-        )
-    )

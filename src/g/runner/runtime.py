@@ -130,45 +130,6 @@ class RunRuntime:
         return jax_runtime_policy_from_native_policy(self.native_runtime.jax_runtime_policy())
 
 
-@dataclass(frozen=True)
-class RuntimeState:
-    """Process-global runtime choices already configured in this Python process.
-
-    Attributes:
-        logging_policy: Configured logging and tracing sink policy.
-        rayon_thread_count: Configured Rayon thread count.
-        jax_policy: Configured JAX runtime policy.
-
-    """
-
-    logging_policy: LoggingRuntimePolicy | None
-    rayon_thread_count: int | None
-    jax_policy: JaxRuntimePolicy | None
-
-
-def build_process_runtime_state(
-    logging_policy: LoggingRuntimePolicy | None,
-    rayon_thread_count: int | None,
-    jax_policy: _core.NativeJaxRuntimePolicy | None,
-) -> _core.NativeRuntimeState:
-    """Build a native process runtime state handle.
-
-    Args:
-        logging_policy: Optional configured logging policy to seed.
-        rayon_thread_count: Optional configured Rayon thread count to seed.
-        jax_policy: Optional configured JAX runtime policy to seed.
-
-    Returns:
-        Native process runtime state handle.
-
-    """
-    return _core.NativeRuntimeState().build_process_runtime_state_handle(
-        None if logging_policy is None else logging_runtime_policy_to_native_policy(logging_policy),
-        rayon_thread_count,
-        jax_policy,
-    )
-
-
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.global_process_runtime_state()
 
 
@@ -333,46 +294,6 @@ def build_runtime_policy(
     )
 
 
-def describe_logging_runtime_policy(policy: LoggingRuntimePolicy) -> str:
-    """Format a logging runtime policy for concise errors."""
-    return str(
-        PROCESS_RUNTIME_STATE.describe_logging_runtime_policy_value(
-            policy.log_filter,
-            None if policy.log_file is None else str(policy.log_file),
-            policy.log_stderr,
-            policy.log_queue_size,
-            policy.log_lossy,
-            policy.include_source_location,
-            policy.include_span_events,
-            None if policy.trace_file is None else str(policy.trace_file),
-            policy.trace_filter,
-            policy.trace_event_cap,
-        )
-    )
-
-
-def require_compatible_logging_runtime_policy(logging_policy: LoggingRuntimePolicy) -> None:
-    """Raise when a run requests incompatible process-global logging settings."""
-    PROCESS_RUNTIME_STATE.require_compatible_logging_runtime_policy(
-        logging_runtime_policy_to_native_policy(logging_policy)
-    )
-
-
-def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
-    """Raise when a run requests an incompatible process-global Rayon thread count."""
-    PROCESS_RUNTIME_STATE.require_compatible_rayon_thread_count(thread_count)
-
-
-def require_compatible_jax_runtime_policy(jax_policy: _core.NativeJaxRuntimePolicy) -> None:
-    """Raise when a run requests incompatible process-global JAX settings."""
-    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(jax_policy)
-
-
-def record_jax_runtime_policy(jax_policy: _core.NativeJaxRuntimePolicy) -> None:
-    """Record the process-global JAX runtime policy configured in this process."""
-    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(jax_policy)
-
-
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
     """Return a native token after process-global runtime checks pass."""
     return build_run_runtime(runtime_policy).runtime_compatibility_token
@@ -381,18 +302,6 @@ def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.Na
 def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
     """Build a run-scoped native runtime handle after compatibility checks pass."""
     return RunRuntime(native_runtime=PROCESS_RUNTIME_STATE.build_run_runtime(runtime_policy.native_policy))
-
-
-def describe_runtime_state() -> RuntimeState:
-    """Return the process-global runtime state known to this Python process."""
-    runtime_state_snapshot = PROCESS_RUNTIME_STATE.runtime_state_snapshot()
-    logging_policy = runtime_state_snapshot.logging_policy
-    jax_policy = runtime_state_snapshot.jax_policy
-    return RuntimeState(
-        logging_policy=None if logging_policy is None else logging_runtime_policy_from_native_policy(logging_policy),
-        rayon_thread_count=runtime_state_snapshot.rayon_thread_count,
-        jax_policy=None if jax_policy is None else jax_runtime_policy_from_native_policy(jax_policy),
-    )
 
 
 def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitPipelineRequest) -> Path | None:
@@ -421,16 +330,6 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_bgen_pipeline(request)
-
-
-def configure_rayon_thread_pool(thread_count: int) -> None:
-    """Configure Rayon global thread count through the native process state."""
-    PROCESS_RUNTIME_STATE.configure_rayon_thread_pool(thread_count)
-
-
-def effective_rayon_thread_count(requested_thread_count: int | None) -> int | None:
-    """Return the Rayon thread count known to be effective in this process."""
-    return PROCESS_RUNTIME_STATE.effective_rayon_thread_count(requested_thread_count)
 
 
 def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:

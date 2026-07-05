@@ -16,23 +16,6 @@ if typing.TYPE_CHECKING:
     import collections.abc
 
 
-def enforce_null_logistic_nonconvergence_policy(
-    *,
-    chromosome: str,
-    null_logistic_converged: typing.Any,
-    policy: types.NullLogisticNonconvergencePolicy,
-    phenotype_names: tuple[str, ...] | None,
-) -> _core.NativeNullLogisticNonconvergencePlan:
-    """Raise or warn when a binary null-logistic chromosome fit did not converge."""
-    convergence_flags = np.asarray(jax.device_get(null_logistic_converged), dtype=np.bool_)
-    return enforce_host_null_logistic_nonconvergence_policy(
-        chromosome=chromosome,
-        convergence_flags=convergence_flags,
-        policy=policy,
-        phenotype_names=phenotype_names,
-    )
-
-
 def record_null_logistic_chromosome_diagnostics(
     *,
     chromosome: str,
@@ -122,25 +105,6 @@ def enforce_host_null_logistic_nonconvergence_policy(
         total_fit_count=native_policy_plan.total_fit_count,
     )
     return native_policy_plan
-
-
-def record_binary_chunk_diagnostics(
-    *,
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-    result: (
-        regenie2_binary.Regenie2BinaryScoreChunkResult
-        | regenie2_binary.Regenie2BinaryChunkResult
-        | regenie2_binary.Regenie2MultiBinaryScoreChunkResult
-        | regenie2_binary.Regenie2MultiBinaryChunkResult
-    ),
-) -> None:
-    """Record binary candidate and Firth diagnostics for one chunk."""
-    if not engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        return
-    record_binary_chunk_diagnostics_from_count(
-        stage_timing_recorder=stage_timing_recorder,
-        diagnostics=regenie2_binary.count_binary_chunk_diagnostics(result),
-    )
 
 
 def record_binary_chunk_diagnostics_from_count(

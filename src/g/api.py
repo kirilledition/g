@@ -7,10 +7,8 @@ import typing
 from g.interface import config
 from g.runner import events
 from g.runner import execution as runner_execution
-from g.runner import runtime as runner_runtime
 
 RunArtifacts = events.RunArtifacts
-RuntimeState = runner_runtime.RuntimeState
 
 
 class RegenieApi:
@@ -33,11 +31,6 @@ class RegenieApi:
             close_telemetry_session_on_exit=True,
             initialize_logging_on_entry=True,
         )
-
-
-def describe_runtime_state() -> RuntimeState:
-    """Return process-global runtime settings already configured in this process."""
-    return runner_runtime.describe_runtime_state()
 
 
 regenie = RegenieApi()

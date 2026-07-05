@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
+use pyo3::types::{PyModule, PyTuple};
 
 use g_interface as interface;
 use g_interface::{
@@ -1156,54 +1156,6 @@ fn config_from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<RegenieConfig
 }
 
 #[pyfunction]
-fn config_from_toml(path: &Bound<'_, PyAny>) -> PyResult<RegenieConfig> {
-    RegenieConfig::from_toml(path)
-}
-
-#[pyfunction]
-fn load_packaged_config() -> PyResult<RegenieConfig> {
-    interface::load_packaged_config_data()
-        .map(RegenieConfig::new)
-        .map_err(|error| config_error_to_py("load_packaged_config_data", error))
-}
-
-#[pyfunction]
-fn config_option_schema(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let entries = PyList::empty(py);
-    for metadata in interface::config_option_metadata() {
-        let entry = PyDict::new(py);
-        entry.set_item("section", metadata.section)?;
-        entry.set_item("toml_name", metadata.toml_name)?;
-        entry.set_item("accepted_toml_names", metadata.accepted_toml_names)?;
-        entry.set_item("cli_long_name", metadata.cli_long_name)?;
-        entry.set_item("negative_cli_long_name", metadata.negative_cli_long_name)?;
-        entry.set_item("flat_python_names", metadata.flat_python_names)?;
-        entry.set_item("value_kind", metadata.value_kind.as_str())?;
-        entries.append(entry)?;
-    }
-    Ok(entries.into_any().unbind())
-}
-
-#[pyfunction]
-fn dumps_config_toml(config: &RegenieConfig) -> PyResult<String> {
-    interface::dumps_toml(config.data()).map_err(|error| config_error_to_py("dumps_toml", error))
-}
-
-#[pyfunction]
-fn write_config_toml(config: &RegenieConfig, path: &Bound<'_, PyAny>) -> PyResult<()> {
-    let path_text = path_to_string(path)?;
-    interface::write_toml(config.data(), Path::new(&path_text)).map_err(|error| config_error_to_py("write_toml", error))
-}
-
-#[pyfunction]
-fn validate_regenie_config(config: &RegenieConfig) -> PyResult<()> {
-    if config.data().is_validated {
-        return Ok(());
-    }
-    interface::validate_config(config.data()).map_err(|error| config_error_to_py("validate_config", error))
-}
-
-#[pyfunction]
 fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
     interface::validate_config_for_run(config.data())
         .map_err(|error| config_error_to_py("validate_config_for_run", error))
@@ -1254,12 +1206,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePhenotypeComputeGroup>()?;
     module.add_class::<NativeBinaryCorrectionPlan>()?;
     module.add_function(wrap_pyfunction!(config_from_options, module)?)?;
-    module.add_function(wrap_pyfunction!(config_from_toml, module)?)?;
-    module.add_function(wrap_pyfunction!(load_packaged_config, module)?)?;
-    module.add_function(wrap_pyfunction!(config_option_schema, module)?)?;
-    module.add_function(wrap_pyfunction!(dumps_config_toml, module)?)?;
-    module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
-    module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;
