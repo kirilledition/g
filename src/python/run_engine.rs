@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use g_engine::Regenie2RunEngineCore;
+use g_engine::{Regenie2RunEngineCore, TrustedBgenValidationError};
 use g_genotype::common::ChunkSpec as NativeChunkSpec;
 use g_input::sample::{self, AlignmentInputs, MultiAlignmentInputs};
 use g_runtime::trusted_validation as native_trusted_validation;
@@ -315,12 +315,14 @@ impl Regenie2RunEngine {
         let cache_directory = py
             .detach(native_trusted_validation::default_trusted_bgen_validation_cache_directory)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        self.validate_trusted_no_missing_diploid_with_cache_directory(
-            py,
-            &bgen_path,
-            &validation_mode,
-            cache_directory.as_path(),
-        )
+        py.detach(|| {
+            self.engine.validate_trusted_no_missing_diploid_with_cache_directory(
+                Path::new(&bgen_path),
+                &validation_mode,
+                cache_directory.as_path(),
+            )
+        })
+        .map_err(convert_trusted_bgen_validation_error)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -450,63 +452,18 @@ fn flush_variant_major_dosage_batch<'py>(
     Ok(())
 }
 
-impl Regenie2RunEngine {
-    fn validate_trusted_no_missing_diploid_with_cache_directory(
-        &self,
-        py: Python<'_>,
-        bgen_path: &str,
-        validation_mode: &str,
-        cache_directory: &Path,
-    ) -> PyResult<()> {
-        native_trusted_validation::require_cache_backed_trusted_bgen_validation_mode(validation_mode)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let sample_count = i64::try_from(self.engine.reader().sample_count())
-            .map_err(|_| PyValueError::new_err("BGEN sample count exceeds the native validation cache range."))?;
-        let variant_count = i64::try_from(self.engine.reader().variant_count())
-            .map_err(|_| PyValueError::new_err("BGEN variant count exceeds the native validation cache range."))?;
-        let fingerprint = py
-            .detach(|| {
-                native_trusted_validation::build_trusted_bgen_validation_fingerprint(
-                    &native_trusted_validation::TrustedBgenValidationFingerprintInput {
-                        bgen_path: bgen_path.into(),
-                        sample_count,
-                        variant_count,
-                        trusted_no_missing_diploid: true,
-                    },
-                )
-            })
-            .map_err(PyOSError::new_err)?;
-        let cache_path =
-            native_trusted_validation::build_trusted_bgen_validation_cache_path(cache_directory, &fingerprint);
-        let cache_lookup_plan = py
-            .detach(|| {
-                native_trusted_validation::plan_trusted_bgen_validation_cache_lookup(validation_mode, &cache_path)
-            })
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        if cache_lookup_plan.should_mark_validated {
-            py.detach(|| self.engine.reader().mark_trusted_no_missing_diploid_validated())
-                .map_err(|error| convert_bgen_error("mark_trusted_no_missing_diploid_validated", error))?;
+fn convert_trusted_bgen_validation_error(error: TrustedBgenValidationError) -> PyErr {
+    match error {
+        TrustedBgenValidationError::Bgen(error) => convert_bgen_error("validate_trusted_no_missing_diploid", error),
+        TrustedBgenValidationError::Io(error) => PyOSError::new_err(error.to_string()),
+        TrustedBgenValidationError::CacheLookup(error) => PyValueError::new_err(error.to_string()),
+        TrustedBgenValidationError::SampleCountRange | TrustedBgenValidationError::VariantCountRange => {
+            PyValueError::new_err(error.to_string())
         }
-        if !cache_lookup_plan.should_validate {
-            return Ok(());
-        }
-        py.detach(|| self.engine.reader().validate_trusted_no_missing_diploid())
-            .map_err(|error| convert_bgen_error("validate_trusted_no_missing_diploid", error))?;
-        if cache_lookup_plan.should_write_cache {
-            py.detach(|| {
-                native_trusted_validation::write_trusted_bgen_validation_cache_payload(
-                    &cache_path,
-                    fingerprint,
-                    Path::new(&bgen_path),
-                    sample_count,
-                    variant_count,
-                )
-            })
-            .map_err(PyOSError::new_err)?;
-        }
-        Ok(())
     }
+}
 
+impl Regenie2RunEngine {
     fn run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices<'py>(
         &self,
         py: Python<'py>,

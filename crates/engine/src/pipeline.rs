@@ -8,6 +8,7 @@ use g_genotype::common::{ChunkSpec, GenotypeError};
 use g_genotype::planner;
 
 use crate::preflight::PreflightError;
+use crate::trusted_validation::TrustedBgenValidationError;
 
 pub struct Regenie2RunEngineCore {
     reader: BgenReaderCore,
@@ -83,5 +84,25 @@ impl Regenie2RunEngineCore {
             chromosome_labels.push(chromosome_label);
         }
         Ok(chromosome_labels)
+    }
+
+    /// Validate trusted no-missing diploid BGEN assumptions through a persistent cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when validation mode parsing, cache I/O, or BGEN
+    /// validation fails.
+    pub fn validate_trusted_no_missing_diploid_with_cache_directory(
+        &self,
+        bgen_path: &Path,
+        validation_mode: &str,
+        cache_directory: &Path,
+    ) -> Result<(), TrustedBgenValidationError> {
+        crate::trusted_validation::validate_trusted_no_missing_diploid_with_cache_directory(
+            self.reader(),
+            bgen_path,
+            validation_mode,
+            cache_directory,
+        )
     }
 }

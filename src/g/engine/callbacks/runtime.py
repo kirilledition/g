@@ -195,21 +195,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return the number of host buffers waiting for reuse."""
         return self.callback_runtime_resources.free_dosage_buffer_count
 
-    def record_processed_chunk(
-        self,
-        chunk_identity: _core.NativeCallbackChunkIdentity,
-    ) -> _core.NativeCallbackProgressUpdate:
-        """Record native progress through the active runtime owner."""
-        return self.callback_runtime_resources.record_processed_chunk(chunk_identity)
-
-    def record_processed_chunk_without_progress(self) -> None:
-        """Record native progress without telemetry through the active runtime owner."""
-        self.callback_runtime_resources.record_processed_chunk_without_progress()
-
-    def finish_progress_state(self) -> _core.NativeCallbackProgressCompletion | None:
-        """Finish native progress through the active runtime owner."""
-        return self.callback_runtime_resources.finish_progress()
-
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
         engine_timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
@@ -614,14 +599,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
         _core.emit_callback_progress_update_telemetry(self.telemetry_session, progress_update)
 
-    def complete_progress(self) -> None:
-        """Emit the native final progress completion event when telemetry consumed chunks."""
-        progress_completion = self.finish_progress_state()
-        _core.emit_callback_progress_completion_telemetry(
-            self.telemetry_session,
-            progress_completion,
-        )
-
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
         self.callback_runtime_resources.add_binary_null_model_failure_count(failure_count)
@@ -683,22 +660,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             diagnostics_counts.nr_warm_start_success_count,
             diagnostics_counts.sparse_correction_count,
             diagnostics_counts.dense_correction_count,
-        )
-
-    def emit_binary_correction_summary(self) -> None:
-        """Emit aggregate binary correction diagnostics when a binary run produced them."""
-        summary_emit_plan = self.callback_runtime_resources.plan_binary_correction_summary_emit_for_pending_diagnostics(
-            self.binary_correction_pending_diagnostics,
-        )
-        if summary_emit_plan.should_flush_pending_diagnostics:
-            self.flush_binary_correction_diagnostics()
-        if not summary_emit_plan.should_emit_summary:
-            return
-        summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-        _core.emit_binary_correction_summary_telemetry(
-            self.telemetry_session,
-            summary_payload,
-            "Native binary correction summary emit plan selected a missing telemetry session.",
         )
 
     def consume_result_write_items(self) -> None:

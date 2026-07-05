@@ -2147,10 +2147,6 @@ def emit_callback_progress_event_telemetry(
     progress_event: NativeCallbackProgressTelemetryEvent | None,
     missing_session_message: str,
 ) -> None: ...
-def emit_callback_progress_completion_telemetry(
-    telemetry_session: object | None,
-    progress_completion: NativeCallbackProgressCompletion | None,
-) -> None: ...
 def enforce_null_logistic_nonconvergence_from_array(
     chromosome: str,
     convergence_values: object,

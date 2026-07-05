@@ -11,6 +11,9 @@ from g import types
 
 def resolve_jax_dtype(floating_point_dtype: types.FloatingPointDtype) -> typing.Any:
     """Resolve a configured floating-point dtype to a JAX dtype."""
-    if floating_point_dtype == types.FloatingPointDtype.FLOAT64:
+    if floating_point_dtype is types.FloatingPointDtype.FLOAT32:
+        return jnp.float32
+    if floating_point_dtype is types.FloatingPointDtype.FLOAT64:
         return jnp.float64
-    return jnp.float32
+    message = f"Unsupported JAX floating-point dtype: {floating_point_dtype!s}"
+    raise ValueError(message)

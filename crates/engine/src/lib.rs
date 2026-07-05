@@ -9,11 +9,13 @@ pub mod coordinator;
 pub mod effects;
 pub mod fake_backend;
 pub mod fake_effects;
+mod output_manifest;
 pub mod phase;
 pub mod pipeline;
 pub mod preflight;
 pub mod preparation;
 pub mod schedule;
+mod trusted_validation;
 
 pub use backend::{
     AssociationBackend, AssociationBatchResult, BackendError, GenotypeBatchView, PredictionView, PreparedGroupInput,
@@ -35,6 +37,7 @@ pub use coordinator::{
 pub use effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
 pub use fake_backend::{FakeBackend, FakeBackendFailure, FakeChromosomeState, FakeGroupState};
 pub use fake_effects::{FakeEngineRunEffects, FakeOutputLifecycleState, FakeOutputState, FakeRunEffectState};
+pub use output_manifest::build_current_run_manifest_header_json_from_value_with_cache;
 pub use phase::RunPhase;
 pub use pipeline::Regenie2RunEngineCore;
 pub use preflight::{
@@ -72,3 +75,4 @@ pub use schedule::{
     resolve_manifest_gpu_genotype_format, resolve_native_callback_queue_limits, resolve_writer_finish_thread_count,
     should_attempt_callback_worker_stop,
 };
+pub use trusted_validation::TrustedBgenValidationError;

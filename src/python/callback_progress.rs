@@ -372,23 +372,6 @@ pub(crate) fn emit_callback_progress_event_telemetry(
     Ok(())
 }
 
-#[pyfunction]
-pub(crate) fn emit_callback_progress_completion_telemetry(
-    telemetry_session: &Bound<'_, PyAny>,
-    progress_completion: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    if telemetry_session.is_none() || progress_completion.is_none() {
-        return Ok(());
-    }
-    let Some(native_telemetry_session) = optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
-    else {
-        return Ok(());
-    };
-    let progress_event = progress_completion.getattr("telemetry_event")?;
-    native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
-    Ok(())
-}
-
 fn require_native_telemetry_session<'py>(
     telemetry_session: &Bound<'py, PyAny>,
     missing_session_message: &str,
@@ -427,6 +410,5 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
     module.add_function(wrap_pyfunction!(emit_callback_progress_update_telemetry, module)?)?;
     module.add_function(wrap_pyfunction!(emit_callback_progress_event_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_callback_progress_completion_telemetry, module)?)?;
     Ok(())
 }

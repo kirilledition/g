@@ -769,7 +769,10 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "g-genotype",
+ "g-input",
  "g-output",
+ "g-runtime",
+ "serde_json",
  "thiserror",
 ]
 

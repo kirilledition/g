@@ -110,7 +110,6 @@ class OutputPlan:
         output_prefix: User-facing output prefix.
         output_run_root: Root directory for per-phenotype chunked runs.
         resume: Whether to resume a previous run.
-        resume_mode: Resume validation mode.
         writer_settings: Output writer and finalization settings.
 
     """
@@ -118,7 +117,6 @@ class OutputPlan:
     output_prefix: Path
     output_run_root: Path
     resume: bool
-    resume_mode: types.ResumeMode
     writer_settings: OutputWriterPlan
 
 
@@ -276,7 +274,6 @@ def build_output_plan_from_run_request(run_request: _core.NativeRunRequest) -> O
         output_prefix=Path(run_request.output_prefix),
         output_run_root=Path(run_request.output_run_root),
         resume=run_request.output_resume,
-        resume_mode=types.ResumeMode(run_request.output_resume_mode),
         writer_settings=OutputWriterPlan(
             finalize_parquet=run_request.output_finalize_parquet,
             writer_thread_count=run_request.output_writer_thread_count,
