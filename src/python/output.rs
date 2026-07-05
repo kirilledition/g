@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
+use g_engine::schedule as native_schedule;
 use g_input::regenie::{PredictionError, resolve_prediction_loco_paths as resolve_native_prediction_loco_paths};
 use g_output::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState,
@@ -20,7 +21,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::{
     genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
-    json_bridge,
+    json_bridge, schedule,
 };
 
 #[pyclass]
@@ -223,8 +224,111 @@ impl OutputWriterSession {
     }
 }
 
+fn extract_optional_readonly_array1_i32<'py>(
+    extra_code: Option<&Bound<'py, PyAny>>,
+) -> PyResult<Option<PyReadonlyArray1<'py, i32>>> {
+    extra_code.map(|array| array.extract().map_err(Into::into)).transpose()
+}
+
+fn extract_optional_readonly_array2_i32<'py>(
+    extra_code: Option<&Bound<'py, PyAny>>,
+) -> PyResult<Option<PyReadonlyArray2<'py, i32>>> {
+    extra_code.map(|array| array.extract().map_err(Into::into)).transpose()
+}
+
 #[pyfunction]
-#[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+#[pyo3(signature = (writer_session, metadata, chunk_stats, output_statistic_dtype, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn write_regenie2_native_chunk_with_output_dtype<'py>(
+    py: Python<'py>,
+    writer_session: PyRef<'py, OutputWriterSession>,
+    metadata: PyRef<'py, PyVariantMetadata>,
+    chunk_stats: PyRef<'py, PyChunkStats>,
+    output_statistic_dtype: String,
+    beta: &Bound<'py, PyAny>,
+    standard_error: &Bound<'py, PyAny>,
+    chi_squared: &Bound<'py, PyAny>,
+    log10_p_value: &Bound<'py, PyAny>,
+    extra_code: Option<&Bound<'py, PyAny>>,
+) -> PyResult<()> {
+    let write_plan = native_schedule::plan_single_trait_output_write(true, &output_statistic_dtype)
+        .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    if write_plan.uses_float64_native_writer {
+        return writer_session.write_regenie2_native_chunk_f64(
+            py,
+            metadata,
+            chunk_stats,
+            beta.extract()?,
+            standard_error.extract()?,
+            chi_squared.extract()?,
+            log10_p_value.extract()?,
+            extract_optional_readonly_array1_i32(extra_code)?,
+        );
+    }
+    writer_session.write_regenie2_native_chunk(
+        py,
+        metadata,
+        chunk_stats,
+        beta.extract()?,
+        standard_error.extract()?,
+        chi_squared.extract()?,
+        log10_p_value.extract()?,
+        extract_optional_readonly_array1_i32(extra_code)?,
+    )
+}
+
+#[pyfunction]
+#[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, output_statistic_dtype, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn write_regenie2_multi_native_chunk_with_output_dtype<'py>(
+    py: Python<'py>,
+    writer_sessions: Vec<PyRef<'py, OutputWriterSession>>,
+    active_trait_indices: Vec<usize>,
+    metadata: PyRef<'py, PyVariantMetadata>,
+    chunk_stats: PyRef<'py, PyChunkStats>,
+    output_statistic_dtype: String,
+    beta: &Bound<'py, PyAny>,
+    standard_error: &Bound<'py, PyAny>,
+    chi_squared: &Bound<'py, PyAny>,
+    log10_p_value: &Bound<'py, PyAny>,
+    extra_code: Option<&Bound<'py, PyAny>>,
+) -> PyResult<()> {
+    let write_plan =
+        native_schedule::plan_multi_trait_output_write(active_trait_indices.len(), true, &output_statistic_dtype)
+            .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    if !write_plan.use_native_multi_writer {
+        return Ok(());
+    }
+    if write_plan.uses_float64_native_writer {
+        return write_regenie2_multi_native_chunk_f64(
+            py,
+            writer_sessions,
+            active_trait_indices,
+            metadata,
+            chunk_stats,
+            beta.extract()?,
+            standard_error.extract()?,
+            chi_squared.extract()?,
+            log10_p_value.extract()?,
+            extract_optional_readonly_array2_i32(extra_code)?,
+        );
+    }
+    write_regenie2_multi_native_chunk(
+        py,
+        writer_sessions,
+        active_trait_indices,
+        metadata,
+        chunk_stats,
+        beta.extract()?,
+        standard_error.extract()?,
+        chi_squared.extract()?,
+        log10_p_value.extract()?,
+        extract_optional_readonly_array2_i32(extra_code)?,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_regenie2_multi_native_chunk(
@@ -304,8 +408,6 @@ pub(crate) fn write_regenie2_multi_native_chunk(
     Ok(())
 }
 
-#[pyfunction]
-#[pyo3(signature = (writer_sessions, active_trait_indices, metadata, chunk_stats, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_regenie2_multi_native_chunk_f64(
@@ -388,8 +490,8 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeManifestFileFingerprintCache>()?;
     module.add_class::<OutputWriterSession>()?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk, module)?)?;
-    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_f64, module)?)?;
+    module.add_function(wrap_pyfunction!(write_regenie2_native_chunk_with_output_dtype, module)?)?;
+    module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_with_output_dtype, module)?)?;
     Ok(())
 }
 

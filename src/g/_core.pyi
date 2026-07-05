@@ -1403,47 +1403,14 @@ class NativeBgenDeliveryInvocationPlan:
     @property
     def callback_batch_size(self) -> int: ...
 
-class NativeSingleTraitOutputWritePlan:
-    @property
-    def method_name(self) -> str: ...
-    @property
-    def uses_float64_native_writer(self) -> bool: ...
-
-class NativeMultiTraitOutputWritePlan:
-    @property
-    def active_trait_count(self) -> int: ...
-    @property
-    def use_native_multi_writer(self) -> bool: ...
-    @property
-    def uses_float64_native_writer(self) -> bool: ...
-
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
 def resolve_grouped_union_callback_batch_size(native_callback_batch_size: int) -> int: ...
-def resolve_manifest_gpu_genotype_format(
-    resume: bool,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-) -> str | None: ...
 def resolve_effective_trusted_no_missing_diploid(
     requested_trusted_no_missing_diploid: bool,
     variant_major_packed8_probability_pairs: bool,
 ) -> bool: ...
-def plan_gpu_genotype_format_auto_to_dosage(
-    requested_gpu_genotype_format: str,
-    resolution_reason: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_single_trait_binary_gpu_genotype_format_resolution(
-    requested_gpu_genotype_format: str,
-    manifest_gpu_genotype_format: str | None,
-    association_backend_genotype_format: str | None,
-    resume: bool,
-    jax_device: str,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
-def plan_auto_gpu_genotype_format_after_trusted_validation(
-    fallback_error: str | None,
-) -> NativeGpuGenotypeFormatResolutionPlan: ...
 def plan_multi_trait_chunk_write(
     writer_session_count: int,
     chunk_identifier: int,
@@ -1463,15 +1430,6 @@ def plan_bgen_delivery_invocation(
     has_native_multi_aligned_sample_data: bool,
     has_native_aligned_sample_data: bool,
 ) -> NativeBgenDeliveryInvocationPlan: ...
-def plan_single_trait_output_write(
-    is_native_writer_session: bool,
-    output_statistic_dtype: str,
-) -> NativeSingleTraitOutputWritePlan: ...
-def plan_multi_trait_output_write(
-    active_trait_count: int,
-    all_writer_sessions_native: bool,
-    output_statistic_dtype: str,
-) -> NativeMultiTraitOutputWritePlan: ...
 
 class NativeCallbackWorkerLifecycleState:
     def __init__(self) -> None: ...
@@ -2212,8 +2170,31 @@ def record_final_timing_outputs_write_started_diagnostic_event(
     profile_summary_path: str | None,
     run_id: str | None,
 ) -> None: ...
-def write_regenie2_multi_native_chunk(*args: typing.Any, **kwargs: typing.Any) -> None: ...
-def write_regenie2_multi_native_chunk_f64(*args: typing.Any, **kwargs: typing.Any) -> None: ...
+def write_regenie2_native_chunk_with_output_dtype(
+    *,
+    writer_session: OutputWriterSession,
+    metadata: VariantMetadata,
+    chunk_stats: ChunkStats,
+    output_statistic_dtype: str,
+    beta: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    standard_error: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    chi_squared: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    log10_p_value: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    extra_code: npt.NDArray[np.int32] | None = None,
+) -> None: ...
+def write_regenie2_multi_native_chunk_with_output_dtype(
+    *,
+    writer_sessions: list[OutputWriterSession],
+    active_trait_indices: list[int],
+    metadata: VariantMetadata,
+    chunk_stats: ChunkStats,
+    output_statistic_dtype: str,
+    beta: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    standard_error: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    chi_squared: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    log10_p_value: npt.NDArray[np.float32] | npt.NDArray[np.float64],
+    extra_code: npt.NDArray[np.int32] | None = None,
+) -> None: ...
 def build_run_completed_event(artifacts: object) -> NativeRunCompletedEvent: ...
 def build_run_interrupted_event(shutdown_request: object) -> NativeRunInterruptedEvent: ...
 def build_run_failed_event(error: BaseException) -> NativeRunFailedEvent: ...
@@ -2232,10 +2213,23 @@ def record_multi_phenotype_preflight_completed_telemetry_event(*args: typing.Any
 def record_sample_alignment_completed_telemetry_event(*args: typing.Any, **kwargs: typing.Any) -> None: ...
 def record_prediction_source_loaded_telemetry_event(*args: typing.Any, **kwargs: typing.Any) -> None: ...
 def record_multi_phenotype_sample_summary_telemetry_event(*args: typing.Any, **kwargs: typing.Any) -> None: ...
-def record_gpu_genotype_format_resolved_plan_events(
+def plan_gpu_genotype_format_auto_to_dosage_and_record_events(
     telemetry_session: object | None,
-    native_resolution_plan: NativeGpuGenotypeFormatResolutionPlan,
-) -> None: ...
+    requested_gpu_genotype_format: str,
+    resolution_reason: str,
+) -> NativeGpuGenotypeFormatResolutionPlan: ...
+def plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events(
+    telemetry_session: object | None,
+    requested_gpu_genotype_format: str,
+    manifest_gpu_genotype_format: str | None,
+    association_backend_genotype_format: str | None,
+    resume: bool,
+    jax_device: str,
+) -> NativeGpuGenotypeFormatResolutionPlan: ...
+def plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(
+    telemetry_session: object | None,
+    fallback_error: str | None,
+) -> NativeGpuGenotypeFormatResolutionPlan: ...
 def record_association_backend_selected_telemetry_event(*args: typing.Any, **kwargs: typing.Any) -> None: ...
 def record_bgen_engine_opened_telemetry_event(*args: typing.Any, **kwargs: typing.Any) -> None: ...
 def record_runner_jax_runtime_configuration_started_diagnostic_event() -> None: ...

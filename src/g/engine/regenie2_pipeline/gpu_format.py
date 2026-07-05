@@ -58,13 +58,10 @@ def resolve_auto_to_dosage(
     resolution_reason: str,
 ) -> types.GpuGenotypeFormat:
     """Resolve non-profiled auto requests to dosage."""
-    native_resolution_plan = _core.plan_gpu_genotype_format_auto_to_dosage(
+    native_resolution_plan = _core.plan_gpu_genotype_format_auto_to_dosage_and_record_events(
+        telemetry_session,
         requested_gpu_genotype_format.value,
         resolution_reason,
-    )
-    log_native_auto_resolution(
-        telemetry_session=telemetry_session,
-        native_resolution_plan=native_resolution_plan,
     )
     return concrete_gpu_genotype_format_from_native_plan(native_resolution_plan)
 
@@ -88,32 +85,6 @@ def read_manifest_gpu_genotype_format_fields(
     )
 
 
-def read_manifest_gpu_genotype_format(
-    existing_manifest: collections.abc.Mapping[str, typing.Any],
-) -> types.GpuGenotypeFormat | None:
-    """Read a concrete GPU genotype format from an existing manifest."""
-    manifest_fields = read_manifest_gpu_genotype_format_fields(existing_manifest)
-    native_gpu_genotype_format = _core.resolve_manifest_gpu_genotype_format(
-        resume=True,
-        manifest_gpu_genotype_format=manifest_fields.manifest_gpu_genotype_format,
-        association_backend_genotype_format=manifest_fields.association_backend_genotype_format,
-    )
-    if native_gpu_genotype_format is None:
-        return None
-    return types.GpuGenotypeFormat(native_gpu_genotype_format)
-
-
-def resolve_manifest_gpu_genotype_format(
-    *,
-    existing_manifest: dict[str, typing.Any] | None,
-    resume: bool,
-) -> types.GpuGenotypeFormat | None:
-    """Return the manifest's concrete GPU genotype format when resume can reuse it."""
-    if not resume or existing_manifest is None:
-        return None
-    return read_manifest_gpu_genotype_format(existing_manifest)
-
-
 def concrete_gpu_genotype_format_from_native_plan(
     native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
 ) -> types.GpuGenotypeFormat:
@@ -122,15 +93,6 @@ def concrete_gpu_genotype_format_from_native_plan(
     if resolved_gpu_genotype_format is None:
         raise RuntimeError("Native GPU genotype-format resolution plan is not resolved.")
     return types.GpuGenotypeFormat(resolved_gpu_genotype_format)
-
-
-def log_native_auto_resolution(
-    *,
-    telemetry_session: object | None,
-    native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
-) -> None:
-    """Emit logging and telemetry for a resolved native auto decision."""
-    _core.record_gpu_genotype_format_resolved_plan_events(telemetry_session, native_resolution_plan)
 
 
 def build_resolution_from_native_plan(
@@ -197,7 +159,8 @@ def resolve_single_trait_binary_gpu_genotype_format(
             association_backend_genotype_format=None,
         )
     )
-    native_resolution_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution(
+    native_resolution_plan = _core.plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events(
+        telemetry_session,
         requested_gpu_genotype_format.value,
         manifest_fields.manifest_gpu_genotype_format,
         manifest_fields.association_backend_genotype_format,
@@ -206,10 +169,6 @@ def resolve_single_trait_binary_gpu_genotype_format(
     )
     prepared_engine: _core.Regenie2RunEngine | None = None
     if not native_resolution_plan.requires_trusted_validation:
-        log_native_auto_resolution(
-            telemetry_session=telemetry_session,
-            native_resolution_plan=native_resolution_plan,
-        )
         return build_resolution_from_native_plan(
             native_resolution_plan=native_resolution_plan,
             prepared_engine=prepared_engine,
@@ -224,15 +183,17 @@ def resolve_single_trait_binary_gpu_genotype_format(
             stage_timing_recorder=stage_timing_recorder,
         )
     except ValueError as error:
-        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(str(error))
+        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(
+            telemetry_session,
+            str(error),
+        )
         prepared_engine = None
     else:
-        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation(None)
+        native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(
+            telemetry_session,
+            None,
+        )
 
-    log_native_auto_resolution(
-        telemetry_session=telemetry_session,
-        native_resolution_plan=native_resolution_plan,
-    )
     return build_resolution_from_native_plan(
         native_resolution_plan=native_resolution_plan,
         prepared_engine=prepared_engine,

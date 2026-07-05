@@ -239,16 +239,6 @@ def cast_statistic_array_for_native_writer(
     )
 
 
-def cast_statistic_array_for_native_writer_float32(array: object) -> npt.NDArray[np.float32]:
-    """Cast computed statistics to the float32 native writer schema dtype."""
-    return typing.cast("npt.NDArray[np.float32]", np.asarray(array, dtype=np.float32))
-
-
-def cast_statistic_array_for_native_writer_float64(array: object) -> npt.NDArray[np.float64]:
-    """Cast computed statistics to the float64 native writer schema dtype."""
-    return typing.cast("npt.NDArray[np.float64]", np.asarray(array, dtype=np.float64))
-
-
 def get_linear_chunk_stats_arrays(chunk_stats: ChunkStatsComputeArraysProtocol) -> shared.LinearChunkStatsArrays:
     """Return the native stat arrays needed by linear variant-major compute."""
     compute_arrays = chunk_stats.compute_arrays(

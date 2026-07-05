@@ -81,16 +81,6 @@ pub(crate) struct NativeBgenDeliveryInvocationPlan {
 }
 
 #[pyclass]
-pub(crate) struct NativeSingleTraitOutputWritePlan {
-    inner: native_schedule::SingleTraitOutputWritePlan,
-}
-
-#[pyclass]
-pub(crate) struct NativeMultiTraitOutputWritePlan {
-    inner: native_schedule::MultiTraitOutputWritePlan,
-}
-
-#[pyclass]
 pub(crate) struct NativeCallbackQueueOperationObservationPlan {
     inner: native_schedule::CallbackQueueOperationObservationPlan,
 }
@@ -1339,37 +1329,6 @@ impl NativeBgenDeliveryInvocationPlan {
 }
 
 #[pymethods]
-impl NativeSingleTraitOutputWritePlan {
-    #[getter]
-    fn method_name(&self) -> &str {
-        &self.inner.method_name
-    }
-
-    #[getter]
-    fn uses_float64_native_writer(&self) -> bool {
-        self.inner.uses_float64_native_writer
-    }
-}
-
-#[pymethods]
-impl NativeMultiTraitOutputWritePlan {
-    #[getter]
-    fn active_trait_count(&self) -> usize {
-        self.inner.active_trait_count
-    }
-
-    #[getter]
-    fn use_native_multi_writer(&self) -> bool {
-        self.inner.use_native_multi_writer
-    }
-
-    #[getter]
-    fn uses_float64_native_writer(&self) -> bool {
-        self.inner.uses_float64_native_writer
-    }
-}
-
-#[pymethods]
 impl NativeCallbackQueueOperationObservationPlan {
     #[getter]
     fn queue_name(&self) -> &str {
@@ -1969,28 +1928,6 @@ impl NativeGpuGenotypeFormatResolutionPlan {
 
     #[getter]
     fn should_log_auto_resolution(&self) -> bool {
-        self.inner.should_log_auto_resolution()
-    }
-}
-
-impl NativeGpuGenotypeFormatResolutionPlan {
-    pub(crate) fn requested_gpu_genotype_format_value(&self) -> &str {
-        &self.inner.requested_gpu_genotype_format
-    }
-
-    pub(crate) fn resolved_gpu_genotype_format_value(&self) -> Option<&str> {
-        self.inner.resolved_gpu_genotype_format.as_deref()
-    }
-
-    pub(crate) fn resolution_reason_value(&self) -> Option<&str> {
-        self.inner.resolution_reason.as_deref()
-    }
-
-    pub(crate) fn fallback_error_value(&self) -> Option<&str> {
-        self.inner.fallback_error.as_deref()
-    }
-
-    pub(crate) fn should_log_auto_resolution_value(&self) -> bool {
         self.inner.should_log_auto_resolution()
     }
 }
@@ -2889,18 +2826,6 @@ impl From<native_schedule::BgenDeliveryInvocationPlan> for NativeBgenDeliveryInv
     }
 }
 
-impl From<native_schedule::SingleTraitOutputWritePlan> for NativeSingleTraitOutputWritePlan {
-    fn from(write_plan: native_schedule::SingleTraitOutputWritePlan) -> Self {
-        Self { inner: write_plan }
-    }
-}
-
-impl From<native_schedule::MultiTraitOutputWritePlan> for NativeMultiTraitOutputWritePlan {
-    fn from(write_plan: native_schedule::MultiTraitOutputWritePlan) -> Self {
-        Self { inner: write_plan }
-    }
-}
-
 impl From<native_schedule::CallbackQueueOperationObservationPlan> for NativeCallbackQueueOperationObservationPlan {
     fn from(observation_plan: native_schedule::CallbackQueueOperationObservationPlan) -> Self {
         Self { inner: observation_plan }
@@ -3067,21 +2992,6 @@ fn intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets: Ve
 }
 
 #[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn resolve_manifest_gpu_genotype_format(
-    resume: bool,
-    manifest_gpu_genotype_format: Option<String>,
-    association_backend_genotype_format: Option<String>,
-) -> Option<String> {
-    native_schedule::resolve_manifest_gpu_genotype_format(
-        resume,
-        manifest_gpu_genotype_format.as_deref(),
-        association_backend_genotype_format.as_deref(),
-    )
-    .map(str::to_string)
-}
-
-#[pyfunction]
 fn resolve_effective_trusted_no_missing_diploid(
     requested_trusted_no_missing_diploid: bool,
     variant_major_packed8_probability_pairs: bool,
@@ -3090,45 +3000,6 @@ fn resolve_effective_trusted_no_missing_diploid(
         requested_trusted_no_missing_diploid,
         variant_major_packed8_probability_pairs,
     )
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_gpu_genotype_format_auto_to_dosage(
-    requested_gpu_genotype_format: String,
-    resolution_reason: String,
-) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
-    native_schedule::plan_gpu_genotype_format_auto_to_dosage(&requested_gpu_genotype_format, &resolution_reason)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_single_trait_binary_gpu_genotype_format_resolution(
-    requested_gpu_genotype_format: String,
-    manifest_gpu_genotype_format: Option<String>,
-    association_backend_genotype_format: Option<String>,
-    resume: bool,
-    jax_device: String,
-) -> PyResult<NativeGpuGenotypeFormatResolutionPlan> {
-    native_schedule::plan_single_trait_binary_gpu_genotype_format_resolution(
-        &requested_gpu_genotype_format,
-        manifest_gpu_genotype_format.as_deref(),
-        association_backend_genotype_format.as_deref(),
-        resume,
-        &jax_device,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_auto_gpu_genotype_format_after_trusted_validation(
-    fallback_error: Option<String>,
-) -> NativeGpuGenotypeFormatResolutionPlan {
-    native_schedule::plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error.as_deref()).into()
 }
 
 #[pyfunction]
@@ -3193,33 +3064,6 @@ fn plan_bgen_delivery_invocation(
     .map_err(|error| schedule_error_to_py(&error))
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_single_trait_output_write(
-    is_native_writer_session: bool,
-    output_statistic_dtype: String,
-) -> PyResult<NativeSingleTraitOutputWritePlan> {
-    native_schedule::plan_single_trait_output_write(is_native_writer_session, &output_statistic_dtype)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_multi_trait_output_write(
-    active_trait_count: usize,
-    all_writer_sessions_native: bool,
-    output_statistic_dtype: String,
-) -> PyResult<NativeMultiTraitOutputWritePlan> {
-    native_schedule::plan_multi_trait_output_write(
-        active_trait_count,
-        all_writer_sessions_native,
-        &output_statistic_dtype,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_schedule_function_exports(module)?;
     register_callback_queue_exports(module)?;
@@ -3234,18 +3078,12 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_manifest_gpu_genotype_format, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_auto_gpu_genotype_format_after_trusted_validation, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_single_trait_output_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_multi_trait_output_write, module)?)?;
     Ok(())
 }
 
@@ -3291,8 +3129,6 @@ fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResul
     module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
     module.add_class::<NativeBgenDeliveryInvocationPlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
-    module.add_class::<NativeMultiTraitOutputWritePlan>()?;
-    module.add_class::<NativeSingleTraitOutputWritePlan>()?;
     module.add_class::<NativeWriterFinishExecutionPlan>()?;
     Ok(())
 }
@@ -3302,6 +3138,6 @@ fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
+pub(crate) fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }

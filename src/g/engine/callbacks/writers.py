@@ -130,20 +130,27 @@ def write_materialized_regenie2_native_chunk_with_optional_timing(
 ) -> None:
     """Write one already-materialized single-trait REGENIE result chunk."""
     write_start_time = time.perf_counter() if stage_timing_recorder is not None else 0.0
-    write_plan = _core.plan_single_trait_output_write(
-        is_native_writer_session=isinstance(writer_session, _core.OutputWriterSession),
-        output_statistic_dtype=output_statistic_dtype.value,
-    )
-    if write_plan.uses_float64_native_writer:
+    if isinstance(writer_session, _core.OutputWriterSession):
         native_writer_session = typing.cast("_core.OutputWriterSession", writer_session)
         native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
-        native_writer_session.write_regenie2_native_chunk_f64(
+        _core.write_regenie2_native_chunk_with_output_dtype(
+            writer_session=native_writer_session,
             metadata=metadata,
             chunk_stats=chunk_stats,
-            beta=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.beta),
-            standard_error=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.standard_error),
-            chi_squared=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.chi_squared),
-            log10_p_value=transfers.cast_statistic_array_for_native_writer_float64(materialized_chunk.log10_p_value),
+            output_statistic_dtype=output_statistic_dtype.value,
+            beta=transfers.cast_statistic_array_for_native_writer(materialized_chunk.beta, output_statistic_dtype),
+            standard_error=transfers.cast_statistic_array_for_native_writer(
+                materialized_chunk.standard_error,
+                output_statistic_dtype,
+            ),
+            chi_squared=transfers.cast_statistic_array_for_native_writer(
+                materialized_chunk.chi_squared,
+                output_statistic_dtype,
+            ),
+            log10_p_value=transfers.cast_statistic_array_for_native_writer(
+                materialized_chunk.log10_p_value,
+                output_statistic_dtype,
+            ),
             extra_code=native_extra_code,
         )
     else:
@@ -346,43 +353,26 @@ def write_materialized_regenie2_multi_native_chunk_with_optional_timing(
                 chunk_metadata=metadata,
             )
         return
-    write_plan = _core.plan_multi_trait_output_write(
-        active_trait_count=len(active_writer_sessions),
-        all_writer_sessions_native=materialized_chunk.use_native_multi_writer,
-        output_statistic_dtype=output_statistic_dtype.value,
-    )
-    if write_plan.use_native_multi_writer:
+    if materialized_chunk.use_native_multi_writer:
         native_writer_sessions = typing.cast("tuple[_core.OutputWriterSession, ...]", active_writer_sessions)
-        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
         beta = materialized_chunk.beta
         standard_error = materialized_chunk.standard_error
         chi_squared = materialized_chunk.chi_squared
         log10_p_value = materialized_chunk.log10_p_value
-        active_trait_indices = list(range(write_plan.active_trait_count))
-        if write_plan.uses_float64_native_writer:
-            _core.write_regenie2_multi_native_chunk_f64(
-                writer_sessions=list(native_writer_sessions),
-                active_trait_indices=active_trait_indices,
-                metadata=metadata,
-                chunk_stats=chunk_stats,
-                beta=transfers.cast_statistic_array_for_native_writer_float64(beta),
-                standard_error=transfers.cast_statistic_array_for_native_writer_float64(standard_error),
-                chi_squared=transfers.cast_statistic_array_for_native_writer_float64(chi_squared),
-                log10_p_value=transfers.cast_statistic_array_for_native_writer_float64(log10_p_value),
-                extra_code=native_extra_code,
-            )
-        else:
-            _core.write_regenie2_multi_native_chunk(
-                writer_sessions=list(native_writer_sessions),
-                active_trait_indices=active_trait_indices,
-                metadata=metadata,
-                chunk_stats=chunk_stats,
-                beta=transfers.cast_statistic_array_for_native_writer_float32(beta),
-                standard_error=transfers.cast_statistic_array_for_native_writer_float32(standard_error),
-                chi_squared=transfers.cast_statistic_array_for_native_writer_float32(chi_squared),
-                log10_p_value=transfers.cast_statistic_array_for_native_writer_float32(log10_p_value),
-                extra_code=native_extra_code,
-            )
+        native_extra_code = typing.cast("typing.Any", materialized_chunk.extra_code)
+        active_trait_indices = list(range(len(active_writer_sessions)))
+        _core.write_regenie2_multi_native_chunk_with_output_dtype(
+            writer_sessions=list(native_writer_sessions),
+            active_trait_indices=active_trait_indices,
+            metadata=metadata,
+            chunk_stats=chunk_stats,
+            output_statistic_dtype=output_statistic_dtype.value,
+            beta=transfers.cast_statistic_array_for_native_writer(beta, output_statistic_dtype),
+            standard_error=transfers.cast_statistic_array_for_native_writer(standard_error, output_statistic_dtype),
+            chi_squared=transfers.cast_statistic_array_for_native_writer(chi_squared, output_statistic_dtype),
+            log10_p_value=transfers.cast_statistic_array_for_native_writer(log10_p_value, output_statistic_dtype),
+            extra_code=native_extra_code,
+        )
         if stage_timing_recorder is not None:
             transfers.record_stage_duration_with_optional_chunk(
                 stage_timing_recorder=stage_timing_recorder,

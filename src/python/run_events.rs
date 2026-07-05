@@ -4,6 +4,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
+use g_engine::schedule as native_schedule;
 use g_runtime::run_events as native_run_events;
 
 use super::{logging, schedule};
@@ -550,27 +551,75 @@ fn record_gpu_genotype_format_resolved_events(
     )
 }
 
-#[pyfunction]
-pub fn record_gpu_genotype_format_resolved_plan_events(
+fn record_gpu_genotype_format_resolved_native_plan_events(
     telemetry_session: &Bound<'_, PyAny>,
-    native_resolution_plan: &schedule::NativeGpuGenotypeFormatResolutionPlan,
+    native_resolution_plan: &native_schedule::GpuGenotypeFormatResolutionPlan,
 ) -> PyResult<()> {
-    if !native_resolution_plan.should_log_auto_resolution_value() {
+    if !native_resolution_plan.should_log_auto_resolution() {
         return Ok(());
     }
     let resolved_gpu_genotype_format = native_resolution_plan
-        .resolved_gpu_genotype_format_value()
+        .resolved_gpu_genotype_format
+        .as_deref()
         .ok_or_else(|| PyRuntimeError::new_err("Native GPU genotype-format resolution plan is not resolved."))?;
-    let resolution_reason = native_resolution_plan.resolution_reason_value().ok_or_else(|| {
+    let resolution_reason = native_resolution_plan.resolution_reason.as_deref().ok_or_else(|| {
         PyRuntimeError::new_err("Native GPU genotype-format resolution plan has no resolution reason.")
     })?;
     record_gpu_genotype_format_resolved_events(
         telemetry_session,
-        native_resolution_plan.requested_gpu_genotype_format_value(),
+        &native_resolution_plan.requested_gpu_genotype_format,
         resolved_gpu_genotype_format,
         resolution_reason,
-        native_resolution_plan.fallback_error_value().map(str::to_string),
+        native_resolution_plan.fallback_error.clone(),
     )
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn plan_gpu_genotype_format_auto_to_dosage_and_record_events(
+    telemetry_session: &Bound<'_, PyAny>,
+    requested_gpu_genotype_format: String,
+    resolution_reason: String,
+) -> PyResult<schedule::NativeGpuGenotypeFormatResolutionPlan> {
+    let native_resolution_plan =
+        native_schedule::plan_gpu_genotype_format_auto_to_dosage(&requested_gpu_genotype_format, &resolution_reason)
+            .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
+    Ok(native_resolution_plan.into())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events(
+    telemetry_session: &Bound<'_, PyAny>,
+    requested_gpu_genotype_format: String,
+    manifest_gpu_genotype_format: Option<String>,
+    association_backend_genotype_format: Option<String>,
+    resume: bool,
+    jax_device: String,
+) -> PyResult<schedule::NativeGpuGenotypeFormatResolutionPlan> {
+    let native_resolution_plan = native_schedule::plan_single_trait_binary_gpu_genotype_format_resolution(
+        &requested_gpu_genotype_format,
+        manifest_gpu_genotype_format.as_deref(),
+        association_backend_genotype_format.as_deref(),
+        resume,
+        &jax_device,
+    )
+    .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
+    Ok(native_resolution_plan.into())
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(
+    telemetry_session: &Bound<'_, PyAny>,
+    fallback_error: Option<String>,
+) -> PyResult<schedule::NativeGpuGenotypeFormatResolutionPlan> {
+    let native_resolution_plan =
+        native_schedule::plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error.as_deref());
+    record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
+    Ok(native_resolution_plan.into())
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1319,7 +1368,15 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_gpu_genotype_format_resolved_plan_events, module)?)?;
+    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage_and_record_events, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events,
+        module
+    )?)?;
+    module.add_function(wrap_pyfunction!(
+        plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events,
+        module
+    )?)?;
     module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry_event, module)?)?;
     Ok(())
