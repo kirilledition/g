@@ -226,82 +226,46 @@ class TransferMetadataSnapshot:
     total_elements: int
 
 
-def optional_numeric_diagnostic(
-    diagnostics: typing.Mapping[str, int | float],
-    key: str,
-) -> int | float | None:
-    """Return a numeric diagnostic value when present."""
-    return diagnostics.get(key)
-
-
-def optional_integer_diagnostic(
-    diagnostics: typing.Mapping[str, int | str],
-    key: str,
-) -> int | None:
-    """Return an integer diagnostic value when present."""
-    value = diagnostics.get(key)
-    if value is None:
-        return None
-    return int(value)
-
-
-def optional_string_diagnostic(
-    diagnostics: typing.Mapping[str, int | str],
-    key: str,
-) -> str | None:
-    """Return a string diagnostic value when present."""
-    value = diagnostics.get(key)
-    if value is None:
-        return None
-    return str(value)
-
-
-def binary_chunk_diagnostics_snapshot_from_mapping(
-    diagnostics: typing.Mapping[str, int | float],
+def binary_chunk_diagnostics_snapshot_from_native(
+    diagnostics: _core.NativeBinaryChunkDiagnosticsSnapshot,
 ) -> BinaryChunkDiagnosticsSnapshot:
-    """Build a typed binary diagnostic snapshot from JSON-like counters."""
+    """Build a typed binary diagnostic snapshot from native counters."""
     return BinaryChunkDiagnosticsSnapshot(
-        score_only_count=optional_numeric_diagnostic(diagnostics, "score_only_count"),
-        score_test_candidate_count=optional_numeric_diagnostic(diagnostics, "score_test_candidate_count"),
-        firth_candidate_count=optional_numeric_diagnostic(diagnostics, "firth_candidate_count"),
-        firth_iteration_min=optional_numeric_diagnostic(diagnostics, "firth_iteration_min"),
-        firth_iteration_median=optional_numeric_diagnostic(diagnostics, "firth_iteration_median"),
-        firth_iteration_max=optional_numeric_diagnostic(diagnostics, "firth_iteration_max"),
-        firth_converged_count=optional_numeric_diagnostic(diagnostics, "firth_converged_count"),
-        firth_failed_count=optional_numeric_diagnostic(diagnostics, "firth_failed_count"),
-        firth_numerical_failure_count=optional_numeric_diagnostic(diagnostics, "firth_numerical_failure_count"),
-        firth_max_iteration_failure_count=optional_numeric_diagnostic(diagnostics, "firth_max_iteration_failure_count"),
-        firth_invalid_statistic_failure_count=optional_numeric_diagnostic(
-            diagnostics,
-            "firth_invalid_statistic_failure_count",
-        ),
-        firth_step_halving_failure_count=optional_numeric_diagnostic(
-            diagnostics,
-            "firth_step_halving_failure_count",
-        ),
-        pseudo_firth_attempt_count=optional_numeric_diagnostic(diagnostics, "pseudo_firth_attempt_count"),
-        pseudo_firth_success_count=optional_numeric_diagnostic(diagnostics, "pseudo_firth_success_count"),
-        nr_zero_start_attempt_count=optional_numeric_diagnostic(diagnostics, "nr_zero_start_attempt_count"),
-        nr_zero_start_success_count=optional_numeric_diagnostic(diagnostics, "nr_zero_start_success_count"),
-        nr_warm_start_attempt_count=optional_numeric_diagnostic(diagnostics, "nr_warm_start_attempt_count"),
-        nr_warm_start_success_count=optional_numeric_diagnostic(diagnostics, "nr_warm_start_success_count"),
-        sparse_correction_count=optional_numeric_diagnostic(diagnostics, "sparse_correction_count"),
-        dense_correction_count=optional_numeric_diagnostic(diagnostics, "dense_correction_count"),
+        score_only_count=diagnostics.score_only_count,
+        score_test_candidate_count=diagnostics.score_test_candidate_count,
+        firth_candidate_count=diagnostics.firth_candidate_count,
+        firth_iteration_min=diagnostics.firth_iteration_min,
+        firth_iteration_median=diagnostics.firth_iteration_median,
+        firth_iteration_max=diagnostics.firth_iteration_max,
+        firth_converged_count=diagnostics.firth_converged_count,
+        firth_failed_count=diagnostics.firth_failed_count,
+        firth_numerical_failure_count=diagnostics.firth_numerical_failure_count,
+        firth_max_iteration_failure_count=diagnostics.firth_max_iteration_failure_count,
+        firth_invalid_statistic_failure_count=diagnostics.firth_invalid_statistic_failure_count,
+        firth_step_halving_failure_count=diagnostics.firth_step_halving_failure_count,
+        pseudo_firth_attempt_count=diagnostics.pseudo_firth_attempt_count,
+        pseudo_firth_success_count=diagnostics.pseudo_firth_success_count,
+        nr_zero_start_attempt_count=diagnostics.nr_zero_start_attempt_count,
+        nr_zero_start_success_count=diagnostics.nr_zero_start_success_count,
+        nr_warm_start_attempt_count=diagnostics.nr_warm_start_attempt_count,
+        nr_warm_start_success_count=diagnostics.nr_warm_start_success_count,
+        sparse_correction_count=diagnostics.sparse_correction_count,
+        dense_correction_count=diagnostics.dense_correction_count,
     )
 
 
-def null_logistic_diagnostics_snapshot_from_mapping(
-    diagnostics: typing.Mapping[str, int | str],
+def null_logistic_diagnostics_snapshot_from_native(
+    diagnostics: _core.NativeNullLogisticDiagnosticsSnapshot,
 ) -> NullLogisticDiagnosticsSnapshot:
-    """Build a typed null logistic diagnostic snapshot from JSON-like counters."""
+    """Build a typed null logistic diagnostic snapshot from native counters."""
     return NullLogisticDiagnosticsSnapshot(
-        chromosome=optional_string_diagnostic(diagnostics, "chromosome"),
-        phenotype=optional_string_diagnostic(diagnostics, "phenotype"),
-        iteration_count=optional_integer_diagnostic(diagnostics, "iteration_count"),
-        converged=optional_integer_diagnostic(diagnostics, "converged"),
-        firth_iteration_count=optional_integer_diagnostic(diagnostics, "firth_iteration_count"),
-        firth_convergence_reason_code=optional_integer_diagnostic(diagnostics, "firth_convergence_reason_code"),
-        correction_method=optional_string_diagnostic(diagnostics, "correction_method"),
+        chromosome=diagnostics.chromosome,
+        phenotype=diagnostics.phenotype,
+        iteration_count=diagnostics.iteration_count,
+        converged=diagnostics.converged,
+        firth_iteration_count=diagnostics.firth_iteration_count,
+        firth_convergence_reason_code=diagnostics.firth_convergence_reason_code,
+        correction_method=diagnostics.correction_method,
     )
 
 
@@ -460,7 +424,7 @@ class StageTimingRecorder:
 
     def snapshot(self) -> StageTimingSnapshot:
         """Return an immutable copy of the current timings."""
-        return adapt_stage_timing_snapshot_payload(self.native_recorder.snapshot_payload())
+        return adapt_stage_timing_snapshot(self.native_recorder.snapshot())
 
     def write_final_timing_outputs(
         self,
@@ -482,91 +446,71 @@ class StageTimingRecorder:
         )
 
 
-def adapt_stage_timing_snapshot_payload(snapshot_payload: dict[str, object]) -> StageTimingSnapshot:
-    """Adapt a native timing snapshot payload to the public Python shape."""
+def adapt_stage_timing_snapshot(native_snapshot: _core.NativeStageTimingSnapshot) -> StageTimingSnapshot:
+    """Adapt a native timing snapshot to the public Python shape."""
     return StageTimingSnapshot(
-        stage_totals_seconds=dict(typing.cast("typing.Mapping[str, float]", snapshot_payload["stage_totals_seconds"])),
-        stage_counts=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["stage_counts"])),
+        stage_totals_seconds=dict(native_snapshot.stage_totals_seconds),
+        stage_counts=dict(native_snapshot.stage_counts),
         chunk_stage_timings=tuple(
-            adapt_chunk_stage_timing_payload(chunk_stage_timing_payload)
-            for chunk_stage_timing_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["chunk_stage_timings"],
-            )
+            adapt_chunk_stage_timing(chunk_stage_timing) for chunk_stage_timing in native_snapshot.chunk_stage_timings
         ),
-        native_bgen_profile=dict(typing.cast("typing.Mapping[str, int]", snapshot_payload["native_bgen_profile"])),
+        native_bgen_profile=dict(native_snapshot.native_bgen_profile),
         binary_chunk_diagnostics=tuple(
-            binary_chunk_diagnostics_snapshot_from_mapping(
-                typing.cast("typing.Mapping[str, int | float]", binary_diagnostic_payload)
-            )
-            for binary_diagnostic_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["binary_chunk_diagnostics"],
-            )
+            binary_chunk_diagnostics_snapshot_from_native(binary_diagnostics)
+            for binary_diagnostics in native_snapshot.binary_chunk_diagnostics
         ),
         null_logistic_diagnostics=tuple(
-            null_logistic_diagnostics_snapshot_from_mapping(
-                typing.cast("typing.Mapping[str, int | str]", null_logistic_diagnostic_payload)
-            )
-            for null_logistic_diagnostic_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["null_logistic_diagnostics"],
-            )
+            null_logistic_diagnostics_snapshot_from_native(null_logistic_diagnostics)
+            for null_logistic_diagnostics in native_snapshot.null_logistic_diagnostics
         ),
         queue_backpressure=tuple(
-            adapt_queue_backpressure_payload(queue_backpressure_payload)
-            for queue_backpressure_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["queue_backpressure"],
-            )
+            adapt_queue_backpressure(queue_backpressure) for queue_backpressure in native_snapshot.queue_backpressure
         ),
         transfer_metadata=tuple(
-            adapt_transfer_metadata_payload(transfer_metadata_payload)
-            for transfer_metadata_payload in typing.cast(
-                "typing.Sequence[dict[str, object]]",
-                snapshot_payload["transfer_metadata"],
-            )
+            adapt_transfer_metadata(transfer_metadata) for transfer_metadata in native_snapshot.transfer_metadata
         ),
     )
 
 
-def adapt_chunk_stage_timing_payload(chunk_stage_timing_payload: dict[str, object]) -> ChunkStageTimingSnapshot:
-    """Adapt one native chunk-stage timing payload."""
+def adapt_chunk_stage_timing(
+    chunk_stage_timing: _core.NativeChunkStageTimingSnapshot,
+) -> ChunkStageTimingSnapshot:
+    """Adapt one native chunk-stage timing row."""
     return ChunkStageTimingSnapshot(
-        chunk_identifier=typing.cast("int", chunk_stage_timing_payload["chunk_identifier"]),
-        chromosome=typing.cast("str", chunk_stage_timing_payload["chromosome"]),
-        variant_start_index=typing.cast("int", chunk_stage_timing_payload["variant_start_index"]),
-        variant_stop_index=typing.cast("int", chunk_stage_timing_payload["variant_stop_index"]),
-        variant_count=typing.cast("int", chunk_stage_timing_payload["variant_count"]),
-        stage_name=typing.cast("str", chunk_stage_timing_payload["stage_name"]),
-        duration_seconds=typing.cast("float", chunk_stage_timing_payload["duration_seconds"]),
+        chunk_identifier=chunk_stage_timing.chunk_identifier,
+        chromosome=chunk_stage_timing.chromosome,
+        variant_start_index=chunk_stage_timing.variant_start_index,
+        variant_stop_index=chunk_stage_timing.variant_stop_index,
+        variant_count=chunk_stage_timing.variant_count,
+        stage_name=chunk_stage_timing.stage_name,
+        duration_seconds=chunk_stage_timing.duration_seconds,
     )
 
 
-def adapt_queue_backpressure_payload(queue_backpressure_payload: dict[str, object]) -> QueueBackpressureSnapshot:
-    """Adapt one native queue/backpressure payload."""
+def adapt_queue_backpressure(queue_backpressure: _core.NativeQueueBackpressureSnapshot) -> QueueBackpressureSnapshot:
+    """Adapt one native queue/backpressure row."""
     return QueueBackpressureSnapshot(
-        queue_name=typing.cast("str", queue_backpressure_payload["queue_name"]),
-        operation_name=typing.cast("str", queue_backpressure_payload["operation_name"]),
-        observation_count=typing.cast("int", queue_backpressure_payload["observation_count"]),
-        max_depth=typing.cast("int", queue_backpressure_payload["max_depth"]),
-        max_capacity=typing.cast("int", queue_backpressure_payload["max_capacity"]),
-        total_elapsed_seconds=typing.cast("float", queue_backpressure_payload["total_elapsed_seconds"]),
-        total_blocked_seconds=typing.cast("float", queue_backpressure_payload["total_blocked_seconds"]),
+        queue_name=queue_backpressure.queue_name,
+        operation_name=queue_backpressure.operation_name,
+        observation_count=queue_backpressure.observation_count,
+        max_depth=queue_backpressure.max_depth,
+        max_capacity=queue_backpressure.max_capacity,
+        total_elapsed_seconds=queue_backpressure.total_elapsed_seconds,
+        total_blocked_seconds=queue_backpressure.total_blocked_seconds,
     )
 
 
-def adapt_transfer_metadata_payload(transfer_metadata_payload: dict[str, object]) -> TransferMetadataSnapshot:
-    """Adapt one native transfer metadata payload."""
+def adapt_transfer_metadata(transfer_metadata: _core.NativeTransferMetadataSnapshot) -> TransferMetadataSnapshot:
+    """Adapt one native transfer metadata row."""
     return TransferMetadataSnapshot(
-        transfer_name=typing.cast("str", transfer_metadata_payload["transfer_name"]),
-        array_role=typing.cast("str", transfer_metadata_payload["array_role"]),
-        dtype_name=typing.cast("str", transfer_metadata_payload["dtype_name"]),
-        ndim=typing.cast("int", transfer_metadata_payload["ndim"]),
-        observation_count=typing.cast("int", transfer_metadata_payload["observation_count"]),
-        total_bytes=typing.cast("int", transfer_metadata_payload["total_bytes"]),
-        max_bytes=typing.cast("int", transfer_metadata_payload["max_bytes"]),
-        total_elements=typing.cast("int", transfer_metadata_payload["total_elements"]),
+        transfer_name=transfer_metadata.transfer_name,
+        array_role=transfer_metadata.array_role,
+        dtype_name=transfer_metadata.dtype_name,
+        ndim=transfer_metadata.ndim,
+        observation_count=transfer_metadata.observation_count,
+        total_bytes=transfer_metadata.total_bytes,
+        max_bytes=transfer_metadata.max_bytes,
+        total_elements=transfer_metadata.total_elements,
     )
 
 
@@ -582,17 +526,12 @@ def build_stage_timing_recorder(
     return StageTimingRecorder.from_native_recorder(native_recorder)
 
 
-def native_final_timing_output_policy() -> _core.NativeFinalTimingOutputPolicy:
-    """Build the native final timing output policy handle."""
-    return _core.NativeFinalTimingOutputPolicy()
-
-
 def resolve_final_timing_output_context(
     diagnostics_stage_timing_path: pathlib.Path | None,
     telemetry_session: object | None,
 ) -> FinalTimingOutputContext:
     """Resolve final timing output paths through the native runtime policy."""
-    native_context = native_final_timing_output_policy().resolve_final_timing_output_context(
+    native_context = _core.resolve_final_timing_output_context(
         None if diagnostics_stage_timing_path is None else str(diagnostics_stage_timing_path),
         telemetry_session,
     )
@@ -610,7 +549,7 @@ def record_final_timing_outputs_write_started_diagnostic_event(
     run_id: str | None,
 ) -> None:
     """Record that final timing output writes are starting."""
-    native_final_timing_output_policy().record_final_timing_outputs_write_started_diagnostic_event(
+    _core.record_final_timing_outputs_write_started_diagnostic_event(
         None if stage_timing_path is None else str(stage_timing_path),
         None if profile_summary_path is None else str(profile_summary_path),
         run_id,

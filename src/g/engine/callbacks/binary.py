@@ -15,13 +15,13 @@ import g.engine.callbacks.writers as writers
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.engine.callbacks import timing
+from g.engine import timing as engine_timing
 
 if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from g.engine.callbacks import events
+    from g.runner import events
 
 
 class BinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
@@ -40,7 +40,7 @@ class BinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
-        stage_timing_recorder: timing.StageTimingRecorder | None,
+        stage_timing_recorder: engine_timing.StageTimingRecorder | None,
         telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
@@ -149,7 +149,7 @@ class BinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached binary chromosome state for the metadata chromosome."""
-        chromosome = shared.get_metadata_chromosome(variant_metadata)
+        chromosome = str(variant_metadata.chromosome_label)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -161,7 +161,7 @@ class BinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             kernel_config=self.kernel_config,
             score_dtype=self.score_dtype,
         )
-        diagnostics.block_until_ready(self.current_chromosome_state.score_residual)
+        jax.block_until_ready(self.current_chromosome_state.score_residual)
         null_logistic_failure_count = diagnostics.record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
@@ -174,7 +174,11 @@ class BinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             stage_timing_recorder=self.stage_timing_recorder,
         )
         self.record_binary_null_model_failure_count(null_logistic_failure_count)
-        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        engine_timing.record_stage_duration(
+            self.stage_timing_recorder,
+            "chromosome_state_preparation",
+            chromosome_start_time,
+        )
         self.current_chromosome = chromosome
 
     def compute_binary_result(
@@ -425,7 +429,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
-        stage_timing_recorder: timing.StageTimingRecorder | None,
+        stage_timing_recorder: engine_timing.StageTimingRecorder | None,
         telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
@@ -763,7 +767,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-binary chromosome state for the metadata chromosome."""
-        chromosome = shared.get_metadata_chromosome(variant_metadata)
+        chromosome = str(variant_metadata.chromosome_label)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -775,7 +779,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             self.kernel_config,
             self.score_dtype,
         )
-        diagnostics.block_until_ready(self.current_chromosome_state.score_residual)
+        jax.block_until_ready(self.current_chromosome_state.score_residual)
         null_logistic_failure_count = diagnostics.record_null_logistic_chromosome_diagnostics(
             chromosome=chromosome,
             null_logistic_converged=self.current_chromosome_state.null_logistic_converged,
@@ -788,7 +792,11 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             stage_timing_recorder=self.stage_timing_recorder,
         )
         self.record_binary_null_model_failure_count(null_logistic_failure_count)
-        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        engine_timing.record_stage_duration(
+            self.stage_timing_recorder,
+            "chromosome_state_preparation",
+            chromosome_start_time,
+        )
         self.current_chromosome = chromosome
 
     def enqueue_multi_result_for_write(

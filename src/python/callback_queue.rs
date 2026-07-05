@@ -414,10 +414,7 @@ impl NativeCallbackObjectQueueGetResult {
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCallbackObjectQueue>()?;
-    module.add_class::<NativeCallbackObjectQueueGetResult>()?;
-    module.add_class::<NativeCallbackWaitSignal>()?;
-    module.add_class::<NativeCallbackWorkerThread>()?;
+    let _ = module;
     Ok(())
 }
 

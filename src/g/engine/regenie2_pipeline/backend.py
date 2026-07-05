@@ -61,8 +61,7 @@ def plan_association_backend(
     gpu_genotype_format: types.GpuGenotypeFormat,
 ) -> AssociationBackendPlan:
     """Select the concrete backend used by association execution."""
-    native_host_planning_policy = _core.NativeHostPlanningPolicy()
-    native_backend_plan = native_host_planning_policy.plan_association_backend(
+    native_backend_plan = _core.plan_association_backend(
         association_mode.value,
         jax_device.value,
         gpu_genotype_format.value,

@@ -24,8 +24,41 @@ pub(crate) struct NativeFinalTimingOutputContext {
     inner: native_timing::FinalTimingOutputContext,
 }
 
-#[pyclass]
-pub(crate) struct NativeFinalTimingOutputPolicy;
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeStageTimingSnapshot {
+    data: native_timing::StageTimingSnapshotPayload,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeChunkStageTimingSnapshot {
+    data: native_timing::ChunkStageTiming,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeBinaryChunkDiagnosticsSnapshot {
+    data: BTreeMap<String, native_timing::NumericDiagnosticValue>,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeNullLogisticDiagnosticsSnapshot {
+    data: BTreeMap<String, native_timing::NullLogisticDiagnosticValue>,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeQueueBackpressureSnapshot {
+    data: native_timing::QueueBackpressureSnapshot,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeTransferMetadataSnapshot {
+    data: native_timing::TransferMetadataSnapshot,
+}
 
 #[pymethods]
 impl NativeFinalTimingOutputContext {
@@ -50,31 +83,347 @@ impl NativeFinalTimingOutputContext {
     }
 }
 
+impl NativeStageTimingSnapshot {
+    fn new(data: native_timing::StageTimingSnapshotPayload) -> Self {
+        Self { data }
+    }
+}
+
 #[pymethods]
-#[allow(clippy::unused_self)]
-impl NativeFinalTimingOutputPolicy {
-    #[new]
-    fn new() -> Self {
-        Self
+impl NativeStageTimingSnapshot {
+    #[getter]
+    fn stage_totals_seconds<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_float_mapping(py, &self.data.stage_totals_seconds)
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn resolve_final_timing_output_context(
-        &self,
-        diagnostics_stage_timing_path: Option<String>,
-        telemetry_session: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeFinalTimingOutputContext> {
-        resolve_final_timing_output_context(diagnostics_stage_timing_path, telemetry_session)
+    #[getter]
+    fn stage_counts<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_integer_mapping(py, &self.data.stage_counts)
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn record_final_timing_outputs_write_started_diagnostic_event(
-        &self,
-        stage_timing_path: Option<String>,
-        profile_summary_path: Option<String>,
-        run_id: Option<String>,
-    ) -> PyResult<()> {
-        record_final_timing_outputs_write_started_diagnostic_event(stage_timing_path, profile_summary_path, run_id)
+    #[getter]
+    fn chunk_stage_timings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let timings = self
+            .data
+            .chunk_stage_timings
+            .iter()
+            .cloned()
+            .map(|timing| Py::new(py, NativeChunkStageTimingSnapshot { data: timing }))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &timings)
+    }
+
+    #[getter]
+    fn native_bgen_profile<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        build_integer_mapping(py, &self.data.native_bgen_profile)
+    }
+
+    #[getter]
+    fn binary_chunk_diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let diagnostics = self
+            .data
+            .binary_chunk_diagnostics
+            .iter()
+            .cloned()
+            .map(|diagnostic| Py::new(py, NativeBinaryChunkDiagnosticsSnapshot { data: diagnostic }))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &diagnostics)
+    }
+
+    #[getter]
+    fn null_logistic_diagnostics<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let diagnostics = self
+            .data
+            .null_logistic_diagnostics
+            .iter()
+            .cloned()
+            .map(|diagnostic| Py::new(py, NativeNullLogisticDiagnosticsSnapshot { data: diagnostic }))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &diagnostics)
+    }
+
+    #[getter]
+    fn queue_backpressure<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let snapshots = self
+            .data
+            .queue_backpressure
+            .iter()
+            .cloned()
+            .map(|snapshot| Py::new(py, NativeQueueBackpressureSnapshot { data: snapshot }))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &snapshots)
+    }
+
+    #[getter]
+    fn transfer_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let snapshots = self
+            .data
+            .transfer_metadata
+            .iter()
+            .cloned()
+            .map(|snapshot| Py::new(py, NativeTransferMetadataSnapshot { data: snapshot }))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &snapshots)
+    }
+}
+
+#[pymethods]
+impl NativeChunkStageTimingSnapshot {
+    #[getter]
+    fn chunk_identifier(&self) -> i64 {
+        self.data.chunk_identifier
+    }
+
+    #[getter]
+    fn chromosome(&self) -> &str {
+        &self.data.chromosome
+    }
+
+    #[getter]
+    fn variant_start_index(&self) -> i64 {
+        self.data.variant_start_index
+    }
+
+    #[getter]
+    fn variant_stop_index(&self) -> i64 {
+        self.data.variant_stop_index
+    }
+
+    #[getter]
+    fn variant_count(&self) -> i64 {
+        self.data.variant_count
+    }
+
+    #[getter]
+    fn stage_name(&self) -> &str {
+        &self.data.stage_name
+    }
+
+    #[getter]
+    fn duration_seconds(&self) -> f64 {
+        self.data.duration_seconds
+    }
+}
+
+#[pymethods]
+impl NativeBinaryChunkDiagnosticsSnapshot {
+    #[getter]
+    fn score_only_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "score_only_count")
+    }
+
+    #[getter]
+    fn score_test_candidate_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "score_test_candidate_count")
+    }
+
+    #[getter]
+    fn firth_candidate_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_candidate_count")
+    }
+
+    #[getter]
+    fn firth_iteration_min(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_iteration_min")
+    }
+
+    #[getter]
+    fn firth_iteration_median(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_iteration_median")
+    }
+
+    #[getter]
+    fn firth_iteration_max(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_iteration_max")
+    }
+
+    #[getter]
+    fn firth_converged_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_converged_count")
+    }
+
+    #[getter]
+    fn firth_failed_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_failed_count")
+    }
+
+    #[getter]
+    fn firth_numerical_failure_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_numerical_failure_count")
+    }
+
+    #[getter]
+    fn firth_max_iteration_failure_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_max_iteration_failure_count")
+    }
+
+    #[getter]
+    fn firth_invalid_statistic_failure_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_invalid_statistic_failure_count")
+    }
+
+    #[getter]
+    fn firth_step_halving_failure_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "firth_step_halving_failure_count")
+    }
+
+    #[getter]
+    fn pseudo_firth_attempt_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "pseudo_firth_attempt_count")
+    }
+
+    #[getter]
+    fn pseudo_firth_success_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "pseudo_firth_success_count")
+    }
+
+    #[getter]
+    fn nr_zero_start_attempt_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "nr_zero_start_attempt_count")
+    }
+
+    #[getter]
+    fn nr_zero_start_success_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "nr_zero_start_success_count")
+    }
+
+    #[getter]
+    fn nr_warm_start_attempt_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "nr_warm_start_attempt_count")
+    }
+
+    #[getter]
+    fn nr_warm_start_success_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "nr_warm_start_success_count")
+    }
+
+    #[getter]
+    fn sparse_correction_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "sparse_correction_count")
+    }
+
+    #[getter]
+    fn dense_correction_count(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        optional_numeric_diagnostic_value(py, &self.data, "dense_correction_count")
+    }
+}
+
+#[pymethods]
+impl NativeNullLogisticDiagnosticsSnapshot {
+    #[getter]
+    fn chromosome(&self) -> Option<&str> {
+        optional_text_diagnostic_value(&self.data, "chromosome")
+    }
+
+    #[getter]
+    fn phenotype(&self) -> Option<&str> {
+        optional_text_diagnostic_value(&self.data, "phenotype")
+    }
+
+    #[getter]
+    fn iteration_count(&self) -> Option<i64> {
+        optional_integer_diagnostic_value(&self.data, "iteration_count")
+    }
+
+    #[getter]
+    fn converged(&self) -> Option<i64> {
+        optional_integer_diagnostic_value(&self.data, "converged")
+    }
+
+    #[getter]
+    fn firth_iteration_count(&self) -> Option<i64> {
+        optional_integer_diagnostic_value(&self.data, "firth_iteration_count")
+    }
+
+    #[getter]
+    fn firth_convergence_reason_code(&self) -> Option<i64> {
+        optional_integer_diagnostic_value(&self.data, "firth_convergence_reason_code")
+    }
+
+    #[getter]
+    fn correction_method(&self) -> Option<&str> {
+        optional_text_diagnostic_value(&self.data, "correction_method")
+    }
+}
+
+#[pymethods]
+impl NativeQueueBackpressureSnapshot {
+    #[getter]
+    fn queue_name(&self) -> &str {
+        &self.data.queue_name
+    }
+
+    #[getter]
+    fn operation_name(&self) -> &str {
+        &self.data.operation_name
+    }
+
+    #[getter]
+    fn observation_count(&self) -> i64 {
+        self.data.observation_count
+    }
+
+    #[getter]
+    fn max_depth(&self) -> i64 {
+        self.data.max_depth
+    }
+
+    #[getter]
+    fn max_capacity(&self) -> i64 {
+        self.data.max_capacity
+    }
+
+    #[getter]
+    fn total_elapsed_seconds(&self) -> f64 {
+        self.data.total_elapsed_seconds
+    }
+
+    #[getter]
+    fn total_blocked_seconds(&self) -> f64 {
+        self.data.total_blocked_seconds
+    }
+}
+
+#[pymethods]
+impl NativeTransferMetadataSnapshot {
+    #[getter]
+    fn transfer_name(&self) -> &str {
+        &self.data.transfer_name
+    }
+
+    #[getter]
+    fn array_role(&self) -> &str {
+        &self.data.array_role
+    }
+
+    #[getter]
+    fn dtype_name(&self) -> &str {
+        &self.data.dtype_name
+    }
+
+    #[getter]
+    fn ndim(&self) -> i64 {
+        self.data.dimension_count
+    }
+
+    #[getter]
+    fn observation_count(&self) -> i64 {
+        self.data.observation_count
+    }
+
+    #[getter]
+    fn total_bytes(&self) -> i64 {
+        self.data.total_bytes
+    }
+
+    #[getter]
+    fn max_bytes(&self) -> i64 {
+        self.data.max_bytes
+    }
+
+    #[getter]
+    fn total_elements(&self) -> i64 {
+        self.data.total_elements
     }
 }
 
@@ -257,9 +606,9 @@ impl NativeStageTimingRecorder {
             .map_err(|error| transfer_metadata_error_to_py(&error))
     }
 
-    fn snapshot_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn snapshot(&self) -> PyResult<NativeStageTimingSnapshot> {
         let recorder = self.lock_recorder()?;
-        build_stage_timing_snapshot_payload(py, &recorder.build_stage_timing_snapshot_payload())
+        Ok(NativeStageTimingSnapshot::new(recorder.build_stage_timing_snapshot_payload()))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -292,6 +641,7 @@ impl NativeStageTimingRecorder {
     }
 }
 
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<String>,
@@ -319,6 +669,7 @@ pub(crate) fn resolve_final_timing_output_context(
     Ok(NativeFinalTimingOutputContext { inner: context })
 }
 
+#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: Option<String>,
@@ -337,8 +688,15 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeFinalTimingOutputContext>()?;
-    module.add_class::<NativeFinalTimingOutputPolicy>()?;
+    module.add_class::<NativeStageTimingSnapshot>()?;
+    module.add_class::<NativeChunkStageTimingSnapshot>()?;
+    module.add_class::<NativeBinaryChunkDiagnosticsSnapshot>()?;
+    module.add_class::<NativeNullLogisticDiagnosticsSnapshot>()?;
+    module.add_class::<NativeQueueBackpressureSnapshot>()?;
+    module.add_class::<NativeTransferMetadataSnapshot>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
+    module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;
+    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
     Ok(())
 }
 
@@ -567,145 +925,38 @@ fn build_integer_mapping<'py>(py: Python<'py>, values: &BTreeMap<String, i64>) -
     Ok(mapping)
 }
 
-fn build_stage_timing_snapshot_payload<'py>(
-    py: Python<'py>,
-    snapshot_payload: &native_timing::StageTimingSnapshotPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let payload = PyDict::new(py);
-    payload.set_item("stage_totals_seconds", build_float_mapping(py, &snapshot_payload.stage_totals_seconds)?)?;
-    payload.set_item("stage_counts", build_integer_mapping(py, &snapshot_payload.stage_counts)?)?;
-    payload.set_item(
-        "chunk_stage_timings",
-        build_chunk_stage_timing_payloads(py, &snapshot_payload.chunk_stage_timings)?,
-    )?;
-    payload.set_item("native_bgen_profile", build_integer_mapping(py, &snapshot_payload.native_bgen_profile)?)?;
-    payload.set_item(
-        "binary_chunk_diagnostics",
-        build_binary_chunk_diagnostics_payloads(py, &snapshot_payload.binary_chunk_diagnostics)?,
-    )?;
-    payload.set_item(
-        "null_logistic_diagnostics",
-        build_null_logistic_diagnostics_payloads(py, &snapshot_payload.null_logistic_diagnostics)?,
-    )?;
-    payload.set_item(
-        "queue_backpressure",
-        build_queue_backpressure_summary_payloads(py, &snapshot_payload.queue_backpressure)?,
-    )?;
-    payload.set_item(
-        "transfer_metadata",
-        build_transfer_metadata_summary_payloads(py, &snapshot_payload.transfer_metadata)?,
-    )?;
-    Ok(payload)
+fn optional_numeric_diagnostic_value(
+    py: Python<'_>,
+    diagnostics: &BTreeMap<String, native_timing::NumericDiagnosticValue>,
+    key: &str,
+) -> PyResult<Option<Py<PyAny>>> {
+    match diagnostics.get(key) {
+        Some(native_timing::NumericDiagnosticValue::Integer(integer_value)) => {
+            Ok(Some((*integer_value).into_pyobject(py)?.into_any().unbind()))
+        }
+        Some(native_timing::NumericDiagnosticValue::Float(float_value)) => {
+            Ok(Some((*float_value).into_pyobject(py)?.into_any().unbind()))
+        }
+        None => Ok(None),
+    }
 }
 
-fn build_chunk_stage_timing_payloads<'py>(
-    py: Python<'py>,
-    timings: &[native_timing::ChunkStageTiming],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = timings
-        .iter()
-        .map(|timing| {
-            let payload = PyDict::new(py);
-            payload.set_item("chunk_identifier", timing.chunk_identifier)?;
-            payload.set_item("chromosome", &timing.chromosome)?;
-            payload.set_item("variant_start_index", timing.variant_start_index)?;
-            payload.set_item("variant_stop_index", timing.variant_stop_index)?;
-            payload.set_item("variant_count", timing.variant_count)?;
-            payload.set_item("stage_name", &timing.stage_name)?;
-            payload.set_item("duration_seconds", timing.duration_seconds)?;
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
+fn optional_integer_diagnostic_value(
+    diagnostics: &BTreeMap<String, native_timing::NullLogisticDiagnosticValue>,
+    key: &str,
+) -> Option<i64> {
+    match diagnostics.get(key) {
+        Some(native_timing::NullLogisticDiagnosticValue::Integer(integer_value)) => Some(*integer_value),
+        Some(native_timing::NullLogisticDiagnosticValue::Text(_)) | None => None,
+    }
 }
 
-fn build_binary_chunk_diagnostics_payloads<'py>(
-    py: Python<'py>,
-    diagnostics: &[BTreeMap<String, native_timing::NumericDiagnosticValue>],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = diagnostics
-        .iter()
-        .map(|diagnostic_mapping| {
-            let payload = PyDict::new(py);
-            for (key, value) in diagnostic_mapping {
-                match value {
-                    native_timing::NumericDiagnosticValue::Integer(integer_value) => {
-                        payload.set_item(key, integer_value)?;
-                    }
-                    native_timing::NumericDiagnosticValue::Float(float_value) => {
-                        payload.set_item(key, float_value)?;
-                    }
-                }
-            }
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
-}
-
-fn build_null_logistic_diagnostics_payloads<'py>(
-    py: Python<'py>,
-    diagnostics: &[BTreeMap<String, native_timing::NullLogisticDiagnosticValue>],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = diagnostics
-        .iter()
-        .map(|diagnostic_mapping| {
-            let payload = PyDict::new(py);
-            for (key, value) in diagnostic_mapping {
-                match value {
-                    native_timing::NullLogisticDiagnosticValue::Integer(integer_value) => {
-                        payload.set_item(key, integer_value)?;
-                    }
-                    native_timing::NullLogisticDiagnosticValue::Text(text_value) => {
-                        payload.set_item(key, text_value)?;
-                    }
-                }
-            }
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
-}
-
-fn build_queue_backpressure_summary_payloads<'py>(
-    py: Python<'py>,
-    queue_backpressure: &[native_timing::QueueBackpressureSnapshot],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = queue_backpressure
-        .iter()
-        .map(|snapshot| {
-            let payload = PyDict::new(py);
-            payload.set_item("queue_name", &snapshot.queue_name)?;
-            payload.set_item("operation_name", &snapshot.operation_name)?;
-            payload.set_item("observation_count", snapshot.observation_count)?;
-            payload.set_item("max_depth", snapshot.max_depth)?;
-            payload.set_item("max_capacity", snapshot.max_capacity)?;
-            payload.set_item("total_elapsed_seconds", snapshot.total_elapsed_seconds)?;
-            payload.set_item("total_blocked_seconds", snapshot.total_blocked_seconds)?;
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
-}
-
-fn build_transfer_metadata_summary_payloads<'py>(
-    py: Python<'py>,
-    transfer_metadata: &[native_timing::TransferMetadataSnapshot],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let payloads = transfer_metadata
-        .iter()
-        .map(|snapshot| {
-            let payload = PyDict::new(py);
-            payload.set_item("transfer_name", &snapshot.transfer_name)?;
-            payload.set_item("array_role", &snapshot.array_role)?;
-            payload.set_item("dtype_name", &snapshot.dtype_name)?;
-            payload.set_item("ndim", snapshot.dimension_count)?;
-            payload.set_item("observation_count", snapshot.observation_count)?;
-            payload.set_item("total_bytes", snapshot.total_bytes)?;
-            payload.set_item("max_bytes", snapshot.max_bytes)?;
-            payload.set_item("total_elements", snapshot.total_elements)?;
-            Ok(payload)
-        })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &payloads)
+fn optional_text_diagnostic_value<'a>(
+    diagnostics: &'a BTreeMap<String, native_timing::NullLogisticDiagnosticValue>,
+    key: &str,
+) -> Option<&'a str> {
+    match diagnostics.get(key) {
+        Some(native_timing::NullLogisticDiagnosticValue::Text(text_value)) => Some(text_value.as_str()),
+        Some(native_timing::NullLogisticDiagnosticValue::Integer(_)) | None => None,
+    }
 }

@@ -9,6 +9,8 @@ import numpy as np
 
 import g
 
+NATIVE_PREFLIGHT_VALIDATOR = g._core.NativePreflightValidator()
+
 
 @dataclass(frozen=True)
 class PreflightReport:
@@ -49,9 +51,8 @@ def emit_preflight_warnings(
     trusted_no_missing_diploid: bool,
 ) -> None:
     """Emit all non-fatal preflight warnings through native tracing."""
-    native_preflight_diagnostic_policy = native_output_preflight_diagnostic_policy()
     for warning_index, warning_message in enumerate(preflight_report.warning_messages):
-        native_preflight_diagnostic_policy.record_preflight_warning_diagnostic_event(
+        g._core.record_preflight_warning_diagnostic_event(
             message=warning_message,
             chromosome_count=preflight_report.chromosome_count,
             covariate_count=preflight_report.covariate_count,
@@ -60,11 +61,6 @@ def emit_preflight_warnings(
             trusted_no_missing_diploid=trusted_no_missing_diploid,
             warning_index=warning_index,
         )
-
-
-def native_output_preflight_diagnostic_policy() -> g._core.NativeOutputPreflightDiagnosticPolicy:
-    """Build the native output/preflight diagnostic policy handle."""
-    return g._core.NativeOutputPreflightDiagnosticPolicy()
 
 
 @dataclass(frozen=True)
@@ -122,7 +118,7 @@ def run_regenie2_preflight(
     required_chromosomes = collect_required_chromosomes(engine, variant_limit)
     for chromosome in required_chromosomes:
         prediction_values = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
-        native_preflight_validator().validate_single_prediction_preflight_shape(
+        NATIVE_PREFLIGHT_VALIDATOR.validate_single_prediction_preflight_shape(
             chromosome,
             array_shape_counts(prediction_values),
             sample_count,
@@ -174,7 +170,7 @@ def run_regenie2_multi_preflight(
     required_chromosomes = collect_required_chromosomes(engine, variant_limit)
     for chromosome in required_chromosomes:
         prediction_matrix = np.asarray(prediction_source.get_chromosome_predictions(chromosome))
-        native_preflight_validator().validate_multi_prediction_preflight_shape(
+        NATIVE_PREFLIGHT_VALIDATOR.validate_multi_prediction_preflight_shape(
             chromosome,
             array_shape_counts(prediction_matrix),
             trait_count,
@@ -198,17 +194,17 @@ def run_regenie2_multi_preflight(
 
 def validate_finite_array(label: str, values: np.ndarray) -> None:
     """Validate that an array contains only finite values."""
-    native_preflight_validator().validate_finite_array_values(label, values)
+    NATIVE_PREFLIGHT_VALIDATOR.validate_finite_array_values(label, values)
 
 
 def validate_covariate_matrix_rank(covariate_matrix: np.ndarray, covariate_count: int) -> None:
     """Validate covariate matrix rank after native shape checks."""
-    native_preflight_validator().validate_covariate_matrix_rank_array(covariate_matrix, covariate_count)
+    NATIVE_PREFLIGHT_VALIDATOR.validate_covariate_matrix_rank_array(covariate_matrix, covariate_count)
 
 
 def validate_binary_phenotype(phenotype_vector: np.ndarray) -> None:
     """Validate binary phenotype coding and case/control counts."""
-    native_preflight_validator().validate_binary_phenotype_array(phenotype_vector)
+    NATIVE_PREFLIGHT_VALIDATOR.validate_binary_phenotype_array(phenotype_vector)
 
 
 def resolve_single_trait_preflight_shape(
@@ -216,7 +212,7 @@ def resolve_single_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> SingleTraitPreflightShape:
     """Validate single-trait shape policy through the native engine crate."""
-    native_shape = native_preflight_validator().validate_single_trait_preflight_shape(
+    native_shape = NATIVE_PREFLIGHT_VALIDATOR.validate_single_trait_preflight_shape(
         shape_count(phenotype_vector.shape, 0),
         int(covariate_matrix.ndim),
         shape_count(covariate_matrix.shape, 0),
@@ -233,7 +229,7 @@ def resolve_multi_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> MultiTraitPreflightShape:
     """Validate multi-trait shape policy through the native engine crate."""
-    native_shape = native_preflight_validator().validate_multi_trait_preflight_shape(
+    native_shape = NATIVE_PREFLIGHT_VALIDATOR.validate_multi_trait_preflight_shape(
         int(phenotype_matrix.ndim),
         shape_count(phenotype_matrix.shape, 0),
         shape_count(phenotype_matrix.shape, 1),
@@ -263,7 +259,7 @@ def array_shape_counts(values: np.ndarray) -> tuple[int, ...]:
 def collect_required_chromosomes(engine: BgenPreflightEngineProtocol, variant_limit: int | None) -> tuple[str, ...]:
     """Collect chromosome labels represented in the native BGEN engine."""
     variant_count = int(engine.variant_count)
-    native_preflight_validator().resolve_preflight_variant_count(variant_count, variant_limit)
+    NATIVE_PREFLIGHT_VALIDATOR.resolve_preflight_variant_count(variant_count, variant_limit)
     return tuple(str(chromosome) for chromosome in engine.required_chromosomes(variant_limit))
 
 
@@ -275,7 +271,7 @@ def build_preflight_report(
     trusted_no_missing_diploid: bool,
 ) -> PreflightReport:
     """Build the native-owned preflight report."""
-    native_report = native_preflight_validator().build_preflight_report(
+    native_report = NATIVE_PREFLIGHT_VALIDATOR.build_preflight_report(
         sample_count,
         covariate_count,
         chromosome_count,
@@ -287,8 +283,3 @@ def build_preflight_report(
         chromosome_count=native_report.chromosome_count,
         warning_messages=tuple(native_report.warning_messages),
     )
-
-
-def native_preflight_validator() -> g._core.NativePreflightValidator:
-    """Build the native preflight validator handle."""
-    return g._core.NativePreflightValidator()

@@ -229,9 +229,9 @@ def build_test_output_writer_settings(
     arrow_compression: types.ArrowCompression,
     output_format: types.OutputFormat,
     output_statistic_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> output.OutputWriterSettings:
+) -> execution_plan.OutputWriterPlan:
     """Build writer settings with explicit output statistic dtype."""
-    return output.OutputWriterSettings(
+    return execution_plan.OutputWriterPlan(
         finalize_parquet=finalize_parquet,
         writer_thread_count=writer_thread_count,
         writer_queue_depth=writer_queue_depth,
@@ -522,7 +522,7 @@ def load_test_native_bgen_run_input(**keyword_arguments: typing.Any) -> native_d
 class PipelineRuntimeOptions:
     """Runtime options that pipeline tests pass explicitly."""
 
-    writer_settings: output.OutputWriterSettings
+    writer_settings: execution_plan.OutputWriterPlan
     bgen_decode_tile_variant_count: int
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype

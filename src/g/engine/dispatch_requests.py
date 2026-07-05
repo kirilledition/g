@@ -11,7 +11,8 @@ if typing.TYPE_CHECKING:
     from g import _core, execution_plan, types
     from g.engine import timing
     from g.engine.native_dispatch import models as native_dispatch_models
-    from g.engine.regenie2_pipeline import compute_config, outputs, telemetry_events
+    from g.engine.regenie2_pipeline import compute_config
+    from g.runner import events as runner_events
 
 
 @dataclass(frozen=True)
@@ -30,8 +31,6 @@ class PipelineCommonRequest:
         native_callback_batch_size: Native-to-Python callback chunk batch size.
         result_in_flight_limit: Optional materialization backlog cap.
         dosage_buffer_limit: Optional native dosage decode buffer cap.
-        resume: Whether output resume is enabled.
-        resume_mode: Resume validation policy.
         writer_settings: Output writer settings.
         trusted_no_missing_diploid: Trusted BGEN fast-path policy.
         trusted_bgen_validation_mode: Trusted BGEN validation policy.
@@ -43,8 +42,7 @@ class PipelineCommonRequest:
         stage_timing_recorder: Optional stage timing recorder.
         telemetry_session: Optional telemetry session.
         alignment_config: Sample alignment settings.
-        runtime_compatibility_token: Native token proving runtime checks passed.
-        output_initialized_callback: Callback after manifest initialization.
+        lifecycle_session: Native run lifecycle session.
 
     """
 
@@ -59,9 +57,7 @@ class PipelineCommonRequest:
     native_callback_batch_size: int
     result_in_flight_limit: int | None
     dosage_buffer_limit: int | None
-    resume: bool
-    resume_mode: types.ResumeMode
-    writer_settings: outputs.OutputWriterSettings
+    writer_settings: execution_plan.OutputWriterPlan
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     bgen_decode_tile_variant_count: int
@@ -70,10 +66,9 @@ class PipelineCommonRequest:
     score_dtype: types.FloatingPointDtype
     firth_dtype: types.FloatingPointDtype
     stage_timing_recorder: timing.StageTimingRecorder | None
-    telemetry_session: telemetry_events.TelemetrySession | None
+    telemetry_session: runner_events.TelemetrySession | None
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
-    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
+    lifecycle_session: _core.NativeRunLifecycleSession
 
 
 @dataclass(frozen=True)
@@ -83,8 +78,7 @@ class SingleTraitPipelineRequest:
     Attributes:
         common: Shared dispatch settings.
         phenotype_name: Phenotype column to run.
-        output_run_paths: Output paths for this phenotype.
-        existing_manifest: Optional existing output manifest.
+        prepared_run: Native lifecycle output run handle.
         association_mode: Statistical association mode.
         correction_plan: Binary correction settings.
         binary_kernel_config: Binary kernel config when binary.
@@ -96,8 +90,7 @@ class SingleTraitPipelineRequest:
 
     common: PipelineCommonRequest
     phenotype_name: str
-    output_run_paths: outputs.OutputRunPaths
-    existing_manifest: dict[str, typing.Any] | None
+    prepared_run: _core.NativeRunLifecyclePhenotypeRun
     association_mode: types.AssociationMode
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
@@ -113,8 +106,7 @@ class MultiTraitPipelineRequest:
     Attributes:
         common: Shared dispatch settings.
         phenotype_names: Phenotype columns to run.
-        output_run_paths_by_phenotype: Output paths in phenotype order.
-        existing_manifests_by_phenotype: Optional existing manifests in phenotype order.
+        prepared_runs: Native lifecycle output run handles in phenotype order.
         association_mode: Statistical association mode.
         correction_plan: Binary correction settings.
         binary_kernel_config: Binary kernel config when binary.
@@ -128,8 +120,7 @@ class MultiTraitPipelineRequest:
 
     common: PipelineCommonRequest
     phenotype_names: tuple[str, ...]
-    output_run_paths_by_phenotype: tuple[outputs.OutputRunPaths, ...]
-    existing_manifests_by_phenotype: tuple[dict[str, typing.Any] | None, ...] | None
+    prepared_runs: tuple[_core.NativeRunLifecyclePhenotypeRun, ...]
     association_mode: types.AssociationMode
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None

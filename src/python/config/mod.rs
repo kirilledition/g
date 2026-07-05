@@ -3,17 +3,17 @@ use std::path::{Path, PathBuf};
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyModule};
+use pyo3::types::{PyDict, PyList, PyModule, PyTuple};
 
 use g_interface as interface;
 use g_interface::{
     BinaryConfigData, CliOutcomeData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
     RegenieConfigData, TraitConfigData,
 };
+use g_plan as native_plan;
 
 mod conversion;
 
-use super::json_bridge;
 use conversion::{
     enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
 };
@@ -64,6 +64,40 @@ pub(crate) struct RegenieConfig {
 #[derive(Clone)]
 pub(crate) struct CliOutcome {
     data: CliOutcomeData,
+}
+
+#[pyclass(name = "NativeRunRequest", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeRunRequest {
+    data: native_plan::RunRequest,
+}
+
+#[pyclass(name = "NativePhenotypeRunPlan", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativePhenotypeRunPlan {
+    phenotype_index: i64,
+    phenotype_name: String,
+    output_directory_name: String,
+}
+
+#[pyclass(name = "NativePhenotypeComputeGroup", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativePhenotypeComputeGroup {
+    group_mode: String,
+    phenotype_indices: Vec<i64>,
+    phenotype_names: Vec<String>,
+    sample_mode: String,
+    sample_set_fingerprint: Option<String>,
+    covariate_design_fingerprint: Option<String>,
+    prediction_alignment_fingerprint: Option<String>,
+}
+
+#[pyclass(name = "NativeBinaryCorrectionPlan", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeBinaryCorrectionPlan {
+    method: String,
+    p_threshold: f64,
+    firth_se: bool,
 }
 
 impl InputConfig {
@@ -118,6 +152,58 @@ impl CliOutcome {
     }
 }
 
+impl NativeRunRequest {
+    pub(crate) fn new(data: native_plan::RunRequest) -> Self {
+        Self { data }
+    }
+}
+
+impl NativePhenotypeRunPlan {
+    fn from_native_plan(data: &native_plan::PhenotypeRunPlan) -> Self {
+        Self {
+            phenotype_index: i64::from(data.phenotype_index),
+            phenotype_name: data.phenotype_name.clone(),
+            output_directory_name: data.output_directory_name.clone(),
+        }
+    }
+}
+
+impl NativePhenotypeComputeGroup {
+    fn from_native_group(data: &native_plan::PhenotypeComputeGroup) -> Self {
+        Self {
+            group_mode: data.group_mode.as_str().to_string(),
+            phenotype_indices: data.phenotype_indices.iter().map(|value| i64::from(*value)).collect(),
+            phenotype_names: data.phenotype_names.clone(),
+            sample_mode: data.sample_mode.as_str().to_string(),
+            sample_set_fingerprint: data.sample_set_fingerprint.clone(),
+            covariate_design_fingerprint: data.covariate_design_fingerprint.clone(),
+            prediction_alignment_fingerprint: data.prediction_alignment_fingerprint.clone(),
+        }
+    }
+
+    pub(crate) fn from_host_policy_payload(data: native_plan::PhenotypeComputeGroupPayload) -> Self {
+        Self {
+            group_mode: data.group_mode.to_string(),
+            phenotype_indices: data.phenotype_indices,
+            phenotype_names: data.phenotype_names,
+            sample_mode: data.sample_mode.to_string(),
+            sample_set_fingerprint: data.sample_set_fingerprint,
+            covariate_design_fingerprint: data.covariate_design_fingerprint,
+            prediction_alignment_fingerprint: data.prediction_alignment_fingerprint,
+        }
+    }
+}
+
+impl NativeBinaryCorrectionPlan {
+    fn from_native_plan(data: &native_plan::CorrectionPlan) -> Self {
+        Self { method: data.method.as_str().to_string(), p_threshold: data.p_threshold, firth_se: data.firth_se }
+    }
+
+    pub(crate) fn from_host_policy_payload(data: native_plan::BinaryCorrectionPlanPayload) -> Self {
+        Self { method: data.method.to_string(), p_threshold: data.p_threshold, firth_se: data.firth_se }
+    }
+}
+
 #[pymethods]
 impl InputConfig {
     #[getter]
@@ -158,6 +244,330 @@ impl InputConfig {
     #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
     fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
         compare_bool(self.data == other.data, operation)
+    }
+}
+
+#[pymethods]
+impl NativeRunRequest {
+    #[getter]
+    fn association_mode(&self) -> &str {
+        self.data.association_mode.as_str()
+    }
+
+    #[getter]
+    fn input_bgen_path(&self) -> &str {
+        &self.data.input.bgen_path
+    }
+
+    #[getter]
+    fn input_sample_path(&self) -> Option<&str> {
+        self.data.input.sample_path.as_deref()
+    }
+
+    #[getter]
+    fn input_phenotype_path(&self) -> &str {
+        &self.data.input.phenotype_path
+    }
+
+    #[getter]
+    fn input_prediction_list_path(&self) -> &str {
+        &self.data.input.prediction_list_path
+    }
+
+    #[getter]
+    fn input_covariate_path(&self) -> Option<&str> {
+        self.data.input.covariate_path.as_deref()
+    }
+
+    #[getter]
+    fn input_covariate_names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.data.input.covariate_names)
+    }
+
+    #[getter]
+    fn input_sample_key_mode(&self) -> &str {
+        self.data.input.sample_key_mode.as_str()
+    }
+
+    #[getter]
+    fn trait_type(&self) -> &str {
+        self.data.trait_request.trait_type.as_str()
+    }
+
+    #[getter]
+    fn trait_chunk_size(&self) -> u32 {
+        self.data.trait_request.chunk_size
+    }
+
+    #[getter]
+    fn trait_thread_count(&self) -> Option<u32> {
+        self.data.trait_request.thread_count
+    }
+
+    #[getter]
+    fn compute_device(&self) -> &str {
+        self.data.compute.device.as_str()
+    }
+
+    #[getter]
+    fn compute_staging_depth(&self) -> u32 {
+        self.data.compute.staging_depth
+    }
+
+    #[getter]
+    fn compute_native_callback_batch_size(&self) -> u32 {
+        self.data.compute.native_callback_batch_size
+    }
+
+    #[getter]
+    fn compute_result_in_flight_limit(&self) -> Option<u32> {
+        self.data.compute.result_in_flight_limit
+    }
+
+    #[getter]
+    fn compute_dosage_buffer_limit(&self) -> Option<u32> {
+        self.data.compute.dosage_buffer_limit
+    }
+
+    #[getter]
+    fn compute_variant_limit(&self) -> Option<u32> {
+        self.data.compute.variant_limit
+    }
+
+    #[getter]
+    fn compute_bgen_decode_tile_variant_count(&self) -> u32 {
+        self.data.compute.bgen_decode_tile_variant_count
+    }
+
+    #[getter]
+    fn compute_requested_gpu_genotype_format(&self) -> &str {
+        self.data.compute.requested_gpu_genotype_format.as_str()
+    }
+
+    #[getter]
+    fn compute_trusted_no_missing_diploid(&self) -> bool {
+        self.data.compute.trusted_no_missing_diploid
+    }
+
+    #[getter]
+    fn compute_trusted_bgen_validation_mode(&self) -> &str {
+        self.data.compute.trusted_bgen_validation_mode.as_str()
+    }
+
+    #[getter]
+    fn compute_multi_phenotype_sample_mode(&self) -> &str {
+        self.data.compute.multi_phenotype_sample_mode.as_str()
+    }
+
+    #[getter]
+    fn compute_score_dtype(&self) -> &str {
+        self.data.compute.score_dtype.as_str()
+    }
+
+    #[getter]
+    fn compute_firth_dtype(&self) -> &str {
+        self.data.compute.firth_dtype.as_str()
+    }
+
+    #[getter]
+    fn correction(&self) -> NativeBinaryCorrectionPlan {
+        NativeBinaryCorrectionPlan::from_native_plan(&self.data.correction)
+    }
+
+    #[getter]
+    fn output_prefix(&self) -> &str {
+        &self.data.output.output_prefix
+    }
+
+    #[getter]
+    fn output_run_root(&self) -> &str {
+        &self.data.output.output_run_root
+    }
+
+    #[getter]
+    fn output_resume(&self) -> bool {
+        self.data.output.resume
+    }
+
+    #[getter]
+    fn output_resume_mode(&self) -> &str {
+        self.data.output.resume_mode.as_str()
+    }
+
+    #[getter]
+    fn output_finalize_parquet(&self) -> bool {
+        self.data.output.finalize_parquet
+    }
+
+    #[getter]
+    fn output_writer_thread_count(&self) -> u32 {
+        self.data.output.writer_thread_count
+    }
+
+    #[getter]
+    fn output_writer_queue_depth(&self) -> u32 {
+        self.data.output.writer_queue_depth
+    }
+
+    #[getter]
+    fn output_chunks_per_arrow_file(&self) -> u32 {
+        self.data.output.chunks_per_arrow_file
+    }
+
+    #[getter]
+    fn output_arrow_compression(&self) -> &str {
+        self.data.output.arrow_compression.as_str()
+    }
+
+    #[getter]
+    fn output_parquet_compression(&self) -> &str {
+        self.data.output.parquet_compression.as_str()
+    }
+
+    #[getter]
+    fn output_format(&self) -> &str {
+        self.data.output.output_format.as_str()
+    }
+
+    #[getter]
+    fn output_statistic_dtype(&self) -> &str {
+        self.data.output.output_statistic_dtype.as_str()
+    }
+
+    #[getter]
+    fn runtime_jax_cache_directory(&self) -> Option<&str> {
+        self.data.runtime.jax_cache_directory.as_deref()
+    }
+
+    #[getter]
+    fn runtime_jax_matmul_precision(&self) -> Option<&str> {
+        self.data.runtime.jax_matmul_precision.map(native_plan::JaxMatmulPrecision::as_str)
+    }
+
+    #[getter]
+    fn runtime_persistent_cache_enabled(&self) -> bool {
+        self.data.runtime.persistent_cache_enabled
+    }
+
+    #[getter]
+    fn runtime_persistent_cache_min_entry_size_bytes(&self) -> i64 {
+        self.data.runtime.persistent_cache_min_entry_size_bytes
+    }
+
+    #[getter]
+    fn runtime_persistent_cache_min_compile_time_seconds(&self) -> u32 {
+        self.data.runtime.persistent_cache_min_compile_time_seconds
+    }
+
+    #[getter]
+    fn runtime_xla_autotune_cache_enabled(&self) -> bool {
+        self.data.runtime.xla_autotune_cache_enabled
+    }
+
+    #[getter]
+    fn runtime_transfer_guard_enabled(&self) -> bool {
+        self.data.runtime.transfer_guard_enabled
+    }
+
+    #[getter]
+    fn phenotype_runs<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let plans = self
+            .data
+            .phenotype_runs
+            .iter()
+            .map(|plan| Py::new(py, NativePhenotypeRunPlan::from_native_plan(plan)))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &plans)
+    }
+
+    #[getter]
+    fn phenotype_compute_groups<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let groups = self
+            .data
+            .phenotype_compute_groups
+            .iter()
+            .map(|group| Py::new(py, NativePhenotypeComputeGroup::from_native_group(group)))
+            .collect::<PyResult<Vec<_>>>()?;
+        PyTuple::new(py, &groups)
+    }
+
+    #[getter]
+    fn stage_timings_json(&self) -> Option<&str> {
+        self.data.stage_timings_json.as_deref()
+    }
+}
+
+#[pymethods]
+impl NativePhenotypeRunPlan {
+    #[getter]
+    fn phenotype_index(&self) -> i64 {
+        self.phenotype_index
+    }
+
+    #[getter]
+    fn phenotype_name(&self) -> &str {
+        &self.phenotype_name
+    }
+
+    #[getter]
+    fn output_directory_name(&self) -> &str {
+        &self.output_directory_name
+    }
+}
+
+#[pymethods]
+impl NativePhenotypeComputeGroup {
+    #[getter]
+    fn group_mode(&self) -> &str {
+        &self.group_mode
+    }
+
+    #[getter]
+    fn phenotype_indices<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.phenotype_indices)
+    }
+
+    #[getter]
+    fn phenotype_names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, &self.phenotype_names)
+    }
+
+    #[getter]
+    fn sample_mode(&self) -> &str {
+        &self.sample_mode
+    }
+
+    #[getter]
+    fn sample_set_fingerprint(&self) -> Option<&str> {
+        self.sample_set_fingerprint.as_deref()
+    }
+
+    #[getter]
+    fn covariate_design_fingerprint(&self) -> Option<&str> {
+        self.covariate_design_fingerprint.as_deref()
+    }
+
+    #[getter]
+    fn prediction_alignment_fingerprint(&self) -> Option<&str> {
+        self.prediction_alignment_fingerprint.as_deref()
+    }
+}
+
+#[pymethods]
+impl NativeBinaryCorrectionPlan {
+    #[getter]
+    fn method(&self) -> &str {
+        &self.method
+    }
+
+    #[getter]
+    fn p_threshold(&self) -> f64 {
+        self.p_threshold
+    }
+
+    #[getter]
+    fn firth_se(&self) -> bool {
+        self.firth_se
     }
 }
 
@@ -804,12 +1214,10 @@ fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn compile_run_request_payload(py: Python<'_>, config: &RegenieConfig) -> PyResult<Py<PyAny>> {
+fn compile_run_request(config: &RegenieConfig) -> PyResult<NativeRunRequest> {
     let run_request = interface::compile_run_request(config.data())
         .map_err(|error| config_error_to_py("compile_run_request", error))?;
-    let run_request_value = serde_json::to_value(&run_request)
-        .map_err(|error| PyValueError::new_err(format!("Failed to serialize run request: {error}.")))?;
-    json_bridge::json_value_to_py_object(py, &run_request_value)
+    Ok(NativeRunRequest::new(run_request))
 }
 
 #[pyfunction]
@@ -852,6 +1260,10 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<GDiagnosticsConfig>()?;
     module.add_class::<RegenieConfig>()?;
     module.add_class::<CliOutcome>()?;
+    module.add_class::<NativeRunRequest>()?;
+    module.add_class::<NativePhenotypeRunPlan>()?;
+    module.add_class::<NativePhenotypeComputeGroup>()?;
+    module.add_class::<NativeBinaryCorrectionPlan>()?;
     module.add_function(wrap_pyfunction!(config_from_options, module)?)?;
     module.add_function(wrap_pyfunction!(config_from_toml, module)?)?;
     module.add_function(wrap_pyfunction!(load_packaged_config, module)?)?;
@@ -860,7 +1272,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
-    module.add_function(wrap_pyfunction!(compile_run_request_payload, module)?)?;
+    module.add_function(wrap_pyfunction!(compile_run_request, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;
     Ok(())

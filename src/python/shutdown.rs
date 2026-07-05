@@ -4,13 +4,21 @@ use std::sync::{Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
+use pyo3::types::{PyAny, PyModule};
 
 use g_runtime::shutdown as native_shutdown;
 
 #[pyclass]
 pub(crate) struct NativeShutdownController {
     session: Mutex<native_shutdown::ShutdownHandlerSession<Py<PyAny>>>,
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct NativeShutdownSignal {
+    number: i32,
+    name: String,
+    exit_code: i32,
 }
 
 #[pymethods]
@@ -39,34 +47,22 @@ impl NativeShutdownController {
         Ok(self.lock_session()?.handlers_installed())
     }
 
-    fn requested_signal_payload<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+    fn requested_signal(&self) -> PyResult<Option<NativeShutdownSignal>> {
         let session = self.lock_session()?;
-        session.requested_signal().map(|payload| shutdown_signal_payload_to_dict(py, payload)).transpose()
+        Ok(session.requested_signal().map(NativeShutdownSignal::from_native_signal))
     }
 
-    fn request_shutdown_payload<'py>(&self, py: Python<'py>, signal_number: i32) -> PyResult<Bound<'py, PyDict>> {
-        let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
-        shutdown_request_decision_payload_to_dict(py, &decision)
-    }
-
-    fn request_shutdown_signal_or_raise_second_signal_payload<'py>(
+    fn request_shutdown_signal_or_raise_second_signal(
         &self,
-        py: Python<'py>,
+        py: Python<'_>,
         signal_number: i32,
-    ) -> PyResult<Bound<'py, PyDict>> {
+    ) -> PyResult<NativeShutdownSignal> {
         let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
         if decision.action == native_shutdown::ShutdownRequestAction::Force {
             self.restore_python_signal_handlers(py)?;
             return raise_second_signal_exception_from_plan(signal_number);
         }
-        shutdown_signal_payload_to_dict(py, &decision.signal)
-    }
-
-    fn handler_install_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let plan = self.lock_session()?.begin_handler_install();
-        let python_payload = PyDict::new(py);
-        python_payload.set_item("handled_signals", shutdown_signal_payloads_to_tuple(py, &plan.handled_signals)?)?;
-        Ok(python_payload)
+        Ok(NativeShutdownSignal::from_native_signal(&decision.signal))
     }
 
     fn mark_handlers_installed(&self) -> PyResult<()> {
@@ -87,14 +83,6 @@ impl NativeShutdownController {
         }
         session.mark_handlers_installed();
         Ok(())
-    }
-
-    fn handler_restore_plan_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let plan = self.lock_session()?.plan_handler_restore();
-        let python_payload = PyDict::new(py);
-        python_payload.set_item("should_restore", plan.should_restore)?;
-        python_payload.set_item("handled_signals", shutdown_signal_payloads_to_tuple(py, &plan.handled_signals)?)?;
-        Ok(python_payload)
     }
 
     fn mark_handlers_restored(&self) -> PyResult<()> {
@@ -134,8 +122,33 @@ impl NativeShutdownController {
     }
 }
 
+impl NativeShutdownSignal {
+    fn from_native_signal(signal_payload: &native_shutdown::ShutdownSignalPayload) -> Self {
+        Self { number: signal_payload.number, name: signal_payload.name.clone(), exit_code: signal_payload.exit_code }
+    }
+}
+
+#[pymethods]
+impl NativeShutdownSignal {
+    #[getter]
+    fn number(&self) -> i32 {
+        self.number
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[getter]
+    fn exit_code(&self) -> i32 {
+        self.exit_code
+    }
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeShutdownController>()?;
+    module.add_class::<NativeShutdownSignal>()?;
     Ok(())
 }
 
@@ -145,34 +158,4 @@ fn raise_second_signal_exception_from_plan<T>(signal_number: i32) -> PyResult<T>
         return Err(PyKeyboardInterrupt::new_err(()));
     }
     Err(PySystemExit::new_err(plan.exit_code))
-}
-
-fn shutdown_request_decision_payload_to_dict<'py>(
-    py: Python<'py>,
-    decision: &native_shutdown::ShutdownRequestDecisionPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let python_payload = PyDict::new(py);
-    python_payload.set_item("action", decision.action.as_str())?;
-    python_payload.set_item("signal", shutdown_signal_payload_to_dict(py, &decision.signal)?)?;
-    Ok(python_payload)
-}
-
-fn shutdown_signal_payload_to_dict<'py>(
-    py: Python<'py>,
-    payload: &native_shutdown::ShutdownSignalPayload,
-) -> PyResult<Bound<'py, PyDict>> {
-    let python_payload = PyDict::new(py);
-    python_payload.set_item("number", payload.number)?;
-    python_payload.set_item("name", &payload.name)?;
-    python_payload.set_item("exit_code", payload.exit_code)?;
-    Ok(python_payload)
-}
-
-fn shutdown_signal_payloads_to_tuple<'py>(
-    py: Python<'py>,
-    payloads: &[native_shutdown::ShutdownSignalPayload],
-) -> PyResult<Bound<'py, PyTuple>> {
-    let python_payloads =
-        payloads.iter().map(|payload| shutdown_signal_payload_to_dict(py, payload)).collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &python_payloads)
 }

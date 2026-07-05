@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import time
 import typing
-from dataclasses import dataclass
 
-from g import _core, execution_plan, types
-from g.engine.regenie2_pipeline import bgen_engine, inputs, telemetry_events, timing
+from g import _core, execution_plan
+from g.engine import timing as engine_timing
+from g.engine.native_dispatch import engine as native_dispatch_engine
+from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.io import output
-from g.jax_runtime import models as jax_runtime_models
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-type OutputRunPaths = output.OutputRunPaths
-type OutputWriterSettings = output.OutputWriterSettings
 type RunManifestHeaderInput = output.RunManifestHeaderInput
 type ManifestFileFingerprintCache = output.ManifestFileFingerprintCache
 type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
@@ -23,41 +21,7 @@ type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
 SINGLE_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE
 PER_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.PER_PHENOTYPE
 COMPLETE_CASE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.COMPLETE_CASE
-
-
-@dataclass(frozen=True)
-class InitializedPipelineOutputRuns:
-    """Native initialization result for pipeline output runs.
-
-    Attributes:
-        native_initialization: Native output initialization result handle.
-
-    """
-
-    native_initialization: _core.NativePipelineOutputInitialization
-
-    @property
-    def committed_chunk_identifier_sets(self) -> tuple[set[int], ...]:
-        """Return committed chunk identifiers for each initialized output."""
-        return tuple(
-            {int(chunk_identifier) for chunk_identifier in chunk_identifier_set}
-            for chunk_identifier_set in self.native_initialization.committed_chunk_identifier_sets()
-        )
-
-    def committed_chunk_identifiers(self, output_index: int) -> set[int]:
-        """Return committed chunk identifiers for one initialized output.
-
-        Args:
-            output_index: Output index in the native initialization result.
-
-        Returns:
-            Committed chunk identifiers for the requested output.
-
-        """
-        return {
-            int(chunk_identifier)
-            for chunk_identifier in self.native_initialization.committed_chunk_identifiers(output_index)
-        }
+JAX_ENABLE_X64 = True
 
 
 def open_pipeline_bgen_engine(
@@ -69,18 +33,23 @@ def open_pipeline_bgen_engine(
 ) -> _core.Regenie2RunEngine:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    telemetry_events.record_bgen_engine_open_started(
-        context=context,
+    _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
+        phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
-        phenotype_name=phenotype_name,
-        phenotype_count=phenotype_count,
+        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+        variant_limit=context.variant_limit,
     )
-    telemetry_events.record_association_backend_selected(
-        context=context,
-        phenotype_name=phenotype_name,
-        phenotype_count=phenotype_count,
+    _core.record_association_backend_selected_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        context.backend_plan.jax_device.value,
+        context.backend_plan.genotype_format.value,
+        phenotype_name,
+        phenotype_count,
     )
-    engine = bgen_engine.build_bgen_run_engine(
+    engine = native_dispatch_engine.build_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,
@@ -88,13 +57,26 @@ def open_pipeline_bgen_engine(
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         trusted_bgen_validator=None,
     )
-    timing.record_stage_duration(context.stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    telemetry_events.record_bgen_engine_opened(
-        context=context,
-        engine=engine,
-        pipeline_label=pipeline_label,
-        phenotype_name=phenotype_name,
+    engine_timing.record_stage_duration(
+        context.stage_timing_recorder,
+        "bgen_engine_open_index_setup",
+        engine_start_time,
+    )
+    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+    )
+    _core.record_bgen_engine_opened_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        int(engine.sample_count),
+        int(engine.variant_count),
+        phenotype_name,
+        phenotype_count,
     )
     return engine
 
@@ -108,22 +90,35 @@ def use_prepared_pipeline_bgen_engine(
     phenotype_count: int | None,
 ) -> _core.Regenie2RunEngine:
     """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    telemetry_events.record_prevalidated_bgen_engine_used(
+    _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    telemetry_events.record_association_backend_selected(
-        context=context,
-        phenotype_name=phenotype_name,
-        phenotype_count=phenotype_count,
+    _core.record_association_backend_selected_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        context.backend_plan.jax_device.value,
+        context.backend_plan.genotype_format.value,
+        phenotype_name,
+        phenotype_count,
     )
-    telemetry_events.record_bgen_engine_opened(
-        context=context,
-        engine=engine,
-        pipeline_label=pipeline_label,
-        phenotype_name=phenotype_name,
+    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
+        phenotype_name=phenotype_name,
+        pipeline_label=pipeline_label,
+        sample_count=int(engine.sample_count),
+        variant_count=int(engine.variant_count),
+    )
+    _core.record_bgen_engine_opened_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        context.backend_plan.backend_kind.value,
+        int(engine.sample_count),
+        int(engine.variant_count),
+        phenotype_name,
+        phenotype_count,
     )
     return engine
 
@@ -164,12 +159,12 @@ def build_pipeline_manifest_header(
         variant_limit=context.variant_limit,
         binary_correction_plan=context.correction_plan,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-        sample_key_mode=inputs.resolve_sample_key_mode(context.alignment_config),
+        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config),
         binary_kernel_config=context.binary_kernel_config if context.is_binary_trait else None,
         bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         jax_device=context.jax_device,
-        jax_enable_x64=jax_runtime_models.JAX_ENABLE_X64,
+        jax_enable_x64=JAX_ENABLE_X64,
         jax_matmul_precision=context.jax_matmul_precision,
         requested_gpu_genotype_format=context.requested_gpu_genotype_format,
         gpu_genotype_format=context.gpu_genotype_format,
@@ -199,124 +194,97 @@ def build_pipeline_manifest_header(
 
 def initialize_pipeline_output_runs(
     *,
-    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
+    context: pipeline_context.Regenie2PipelineContext,
+    phenotype_names: tuple[str, ...],
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
-    resume: bool,
-    resume_mode: types.ResumeMode,
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-) -> InitializedPipelineOutputRuns:
+) -> _core.NativeRunLifecycleOutputInitialization:
     """Validate/write output manifests and return committed chunk sets."""
-    native_preparation_batch = build_pipeline_output_preparation_batch(
-        output_run_paths_by_trait=output_run_paths_by_trait,
-        existing_manifests_by_trait=existing_manifests_by_trait,
-        current_headers_by_trait=current_headers_by_trait,
-        resume=resume,
-        resume_mode=resume_mode,
+    native_initialization = context.lifecycle_session.initialize_output_runs(
+        phenotype_names,
+        current_headers_by_trait,
     )
-    native_initialization = native_preparation_batch.initialize(runtime_compatibility_token)
-    if resume:
+    if context.lifecycle_session.output_resume:
         for output_index, committed_chunk_identifier_set in enumerate(
             native_initialization.committed_chunk_identifier_sets()
         ):
             committed_chunk_count = len(committed_chunk_identifier_set)
-            telemetry_events.record_pipeline_output_resume_committed_chunks(
+            _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
                 committed_chunk_count=committed_chunk_count,
                 output_index=output_index,
             )
-    return InitializedPipelineOutputRuns(native_initialization=native_initialization)
+    return native_initialization
 
 
 def validate_pipeline_resume_compatibility(
     *,
-    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
-    resume_mode: types.ResumeMode,
-) -> None:
-    """Validate all resume manifests before any output run is mutated."""
-    native_preparation_batch = build_pipeline_output_preparation_batch(
-        output_run_paths_by_trait=output_run_paths_by_trait,
-        existing_manifests_by_trait=existing_manifests_by_trait,
-        current_headers_by_trait=current_headers_by_trait,
-        resume=True,
-        resume_mode=resume_mode,
-    )
-    native_preparation_batch.validate_resume_compatibility()
-
-
-def build_pipeline_output_preparation_batch(
-    *,
-    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
-    existing_manifests_by_trait: tuple[dict[str, typing.Any] | None, ...],
-    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
-    resume: bool,
-    resume_mode: types.ResumeMode,
-) -> _core.NativePipelineOutputPreparationBatch:
-    """Build the native output-preparation batch handle.
-
-    Args:
-        output_run_paths_by_trait: Output run paths in trait order.
-        existing_manifests_by_trait: Existing manifest mappings in trait order.
-        current_headers_by_trait: Current manifest headers in trait order.
-        resume: Whether this batch will resume existing output runs.
-        resume_mode: Resume validation policy.
-
-    Returns:
-        Native output preparation batch handle.
-
-    """
-    return output.build_native_pipeline_output_preparation_batch(
-        output_run_paths_by_trait=output_run_paths_by_trait,
-        existing_manifests_by_trait=existing_manifests_by_trait,
-        current_headers_by_trait=current_headers_by_trait,
-        resume=resume,
-        resume_mode=resume_mode,
-    )
-
-
-def notify_output_runs_initialized(
-    *,
     context: pipeline_context.Regenie2PipelineContext,
     phenotype_names: tuple[str, ...],
+    current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
 ) -> None:
-    """Notify the runner that manifest compatibility has passed."""
-    if context.output_initialized_callback is None:
+    """Validate all resume manifests before any output run is mutated."""
+    if not context.lifecycle_session.output_resume:
         return
-    context.output_initialized_callback(phenotype_names)
+    context.lifecycle_session.validate_output_resume_compatibility(phenotype_names, current_headers_by_trait)
 
 
 def create_pipeline_writer_sessions(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    output_run_paths_by_trait: tuple[OutputRunPaths, ...],
+    prepared_runs_by_trait: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    telemetry_events.record_pipeline_output_writer_sessions_create_started(
-        association_mode=context.association_mode,
-        output_count=len(output_run_paths_by_trait),
+    _core.record_pipeline_output_writer_sessions_create_started_diagnostic_event(
+        association_mode=context.association_mode.value,
+        output_count=len(prepared_runs_by_trait),
     )
     writer_sessions = tuple(
-        output.create_output_writer_session(
-            output_run_paths,
-            context.association_mode,
+        _core.OutputWriterSession(
+            prepared_run.run_directory,
+            prepared_run.chunks_directory,
+            context.association_mode.value,
             writer_thread_count=context.writer_settings.writer_thread_count,
             writer_queue_depth=context.writer_settings.writer_queue_depth,
+            output_format=context.writer_settings.output_format.value,
+            output_statistic_dtype=context.writer_settings.output_statistic_dtype.value,
             finalize_parquet=context.writer_settings.finalize_parquet,
-            output_format=context.writer_settings.output_format,
             chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
-            arrow_compression=context.writer_settings.arrow_compression,
-            parquet_compression=context.writer_settings.parquet_compression,
-            output_statistic_dtype=context.writer_settings.output_statistic_dtype,
-            collect_stage_timings=timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
+            arrow_compression=context.writer_settings.arrow_compression.value,
+            parquet_compression=context.writer_settings.parquet_compression.value,
+            collect_stage_timings=engine_timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
         )
-        for output_run_paths in output_run_paths_by_trait
+        for prepared_run in prepared_runs_by_trait
     )
-    timing.record_stage_duration(context.stage_timing_recorder, "output_writer_preparation", writer_start_time)
+    engine_timing.record_stage_duration(context.stage_timing_recorder, "output_writer_preparation", writer_start_time)
     return writer_sessions
 
 
-def build_manifest_file_fingerprint_cache() -> ManifestFileFingerprintCache:
-    """Build a run-scoped manifest fingerprint cache."""
-    return output.ManifestFileFingerprintCache()
+def committed_chunk_identifiers(
+    initialization: _core.NativeRunLifecycleOutputInitialization,
+    output_index: int,
+) -> set[int]:
+    """Return committed chunk identifiers for one initialized output."""
+    return {int(chunk_identifier) for chunk_identifier in initialization.committed_chunk_identifiers(output_index)}
+
+
+def committed_chunk_identifier_sets(
+    initialization: _core.NativeRunLifecycleOutputInitialization,
+) -> tuple[set[int], ...]:
+    """Return committed chunk identifiers for each initialized output."""
+    return tuple(
+        {int(chunk_identifier) for chunk_identifier in chunk_identifier_set}
+        for chunk_identifier_set in initialization.committed_chunk_identifier_sets()
+    )
+
+
+def existing_manifest_from_prepared_run(
+    prepared_run: _core.NativeRunLifecyclePhenotypeRun,
+) -> dict[str, typing.Any] | None:
+    """Return an existing persisted manifest mapping for GPU-format planning."""
+    existing_manifest = prepared_run.existing_manifest_payload()
+    if existing_manifest is None:
+        return None
+    if not isinstance(existing_manifest, dict):
+        message = "Native prepared run existing manifest payload must be a mapping."
+        raise TypeError(message)
+    return existing_manifest

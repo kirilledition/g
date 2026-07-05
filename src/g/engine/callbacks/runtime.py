@@ -15,7 +15,7 @@ import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
 from g import _core, types
-from g.engine.callbacks import timing
+from g.engine import timing as engine_timing
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -23,7 +23,7 @@ if typing.TYPE_CHECKING:
     import jax
 
     from g.compute.regenie2_binary import api as regenie2_binary
-    from g.engine.callbacks import events
+    from g.runner import events
 
 type PreprocessedDosageWorkItem = (
     shared.PreprocessedDosageChunkWorkItem
@@ -38,16 +38,6 @@ DOSAGE_BUFFER_POOL_RETURN_OPERATION = "return"
 DOSAGE_BUFFER_POOL_ALLOCATE_OPERATION = "allocate"
 DOSAGE_BUFFER_POOL_DISCARD_OPERATION = "discard"
 DOSAGE_BUFFER_POOL_CONSUMER_WAIT_OPERATION = "consumer_wait"
-
-
-def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
-    """Build the native callback progress telemetry policy handle."""
-    return _core.NativeCallbackProgressPolicy()
-
-
-def native_binary_correction_summary_telemetry_policy() -> _core.NativeBinaryCorrectionSummaryTelemetryPolicy:
-    """Build the native binary correction summary telemetry policy handle."""
-    return _core.NativeBinaryCorrectionSummaryTelemetryPolicy()
 
 
 class ResultWriteItemKind(enum.StrEnum):
@@ -128,7 +118,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         flush_binary_correction_diagnostics_on_result_stop: bool,
         result_in_flight_limit: int | None,
         dosage_buffer_limit: int | None,
-        stage_timing_recorder: timing.StageTimingRecorder | None,
+        stage_timing_recorder: engine_timing.StageTimingRecorder | None,
         telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
@@ -302,7 +292,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def record_stage_duration(self, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage using this runner's timing recorder."""
-        timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
+        engine_timing.record_stage_duration(self.stage_timing_recorder, stage_name, start_time)
 
     def record_chunk_stage_duration(self, metadata: typing.Any, stage_name: str, start_time: float) -> None:
         """Record a nested callback stage for a specific native chunk."""
@@ -925,9 +915,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Raise native dosage work dispatch errors before processing."""
         if not dispatch_outcome.has_dispatch_error:
             return
-        error_message = getattr(dispatch_outcome, "dispatch_error_message", None)
-        if error_message is None:
-            error_message = getattr(dispatch_outcome, "error_message", None)
+        error_message = dispatch_outcome.dispatch_error_message
         if error_message is None:
             message = "Native dosage work dispatch plan omitted the error message."
             raise RuntimeError(message)
@@ -936,14 +924,14 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
-        native_callback_progress_policy().emit_callback_progress_update_telemetry(
+        _core.emit_callback_progress_update_telemetry(
             self.telemetry_session, progress_update
         )
 
     def complete_progress(self) -> None:
         """Emit the native final progress completion event when telemetry consumed chunks."""
         progress_completion = self.finish_progress_state()
-        native_callback_progress_policy().emit_callback_progress_completion_telemetry(
+        _core.emit_callback_progress_completion_telemetry(
             self.telemetry_session,
             progress_completion,
         )
@@ -1021,7 +1009,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if not summary_emit_plan.should_emit_summary:
             return
         summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-        native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
+        _core.emit_binary_correction_summary_telemetry(
             self.telemetry_session,
             summary_payload,
             "Native binary correction summary emit plan selected a missing telemetry session.",
@@ -1184,7 +1172,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         if finish_result.raise_worker_error:
             self.raise_worker_error_if_present()
         progress_completion_event = finish_result.progress_completion_event
-        native_callback_progress_policy().emit_callback_progress_event_telemetry(
+        _core.emit_callback_progress_event_telemetry(
             self.telemetry_session,
             progress_completion_event,
             "Native callback worker finish result selected a missing telemetry session.",
@@ -1194,7 +1182,7 @@ class NativeBgenCallbackRunner(abc.ABC):
             if summary_payload is None and finish_result.flush_binary_correction_pending_diagnostics:
                 self.materialize_binary_correction_pending_diagnostics()
                 summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-            native_binary_correction_summary_telemetry_policy().emit_binary_correction_summary_telemetry(
+            _core.emit_binary_correction_summary_telemetry(
                 self.telemetry_session,
                 summary_payload,
                 "Native callback worker finish result selected a missing telemetry session.",
@@ -1379,9 +1367,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Raise native result write dispatch errors before processing."""
         if not dispatch_outcome.has_dispatch_error:
             return
-        error_message = getattr(dispatch_outcome, "dispatch_error_message", None)
-        if error_message is None:
-            error_message = getattr(dispatch_outcome, "error_message", None)
+        error_message = dispatch_outcome.dispatch_error_message
         if error_message is None:
             message = "Native result write dispatch plan omitted the error message."
             raise RuntimeError(message)

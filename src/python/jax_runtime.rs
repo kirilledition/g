@@ -17,9 +17,6 @@ pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
 }
 
 #[pyclass]
-pub(crate) struct NativeJaxRuntimeDiagnosticPolicy;
-
-#[pyclass]
 pub(crate) struct NativeJaxRuntimeSetupReport {
     setup: native_jax_runtime::JaxRuntimeSetupPayload,
 }
@@ -181,24 +178,6 @@ impl NativeJaxRuntimeDiagnosticField {
                 Ok(value.into_pyobject(py)?.into_any().unbind())
             }
         }
-    }
-}
-
-#[pymethods]
-#[allow(clippy::unused_self)]
-impl NativeJaxRuntimeDiagnosticPolicy {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    fn record_jax_runtime_diagnostic_event(
-        &self,
-        py: Python<'_>,
-        event: &Bound<'_, PyAny>,
-        telemetry_session: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
-        record_jax_runtime_diagnostic_event(py, event, telemetry_session)
     }
 }
 
@@ -372,6 +351,7 @@ impl NativeJaxRuntimeSetupSession {
     }
 }
 
+#[pyfunction]
 pub(crate) fn record_jax_runtime_diagnostic_event(
     py: Python<'_>,
     event: &Bound<'_, PyAny>,
@@ -483,11 +463,11 @@ fn jax_runtime_diagnostic_value_from_py(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeDiagnosticEvent>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticField>()?;
-    module.add_class::<NativeJaxRuntimeDiagnosticPolicy>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupReport>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
     module.add_class::<NativeNvidiaDriverProbePaths>()?;
+    module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
     Ok(())
 }
 

@@ -224,13 +224,3 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
         """Return trait-major aligned LOCO predictions for one chromosome."""
         ...
 
-
-class CallbackChunkMetadataProtocol(typing.Protocol):
-    """Chunk metadata contract required by callback timing and chromosome state."""
-
-    chromosome_label: str
-
-
-def get_metadata_chromosome(metadata: CallbackChunkMetadataProtocol) -> str:
-    """Return the native scalar chromosome label for one chunk."""
-    return str(metadata.chromosome_label)

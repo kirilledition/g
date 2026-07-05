@@ -9,7 +9,7 @@ use pyo3::types::{PyAny, PyDict, PyModule, PySlice, PyTuple};
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
-    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity_value,
+    NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity,
 };
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
@@ -63,7 +63,7 @@ fn callback_chunk_identity_from_metadata(metadata: &Bound<'_, PyAny>) -> PyResul
     let chromosome = metadata_chromosome_value(metadata)?;
     let variant_start_index = metadata.getattr("variant_start_index")?.extract::<i64>()?;
     let variant_stop_index = metadata.getattr("variant_stop_index")?.extract::<i64>()?;
-    Ok(build_callback_chunk_identity_value(chromosome, variant_start_index, variant_stop_index))
+    Ok(build_callback_chunk_identity(chromosome, variant_start_index, variant_stop_index))
 }
 
 #[pyclass]
@@ -811,15 +811,6 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.update_result_worker_error_value(error_message)
     }
 
-    fn put_dosage_work_item_outcome(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
-        let put_result = self.put_dosage_work_item_with_optional_backpressure_observation(py, work_item)?;
-        Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
-    }
-
     fn put_dosage_work_item_until_accepted_outcome(
         &self,
         py: Python<'_>,
@@ -842,15 +833,6 @@ impl NativeCallbackRuntimeResources {
                 last_stage_backpressure_observation = outcome.stage_backpressure_observation;
             }
         }
-    }
-
-    fn put_result_write_item_outcome(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackQueueOperationOutcome> {
-        let put_result = self.put_result_write_item_with_optional_backpressure_observation(py, work_item)?;
-        Ok(NativeCallbackQueueOperationOutcome::from_put_result(put_result))
     }
 
     fn put_result_write_item_until_accepted_outcome(
@@ -887,14 +869,6 @@ impl NativeCallbackRuntimeResources {
         Ok(NativeCallbackQueueOperationOutcome::from_result_write_item_result(get_result))
     }
 
-    fn acquire_result_in_flight_slot_outcome(
-        &self,
-        py: Python<'_>,
-    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let acquire_result = self.acquire_result_in_flight_slot_with_optional_observation(py)?;
-        Ok(NativeCallbackResourceOperationOutcome::from_result_in_flight_acquire_result(acquire_result))
-    }
-
     fn acquire_result_in_flight_slot_until_available_outcome(
         &self,
         py: Python<'_>,
@@ -928,11 +902,6 @@ impl NativeCallbackRuntimeResources {
     ) -> PyResult<NativeCallbackResourceOperationOutcome> {
         let release_result = self.release_result_in_flight_slot_with_optional_backpressure_observation(py)?;
         Ok(NativeCallbackResourceOperationOutcome::from_result_in_flight_release_result(release_result))
-    }
-
-    fn acquire_dosage_buffer_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let acquire_result = self.acquire_dosage_buffer_with_backpressure_timeout(py)?;
-        Ok(NativeCallbackResourceOperationOutcome::from_dosage_buffer_acquire_result(acquire_result))
     }
 
     fn acquire_reusable_dosage_buffer_or_allocate_outcome(

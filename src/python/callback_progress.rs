@@ -43,9 +43,6 @@ pub(crate) struct NativeCallbackProgressState {
     inner: native_callback_progress::CallbackProgressState,
 }
 
-#[pyclass]
-pub(crate) struct NativeCallbackProgressPolicy;
-
 #[pymethods]
 impl NativeCallbackChunkIdentity {
     #[getter]
@@ -313,7 +310,9 @@ impl From<native_callback_progress::CallbackProgressCompletion> for NativeCallba
     }
 }
 
-pub(crate) fn build_callback_chunk_identity_value(
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn build_callback_chunk_identity(
     chromosome: String,
     variant_start_index: i64,
     variant_stop_index: i64,
@@ -321,97 +320,73 @@ pub(crate) fn build_callback_chunk_identity_value(
     native_callback_progress::CallbackChunkIdentity::new(chromosome, variant_start_index, variant_stop_index).into()
 }
 
-#[pymethods]
-impl NativeCallbackProgressPolicy {
-    #[new]
-    fn new() -> Self {
-        Self
+#[pyfunction]
+pub(crate) fn emit_callback_progress_update_telemetry(
+    telemetry_session: &Bound<'_, PyAny>,
+    progress_update: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    if progress_update.is_none() {
+        return Ok(());
+    }
+    let Some(native_telemetry_session) = require_native_telemetry_session(
+        telemetry_session,
+        "Native callback progress plan selected a missing telemetry session.",
+    )?
+    else {
+        return Ok(());
+    };
+
+    let telemetry_plan = progress_update.getattr("telemetry_plan")?;
+    let progress_events = telemetry_plan.getattr("events")?;
+    for progress_event in progress_events.try_iter()? {
+        native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event?,))?;
     }
 
-    #[allow(clippy::unused_self)]
-    #[allow(clippy::needless_pass_by_value)]
-    fn build_callback_chunk_identity(
-        &self,
-        chromosome: String,
-        variant_start_index: i64,
-        variant_stop_index: i64,
-    ) -> NativeCallbackChunkIdentity {
-        build_callback_chunk_identity_value(chromosome, variant_start_index, variant_stop_index)
+    let py = telemetry_session.py();
+    let progress_record = telemetry_plan.getattr("progress")?;
+    let progress_fields = PyDict::new(py);
+    progress_fields.set_item("chromosome", progress_record.getattr("chromosome")?)?;
+    progress_fields.set_item("chunk_identifier", progress_record.getattr("chunk_identifier")?)?;
+    progress_fields.set_item("variant_start_index", progress_record.getattr("variant_start_index")?)?;
+    progress_fields.set_item("variant_stop_index", progress_record.getattr("variant_stop_index")?)?;
+    progress_fields.set_item("variant_count", progress_record.getattr("variant_count")?)?;
+    native_telemetry_session
+        .call_method1("emit_progress", (progress_record.getattr("processed_chunk_count")?, progress_fields))?;
+    Ok(())
+}
+
+#[pyfunction]
+pub(crate) fn emit_callback_progress_event_telemetry(
+    telemetry_session: &Bound<'_, PyAny>,
+    progress_event: &Bound<'_, PyAny>,
+    missing_session_message: &str,
+) -> PyResult<()> {
+    if progress_event.is_none() {
+        return Ok(());
     }
+    let Some(native_telemetry_session) = require_native_telemetry_session(telemetry_session, missing_session_message)?
+    else {
+        return Ok(());
+    };
+    native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
+    Ok(())
+}
 
-    #[allow(clippy::unused_self)]
-    fn emit_callback_progress_update_telemetry(
-        &self,
-        telemetry_session: &Bound<'_, PyAny>,
-        progress_update: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        if progress_update.is_none() {
-            return Ok(());
-        }
-        let Some(native_telemetry_session) = require_native_telemetry_session(
-            telemetry_session,
-            "Native callback progress plan selected a missing telemetry session.",
-        )?
-        else {
-            return Ok(());
-        };
-
-        let telemetry_plan = progress_update.getattr("telemetry_plan")?;
-        let progress_events = telemetry_plan.getattr("events")?;
-        for progress_event in progress_events.try_iter()? {
-            native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event?,))?;
-        }
-
-        let py = telemetry_session.py();
-        let progress_record = telemetry_plan.getattr("progress")?;
-        let progress_fields = PyDict::new(py);
-        progress_fields.set_item("chromosome", progress_record.getattr("chromosome")?)?;
-        progress_fields.set_item("chunk_identifier", progress_record.getattr("chunk_identifier")?)?;
-        progress_fields.set_item("variant_start_index", progress_record.getattr("variant_start_index")?)?;
-        progress_fields.set_item("variant_stop_index", progress_record.getattr("variant_stop_index")?)?;
-        progress_fields.set_item("variant_count", progress_record.getattr("variant_count")?)?;
-        native_telemetry_session
-            .call_method1("emit_progress", (progress_record.getattr("processed_chunk_count")?, progress_fields))?;
-        Ok(())
+#[pyfunction]
+pub(crate) fn emit_callback_progress_completion_telemetry(
+    telemetry_session: &Bound<'_, PyAny>,
+    progress_completion: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    if telemetry_session.is_none() || progress_completion.is_none() {
+        return Ok(());
     }
-
-    #[allow(clippy::unused_self)]
-    fn emit_callback_progress_event_telemetry(
-        &self,
-        telemetry_session: &Bound<'_, PyAny>,
-        progress_event: &Bound<'_, PyAny>,
-        missing_session_message: &str,
-    ) -> PyResult<()> {
-        if progress_event.is_none() {
-            return Ok(());
-        }
-        let Some(native_telemetry_session) =
-            require_native_telemetry_session(telemetry_session, missing_session_message)?
-        else {
-            return Ok(());
-        };
-        native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
-        Ok(())
-    }
-
-    #[allow(clippy::unused_self)]
-    fn emit_callback_progress_completion_telemetry(
-        &self,
-        telemetry_session: &Bound<'_, PyAny>,
-        progress_completion: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        if telemetry_session.is_none() || progress_completion.is_none() {
-            return Ok(());
-        }
-        let Some(native_telemetry_session) =
-            optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
-        else {
-            return Ok(());
-        };
-        let progress_event = progress_completion.getattr("telemetry_event")?;
-        native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
-        Ok(())
-    }
+    let Some(native_telemetry_session) = optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
+    else {
+        return Ok(());
+    };
+    let progress_event = progress_completion.getattr("telemetry_event")?;
+    native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
+    Ok(())
 }
 
 fn require_native_telemetry_session<'py>(
@@ -444,11 +419,14 @@ fn optional_native_telemetry_session<'py>(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackChunkIdentity>()?;
     module.add_class::<NativeCallbackProgressCompletion>()?;
-    module.add_class::<NativeCallbackProgressPolicy>()?;
     module.add_class::<NativeCallbackProgressState>()?;
     module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
     module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
     module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
+    module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_callback_progress_update_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_callback_progress_event_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(emit_callback_progress_completion_telemetry, module)?)?;
     Ok(())
 }

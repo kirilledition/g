@@ -67,12 +67,12 @@ def build_resolved_phenotype_compute_group(
         phenotype_names = tuple(planned_names_by_index[phenotype_index] for phenotype_index in phenotype_indices)
     else:
         phenotype_names = run_input.phenotype_names
-    native_compute_group = resolve_native_per_phenotype_compute_group(
-        phenotype_indices=phenotype_indices,
-        phenotype_names=phenotype_names,
-        run_input=run_input,
-        prediction_list_path=prediction_list_path,
-        alignment_config=alignment_config,
+    native_compute_group = _core.resolve_per_phenotype_compute_group(
+        run_input.native_multi_aligned_sample_data,
+        list(phenotype_indices),
+        list(phenotype_names),
+        None if prediction_list_path is None else str(prediction_list_path),
+        resolve_sample_key_mode(alignment_config).value,
     )
     return adapt_native_phenotype_compute_group(native_compute_group)
 
@@ -85,11 +85,11 @@ def build_resolved_single_phenotype_compute_group(
     alignment_config: models.SampleAlignmentConfigProtocol | None,
 ) -> execution_plan.PhenotypeComputeGroup:
     """Build the alignment-resolved single-phenotype compute group."""
-    native_compute_group = resolve_native_single_phenotype_compute_group(
-        phenotype_name=phenotype_name,
-        run_input=run_input,
-        prediction_list_path=prediction_list_path,
-        alignment_config=alignment_config,
+    native_compute_group = _core.resolve_single_phenotype_compute_group(
+        run_input.native_aligned_sample_data,
+        phenotype_name,
+        str(prediction_list_path),
+        resolve_sample_key_mode(alignment_config).value,
     )
     return adapt_native_phenotype_compute_group(native_compute_group)
 
@@ -103,11 +103,12 @@ def build_resolved_complete_case_phenotype_compute_group(
 ) -> execution_plan.PhenotypeComputeGroup:
     """Build the alignment-resolved complete-case compute group."""
     planned_compute_group = find_complete_case_compute_group(planned_compute_groups)
-    native_compute_group = resolve_native_complete_case_compute_group(
-        run_input=run_input,
-        prediction_list_path=prediction_list_path,
-        planned_compute_group=planned_compute_group,
-        alignment_config=alignment_config,
+    native_compute_group = _core.resolve_complete_case_compute_group(
+        run_input.native_multi_aligned_sample_data,
+        list(planned_compute_group.phenotype_indices),
+        list(planned_compute_group.phenotype_names),
+        str(prediction_list_path),
+        resolve_sample_key_mode(alignment_config).value,
     )
     return adapt_native_phenotype_compute_group(native_compute_group)
 
@@ -145,57 +146,6 @@ def resolve_sample_key_mode(alignment_config: models.SampleAlignmentConfigProtoc
     if alignment_config is None:
         return types.SampleKeyMode.IID
     return alignment_config.sample_key_mode
-
-
-def resolve_native_single_phenotype_compute_group(
-    *,
-    phenotype_name: str,
-    run_input: models.NativeBgenRunInput,
-    prediction_list_path: Path,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
-    """Resolve a single-phenotype compute group through native code."""
-    return _core.resolve_single_phenotype_compute_group(
-        run_input.native_aligned_sample_data,
-        phenotype_name,
-        str(prediction_list_path),
-        resolve_sample_key_mode(alignment_config).value,
-    )
-
-
-def resolve_native_per_phenotype_compute_group(
-    *,
-    phenotype_indices: tuple[int, ...],
-    phenotype_names: tuple[str, ...],
-    run_input: models.NativeBgenMultiRunInput,
-    prediction_list_path: Path | None,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
-    """Resolve a grouped per-phenotype compute group through native code."""
-    return _core.resolve_per_phenotype_compute_group(
-        run_input.native_multi_aligned_sample_data,
-        list(phenotype_indices),
-        list(phenotype_names),
-        None if prediction_list_path is None else str(prediction_list_path),
-        resolve_sample_key_mode(alignment_config).value,
-    )
-
-
-def resolve_native_complete_case_compute_group(
-    *,
-    run_input: models.NativeBgenMultiRunInput,
-    prediction_list_path: Path,
-    planned_compute_group: execution_plan.PhenotypeComputeGroup,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> typing.Any:
-    """Resolve a complete-case compute group through native code."""
-    return _core.resolve_complete_case_compute_group(
-        run_input.native_multi_aligned_sample_data,
-        list(planned_compute_group.phenotype_indices),
-        list(planned_compute_group.phenotype_names),
-        str(prediction_list_path),
-        resolve_sample_key_mode(alignment_config).value,
-    )
 
 
 def adapt_native_phenotype_compute_group(native_compute_group: typing.Any) -> execution_plan.PhenotypeComputeGroup:

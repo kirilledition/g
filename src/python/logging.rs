@@ -31,9 +31,6 @@ pub struct NativeTelemetryRunSession {
     native_telemetry_session: Option<NativeTelemetrySession>,
 }
 
-#[pyclass]
-pub struct NativeTelemetryClosePolicy;
-
 #[pymethods]
 impl NativeTelemetryRunSession {
     #[new]
@@ -596,19 +593,6 @@ impl NativeTelemetryRunSession {
     }
 }
 
-#[pymethods]
-#[allow(clippy::unused_self)]
-impl NativeTelemetryClosePolicy {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    fn close_telemetry_session_with_event(&self, py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
-        close_telemetry_session_with_event(py, telemetry_session)
-    }
-}
-
 struct NativeTelemetrySession {
     writer: Mutex<native_telemetry_writer::TelemetrySessionWriter>,
 }
@@ -715,7 +699,8 @@ impl NativeTelemetryRunSession {
     }
 }
 
-fn close_telemetry_session_with_event(py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
+#[pyfunction]
+pub(crate) fn close_telemetry_session_with_event(py: Python<'_>, telemetry_session: &Bound<'_, PyAny>) -> PyResult<()> {
     if telemetry_session.is_none() {
         return Ok(());
     }
@@ -984,7 +969,7 @@ pub(crate) fn shutdown_logging() -> PyResult<()> {
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeTelemetryRunSession>()?;
-    module.add_class::<NativeTelemetryClosePolicy>()?;
+    module.add_function(wrap_pyfunction!(close_telemetry_session_with_event, module)?)?;
     Ok(())
 }
 

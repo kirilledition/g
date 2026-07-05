@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
-from g.jax_runtime import models as jax_runtime_models
-from g.jax_runtime import resolution as jax_runtime_resolution
 
 if typing.TYPE_CHECKING:
     from g.engine import dispatch_requests
@@ -48,6 +46,32 @@ class LoggingRuntimePolicy:
 
 
 @dataclass(frozen=True)
+class JaxRuntimePolicy:
+    """Process-global JAX runtime settings selected by the first run.
+
+    Attributes:
+        device: Requested JAX platform.
+        cache_directory: Persistent compilation cache directory.
+        matmul_precision: Requested matmul precision.
+        persistent_cache: Whether persistent compilation caching is enabled.
+        persistent_cache_min_entry_size_bytes: Minimum cache entry size.
+        persistent_cache_min_compile_time_seconds: Minimum compile time for cache entries.
+        xla_autotune_cache: Whether XLA autotune caches are enabled.
+        transfer_guard: Whether transfer guard diagnostics are enabled.
+
+    """
+
+    device: types.Device
+    cache_directory: Path | None
+    matmul_precision: types.JaxMatmulPrecision | None
+    persistent_cache: bool
+    persistent_cache_min_entry_size_bytes: int
+    persistent_cache_min_compile_time_seconds: int
+    xla_autotune_cache: bool
+    transfer_guard: bool
+
+
+@dataclass(frozen=True)
 class RuntimePolicy:
     """Process-global runtime choices requested by one run.
 
@@ -69,7 +93,7 @@ class RuntimePolicy:
         return self.native_policy.rayon_thread_count
 
     @property
-    def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
+    def jax_policy(self) -> JaxRuntimePolicy:
         """Return the requested JAX runtime policy view."""
         return jax_runtime_policy_from_native_policy(self.native_policy.jax_runtime_policy())
 
@@ -101,7 +125,7 @@ class RunRuntime:
         return self.native_runtime.rayon_thread_count
 
     @property
-    def jax_policy(self) -> jax_runtime_models.JaxRuntimePolicy:
+    def jax_policy(self) -> JaxRuntimePolicy:
         """Return the checked JAX runtime policy view."""
         return jax_runtime_policy_from_native_policy(self.native_runtime.jax_runtime_policy())
 
@@ -119,13 +143,13 @@ class RuntimeState:
 
     logging_policy: LoggingRuntimePolicy | None
     rayon_thread_count: int | None
-    jax_policy: jax_runtime_models.JaxRuntimePolicy | None
+    jax_policy: JaxRuntimePolicy | None
 
 
 def build_process_runtime_state(
     logging_policy: LoggingRuntimePolicy | None,
     rayon_thread_count: int | None,
-    jax_policy: jax_runtime_models.JaxRuntimePolicy | None,
+    jax_policy: _core.NativeJaxRuntimePolicy | None,
 ) -> _core.NativeRuntimeState:
     """Build a native process runtime state handle.
 
@@ -141,20 +165,15 @@ def build_process_runtime_state(
     return _core.NativeRuntimeState().build_process_runtime_state_handle(
         None if logging_policy is None else logging_runtime_policy_to_native_policy(logging_policy),
         rayon_thread_count,
-        None if jax_policy is None else jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
+        jax_policy,
     )
 
 
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.global_process_runtime_state()
 
 
-def native_jax_runtime_diagnostic_policy() -> _core.NativeJaxRuntimeDiagnosticPolicy:
-    """Build the native JAX runtime diagnostic policy handle."""
-    return _core.NativeJaxRuntimeDiagnosticPolicy()
-
-
 def record_jax_runtime_diagnostic_event(
-    diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent,
+    diagnostic_event: _core.NativeJaxRuntimeDiagnosticEvent,
     *,
     telemetry_session: events.TelemetrySession | None,
 ) -> None:
@@ -165,7 +184,7 @@ def record_jax_runtime_diagnostic_event(
         telemetry_session: Optional run telemetry session.
 
     """
-    native_jax_runtime_diagnostic_policy().record_jax_runtime_diagnostic_event(
+    _core.record_jax_runtime_diagnostic_event(
         diagnostic_event,
         telemetry_session,
     )
@@ -174,16 +193,16 @@ def record_jax_runtime_diagnostic_event(
 def configure_runtime_before_jax_import(
     compute_config: config.GComputeConfig,
     telemetry_session: events.TelemetrySession | None,
-) -> jax_runtime_models.JaxRuntimeSetupReport | None:
+) -> _core.NativeJaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
-    requested_policy = jax_runtime_resolution.resolve_jax_runtime_policy(compute_config)
+    requested_policy = build_jax_runtime_policy(compute_config)
     native_setup_session = PROCESS_RUNTIME_STATE.build_jax_runtime_setup_session_resolving_cache_directory(
-        jax_runtime_resolution.jax_runtime_policy_to_native_policy(requested_policy),
+        requested_policy,
     )
     if not native_setup_session.should_configure:
         return None
 
-    def record_diagnostic_event(diagnostic_event: jax_runtime_models.JaxRuntimeDiagnosticEvent) -> None:
+    def record_diagnostic_event(diagnostic_event: _core.NativeJaxRuntimeDiagnosticEvent) -> None:
         record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
 
     setup_module = importlib.import_module("g.jax_runtime.setup")
@@ -192,7 +211,7 @@ def configure_runtime_before_jax_import(
         diagnostic_sink=record_diagnostic_event,
     )
     PROCESS_RUNTIME_STATE.complete_jax_runtime_setup_session(
-        jax_runtime_resolution.jax_runtime_policy_to_native_policy(requested_policy),
+        requested_policy,
         native_setup_session,
     )
     return setup_report
@@ -255,11 +274,29 @@ def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _co
     )
 
 
+def build_jax_runtime_policy(compute_config: config.GComputeConfig) -> _core.NativeJaxRuntimePolicy:
+    """Build the process-global native JAX runtime policy requested by a run."""
+    return PROCESS_RUNTIME_STATE.build_jax_runtime_policy(
+        device=compute_config.device.value,
+        cache_directory=(
+            None if compute_config.jax_cache_dir is None else str(compute_config.jax_cache_dir.expanduser())
+        ),
+        matmul_precision=None
+        if compute_config.jax_matmul_precision is None
+        else compute_config.jax_matmul_precision.value,
+        persistent_cache=compute_config.jax_persistent_cache,
+        persistent_cache_min_entry_size_bytes=compute_config.jax_persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds=compute_config.jax_persistent_cache_min_compile_time_seconds,
+        xla_autotune_cache=compute_config.jax_xla_autotune_cache,
+        transfer_guard=compute_config.jax_transfer_guard,
+    )
+
+
 def jax_runtime_policy_from_native_policy(
     native_policy: _core.NativeJaxRuntimePolicy,
-) -> jax_runtime_models.JaxRuntimePolicy:
+) -> JaxRuntimePolicy:
     """Adapt a native JAX runtime policy to the Python dataclass."""
-    return jax_runtime_models.JaxRuntimePolicy(
+    return JaxRuntimePolicy(
         device=types.Device(native_policy.device),
         cache_directory=optional_path_from_native_value(native_policy.cache_directory),
         matmul_precision=None
@@ -286,12 +323,12 @@ def build_runtime_policy(
 ) -> RuntimePolicy:
     """Build the process-global runtime policy requested by a run."""
     logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
-    jax_policy = jax_runtime_resolution.resolve_jax_runtime_policy(regenie_config.g_compute)
+    jax_policy = build_jax_runtime_policy(regenie_config.g_compute)
     return RuntimePolicy(
         native_policy=PROCESS_RUNTIME_STATE.build_runtime_policy_handle(
             logging_runtime_policy_to_native_policy(logging_policy),
             regenie_config.trait.threads,
-            jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy),
+            jax_policy,
         )
     )
 
@@ -326,18 +363,14 @@ def require_compatible_rayon_thread_count(thread_count: int | None) -> None:
     PROCESS_RUNTIME_STATE.require_compatible_rayon_thread_count(thread_count)
 
 
-def require_compatible_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
+def require_compatible_jax_runtime_policy(jax_policy: _core.NativeJaxRuntimePolicy) -> None:
     """Raise when a run requests incompatible process-global JAX settings."""
-    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
-    )
+    PROCESS_RUNTIME_STATE.require_compatible_jax_runtime_policy(jax_policy)
 
 
-def record_jax_runtime_policy(jax_policy: jax_runtime_models.JaxRuntimePolicy) -> None:
+def record_jax_runtime_policy(jax_policy: _core.NativeJaxRuntimePolicy) -> None:
     """Record the process-global JAX runtime policy configured in this process."""
-    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(
-        jax_runtime_resolution.jax_runtime_policy_to_native_policy(jax_policy)
-    )
+    PROCESS_RUNTIME_STATE.record_jax_runtime_policy(jax_policy)
 
 
 def require_compatible_runtime_policy(runtime_policy: RuntimePolicy) -> _core.NativeRuntimeCompatibilityToken:
@@ -381,7 +414,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
-    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_linear_bgen_pipeline(request)
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
@@ -389,7 +422,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
-    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_binary_bgen_pipeline(request)
+    return multi_trait_pipeline_module.run_regenie2_multi_phenotype_bgen_pipeline(request)
 
 
 def configure_rayon_thread_pool(thread_count: int) -> None:

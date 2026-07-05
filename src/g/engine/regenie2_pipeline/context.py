@@ -5,14 +5,17 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-from g import execution_plan, types
-from g.engine.regenie2_pipeline import backend, compute_config, outputs, schedule, telemetry_events, timing
+from g import _core, execution_plan, types
+from g.engine import timing as engine_timing
+from g.engine.regenie2_pipeline import backend, compute_config, outputs
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g import _core
-    from g.engine.regenie2_pipeline import callbacks, inputs
+    from g.engine.native_dispatch import models as native_dispatch_models
+    from g.engine.regenie2_pipeline import callbacks
+    from g.runner import events as runner_events
 
 
 @dataclass(frozen=True)
@@ -46,9 +49,7 @@ class Regenie2PipelineContext:
         input_fingerprint_cache: Run-scoped input fingerprint cache.
         alignment_config: Optional sample alignment settings.
         phenotype_compute_groups: Planned phenotype compute groups.
-        runtime_compatibility_token: Native token proving runtime checks passed.
-        output_initialized_callback: Callback invoked after output manifests
-            validate successfully for one or more phenotypes.
+        lifecycle_session: Native run lifecycle session.
 
     """
 
@@ -72,14 +73,13 @@ class Regenie2PipelineContext:
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
     linear_numerical_config: compute_config.LinearNumericalConfig | None
-    writer_settings: outputs.OutputWriterSettings
-    stage_timing_recorder: timing.StageTimingRecorder | None
-    telemetry_session: telemetry_events.TelemetrySession | None
+    writer_settings: execution_plan.OutputWriterPlan
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None
+    telemetry_session: runner_events.TelemetrySession | None
     input_fingerprint_cache: outputs.ManifestFileFingerprintCache
-    alignment_config: inputs.SampleAlignmentConfigProtocol | None
+    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken
-    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None
+    lifecycle_session: _core.NativeRunLifecycleSession
 
     @property
     def uses_packed8_genotypes(self) -> bool:
@@ -89,9 +89,11 @@ class Regenie2PipelineContext:
     @property
     def effective_trusted_no_missing_diploid(self) -> bool:
         """Return trusted BGEN mode after packed8 requirements are applied."""
-        return schedule.resolve_effective_trusted_no_missing_diploid(
-            trusted_no_missing_diploid=self.trusted_no_missing_diploid,
-            uses_packed8_genotypes=self.uses_packed8_genotypes,
+        return bool(
+            _core.resolve_effective_trusted_no_missing_diploid(
+                self.trusted_no_missing_diploid,
+                self.uses_packed8_genotypes,
+            )
         )
 
     @property
@@ -116,7 +118,7 @@ class PreparedMultiPhenotypeGroupDelivery:
 
     compute_group: execution_plan.PhenotypeComputeGroup
     phenotype_indices: tuple[int, ...]
-    run_input: inputs.NativeBgenMultiRunInput
+    run_input: native_dispatch_models.NativeBgenMultiRunInput
     callback: callbacks.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
     committed_chunk_identifier_sets: tuple[set[int], ...]
@@ -143,18 +145,17 @@ def build_regenie2_pipeline_context(
     correction_plan: types.BinaryCorrectionPlan,
     binary_kernel_config: compute_config.BinaryKernelConfig | None,
     linear_numerical_config: compute_config.LinearNumericalConfig | None,
-    writer_settings: outputs.OutputWriterSettings,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
-    telemetry_session: telemetry_events.TelemetrySession | None,
-    alignment_config: inputs.SampleAlignmentConfigProtocol | None,
+    writer_settings: execution_plan.OutputWriterPlan,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
+    telemetry_session: runner_events.TelemetrySession | None,
+    alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
-    runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
-    output_initialized_callback: typing.Callable[[tuple[str, ...]], None] | None,
+    lifecycle_session: _core.NativeRunLifecycleSession,
 ) -> Regenie2PipelineContext:
     """Build a resolved lifecycle context for a REGENIE step 2 run."""
-    resolved_stage_timing_recorder: timing.StageTimingRecorder | None
+    resolved_stage_timing_recorder: engine_timing.StageTimingRecorder | None
     if stage_timing_recorder is None:
-        resolved_stage_timing_recorder = timing.build_stage_timing_recorder(
+        resolved_stage_timing_recorder = engine_timing.build_stage_timing_recorder(
             None,
             force=False,
         )
@@ -189,11 +190,10 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
-        input_fingerprint_cache=outputs.build_manifest_file_fingerprint_cache(),
+        input_fingerprint_cache=output.ManifestFileFingerprintCache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
-        runtime_compatibility_token=runtime_compatibility_token,
-        output_initialized_callback=output_initialized_callback,
+        lifecycle_session=lifecycle_session,
     )
 
 

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import time
 import typing
 from dataclasses import dataclass
 
 from g import _core
-from g.engine.native_dispatch import events, models, timing, writers
+from g.engine import timing as engine_timing
+from g.engine.native_dispatch import models, writers
 from g.runner import lifecycle
 
 if typing.TYPE_CHECKING:
@@ -60,44 +62,6 @@ class BgenDeliveryCleanupExecution:
     callback_finished: bool
 
 
-def plan_bgen_delivery_cleanup(
-    *,
-    cleanup_outcome: BgenDeliveryCleanupOutcome,
-    callback_finished: bool,
-) -> _core.NativeBgenDeliveryCleanupPlan:
-    """Return the native cleanup plan for one delivery outcome."""
-    return _core.plan_bgen_delivery_cleanup(cleanup_outcome.value, callback_finished)
-
-
-def resolve_native_callback_batch_size(
-    callback: models.BgenDeliveryBatchSizeProtocol,
-    *,
-    variant_major_packed8_probability_pairs: bool,
-) -> int:
-    """Return the validated native callback batch size for one callback object."""
-    return int(
-        _core.resolve_delivery_callback_batch_size(
-            callback.native_callback_batch_size,
-            variant_major_packed8_probability_pairs,
-        )
-    )
-
-
-def plan_bgen_delivery_invocation(
-    callback: models.BgenDeliveryBatchSizeProtocol,
-    run_input: models.BgenDeliveryRunInputProtocol,
-    *,
-    variant_major_packed8_probability_pairs: bool,
-) -> _core.NativeBgenDeliveryInvocationPlan:
-    """Return the native delivery invocation plan for one run input."""
-    return _core.plan_bgen_delivery_invocation(
-        callback.native_callback_batch_size,
-        variant_major_packed8_probability_pairs,
-        run_input.native_multi_aligned_sample_data is not None,
-        run_input.native_aligned_sample_data is not None,
-    )
-
-
 def execute_bgen_delivery_cleanup_plan(
     *,
     cleanup_plan: _core.NativeBgenDeliveryCleanupPlan,
@@ -105,7 +69,7 @@ def execute_bgen_delivery_cleanup_plan(
     callback: models.BgenDeliveryCallbackProtocol,
     writer_sessions: tuple[typing.Any, ...],
     writer_finish_thread_count: int,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     shutdown_request: lifecycle.GracefulShutdownRequested | None,
 ) -> BgenDeliveryCleanupExecution:
     """Execute cleanup side effects in the native lifecycle action order."""
@@ -114,7 +78,10 @@ def execute_bgen_delivery_cleanup_plan(
     for cleanup_action_value in cleanup_plan.cleanup_actions:
         cleanup_action = BgenDeliveryCleanupAction(cleanup_action_value)
         if cleanup_action is BgenDeliveryCleanupAction.DRAIN_CALLBACK:
-            writers.finish_callback_drain(callback=callback, stage_timing_recorder=stage_timing_recorder)
+            callback_finish_start_time = time.perf_counter()
+            _core.record_native_dispatch_callback_drain_started_diagnostic_event()
+            callback.finish()
+            engine_timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
             resolved_callback_finished = True
         elif cleanup_action is BgenDeliveryCleanupAction.FINISH_WRITER_SESSIONS:
             final_parquet_paths = writers.finish_writer_sessions(
@@ -133,9 +100,12 @@ def execute_bgen_delivery_cleanup_plan(
                 stage_timing_recorder=stage_timing_recorder,
             )
         elif cleanup_action is BgenDeliveryCleanupAction.ABORT_CALLBACK:
-            writers.abort_callback(callback)
+            with contextlib.suppress(Exception):
+                callback.abort()
         elif cleanup_action is BgenDeliveryCleanupAction.ABORT_WRITER_SESSIONS:
-            writers.abort_writer_sessions(writer_sessions)
+            for writer_session in writer_sessions:
+                with contextlib.suppress(Exception):
+                    writer_session.abort()
         elif cleanup_action is BgenDeliveryCleanupAction.WRITE_STAGE_TIMING_SNAPSHOT:
             # The runner writes final timing outputs once after dispatch.
             continue
@@ -153,10 +123,14 @@ def run_variant_major_packed8_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run packed8 delivery using native sample alignment when available."""
-    invocation_plan = plan_bgen_delivery_invocation(
-        callback,
-        run_input,
-        variant_major_packed8_probability_pairs=True,
+    variant_major_packed8_probability_pairs = True
+    has_native_multi_aligned_sample_data = run_input.native_multi_aligned_sample_data is not None
+    has_native_aligned_sample_data = run_input.native_aligned_sample_data is not None
+    invocation_plan = _core.plan_bgen_delivery_invocation(
+        callback.native_callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
     )
     delivery_method = BgenDeliveryMethod(invocation_plan.delivery_method)
     if delivery_method is BgenDeliveryMethod.PACKED8_NATIVE_MULTI_ALIGNED_SAMPLES:
@@ -197,10 +171,14 @@ def run_variant_major_dosage_delivery(
     committed_chunk_identifier_list: list[int],
 ) -> int:
     """Run dosage delivery using native sample alignment when available."""
-    invocation_plan = plan_bgen_delivery_invocation(
-        callback,
-        run_input,
-        variant_major_packed8_probability_pairs=False,
+    variant_major_packed8_probability_pairs = False
+    has_native_multi_aligned_sample_data = run_input.native_multi_aligned_sample_data is not None
+    has_native_aligned_sample_data = run_input.native_aligned_sample_data is not None
+    invocation_plan = _core.plan_bgen_delivery_invocation(
+        callback.native_callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
     )
     native_callback_batch_size = int(invocation_plan.callback_batch_size)
     delivery_method = BgenDeliveryMethod(invocation_plan.delivery_method)
@@ -244,7 +222,7 @@ def run_bgen_engine_with_writer_sessions(
     committed_chunk_identifiers: set[int] | None,
     writer_sessions: tuple[typing.Any, ...],
     callback: models.BgenDeliveryCallbackProtocol,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     writer_finish_thread_count: int,
     variant_major_packed8_probability_pairs: bool,
     pipeline_label: str,
@@ -257,12 +235,12 @@ def run_bgen_engine_with_writer_sessions(
             engine.reset_profile()
         engine_delivery_start_time = time.perf_counter()
         committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        events.record_delivery_started(
+        _core.record_native_dispatch_delivery_started_diagnostic_event(
             committed_chunk_count=len(committed_chunk_identifier_list),
             pipeline_label=pipeline_label,
             variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
         )
-        writers.start_callback(callback)
+        callback.start()
         if variant_major_packed8_probability_pairs:
             processed_chunk_count = run_variant_major_packed8_delivery(
                 engine=engine,
@@ -277,16 +255,16 @@ def run_bgen_engine_with_writer_sessions(
                 callback=callback,
                 committed_chunk_identifier_list=committed_chunk_identifier_list,
             )
-        timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        events.record_delivery_finished(
+        engine_timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
+        _core.record_native_dispatch_delivery_finished_diagnostic_event(
             pipeline_label=pipeline_label,
             processed_chunk_count=processed_chunk_count,
         )
         if stage_timing_recorder is not None:
             stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        cleanup_plan = plan_bgen_delivery_cleanup(
-            cleanup_outcome=BgenDeliveryCleanupOutcome.SUCCESS,
-            callback_finished=callback_finished,
+        cleanup_plan = _core.plan_bgen_delivery_cleanup(
+            BgenDeliveryCleanupOutcome.SUCCESS.value,
+            callback_finished,
         )
         cleanup_execution = execute_bgen_delivery_cleanup_plan(
             cleanup_plan=cleanup_plan,
@@ -300,13 +278,15 @@ def run_bgen_engine_with_writer_sessions(
         callback_finished = cleanup_execution.callback_finished
         final_parquet_paths = cleanup_execution.final_parquet_paths
     except lifecycle.GracefulShutdownRequested as shutdown_request:
-        events.record_delivery_interrupted(
+        _core.record_native_dispatch_delivery_interrupted_diagnostic_event(
             pipeline_label=pipeline_label,
-            shutdown_request=shutdown_request,
+            signal_exit_code=shutdown_request.exit_code,
+            signal_name=shutdown_request.signal_name,
+            signal_number=shutdown_request.shutdown_signal.number,
         )
-        cleanup_plan = plan_bgen_delivery_cleanup(
-            cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED,
-            callback_finished=callback_finished,
+        cleanup_plan = _core.plan_bgen_delivery_cleanup(
+            BgenDeliveryCleanupOutcome.INTERRUPTED.value,
+            callback_finished,
         )
         try:
             cleanup_execution = execute_bgen_delivery_cleanup_plan(
@@ -320,9 +300,9 @@ def run_bgen_engine_with_writer_sessions(
             )
             callback_finished = cleanup_execution.callback_finished
         except BaseException:
-            cleanup_failure_plan = plan_bgen_delivery_cleanup(
-                cleanup_outcome=BgenDeliveryCleanupOutcome.INTERRUPTED_CLEANUP_FAILURE,
-                callback_finished=callback_finished,
+            cleanup_failure_plan = _core.plan_bgen_delivery_cleanup(
+                BgenDeliveryCleanupOutcome.INTERRUPTED_CLEANUP_FAILURE.value,
+                callback_finished,
             )
             execute_bgen_delivery_cleanup_plan(
                 cleanup_plan=cleanup_failure_plan,
@@ -336,13 +316,14 @@ def run_bgen_engine_with_writer_sessions(
             raise
         raise
     except BaseException as exception:
-        events.record_delivery_failed(
-            exception=exception,
+        _core.record_native_dispatch_delivery_failed_diagnostic_event(
+            exception_message=str(exception),
+            exception_type=type(exception).__name__,
             pipeline_label=pipeline_label,
         )
-        cleanup_plan = plan_bgen_delivery_cleanup(
-            cleanup_outcome=BgenDeliveryCleanupOutcome.FAILURE,
-            callback_finished=callback_finished,
+        cleanup_plan = _core.plan_bgen_delivery_cleanup(
+            BgenDeliveryCleanupOutcome.FAILURE.value,
+            callback_finished,
         )
         execute_bgen_delivery_cleanup_plan(
             cleanup_plan=cleanup_plan,
@@ -354,7 +335,7 @@ def run_bgen_engine_with_writer_sessions(
             shutdown_request=None,
         )
         raise
-    events.record_pipeline_finished(
+    _core.record_native_dispatch_pipeline_finished_diagnostic_event(
         final_parquet_path_count=len(final_parquet_paths),
         pipeline_label=pipeline_label,
     )
@@ -368,7 +349,7 @@ def run_bgen_engine_with_callback(
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,
     callback: models.BgenDeliveryCallbackProtocol,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     variant_major_packed8_probability_pairs: bool,
 ) -> Path | None:
     """Run native BGEN chunk delivery and close the output writer."""

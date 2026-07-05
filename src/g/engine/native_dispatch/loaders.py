@@ -148,32 +148,3 @@ def load_native_bgen_grouped_run_inputs(
         alignment_config=alignment_config,
     )
 
-
-def build_regenie_prediction_source(
-    *,
-    prediction_list_path: Path,
-    phenotype_name: str,
-    run_input: models.NativeBgenRunInput,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> _core.RegeniePredictionSource:
-    """Load Rust-owned REGENIE step 1 predictions aligned to the run samples."""
-    return _core.RegeniePredictionSource.from_native_aligned_sample_data(
-        str(prediction_list_path),
-        phenotype_name,
-        run_input.native_aligned_sample_data,
-        sample_key_mode=groups.resolve_sample_key_mode(alignment_config).value,
-    )
-
-
-def build_multi_regenie_prediction_source(
-    *,
-    prediction_list_path: Path,
-    run_input: models.NativeBgenMultiRunInput,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> _core.MultiRegeniePredictionSource:
-    """Load native multi-trait REGENIE step 1 predictions aligned to shared samples."""
-    return _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
-        str(prediction_list_path),
-        run_input.native_multi_aligned_sample_data,
-        sample_key_mode=groups.resolve_sample_key_mode(alignment_config).value,
-    )

@@ -5,16 +5,14 @@ from __future__ import annotations
 import typing
 
 import g.engine.callbacks.binary as callback_binary
-import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.linear as callback_linear
 import g.engine.callbacks.shared as callback_shared
 from g import types
-from g.engine.regenie2_pipeline import compute_config, inputs
+from g.engine.regenie2_pipeline import compute_config
 from g.engine.regenie2_pipeline import context as pipeline_context
 
 if typing.TYPE_CHECKING:
-    import numpy as np
-    import numpy.typing as npt
+    from g.engine.native_dispatch import models as native_dispatch_models
 
 type MultiPhenotypeGroupCallbackProtocol = callback_shared.MultiPhenotypeGroupCallbackProtocol
 type MultiPhenotypeGroupFanout = callback_shared.MultiPhenotypeGroupFanout
@@ -23,7 +21,7 @@ type MultiPhenotypeGroupFanout = callback_shared.MultiPhenotypeGroupFanout
 def build_single_trait_callback(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: inputs.NativeBgenRunInput,
+    run_input: native_dispatch_models.NativeBgenRunInput,
     prediction_source: typing.Any,
     writer_session: typing.Any,
     staging_depth: int,
@@ -31,7 +29,7 @@ def build_single_trait_callback(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-) -> inputs.BgenDeliveryCallbackProtocol:
+) -> native_dispatch_models.BgenDeliveryCallbackProtocol:
     """Build the association-specific single-trait callback."""
     if context.is_binary_trait:
         return callback_binary.BinaryRegenie2PipelineCallback(
@@ -69,7 +67,7 @@ def build_single_trait_callback(
 def build_multi_phenotype_group_callback(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: inputs.NativeBgenMultiRunInput,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     writer_sessions: tuple[typing.Any, ...],
     committed_chunk_identifier_sets: tuple[set[int], ...],
@@ -113,22 +111,3 @@ def build_multi_phenotype_group_callback(
         telemetry_session=context.telemetry_session,
         output_statistic_dtype=context.writer_settings.output_statistic_dtype,
     )
-
-
-def build_multi_phenotype_group_fanout(
-    *,
-    callback: MultiPhenotypeGroupCallbackProtocol,
-    sample_position_array: npt.NDArray[np.intp],
-) -> MultiPhenotypeGroupFanout:
-    """Build one group fanout for union-sample grouped delivery."""
-    return callback_shared.MultiPhenotypeGroupFanout(
-        callback=callback,
-        sample_position_array=sample_position_array,
-    )
-
-
-def build_grouped_multi_phenotype_fanout_callback(
-    group_fanouts: tuple[MultiPhenotypeGroupFanout, ...],
-) -> inputs.BgenDeliveryCallbackProtocol:
-    """Build the union-sample grouped delivery fanout callback."""
-    return callback_grouped.GroupedMultiPhenotypeFanoutCallback(group_fanouts)

@@ -7,7 +7,6 @@ import typing
 
 import jax
 
-import g.engine.callbacks.diagnostics as diagnostics
 import g.engine.callbacks.runtime as runtime
 import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
@@ -15,13 +14,13 @@ import g.engine.callbacks.writers as writers
 from g import _core, types
 from g.compute.regenie2_linear import api as regenie2_linear
 from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.engine.callbacks import timing
+from g.engine import timing as engine_timing
 
 if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from g.engine.callbacks import events
+    from g.runner import events
 
 
 class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
@@ -38,7 +37,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
         linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-        stage_timing_recorder: timing.StageTimingRecorder | None,
+        stage_timing_recorder: engine_timing.StageTimingRecorder | None,
         telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
@@ -295,7 +294,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached linear chromosome state for the metadata chromosome."""
-        chromosome = shared.get_metadata_chromosome(variant_metadata)
+        chromosome = str(variant_metadata.chromosome_label)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -305,8 +304,12 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             loco_predictions,
             self.score_dtype,
         )
-        diagnostics.block_until_ready(self.current_chromosome_state.adjusted_residual)
-        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        jax.block_until_ready(self.current_chromosome_state.adjusted_residual)
+        engine_timing.record_stage_duration(
+            self.stage_timing_recorder,
+            "chromosome_state_preparation",
+            chromosome_start_time,
+        )
         self.current_chromosome = chromosome
 
     def compute_linear_result(
@@ -363,7 +366,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         dosage_buffer_limit: int | None,
         score_dtype: types.FloatingPointDtype,
         linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None,
-        stage_timing_recorder: timing.StageTimingRecorder | None,
+        stage_timing_recorder: engine_timing.StageTimingRecorder | None,
         telemetry_session: events.TelemetrySession | None,
         output_statistic_dtype: types.FloatingPointDtype,
     ) -> None:
@@ -629,7 +632,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
 
     def prepare_chromosome_state(self, variant_metadata: typing.Any) -> None:
         """Prepare cached multi-linear chromosome state for the metadata chromosome."""
-        chromosome = shared.get_metadata_chromosome(variant_metadata)
+        chromosome = str(variant_metadata.chromosome_label)
         if chromosome == self.current_chromosome:
             return
         chromosome_start_time = time.perf_counter()
@@ -639,8 +642,12 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             loco_predictions,
             self.score_dtype,
         )
-        diagnostics.block_until_ready(self.current_chromosome_state.adjusted_residual_matrix)
-        timing.record_stage_duration(self.stage_timing_recorder, "chromosome_state_preparation", chromosome_start_time)
+        jax.block_until_ready(self.current_chromosome_state.adjusted_residual_matrix)
+        engine_timing.record_stage_duration(
+            self.stage_timing_recorder,
+            "chromosome_state_preparation",
+            chromosome_start_time,
+        )
         self.current_chromosome = chromosome
 
     def enqueue_multi_result_for_write(

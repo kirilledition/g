@@ -10,10 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-import g.engine.callbacks.diagnostics as diagnostics
 import g.engine.callbacks.shared as shared
 from g import _core, types
-from g.engine.callbacks import timing
+from g.engine import timing as engine_timing
 
 PublicStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
 
@@ -44,7 +43,7 @@ def put_compute_array_on_device(array: shared.HostOrDeviceFloatArray) -> jax.Arr
 
 def record_transfer_metadata_for_array(
     *,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     transfer_name: str,
     array_role: str,
     array: TransferMetadataArrayProtocol,
@@ -68,7 +67,7 @@ def record_transfer_metadata_for_array(
 
 def put_genotype_matrix_on_device(
     genotype_matrix: jax.Array | shared.HostGenotypeBuffer,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any | None,
     *,
     array_role: str,
@@ -78,8 +77,8 @@ def put_genotype_matrix_on_device(
         return typing.cast("jax.Array", jax.device_put(genotype_matrix))
     start_time = time.perf_counter()
     genotype_device_array = jax.device_put(genotype_matrix)
-    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        diagnostics.block_until_ready(genotype_device_array)
+    if engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
+        jax.block_until_ready(genotype_device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -97,7 +96,7 @@ def put_genotype_matrix_on_device(
 
 def put_chunk_array_on_device(
     array: jax.Array | npt.NDArray[typing.Any],
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     chunk_metadata: typing.Any,
     *,
     array_role: str,
@@ -107,8 +106,8 @@ def put_chunk_array_on_device(
         return typing.cast("jax.Array", jax.device_put(array))
     start_time = time.perf_counter()
     device_array = jax.device_put(array)
-    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        diagnostics.block_until_ready(device_array)
+    if engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
+        jax.block_until_ready(device_array)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="host_to_device_transfer",
@@ -127,15 +126,15 @@ def put_chunk_array_on_device(
 def block_compute_result_for_timing(
     *,
     result_ready_value: jax.Array,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     start_time: float,
     chunk_metadata: typing.Any | None,
 ) -> None:
     """Synchronize chunk compute only when detailed stage timings are enabled."""
     if stage_timing_recorder is None:
         return
-    if timing.should_collect_exact_stage_timings(stage_timing_recorder):
-        diagnostics.block_until_ready(result_ready_value)
+    if engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
+        jax.block_until_ready(result_ready_value)
     record_stage_duration_with_optional_chunk(
         stage_timing_recorder=stage_timing_recorder,
         stage_name="jax_compute",
@@ -144,10 +143,10 @@ def block_compute_result_for_timing(
     )
 
 
-def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdentity:
+def build_chunk_timing_identity(metadata: typing.Any) -> engine_timing.ChunkTimingIdentity:
     """Build per-chunk timing identity fields from native metadata."""
     native_identity = build_native_callback_chunk_identity(metadata)
-    return timing.ChunkTimingIdentity(
+    return engine_timing.ChunkTimingIdentity(
         chunk_identifier=native_identity.chunk_identifier,
         chromosome=native_identity.chromosome,
         variant_start_index=native_identity.variant_start_index,
@@ -158,21 +157,16 @@ def build_chunk_timing_identity(metadata: typing.Any) -> timing.ChunkTimingIdent
 
 def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
     """Build the native callback chunk identity from metadata attributes."""
-    return native_callback_progress_policy().build_callback_chunk_identity(
-        chromosome=shared.get_metadata_chromosome(metadata),
+    return _core.build_callback_chunk_identity(
+        chromosome=str(metadata.chromosome_label),
         variant_start_index=int(metadata.variant_start_index),
         variant_stop_index=int(metadata.variant_stop_index),
     )
 
 
-def native_callback_progress_policy() -> _core.NativeCallbackProgressPolicy:
-    """Build the native callback progress policy handle."""
-    return _core.NativeCallbackProgressPolicy()
-
-
 def record_stage_duration_with_optional_chunk(
     *,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     stage_name: str,
     start_time: float,
     chunk_metadata: typing.Any | None,
@@ -181,9 +175,9 @@ def record_stage_duration_with_optional_chunk(
     if stage_timing_recorder is None:
         return
     if chunk_metadata is None:
-        timing.record_stage_duration(stage_timing_recorder, stage_name, start_time)
+        engine_timing.record_stage_duration(stage_timing_recorder, stage_name, start_time)
         return
-    timing.record_chunk_stage_duration(
+    engine_timing.record_chunk_stage_duration(
         stage_timing_recorder,
         chunk_identity=build_chunk_timing_identity(chunk_metadata),
         stage_name=stage_name,
@@ -255,23 +249,9 @@ def cast_statistic_array_for_native_writer_float64(array: object) -> npt.NDArray
     return typing.cast("npt.NDArray[np.float64]", np.asarray(array, dtype=np.float64))
 
 
-def get_chunk_stats_compute_arrays(
-    chunk_stats: ChunkStatsComputeArraysProtocol,
-    *,
-    include_imputed_dosage_square_sum: bool,
-    include_sparse_firth_candidate: bool,
-) -> typing.Mapping[str, object]:
-    """Return compute-needed native stat arrays through the bundled binding."""
-    return chunk_stats.compute_arrays(
-        include_imputed_dosage_square_sum=include_imputed_dosage_square_sum,
-        include_sparse_firth_candidate=include_sparse_firth_candidate,
-    )
-
-
 def get_linear_chunk_stats_arrays(chunk_stats: ChunkStatsComputeArraysProtocol) -> shared.LinearChunkStatsArrays:
     """Return the native stat arrays needed by linear variant-major compute."""
-    compute_arrays = get_chunk_stats_compute_arrays(
-        chunk_stats,
+    compute_arrays = chunk_stats.compute_arrays(
         include_imputed_dosage_square_sum=True,
         include_sparse_firth_candidate=False,
     )
@@ -291,20 +271,16 @@ def get_binary_chunk_stats_arrays(
     include_sparse_firth_candidate: bool,
 ) -> shared.BinaryChunkStatsArrays:
     """Return the native stat arrays needed by binary variant-major compute."""
-    compute_arrays = get_chunk_stats_compute_arrays(
-        chunk_stats,
+    compute_arrays = chunk_stats.compute_arrays(
         include_imputed_dosage_square_sum=False,
         include_sparse_firth_candidate=include_sparse_firth_candidate,
     )
     sparse_candidate_mask: npt.NDArray[np.bool_] | None = None
     if include_sparse_firth_candidate:
-        sparse_candidate_mask = typing.cast(
-            "npt.NDArray[np.bool_]",
-            compute_arrays["is_rare_sparse_firth_candidate"],
-        )
+        sparse_candidate_mask = compute_arrays["is_rare_sparse_firth_candidate"]
     return shared.BinaryChunkStatsArrays(
-        dosage_sum=typing.cast("npt.NDArray[np.float32]", compute_arrays["dosage_sum"]),
-        observation_count=typing.cast("npt.NDArray[np.int32]", compute_arrays["observation_count"]),
+        dosage_sum=compute_arrays["dosage_sum"],
+        observation_count=compute_arrays["observation_count"],
         sparse_candidate_mask=sparse_candidate_mask,
     )
 

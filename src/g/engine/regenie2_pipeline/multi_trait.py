@@ -5,16 +5,16 @@ from __future__ import annotations
 import time
 import typing
 
-from g import types
+from g import _core, types
+from g.engine import timing as engine_timing
+from g.engine.native_dispatch import groups as native_dispatch_groups
+from g.engine.native_dispatch import loaders as native_dispatch_loaders
 from g.engine.regenie2_pipeline import (
     compute_config,
     gpu_format,
     grouped,
-    inputs,
     multi_group,
     outputs,
-    telemetry_events,
-    timing,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
 
@@ -22,20 +22,6 @@ if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.engine import dispatch_requests
-
-
-def run_regenie2_multi_phenotype_linear_bgen_pipeline(
-    request: dispatch_requests.MultiTraitPipelineRequest,
-) -> tuple[Path | None, ...]:
-    """Run the complete-case native BGEN pipeline once for multiple quantitative phenotypes."""
-    return run_regenie2_multi_phenotype_bgen_pipeline(request)
-
-
-def run_regenie2_multi_phenotype_binary_bgen_pipeline(
-    request: dispatch_requests.MultiTraitPipelineRequest,
-) -> tuple[Path | None, ...]:
-    """Run the complete-case native BGEN pipeline once for multiple binary phenotypes."""
-    return run_regenie2_multi_phenotype_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
@@ -83,33 +69,28 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         telemetry_session=common_request.telemetry_session,
         alignment_config=common_request.alignment_config,
         phenotype_compute_groups=resolved_compute_groups,
-        runtime_compatibility_token=common_request.runtime_compatibility_token,
-        output_initialized_callback=common_request.output_initialized_callback,
+        lifecycle_session=common_request.lifecycle_session,
     )
     if request.sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
         return grouped.run_regenie2_grouped_per_phenotype_bgen_pipeline(
             context=context,
             phenotype_names=request.phenotype_names,
             covariate_names=common_request.covariate_names,
-            output_run_paths_by_phenotype=request.output_run_paths_by_phenotype,
+            prepared_runs_by_phenotype=request.prepared_runs,
             staging_depth=common_request.staging_depth,
             native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
             dosage_buffer_limit=common_request.dosage_buffer_limit,
-            existing_manifests_by_phenotype=request.existing_manifests_by_phenotype,
-            resume=common_request.resume,
-            resume_mode=common_request.resume_mode,
             null_logistic_nonconvergence_policy=request.null_logistic_nonconvergence_policy,
         )
     if request.sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    telemetry_events.record_pipeline_multi_trait_started(
-        association_mode=context.association_mode,
+    _core.record_pipeline_multi_trait_started_diagnostic_event(
+        association_mode=context.association_mode.value,
         phenotype_count=len(request.phenotype_names),
-        sample_mode=request.sample_mode,
+        sample_mode=request.sample_mode.value,
     )
-    existing_manifests = request.existing_manifests_by_phenotype or tuple(None for _ in request.phenotype_names)
     planned_compute_group = pipeline_context.require_complete_case_compute_group(context.phenotype_compute_groups)
     engine = outputs.open_pipeline_bgen_engine(
         context=context,
@@ -118,8 +99,10 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    telemetry_events.record_pipeline_multi_trait_input_load_started(len(planned_compute_group.phenotype_names))
-    run_input = inputs.load_native_bgen_multi_run_input(
+    _core.record_pipeline_multi_trait_input_load_started_diagnostic_event(
+        phenotype_count=len(planned_compute_group.phenotype_names)
+    )
+    run_input = native_dispatch_loaders.load_native_bgen_multi_run_input(
         genotype_source_config=context.genotype_source_config,
         engine=engine,
         phenotype_path=context.phenotype_path,
@@ -129,58 +112,70 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
     )
-    resolved_compute_group = inputs.build_resolved_complete_case_phenotype_compute_group(
+    resolved_compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
         run_input=run_input,
         prediction_list_path=context.prediction_list_path,
         planned_compute_groups=context.phenotype_compute_groups,
         alignment_config=context.alignment_config,
     )
-    timing.record_stage_duration(
+    engine_timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
     sample_count = int(run_input.sample_indices.shape[0])
     phenotype_count = len(run_input.phenotype_names)
     covariate_count = len(run_input.native_multi_aligned_sample_data.covariate_names)
-    telemetry_events.record_pipeline_multi_trait_input_aligned(
+    _core.record_pipeline_multi_trait_input_aligned_diagnostic_event(
         covariate_count=covariate_count,
         phenotype_count=phenotype_count,
         sample_count=sample_count,
     )
-    telemetry_events.log_sample_alignment_completed(
-        context=context,
-        sample_count=sample_count,
-        covariate_count=covariate_count,
-        phenotype_name=None,
-        phenotype_count=phenotype_count,
-        phenotype_group_count=None,
+    _core.record_sample_alignment_completed_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        None,
+        phenotype_count,
+        sample_count,
+        covariate_count,
+        None,
     )
-    telemetry_events.log_multi_phenotype_sample_summary(
-        context=context,
-        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
-        sample_counts=tuple(sample_count for _ in resolved_compute_group.phenotype_names),
-        sample_set_fingerprints=tuple(
-            resolved_compute_group.sample_set_fingerprint for _ in resolved_compute_group.phenotype_names
-        ),
+    sample_counts = tuple(sample_count for _ in resolved_compute_group.phenotype_names)
+    sample_set_fingerprints = tuple(
+        resolved_compute_group.sample_set_fingerprint for _ in resolved_compute_group.phenotype_names
+    )
+    _core.record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+        phenotype_count=len(sample_counts),
         phenotype_group_count=1,
+        sample_counts_differ=len(set(sample_counts)) > 1,
+        sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
+    )
+    _core.record_multi_phenotype_sample_summary_telemetry_event(
+        context.telemetry_session,
+        context.association_mode.value,
+        types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
+        sample_counts,
+        sample_set_fingerprints,
+        1,
     )
     prediction_start_time = time.perf_counter()
-    telemetry_events.record_pipeline_multi_trait_prediction_source_load_started(phenotype_count)
-    prediction_source = inputs.build_multi_regenie_prediction_source(
-        prediction_list_path=context.prediction_list_path,
-        run_input=run_input,
-        alignment_config=context.alignment_config,
+    _core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
+        phenotype_count=phenotype_count
     )
-    timing.record_stage_duration(context.stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    prediction_source = _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
+        str(context.prediction_list_path),
+        run_input.native_multi_aligned_sample_data,
+        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+    )
+    engine_timing.record_stage_duration(context.stage_timing_recorder, "prediction_source_load", prediction_start_time)
     return multi_group.run_prepared_multi_phenotype_bgen_group(
         context=context,
         engine=engine,
         run_input=run_input,
         prediction_source=prediction_source,
         compute_group=resolved_compute_group,
-        output_run_paths_by_phenotype=typing.cast(
-            "tuple[outputs.OutputRunPaths, ...]",
+        prepared_runs_by_phenotype=typing.cast(
+            "tuple[_core.NativeRunLifecyclePhenotypeRun, ...]",
             pipeline_context.select_by_phenotype_indices(
-                request.output_run_paths_by_phenotype,
+                request.prepared_runs,
                 resolved_compute_group.phenotype_indices,
             ),
         ),
@@ -188,12 +183,6 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
-        existing_manifests=typing.cast(
-            "tuple[dict[str, typing.Any] | None, ...]",
-            pipeline_context.select_by_phenotype_indices(existing_manifests, resolved_compute_group.phenotype_indices),
-        ),
-        resume=common_request.resume,
-        resume_mode=common_request.resume_mode,
         null_logistic_nonconvergence_policy=request.null_logistic_nonconvergence_policy,
         output_sample_mode=outputs.COMPLETE_CASE_SAMPLE_MODE,
     )

@@ -219,18 +219,12 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
     )
 
 
-def close_telemetry_session(telemetry_session: TelemetrySession | None) -> None:
-    """Flush native telemetry teardown hooks and preserve close failures."""
-    native_telemetry_close_policy().close_telemetry_session_with_event(telemetry_session)
-
-
 def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
     """Return the output root used for run-start telemetry."""
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
-    telemetry_policy = native_telemetry_session_policy(regenie_config)
     return Path(
-        telemetry_policy.resolve_output_run_root_value(
+        _core.resolve_output_run_root_value(
             str(output_prefix),
             None if output_run_directory is None else str(output_run_directory),
         )
@@ -242,11 +236,11 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     diagnostics_config = regenie_config.g_diagnostics
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
-    telemetry_policy = native_telemetry_session_policy(regenie_config)
-    return telemetry_paths_from_native_payload(
-        telemetry_policy.resolve_paths_payload(
+    return telemetry_paths_from_native_paths(
+        _core.resolve_telemetry_paths(
             str(output_prefix),
             None if output_run_directory is None else str(output_run_directory),
+            diagnostics_config.telemetry.value,
             None if diagnostics_config.log_dir is None else str(diagnostics_config.log_dir),
             None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
             None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
@@ -256,41 +250,14 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     )
 
 
-def native_telemetry_session_policy(regenie_config: config.RegenieConfig) -> _core.NativeTelemetrySessionPolicy:
-    """Build the native telemetry session policy for a run config."""
-    diagnostics_config = regenie_config.g_diagnostics
-    return _core.NativeTelemetrySessionPolicy(diagnostics_config.telemetry.value, diagnostics_config.trace_event_cap)
-
-
-def native_telemetry_close_policy() -> _core.NativeTelemetryClosePolicy:
-    """Build the native telemetry close policy handle."""
-    return _core.NativeTelemetryClosePolicy()
-
-
-def telemetry_paths_from_native_payload(payload: object) -> TelemetryPaths:
-    """Adapt a native telemetry path payload to the public Python dataclass."""
-    telemetry_paths_payload = native_mapping_payload(payload)
+def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) -> TelemetryPaths:
+    """Adapt native telemetry paths to the public Python dataclass."""
     return TelemetryPaths(
-        log_dir=optional_path_from_native_payload(telemetry_paths_payload["log_dir"]),
-        stream_file=optional_path_from_native_payload(telemetry_paths_payload["stream_file"]),
-        profile_summary_json=optional_path_from_native_payload(telemetry_paths_payload["profile_summary_json"]),
-        stage_timings_json=optional_path_from_native_payload(telemetry_paths_payload["stage_timings_json"]),
+        log_dir=optional_path_from_native_value(native_paths.log_dir),
+        stream_file=optional_path_from_native_value(native_paths.stream_file),
+        profile_summary_json=optional_path_from_native_value(native_paths.profile_summary_json),
+        stage_timings_json=optional_path_from_native_value(native_paths.stage_timings_json),
     )
-
-
-def native_run_event_telemetry_policy() -> _core.NativeRunEventTelemetryPolicy:
-    """Build the native run-event telemetry policy handle."""
-    return _core.NativeRunEventTelemetryPolicy()
-
-
-def native_runner_diagnostic_policy() -> _core.NativeRunnerDiagnosticPolicy:
-    """Build the native runner diagnostic policy handle."""
-    return _core.NativeRunnerDiagnosticPolicy()
-
-
-def native_run_event_payload_policy() -> _core.NativeRunEventPayloadPolicy:
-    """Build the native run-event payload policy handle."""
-    return _core.NativeRunEventPayloadPolicy()
 
 
 def record_runner_run_started(
@@ -302,14 +269,14 @@ def record_runner_run_started(
     output_run_root: Path,
 ) -> None:
     """Record runner run-start telemetry and diagnostics."""
-    native_run_event_telemetry_policy().record_runner_run_started_telemetry_event(
+    _core.record_runner_run_started_telemetry_event(
         telemetry_session,
         association_mode.value,
         trait_type.value,
         phenotype_count,
         str(output_run_root),
     )
-    native_runner_diagnostic_policy().record_runner_run_started_diagnostic_event(
+    _core.record_runner_run_started_diagnostic_event(
         association_mode=association_mode.value,
         trait_type=trait_type.value,
         phenotype_count=phenotype_count,
@@ -321,10 +288,8 @@ def record_runner_run_interrupted(
     interrupted_event: RunInterruptedEvent,
 ) -> None:
     """Record runner interruption telemetry and diagnostics."""
-    native_run_event_telemetry_policy().record_runner_run_interrupted_telemetry_event(
-        telemetry_session, interrupted_event
-    )
-    native_runner_diagnostic_policy().record_runner_run_interrupted_diagnostic_event(interrupted_event)
+    _core.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
+    _core.record_runner_run_interrupted_diagnostic_event(interrupted_event)
 
 
 def record_runner_run_failed(
@@ -332,8 +297,8 @@ def record_runner_run_failed(
     failed_event: RunFailedEvent,
 ) -> None:
     """Record runner failure telemetry and diagnostics."""
-    native_run_event_telemetry_policy().record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
-    native_runner_diagnostic_policy().record_runner_run_failed_diagnostic_event(failed_event)
+    _core.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
+    _core.record_runner_run_failed_diagnostic_event(failed_event)
 
 
 def record_runner_run_completed(
@@ -341,20 +306,8 @@ def record_runner_run_completed(
     completed_event: RunCompletedEvent,
 ) -> None:
     """Record runner completion telemetry and diagnostics."""
-    native_run_event_telemetry_policy().record_runner_run_completed_telemetry_event(
-        telemetry_session, completed_event
-    )
-    native_runner_diagnostic_policy().record_runner_run_completed_diagnostic_event(completed_event)
-
-
-def record_runner_jax_runtime_configuration_started() -> None:
-    """Record that runner JAX runtime configuration has started."""
-    native_runner_diagnostic_policy().record_runner_jax_runtime_configuration_started_diagnostic_event()
-
-
-def record_runner_execution_plan_build_started() -> None:
-    """Record that runner execution-plan construction has started."""
-    native_runner_diagnostic_policy().record_runner_execution_plan_build_started_diagnostic_event()
+    _core.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
+    _core.record_runner_run_completed_diagnostic_event(completed_event)
 
 
 def record_execution_plan_prepared(
@@ -368,7 +321,7 @@ def record_execution_plan_prepared(
     device: types.Device,
 ) -> None:
     """Record that execution-plan output preparation completed."""
-    native_run_event_telemetry_policy().record_execution_plan_prepared_telemetry_event(
+    _core.record_execution_plan_prepared_telemetry_event(
         telemetry_session,
         association_mode.value,
         trait_type.value,
@@ -377,7 +330,7 @@ def record_execution_plan_prepared(
         variant_limit,
         device.value,
     )
-    native_runner_diagnostic_policy().record_runner_execution_plan_prepared_diagnostic_event(
+    _core.record_runner_execution_plan_prepared_diagnostic_event(
         association_mode=association_mode.value,
         phenotype_count=phenotype_count,
         chunk_size=chunk_size,
@@ -386,156 +339,16 @@ def record_execution_plan_prepared(
     )
 
 
-def record_runner_execution_plan_dispatch_started(
-    *,
-    phenotype_count: int,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Record that execution-plan dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_execution_plan_dispatch_started_diagnostic_event(
-        phenotype_count=phenotype_count,
-        association_mode=association_mode.value,
-    )
-
-
-def record_runner_execution_plan_finalization_started(
-    *,
-    phenotype_count: int,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Record that execution-plan finalization has started."""
-    native_runner_diagnostic_policy().record_runner_execution_plan_finalization_started_diagnostic_event(
-        phenotype_count=phenotype_count,
-        association_mode=association_mode.value,
-    )
-
-
-def record_runner_multi_phenotype_dispatch_started(
-    *,
-    phenotype_count: int,
-    association_mode: types.AssociationMode,
-) -> None:
-    """Record that multi-phenotype dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_multi_phenotype_dispatch_started_diagnostic_event(
-        phenotype_count=phenotype_count,
-        association_mode=association_mode.value,
-    )
-
-
-def record_runner_single_phenotype_dispatch_started(
-    *,
-    association_mode: types.AssociationMode,
-    phenotype: str,
-) -> None:
-    """Record that single-phenotype dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_single_phenotype_dispatch_started_diagnostic_event(
-        association_mode=association_mode.value,
-        phenotype=phenotype,
-    )
-
-
-def record_runner_binary_engine_dispatch_started(phenotype: str) -> None:
-    """Record that binary engine dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_binary_engine_dispatch_started_diagnostic_event(
-        phenotype=phenotype
-    )
-
-
-def record_runner_linear_engine_dispatch_started(phenotype: str) -> None:
-    """Record that linear engine dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_linear_engine_dispatch_started_diagnostic_event(
-        phenotype=phenotype
-    )
-
-
-def record_runner_multi_phenotype_binary_engine_dispatch_started(phenotype_count: int) -> None:
-    """Record that binary multi-phenotype engine dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(
-        phenotype_count=phenotype_count
-    )
-
-
-def record_runner_multi_phenotype_linear_engine_dispatch_started(phenotype_count: int) -> None:
-    """Record that linear multi-phenotype engine dispatch has started."""
-    native_runner_diagnostic_policy().record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(
-        phenotype_count=phenotype_count
-    )
-
-
-def record_writer_finished(
-    telemetry_session: TelemetrySession | None,
-    *,
-    association_mode: types.AssociationMode,
-    phenotype: str,
-    final_output_path: Path | None,
-) -> None:
-    """Record single-phenotype writer completion."""
-    native_run_event_telemetry_policy().record_writer_finished_telemetry_event(
-        telemetry_session,
-        association_mode.value,
-        phenotype,
-        None if final_output_path is None else str(final_output_path),
-    )
-
-
-def record_multi_writer_finished(
-    telemetry_session: TelemetrySession | None,
-    *,
-    association_mode: types.AssociationMode,
-    phenotype_count: int,
-    final_output_paths: tuple[Path | None, ...],
-) -> None:
-    """Record multi-phenotype writer completion."""
-    native_run_event_telemetry_policy().record_multi_writer_finished_telemetry_event(
-        telemetry_session,
-        association_mode.value,
-        phenotype_count,
-        tuple(
-            None if final_output_path is None else str(final_output_path) for final_output_path in final_output_paths
-        ),
-    )
-
-
-def record_effective_config_written(
-    telemetry_session: TelemetrySession | None,
-    *,
-    association_mode: types.AssociationMode,
-    phenotype: str,
-    effective_config_path: Path,
-    output_run_directory: Path,
-) -> None:
-    """Record effective config materialization."""
-    native_run_event_telemetry_policy().record_effective_config_written_telemetry_event(
-        telemetry_session,
-        association_mode.value,
-        phenotype,
-        str(effective_config_path),
-        str(output_run_directory),
-    )
-
-
-def record_runner_metadata_artifacts_finalized(
-    *,
-    association_mode: types.AssociationMode,
-    phenotype_count: int,
-) -> None:
-    """Record that user-facing run artifacts were finalized."""
-    native_runner_diagnostic_policy().record_runner_metadata_artifacts_finalized_diagnostic_event(
-        association_mode=association_mode.value,
-        phenotype_count=phenotype_count,
-    )
-
-
 def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:
     """Build a structured interruption event from a graceful shutdown request."""
-    return run_interrupted_event_from_native_payload(
-        native_run_event_payload_policy().build_run_interrupted_event_payload(shutdown_request)
+    return run_interrupted_event_from_native_event(
+        _core.build_run_interrupted_event(shutdown_request)
     )
 
 
 def build_run_failed_event(error: Exception) -> RunFailedEvent:
     """Build a structured failure event from an exception."""
-    return run_failed_event_from_native_payload(native_run_event_payload_policy().build_run_failed_event_payload(error))
+    return run_failed_event_from_native_event(_core.build_run_failed_event(error))
 
 
 def attach_run_metadata(
@@ -546,8 +359,8 @@ def attach_run_metadata(
     phenotype_count: int,
 ) -> RunArtifacts:
     """Attach lifecycle metadata to returned run artifacts."""
-    return run_artifacts_from_native_payload(
-        native_run_event_payload_policy().attach_run_metadata_payload(
+    return run_artifacts_from_native_artifacts(
+        _core.attach_run_metadata(
             artifacts,
             run_id,
             association_mode.value,
@@ -558,105 +371,89 @@ def attach_run_metadata(
 
 def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
     """Build a structured completion event from run artifacts."""
-    return run_completed_event_from_native_payload(
-        native_run_event_payload_policy().build_run_completed_event_payload(artifacts)
-    )
+    return run_completed_event_from_native_event(_core.build_run_completed_event(artifacts))
 
 
 def render_run_interrupted_lines(interrupted_event: RunInterruptedEvent) -> tuple[str, ...]:
     """Render graceful interruption lines for CLI output."""
-    return tuple(native_run_event_payload_policy().render_run_interrupted_lines(interrupted_event))
+    return tuple(_core.render_run_interrupted_lines(interrupted_event))
 
 
 def render_run_failed_lines(failed_event: RunFailedEvent) -> tuple[str, ...]:
     """Render run failure lines for CLI output."""
-    return tuple(native_run_event_payload_policy().render_run_failed_lines(failed_event))
+    return tuple(_core.render_run_failed_lines(failed_event))
 
 
 def render_run_completed_lines(completed_event: RunCompletedEvent) -> tuple[str, ...]:
     """Render run completion lines for CLI output."""
-    return tuple(native_run_event_payload_policy().render_run_completed_lines(completed_event))
+    return tuple(_core.render_run_completed_lines(completed_event))
 
 
-def run_artifacts_from_native_payload(payload: object) -> RunArtifacts:
-    """Adapt a native artifact tree payload to the public Python dataclass."""
-    artifacts_payload = native_mapping_payload(payload)
-    association_mode_payload = typing.cast("str | None", artifacts_payload["association_mode"])
+def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifacts) -> RunArtifacts:
+    """Adapt a native artifact tree to the public Python dataclass."""
+    association_mode_payload = native_artifacts.association_mode
     return RunArtifacts(
-        output_run_directory=optional_path_from_native_payload(artifacts_payload["output_run_directory"]),
-        final_dataset=optional_path_from_native_payload(artifacts_payload["final_dataset"]),
-        final_parquet=optional_path_from_native_payload(artifacts_payload["final_parquet"]),
-        final_regenie=optional_path_from_native_payload(artifacts_payload["final_regenie"]),
-        effective_config=optional_path_from_native_payload(artifacts_payload["effective_config"]),
+        output_run_directory=optional_path_from_native_value(native_artifacts.output_run_directory),
+        final_dataset=optional_path_from_native_value(native_artifacts.final_dataset),
+        final_parquet=optional_path_from_native_value(native_artifacts.final_parquet),
+        final_regenie=optional_path_from_native_value(native_artifacts.final_regenie),
+        effective_config=optional_path_from_native_value(native_artifacts.effective_config),
         phenotype_artifacts=tuple(
-            run_artifacts_from_native_payload(phenotype_artifact_payload)
-            for phenotype_artifact_payload in typing.cast(
-                "typing.Sequence[object]",
-                artifacts_payload["phenotype_artifacts"],
-            )
+            run_artifacts_from_native_artifacts(phenotype_artifact)
+            for phenotype_artifact in native_artifacts.phenotype_artifacts
         ),
-        phenotype_name=typing.cast("str | None", artifacts_payload["phenotype_name"]),
+        phenotype_name=native_artifacts.phenotype_name,
         association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
-        phenotype_count=typing.cast("int | None", artifacts_payload["phenotype_count"]),
-        run_id=typing.cast("str | None", artifacts_payload["run_id"]),
+        phenotype_count=native_artifacts.phenotype_count,
+        run_id=native_artifacts.run_id,
     )
 
 
-def run_completed_event_from_native_payload(payload: object) -> RunCompletedEvent:
-    """Adapt a native completed-run event payload to the public Python dataclass."""
-    event_payload = native_mapping_payload(payload)
-    association_mode_payload = typing.cast("str | None", event_payload["association_mode"])
+def run_completed_event_from_native_event(native_event: _core.NativeRunCompletedEvent) -> RunCompletedEvent:
+    """Adapt a native completed-run event to the public Python dataclass."""
+    association_mode_payload = native_event.association_mode
     return RunCompletedEvent(
-        run_id=typing.cast("str | None", event_payload["run_id"]),
+        run_id=native_event.run_id,
         association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
-        phenotype_count=typing.cast("int | None", event_payload["phenotype_count"]),
+        phenotype_count=native_event.phenotype_count,
         artifacts=tuple(
-            run_artifact_payload_from_native_payload(artifact_payload)
-            for artifact_payload in typing.cast("typing.Sequence[object]", event_payload["artifacts"])
+            run_artifact_payload_from_native_artifact(artifact_payload) for artifact_payload in native_event.artifacts
         ),
     )
 
 
-def run_artifact_payload_from_native_payload(payload: object) -> RunArtifactPayload:
-    """Adapt one native completed-run artifact payload."""
-    artifact_payload = native_mapping_payload(payload)
+def run_artifact_payload_from_native_artifact(native_artifact: _core.NativeRunArtifactPayload) -> RunArtifactPayload:
+    """Adapt one native completed-run artifact."""
     return RunArtifactPayload(
-        phenotype_name=typing.cast("str | None", artifact_payload["phenotype_name"]),
-        output_run_directory=optional_path_from_native_payload(artifact_payload["output_run_directory"]),
-        final_dataset=optional_path_from_native_payload(artifact_payload["final_dataset"]),
-        final_parquet=optional_path_from_native_payload(artifact_payload["final_parquet"]),
-        final_regenie=optional_path_from_native_payload(artifact_payload["final_regenie"]),
-        effective_config=optional_path_from_native_payload(artifact_payload["effective_config"]),
+        phenotype_name=native_artifact.phenotype_name,
+        output_run_directory=optional_path_from_native_value(native_artifact.output_run_directory),
+        final_dataset=optional_path_from_native_value(native_artifact.final_dataset),
+        final_parquet=optional_path_from_native_value(native_artifact.final_parquet),
+        final_regenie=optional_path_from_native_value(native_artifact.final_regenie),
+        effective_config=optional_path_from_native_value(native_artifact.effective_config),
     )
 
 
-def run_interrupted_event_from_native_payload(payload: object) -> RunInterruptedEvent:
-    """Adapt a native interrupted-run event payload."""
-    event_payload = native_mapping_payload(payload)
+def run_interrupted_event_from_native_event(native_event: _core.NativeRunInterruptedEvent) -> RunInterruptedEvent:
+    """Adapt a native interrupted-run event."""
     return RunInterruptedEvent(
-        signal_number=typing.cast("int", event_payload["signal_number"]),
-        signal_name=typing.cast("str", event_payload["signal_name"]),
-        exit_code=typing.cast("int", event_payload["exit_code"]),
-        flushed_for_resume=typing.cast("bool", event_payload["flushed_for_resume"]),
+        signal_number=native_event.signal_number,
+        signal_name=native_event.signal_name,
+        exit_code=native_event.exit_code,
+        flushed_for_resume=native_event.flushed_for_resume,
     )
 
 
-def run_failed_event_from_native_payload(payload: object) -> RunFailedEvent:
-    """Adapt a native failed-run event payload."""
-    event_payload = native_mapping_payload(payload)
+def run_failed_event_from_native_event(native_event: _core.NativeRunFailedEvent) -> RunFailedEvent:
+    """Adapt a native failed-run event."""
     return RunFailedEvent(
-        error_type=typing.cast("str", event_payload["error_type"]),
-        error_message=typing.cast("str", event_payload["error_message"]),
+        error_type=native_event.error_type,
+        error_message=native_event.error_message,
     )
 
 
-def optional_path_from_native_payload(path_payload: object) -> Path | None:
+def optional_path_from_native_value(path_payload: object) -> Path | None:
     """Adapt an optional native path string."""
     if path_payload is None:
         return None
     return Path(typing.cast("str", path_payload))
-
-
-def native_mapping_payload(payload: object) -> dict[str, typing.Any]:
-    """Adapt a native mapping payload to a mutable Python dictionary."""
-    return dict(typing.cast("typing.Mapping[str, typing.Any]", payload))

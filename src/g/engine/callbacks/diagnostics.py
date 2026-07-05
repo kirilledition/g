@@ -10,15 +10,10 @@ import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
-from g.engine.callbacks import events, timing
+from g.engine import timing as engine_timing
 
 if typing.TYPE_CHECKING:
     import collections.abc
-
-
-def block_until_ready(value: typing.Any) -> None:
-    """Synchronize a JAX value or pytree."""
-    jax.block_until_ready(value)
 
 
 def enforce_null_logistic_nonconvergence_policy(
@@ -48,7 +43,7 @@ def record_null_logistic_chromosome_diagnostics(
     policy: types.NullLogisticNonconvergencePolicy,
     phenotype_names: tuple[str, ...] | None,
     correction_method: types.BinaryFallbackMethod,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
 ) -> int:
     """Apply null-logistic policy and record native timing diagnostics."""
     host_value_requests: dict[str, typing.Any] = {"converged": null_logistic_converged}
@@ -101,7 +96,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     phenotype_names: tuple[str, ...] | None,
 ) -> _core.NativeNullLogisticNonconvergencePlan:
     """Raise or warn using already materialized null-logistic convergence flags."""
-    native_policy_plan = native_callback_diagnostics_policy().plan_null_logistic_nonconvergence_from_array(
+    native_policy_plan = _core.plan_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
         convergence_values=convergence_flags,
         phenotype_names=phenotype_names,
@@ -117,7 +112,7 @@ def enforce_host_null_logistic_nonconvergence_policy(
     warning_message = native_policy_plan.warning_message
     if warning_message is None:
         raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    events.record_callback_null_logistic_nonconvergence_warning(
+    _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
         message=warning_message,
         chromosome=chromosome,
         nonconverged_count=native_policy_plan.nonconverged_count,
@@ -129,14 +124,9 @@ def enforce_host_null_logistic_nonconvergence_policy(
     return native_policy_plan
 
 
-def native_callback_diagnostics_policy() -> _core.NativeCallbackDiagnosticsPolicy:
-    """Build the native callback diagnostics policy handle."""
-    return _core.NativeCallbackDiagnosticsPolicy()
-
-
 def record_binary_chunk_diagnostics(
     *,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     result: (
         regenie2_binary.Regenie2BinaryScoreChunkResult
         | regenie2_binary.Regenie2BinaryChunkResult
@@ -145,7 +135,7 @@ def record_binary_chunk_diagnostics(
     ),
 ) -> None:
     """Record binary candidate and Firth diagnostics for one chunk."""
-    if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
+    if not engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
         return
     record_binary_chunk_diagnostics_from_count(
         stage_timing_recorder=stage_timing_recorder,
@@ -155,13 +145,13 @@ def record_binary_chunk_diagnostics(
 
 def record_binary_chunk_diagnostics_from_count(
     *,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     diagnostics: regenie2_binary.BinaryChunkDiagnostics | None,
 ) -> None:
     """Record binary diagnostics that were already counted on-device."""
     if diagnostics is None:
         return
-    if not timing.should_collect_exact_stage_timings(stage_timing_recorder):
+    if not engine_timing.should_collect_exact_stage_timings(stage_timing_recorder):
         return
     assert stage_timing_recorder is not None
     stage_timing_recorder.add_binary_chunk_diagnostics(binary_chunk_diagnostics_to_mapping(diagnostics))
@@ -260,7 +250,7 @@ def binary_chunk_diagnostics_to_summary_counts(
 
 def collect_binary_chunk_diagnostics_if_needed(
     *,
-    stage_timing_recorder: timing.StageTimingRecorder | None,
+    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     result: (
         regenie2_binary.Regenie2BinaryScoreChunkResult
         | regenie2_binary.Regenie2BinaryChunkResult
