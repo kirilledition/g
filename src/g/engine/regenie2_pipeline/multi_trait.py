@@ -112,11 +112,14 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
     )
-    resolved_compute_group = native_dispatch_groups.build_resolved_complete_case_phenotype_compute_group(
-        run_input=run_input,
-        prediction_list_path=context.prediction_list_path,
-        planned_compute_groups=context.phenotype_compute_groups,
-        alignment_config=context.alignment_config,
+    resolved_compute_group = native_dispatch_groups.adapt_native_phenotype_compute_group(
+        _core.resolve_complete_case_compute_group(
+            run_input.native_multi_aligned_sample_data,
+            list(planned_compute_group.phenotype_indices),
+            list(planned_compute_group.phenotype_names),
+            str(context.prediction_list_path),
+            native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+        )
     )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
@@ -157,9 +160,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         1,
     )
     prediction_start_time = time.perf_counter()
-    _core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(
-        phenotype_count=phenotype_count
-    )
+    _core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(phenotype_count=phenotype_count)
     prediction_source = _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
         str(context.prediction_list_path),
         run_input.native_multi_aligned_sample_data,

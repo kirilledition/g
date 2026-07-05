@@ -55,7 +55,6 @@ def open_pipeline_bgen_engine(
         variant_limit=context.variant_limit,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
-        trusted_bgen_validator=None,
     )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder,
@@ -137,7 +136,15 @@ def build_pipeline_manifest_header(
     phenotype_compute_group_id = (
         None
         if phenotype_compute_group is None
-        else execution_plan.build_phenotype_compute_group_id(phenotype_compute_group)
+        else _core.build_phenotype_compute_group_id_value(
+            phenotype_compute_group.group_mode.value,
+            phenotype_compute_group.phenotype_indices,
+            phenotype_compute_group.phenotype_names,
+            phenotype_compute_group.sample_mode.value,
+            phenotype_compute_group.sample_set_fingerprint,
+            phenotype_compute_group.covariate_design_fingerprint,
+            phenotype_compute_group.prediction_alignment_fingerprint,
+        )
     )
     return output.build_current_run_manifest_header(
         association_mode=context.association_mode,

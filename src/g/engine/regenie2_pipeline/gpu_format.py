@@ -51,30 +51,6 @@ class ManifestGpuGenotypeFormatFields:
     association_backend_genotype_format: str | None
 
 
-def log_auto_resolution(
-    *,
-    telemetry_session: object | None,
-    requested_gpu_genotype_format: types.GpuGenotypeFormat,
-    resolved_gpu_genotype_format: types.GpuGenotypeFormat,
-    resolution_reason: str,
-    fallback_error: str | None,
-) -> None:
-    """Emit logging and telemetry for an auto GPU genotype format decision."""
-    _core.record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
-        requested_gpu_genotype_format=requested_gpu_genotype_format.value,
-        resolved_gpu_genotype_format=resolved_gpu_genotype_format.value,
-        resolution_reason=resolution_reason,
-        fallback_error=fallback_error,
-    )
-    _core.record_gpu_genotype_format_resolved_telemetry_event(
-        telemetry_session,
-        requested_gpu_genotype_format.value,
-        resolved_gpu_genotype_format.value,
-        resolution_reason,
-        fallback_error,
-    )
-
-
 def resolve_auto_to_dosage(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
@@ -159,12 +135,12 @@ def log_native_auto_resolution(
     resolution_reason = native_resolution_plan.resolution_reason
     if resolution_reason is None:
         raise RuntimeError("Native GPU genotype-format resolution plan has no resolution reason.")
-    log_auto_resolution(
-        telemetry_session=telemetry_session,
-        requested_gpu_genotype_format=types.GpuGenotypeFormat(native_resolution_plan.requested_gpu_genotype_format),
-        resolved_gpu_genotype_format=concrete_gpu_genotype_format_from_native_plan(native_resolution_plan),
-        resolution_reason=resolution_reason,
-        fallback_error=native_resolution_plan.fallback_error,
+    _core.record_gpu_genotype_format_resolved_events(
+        telemetry_session,
+        native_resolution_plan.requested_gpu_genotype_format,
+        concrete_gpu_genotype_format_from_native_plan(native_resolution_plan).value,
+        resolution_reason,
+        native_resolution_plan.fallback_error,
     )
 
 
@@ -205,7 +181,6 @@ def validate_auto_packed8_bgen_engine(
         engine=engine,
         genotype_source_config=genotype_source_config,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
-        trusted_bgen_validator=None,
     )
     engine_timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
     return engine

@@ -10,7 +10,6 @@ from g import _core, types
 
 if typing.TYPE_CHECKING:
     from g.interface import config
-    from g.runner import lifecycle
 
 TelemetryCounterValue = bool | float | int | None
 TelemetryWriterCounters = dict[str, TelemetryCounterValue]
@@ -132,78 +131,6 @@ class RunArtifacts:
     run_id: str | None
 
 
-@dataclass(frozen=True)
-class RunArtifactPayload:
-    """Structured payload for one phenotype's user-visible artifacts.
-
-    Attributes:
-        phenotype_name: Phenotype column represented by these artifacts.
-        output_run_directory: Chunked output run directory.
-        final_dataset: Parquet dataset directory for part-based output.
-        final_parquet: Finalized Parquet output path.
-        final_regenie: Finalized REGENIE-compatible text output path.
-        effective_config: Written effective TOML config path.
-
-    """
-
-    phenotype_name: str | None
-    output_run_directory: Path | None
-    final_dataset: Path | None
-    final_parquet: Path | None
-    final_regenie: Path | None
-    effective_config: Path | None
-
-
-@dataclass(frozen=True)
-class RunCompletedEvent:
-    """Canonical completion event for telemetry and terminal rendering.
-
-    Attributes:
-        run_id: Diagnostics run identifier when available.
-        association_mode: Statistical association engine used by the run.
-        phenotype_count: Number of phenotypes included in the run.
-        artifacts: User-visible artifacts produced by the run.
-
-    """
-
-    run_id: str | None
-    association_mode: types.AssociationMode | None
-    phenotype_count: int | None
-    artifacts: tuple[RunArtifactPayload, ...]
-
-
-@dataclass(frozen=True)
-class RunInterruptedEvent:
-    """Canonical graceful-interruption event.
-
-    Attributes:
-        signal_number: POSIX signal number.
-        signal_name: POSIX signal name.
-        exit_code: Conventional process exit code for the signal.
-        flushed_for_resume: Whether committed output was flushed for resume.
-
-    """
-
-    signal_number: int
-    signal_name: str
-    exit_code: int
-    flushed_for_resume: bool
-
-
-@dataclass(frozen=True)
-class RunFailedEvent:
-    """Canonical non-graceful failure event.
-
-    Attributes:
-        error_type: Exception class name.
-        error_message: Exception message.
-
-    """
-
-    error_type: str
-    error_message: str
-
-
 def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySession:
     """Build the run telemetry session for one runner invocation."""
     diagnostics_config = regenie_config.g_diagnostics
@@ -216,18 +143,6 @@ def build_telemetry_session(regenie_config: config.RegenieConfig) -> TelemetrySe
         lossy=diagnostics_config.log_lossy,
         trace_event_cap=diagnostics_config.trace_event_cap,
         run_id=None,
-    )
-
-
-def resolve_output_run_root(regenie_config: config.RegenieConfig) -> Path:
-    """Return the output root used for run-start telemetry."""
-    output_prefix = typing.cast("Path", regenie_config.g_output.out)
-    output_run_directory = regenie_config.g_output.output_run_directory
-    return Path(
-        _core.resolve_output_run_root_value(
-            str(output_prefix),
-            None if output_run_directory is None else str(output_run_directory),
-        )
     )
 
 
@@ -260,135 +175,6 @@ def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) 
     )
 
 
-def record_runner_run_started(
-    telemetry_session: TelemetrySession | None,
-    *,
-    association_mode: types.AssociationMode,
-    trait_type: types.RegenieTraitType,
-    phenotype_count: int,
-    output_run_root: Path,
-) -> None:
-    """Record runner run-start telemetry and diagnostics."""
-    _core.record_runner_run_started_telemetry_event(
-        telemetry_session,
-        association_mode.value,
-        trait_type.value,
-        phenotype_count,
-        str(output_run_root),
-    )
-    _core.record_runner_run_started_diagnostic_event(
-        association_mode=association_mode.value,
-        trait_type=trait_type.value,
-        phenotype_count=phenotype_count,
-    )
-
-
-def record_runner_run_interrupted(
-    telemetry_session: TelemetrySession | None,
-    interrupted_event: RunInterruptedEvent,
-) -> None:
-    """Record runner interruption telemetry and diagnostics."""
-    _core.record_runner_run_interrupted_telemetry_event(telemetry_session, interrupted_event)
-    _core.record_runner_run_interrupted_diagnostic_event(interrupted_event)
-
-
-def record_runner_run_failed(
-    telemetry_session: TelemetrySession | None,
-    failed_event: RunFailedEvent,
-) -> None:
-    """Record runner failure telemetry and diagnostics."""
-    _core.record_runner_run_failed_telemetry_event(telemetry_session, failed_event)
-    _core.record_runner_run_failed_diagnostic_event(failed_event)
-
-
-def record_runner_run_completed(
-    telemetry_session: TelemetrySession | None,
-    completed_event: RunCompletedEvent,
-) -> None:
-    """Record runner completion telemetry and diagnostics."""
-    _core.record_runner_run_completed_telemetry_event(telemetry_session, completed_event)
-    _core.record_runner_run_completed_diagnostic_event(completed_event)
-
-
-def record_execution_plan_prepared(
-    telemetry_session: TelemetrySession | None,
-    *,
-    association_mode: types.AssociationMode,
-    trait_type: types.RegenieTraitType,
-    phenotype_count: int,
-    chunk_size: int,
-    variant_limit: int | None,
-    device: types.Device,
-) -> None:
-    """Record that execution-plan output preparation completed."""
-    _core.record_execution_plan_prepared_telemetry_event(
-        telemetry_session,
-        association_mode.value,
-        trait_type.value,
-        phenotype_count,
-        chunk_size,
-        variant_limit,
-        device.value,
-    )
-    _core.record_runner_execution_plan_prepared_diagnostic_event(
-        association_mode=association_mode.value,
-        phenotype_count=phenotype_count,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
-        device=device.value,
-    )
-
-
-def build_run_interrupted_event(shutdown_request: lifecycle.GracefulShutdownRequested) -> RunInterruptedEvent:
-    """Build a structured interruption event from a graceful shutdown request."""
-    return run_interrupted_event_from_native_event(
-        _core.build_run_interrupted_event(shutdown_request)
-    )
-
-
-def build_run_failed_event(error: Exception) -> RunFailedEvent:
-    """Build a structured failure event from an exception."""
-    return run_failed_event_from_native_event(_core.build_run_failed_event(error))
-
-
-def attach_run_metadata(
-    artifacts: RunArtifacts,
-    *,
-    run_id: str | None,
-    association_mode: types.AssociationMode,
-    phenotype_count: int,
-) -> RunArtifacts:
-    """Attach lifecycle metadata to returned run artifacts."""
-    return run_artifacts_from_native_artifacts(
-        _core.attach_run_metadata(
-            artifacts,
-            run_id,
-            association_mode.value,
-            phenotype_count,
-        )
-    )
-
-
-def build_run_completed_event(artifacts: RunArtifacts) -> RunCompletedEvent:
-    """Build a structured completion event from run artifacts."""
-    return run_completed_event_from_native_event(_core.build_run_completed_event(artifacts))
-
-
-def render_run_interrupted_lines(interrupted_event: RunInterruptedEvent) -> tuple[str, ...]:
-    """Render graceful interruption lines for CLI output."""
-    return tuple(_core.render_run_interrupted_lines(interrupted_event))
-
-
-def render_run_failed_lines(failed_event: RunFailedEvent) -> tuple[str, ...]:
-    """Render run failure lines for CLI output."""
-    return tuple(_core.render_run_failed_lines(failed_event))
-
-
-def render_run_completed_lines(completed_event: RunCompletedEvent) -> tuple[str, ...]:
-    """Render run completion lines for CLI output."""
-    return tuple(_core.render_run_completed_lines(completed_event))
-
-
 def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifacts) -> RunArtifacts:
     """Adapt a native artifact tree to the public Python dataclass."""
     association_mode_payload = native_artifacts.association_mode
@@ -406,49 +192,6 @@ def run_artifacts_from_native_artifacts(native_artifacts: _core.NativeRunArtifac
         association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
         phenotype_count=native_artifacts.phenotype_count,
         run_id=native_artifacts.run_id,
-    )
-
-
-def run_completed_event_from_native_event(native_event: _core.NativeRunCompletedEvent) -> RunCompletedEvent:
-    """Adapt a native completed-run event to the public Python dataclass."""
-    association_mode_payload = native_event.association_mode
-    return RunCompletedEvent(
-        run_id=native_event.run_id,
-        association_mode=None if association_mode_payload is None else types.AssociationMode(association_mode_payload),
-        phenotype_count=native_event.phenotype_count,
-        artifacts=tuple(
-            run_artifact_payload_from_native_artifact(artifact_payload) for artifact_payload in native_event.artifacts
-        ),
-    )
-
-
-def run_artifact_payload_from_native_artifact(native_artifact: _core.NativeRunArtifactPayload) -> RunArtifactPayload:
-    """Adapt one native completed-run artifact."""
-    return RunArtifactPayload(
-        phenotype_name=native_artifact.phenotype_name,
-        output_run_directory=optional_path_from_native_value(native_artifact.output_run_directory),
-        final_dataset=optional_path_from_native_value(native_artifact.final_dataset),
-        final_parquet=optional_path_from_native_value(native_artifact.final_parquet),
-        final_regenie=optional_path_from_native_value(native_artifact.final_regenie),
-        effective_config=optional_path_from_native_value(native_artifact.effective_config),
-    )
-
-
-def run_interrupted_event_from_native_event(native_event: _core.NativeRunInterruptedEvent) -> RunInterruptedEvent:
-    """Adapt a native interrupted-run event."""
-    return RunInterruptedEvent(
-        signal_number=native_event.signal_number,
-        signal_name=native_event.signal_name,
-        exit_code=native_event.exit_code,
-        flushed_for_resume=native_event.flushed_for_resume,
-    )
-
-
-def run_failed_event_from_native_event(native_event: _core.NativeRunFailedEvent) -> RunFailedEvent:
-    """Adapt a native failed-run event."""
-    return RunFailedEvent(
-        error_type=native_event.error_type,
-        error_message=native_event.error_message,
     )
 
 

@@ -6,7 +6,7 @@ use pyo3::types::{PyModule, PyTuple};
 
 use g_plan as native_host_policy;
 
-use super::config::{NativeBinaryCorrectionPlan, NativePhenotypeComputeGroup};
+use super::config::NativePhenotypeComputeGroup;
 
 #[pyclass]
 pub(crate) struct NativeAssociationBackendPlan {
@@ -39,20 +39,6 @@ fn plan_association_backend(
 #[allow(clippy::needless_pass_by_value)]
 fn resolve_association_mode_value(trait_type: String) -> String {
     native_host_policy::resolve_association_mode(&trait_type).to_string()
-}
-
-#[pyfunction]
-#[allow(clippy::fn_params_excessive_bools)]
-fn normalize_binary_correction_plan(
-    firth: bool,
-    approx: bool,
-    spa: bool,
-    p_threshold: f64,
-    firth_se: bool,
-) -> PyResult<NativeBinaryCorrectionPlan> {
-    let plan = native_host_policy::normalize_binary_correction(firth, approx, spa, p_threshold, firth_se)
-        .map_err(host_policy_error_to_py)?;
-    Ok(NativeBinaryCorrectionPlan::from_host_policy_payload(plan))
 }
 
 #[pyfunction]
@@ -94,12 +80,6 @@ fn build_phenotype_compute_group_id_value(
     )
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_name: String) -> String {
-    native_host_policy::build_phenotype_output_directory_name(phenotype_index, &phenotype_name)
-}
-
 #[pymethods]
 impl NativeAssociationBackendPlan {
     #[getter]
@@ -132,10 +112,8 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeAssociationBackendPlan>()?;
     module.add_function(wrap_pyfunction!(plan_association_backend, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_association_mode_value, module)?)?;
-    module.add_function(wrap_pyfunction!(normalize_binary_correction_plan, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_groups, module)?)?;
     module.add_function(wrap_pyfunction!(build_phenotype_compute_group_id_value, module)?)?;
-    module.add_function(wrap_pyfunction!(build_phenotype_output_directory_name, module)?)?;
     Ok(())
 }
 

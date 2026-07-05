@@ -3116,15 +3116,6 @@ fn resolve_grouped_union_callback_batch_size(native_callback_batch_size: i64) ->
 }
 
 #[pyfunction]
-fn resolve_delivery_callback_batch_size(
-    callback_batch_size: Option<i64>,
-    variant_major_packed8_probability_pairs: bool,
-) -> PyResult<usize> {
-    native_schedule::resolve_delivery_callback_batch_size(callback_batch_size, variant_major_packed8_probability_pairs)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 fn plan_multi_trait_chunk_write(
     writer_session_count: usize,
@@ -3140,12 +3131,6 @@ fn plan_multi_trait_chunk_write(
     )
     .map(Into::into)
     .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-fn resolve_writer_finish_thread_count(writer_session_count: i64, requested_thread_count: i64) -> PyResult<usize> {
-    native_schedule::resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)
-        .map_err(|error| schedule_error_to_py(&error))
 }
 
 #[pyfunction]
@@ -3233,9 +3218,7 @@ fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<
     module.add_function(wrap_pyfunction!(plan_single_trait_binary_gpu_genotype_format_resolution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_auto_gpu_genotype_format_after_trusted_validation, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_delivery_callback_batch_size, module)?)?;
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_writer_finish_thread_count, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;

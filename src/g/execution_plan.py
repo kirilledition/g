@@ -160,19 +160,6 @@ class PhenotypeComputeGroup:
     prediction_alignment_fingerprint: str | None
 
 
-def build_phenotype_compute_group_id(phenotype_compute_group: PhenotypeComputeGroup) -> str:
-    """Build a deterministic identifier for a resolved phenotype compute group."""
-    return _core.build_phenotype_compute_group_id_value(
-        phenotype_compute_group.group_mode.value,
-        phenotype_compute_group.phenotype_indices,
-        phenotype_compute_group.phenotype_names,
-        phenotype_compute_group.sample_mode.value,
-        phenotype_compute_group.sample_set_fingerprint,
-        phenotype_compute_group.covariate_design_fingerprint,
-        phenotype_compute_group.prediction_alignment_fingerprint,
-    )
-
-
 @dataclass(frozen=True)
 class RegenieExecutionPlan:
     """Complete immutable execution plan for one REGENIE-compatible request.
@@ -205,18 +192,6 @@ class RegenieExecutionPlan:
     kernel_config: KernelConfig
     output_plan: OutputPlan
     stage_timings_json: Path | None
-
-
-def normalize_binary_correction_config(binary_config: config.BinaryConfig) -> types.BinaryCorrectionPlan:
-    """Normalize REGENIE-style binary correction flags into an internal plan."""
-    native_correction_plan = _core.normalize_binary_correction_plan(
-        binary_config.firth,
-        binary_config.approx,
-        binary_config.spa,
-        binary_config.p_threshold,
-        binary_config.firth_se,
-    )
-    return adapt_binary_correction_plan(native_correction_plan)
 
 
 def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie2_binary_config.BinaryKernelConfig:
@@ -263,14 +238,6 @@ def build_binary_kernel_config(compute_config: config.GComputeConfig) -> regenie
     )
 
 
-def build_regenie_execution_plan(
-    regenie_config: config.RegenieConfig,
-) -> RegenieExecutionPlan:
-    """Build a complete execution plan from a validated public config."""
-    run_request = compile_run_request(regenie_config)
-    return build_regenie_execution_plan_from_run_request(regenie_config, run_request)
-
-
 def build_regenie_execution_plan_from_run_request(
     regenie_config: config.RegenieConfig,
     run_request: _core.NativeRunRequest,
@@ -301,11 +268,6 @@ def build_regenie_execution_plan_from_run_request(
         output_plan=output_plan,
         stage_timings_json=optional_path_from_request(run_request.stage_timings_json),
     )
-
-
-def compile_run_request(regenie_config: config.RegenieConfig) -> _core.NativeRunRequest:
-    """Compile a resolved config into the native requested-run contract."""
-    return _core.compile_run_request(regenie_config)
 
 
 def build_output_plan_from_run_request(run_request: _core.NativeRunRequest) -> OutputPlan:
@@ -386,44 +348,6 @@ def build_phenotype_compute_groups(
             phenotype_names,
             multi_phenotype_sample_mode.value,
         )
-    )
-
-
-def resolve_association_mode(trait_type: types.RegenieTraitType) -> types.AssociationMode:
-    """Resolve a trait family to the native association mode."""
-    return types.AssociationMode(_core.resolve_association_mode_value(trait_type.value))
-
-
-def build_kernel_config(regenie_config: config.RegenieConfig) -> KernelConfig:
-    """Build engine kernel settings from a public config."""
-    return KernelConfig(
-        chunk_size=regenie_config.trait.bsize,
-        device=regenie_config.g_compute.device,
-        staging_depth=regenie_config.g_compute.staging_depth,
-        native_callback_batch_size=regenie_config.g_compute.native_callback_batch_size,
-        result_in_flight_limit=regenie_config.g_compute.result_in_flight_limit,
-        dosage_buffer_limit=regenie_config.g_compute.dosage_buffer_limit,
-        variant_limit=regenie_config.g_compute.variant_limit,
-        thread_count=regenie_config.trait.threads,
-        bgen_decode_tile_variant_count=regenie_config.g_compute.bgen_decode_tile_variant_count,
-        gpu_genotype_format=regenie_config.g_compute.gpu_genotype_format,
-        trusted_no_missing_diploid=regenie_config.g_compute.trusted_no_missing_diploid,
-        trusted_bgen_validation_mode=regenie_config.g_compute.trusted_bgen_validation_mode,
-        alignment_config=regenie_config.g_compute,
-        multi_phenotype_sample_mode=regenie_config.g_compute.multi_phenotype_sample_mode,
-        binary_kernel_config=(
-            build_binary_kernel_config(regenie_config.g_compute)
-            if regenie_config.trait.trait_type == types.RegenieTraitType.BINARY
-            else None
-        ),
-        linear_numerical_config=(
-            regenie2_linear_config.LinearNumericalConfig(
-                minimum_variance=regenie_config.g_compute.linear_minimum_variance,
-                relative_variance_tolerance=regenie_config.g_compute.linear_relative_variance_tolerance,
-            )
-            if regenie_config.trait.trait_type == types.RegenieTraitType.QUANTITATIVE
-            else None
-        ),
     )
 
 

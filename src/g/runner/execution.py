@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import time
 import typing
+from pathlib import Path
 
 from g import _core, execution_plan, types
 from g.engine import dispatch_requests
 from g.engine import timing as engine_timing
 from g.interface import config
 from g.runner import events, lifecycle, runtime
-
-if typing.TYPE_CHECKING:
-    from pathlib import Path
 
 
 def regenie(
@@ -30,14 +28,20 @@ def regenie(
         run_runtime = runtime.build_run_runtime(runtime_policy)
         if initialize_logging_on_entry:
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
-        association_mode = execution_plan.resolve_association_mode(regenie_config.trait.trait_type)
+        association_mode = types.AssociationMode(
+            _core.resolve_association_mode_value(regenie_config.trait.trait_type.value)
+        )
         phenotype_count = len(regenie_config.input.pheno_columns)
-        events.record_runner_run_started(
+        output_run_directory = regenie_config.g_output.output_run_directory
+        _core.record_runner_run_started_events(
             active_telemetry_session,
-            association_mode=association_mode,
-            trait_type=regenie_config.trait.trait_type,
-            phenotype_count=phenotype_count,
-            output_run_root=events.resolve_output_run_root(regenie_config),
+            association_mode.value,
+            regenie_config.trait.trait_type.value,
+            phenotype_count,
+            _core.resolve_output_run_root_value(
+                str(typing.cast("Path", regenie_config.g_output.out)),
+                None if output_run_directory is None else str(output_run_directory),
+            ),
         )
         runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
         artifacts = run_validated_regenie_config(
@@ -46,23 +50,20 @@ def regenie(
             runtime_compatibility_token=run_runtime.runtime_compatibility_token,
         )
     except lifecycle.GracefulShutdownRequested as shutdown_request:
-        interrupted_event = events.build_run_interrupted_event(shutdown_request)
-        events.record_runner_run_interrupted(active_telemetry_session, interrupted_event)
+        _core.record_runner_run_interrupted_events(active_telemetry_session, shutdown_request)
         raise
     except Exception as error:
-        failed_event = events.build_run_failed_event(error)
-        events.record_runner_run_failed(active_telemetry_session, failed_event)
+        _core.record_runner_run_failed_events(active_telemetry_session, error)
         raise
     else:
-        artifacts = events.attach_run_metadata(
+        native_artifacts = _core.attach_run_metadata_and_record_completed_events(
+            active_telemetry_session,
             artifacts,
-            run_id=active_telemetry_session.run_id,
-            association_mode=association_mode,
-            phenotype_count=phenotype_count,
+            active_telemetry_session.run_id,
+            association_mode.value,
+            phenotype_count,
         )
-        completed_event = events.build_run_completed_event(artifacts)
-        events.record_runner_run_completed(active_telemetry_session, completed_event)
-        return artifacts
+        return events.run_artifacts_from_native_artifacts(native_artifacts)
     finally:
         if close_telemetry_session_on_exit:
             _core.close_telemetry_session_with_event(active_telemetry_session)
@@ -76,17 +77,29 @@ def run_validated_regenie_config(
     """Plan, execute, and finalize a validated REGENIE-compatible config."""
     api_entry_start_time = time.perf_counter()
     stage_timing_recorder = None
-    final_timing_context = engine_timing.resolve_final_timing_output_context(
-        regenie_config.g_diagnostics.stage_timings_json,
+    native_final_timing_context = _core.resolve_final_timing_output_context(
+        None
+        if regenie_config.g_diagnostics.stage_timings_json is None
+        else str(regenie_config.g_diagnostics.stage_timings_json),
         telemetry_session,
+    )
+    final_stage_timing_path = (
+        None
+        if native_final_timing_context.stage_timing_path is None
+        else Path(native_final_timing_context.stage_timing_path)
+    )
+    final_profile_summary_path = (
+        None
+        if native_final_timing_context.profile_summary_path is None
+        else Path(native_final_timing_context.profile_summary_path)
     )
     try:
         device_start_time = time.perf_counter()
         _core.record_runner_jax_runtime_configuration_started_diagnostic_event()
         runtime.configure_runtime_before_jax_import(regenie_config.g_compute, telemetry_session=telemetry_session)
         stage_timing_recorder = engine_timing.build_stage_timing_recorder(
-            final_timing_context.stage_timing_path,
-            force=final_timing_context.force_stage_timing_recorder,
+            final_stage_timing_path,
+            force=native_final_timing_context.force_stage_timing_recorder,
         )
         engine_timing.record_stage_duration(
             stage_timing_recorder, "jax_device_configuration_backend_init", device_start_time
@@ -99,14 +112,14 @@ def run_validated_regenie_config(
             lifecycle_session.run_request,
         )
         phenotype_run_plans = lifecycle_session.prepared_phenotype_runs()
-        events.record_execution_plan_prepared(
+        _core.record_execution_plan_prepared_events(
             telemetry_session,
-            association_mode=plan.association_mode,
-            trait_type=regenie_config.trait.trait_type,
-            phenotype_count=len(phenotype_run_plans),
-            chunk_size=plan.kernel_config.chunk_size,
-            variant_limit=plan.kernel_config.variant_limit,
-            device=plan.kernel_config.device,
+            plan.association_mode.value,
+            regenie_config.trait.trait_type.value,
+            len(phenotype_run_plans),
+            plan.kernel_config.chunk_size,
+            plan.kernel_config.variant_limit,
+            plan.kernel_config.device.value,
         )
         engine_timing.record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)
         _core.record_runner_execution_plan_dispatch_started_diagnostic_event(
@@ -139,16 +152,16 @@ def run_validated_regenie_config(
     finally:
         if stage_timing_recorder is not None:
             engine_timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
-            engine_timing.record_final_timing_outputs_write_started_diagnostic_event(
-                final_timing_context.stage_timing_path,
-                final_timing_context.profile_summary_path,
-                final_timing_context.run_id,
+            _core.record_final_timing_outputs_write_started_diagnostic_event(
+                None if final_stage_timing_path is None else str(final_stage_timing_path),
+                None if final_profile_summary_path is None else str(final_profile_summary_path),
+                native_final_timing_context.run_id,
             )
             engine_timing.write_final_timing_outputs(
                 stage_timing_recorder,
-                stage_timing_path=final_timing_context.stage_timing_path,
-                profile_summary_path=final_timing_context.profile_summary_path,
-                run_id=final_timing_context.run_id,
+                stage_timing_path=final_stage_timing_path,
+                profile_summary_path=final_profile_summary_path,
+                run_id=native_final_timing_context.run_id,
             )
 
 
@@ -240,9 +253,7 @@ def dispatch_one_phenotype_engine_pipeline(
         telemetry_session=telemetry_session,
     )
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
-        _core.record_runner_binary_engine_dispatch_started_diagnostic_event(
-            phenotype=phenotype_run_plan.phenotype_name
-        )
+        _core.record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype=phenotype_run_plan.phenotype_name)
         final_output_path = runtime.run_regenie2_binary_bgen_pipeline(
             dispatch_requests.SingleTraitPipelineRequest(
                 common=common_request,

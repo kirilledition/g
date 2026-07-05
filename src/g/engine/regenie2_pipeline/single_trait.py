@@ -49,8 +49,6 @@ def load_single_trait_run_input(
         covariate_names=covariate_names,
         is_binary_trait=context.is_binary_trait,
         alignment_config=context.alignment_config,
-        build_native_bgen_run_input_callable=None,
-        load_aligned_sample_data_callable=None,
     )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
@@ -195,11 +193,13 @@ def run_single_trait_bgen_pipeline(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    resolved_compute_group = native_dispatch_groups.build_resolved_single_phenotype_compute_group(
-        phenotype_name=phenotype_name,
-        run_input=run_input,
-        prediction_list_path=context.prediction_list_path,
-        alignment_config=context.alignment_config,
+    resolved_compute_group = native_dispatch_groups.adapt_native_phenotype_compute_group(
+        _core.resolve_single_phenotype_compute_group(
+            run_input.native_aligned_sample_data,
+            phenotype_name,
+            str(context.prediction_list_path),
+            native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+        )
     )
     run_single_trait_preflight(
         context=context,

@@ -389,9 +389,7 @@ def describe_runtime_state() -> RuntimeState:
     logging_policy = runtime_state_snapshot.logging_policy
     jax_policy = runtime_state_snapshot.jax_policy
     return RuntimeState(
-        logging_policy=None
-        if logging_policy is None
-        else logging_runtime_policy_from_native_policy(logging_policy),
+        logging_policy=None if logging_policy is None else logging_runtime_policy_from_native_policy(logging_policy),
         rayon_thread_count=runtime_state_snapshot.rayon_thread_count,
         jax_policy=None if jax_policy is None else jax_runtime_policy_from_native_policy(jax_policy),
     )

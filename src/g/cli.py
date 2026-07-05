@@ -9,10 +9,6 @@ import typing
 
 import g._core
 
-if typing.TYPE_CHECKING:
-    from g.runner import events as runner_events
-
-
 NATIVE_CLI_OUTPUT_LOG_LIMIT = 4096
 NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
 RUNTIME_FAILURE_EXIT_CODE = 1
@@ -66,18 +62,17 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                     initialize_logging_on_entry=False,
                 )
         except runner_lifecycle.GracefulShutdownRequested as shutdown_request:
-            interrupted_event = runner_events.build_run_interrupted_event(shutdown_request)
-            print_interrupted_lines(runner_events, interrupted_event)
-            log_interrupted_lines(runner_events, interrupted_event)
+            interrupted_event = g._core.build_run_interrupted_event(shutdown_request)
+            print_interrupted_lines(interrupted_event)
+            log_interrupted_lines(interrupted_event)
             exit_code = shutdown_request.exit_code
         else:
-            completed_event = runner_events.build_run_completed_event(artifacts)
-            print_completed_lines(runner_events, completed_event)
-            log_completed_lines(runner_events, completed_event)
+            completed_event = g._core.build_run_completed_event(artifacts)
+            print_completed_lines(completed_event)
+            log_completed_lines(completed_event)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
         exit_code = print_and_log_failed_event(
-            runner_events,
             error,
             cli_lifecycle_state=cli_lifecycle_state,
             telemetry_session=run_telemetry_session,
@@ -93,7 +88,6 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                 )
                 if close_failure_plan.should_report_failure:
                     print_and_log_failed_event(
-                        runner_events,
                         error,
                         cli_lifecycle_state=cli_lifecycle_state,
                         telemetry_session=None,
@@ -127,69 +121,62 @@ def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int
         )
 
 
-def print_interrupted_lines(
-    run_events_module: typing.Any,
-    interrupted_event: runner_events.RunInterruptedEvent,
-) -> None:
+def print_interrupted_lines(interrupted_event: object) -> None:
     """Print graceful interruption details."""
-    interrupted_lines = run_events_module.render_run_interrupted_lines(interrupted_event)
+    interrupted_lines = g._core.render_run_interrupted_lines(interrupted_event)
     for line in interrupted_lines:
         print(line, file=sys.stderr)
 
 
-def log_interrupted_lines(
-    run_events_module: typing.Any,
-    interrupted_event: runner_events.RunInterruptedEvent,
-) -> None:
+def log_interrupted_lines(interrupted_event: object) -> None:
     """Emit graceful interruption diagnostics."""
-    interrupted_lines = run_events_module.render_run_interrupted_lines(interrupted_event)
+    interrupted_lines = g._core.render_run_interrupted_lines(interrupted_event)
     for line in interrupted_lines:
         g._core.record_native_cli_interrupted_line_diagnostic_event(line=line)
 
 
 def print_and_log_failed_event(
-    run_events_module: typing.Any,
     error: Exception,
     *,
     cli_lifecycle_state: g._core.NativeCliRunLifecycleState,
     telemetry_session: typing.Any,
 ) -> int:
     """Print and log a concise runtime failure."""
-    failed_event = run_events_module.build_run_failed_event(error)
+    failed_event = g._core.build_run_failed_event(error)
     cli_lifecycle_state.emit_run_failed_telemetry_event(
         telemetry_session,
         failed_event,
     )
-    print_failed_lines(run_events_module, failed_event)
-    log_failed_lines(run_events_module, failed_event)
+    print_failed_lines(failed_event)
+    log_failed_lines(failed_event)
     return RUNTIME_FAILURE_EXIT_CODE
 
 
-def print_failed_lines(run_events_module: typing.Any, failed_event: runner_events.RunFailedEvent) -> None:
+def print_failed_lines(failed_event: object) -> None:
     """Print failure details."""
-    failed_lines = run_events_module.render_run_failed_lines(failed_event)
+    failed_lines = g._core.render_run_failed_lines(failed_event)
     for line in failed_lines:
         print(line, file=sys.stderr)
 
 
-def log_failed_lines(run_events_module: typing.Any, failed_event: runner_events.RunFailedEvent) -> None:
+def log_failed_lines(failed_event: object) -> None:
     """Emit failure diagnostics."""
-    failed_lines = run_events_module.render_run_failed_lines(failed_event)
+    failed_lines = g._core.render_run_failed_lines(failed_event)
     for line in failed_lines:
         with contextlib.suppress(Exception):
             g._core.record_native_cli_failed_line_diagnostic_event(line=line)
 
 
-def print_completed_lines(run_events_module: typing.Any, completed_event: runner_events.RunCompletedEvent) -> None:
+def print_completed_lines(completed_event: object) -> None:
     """Print completion details."""
-    completed_lines = run_events_module.render_run_completed_lines(completed_event)
+    completed_lines = g._core.render_run_completed_lines(completed_event)
     for line in completed_lines:
         print(line)
 
 
-def log_completed_lines(run_events_module: typing.Any, completed_event: runner_events.RunCompletedEvent) -> None:
+def log_completed_lines(completed_event: object) -> None:
     """Emit completion diagnostics."""
-    completed_lines = run_events_module.render_run_completed_lines(completed_event)
+    completed_lines = g._core.render_run_completed_lines(completed_event)
     for line in completed_lines:
         g._core.record_native_cli_completed_line_diagnostic_event(line=line)
 

@@ -924,9 +924,7 @@ class NativeBgenCallbackRunner(abc.ABC):
     def record_progress(self, metadata: typing.Any) -> None:
         """Record throttled progress after one chunk is processed."""
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
-        _core.emit_callback_progress_update_telemetry(
-            self.telemetry_session, progress_update
-        )
+        _core.emit_callback_progress_update_telemetry(self.telemetry_session, progress_update)
 
     def complete_progress(self) -> None:
         """Emit the native final progress completion event when telemetry consumed chunks."""

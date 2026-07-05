@@ -198,10 +198,6 @@ impl NativeBinaryCorrectionPlan {
     fn from_native_plan(data: &native_plan::CorrectionPlan) -> Self {
         Self { method: data.method.as_str().to_string(), p_threshold: data.p_threshold, firth_se: data.firth_se }
     }
-
-    pub(crate) fn from_host_policy_payload(data: native_plan::BinaryCorrectionPlanPayload) -> Self {
-        Self { method: data.method.to_string(), p_threshold: data.p_threshold, firth_se: data.firth_se }
-    }
 }
 
 #[pymethods]
@@ -1214,13 +1210,6 @@ fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn compile_run_request(config: &RegenieConfig) -> PyResult<NativeRunRequest> {
-    let run_request = interface::compile_run_request(config.data())
-        .map_err(|error| config_error_to_py("compile_run_request", error))?;
-    Ok(NativeRunRequest::new(run_request))
-}
-
-#[pyfunction]
 #[expect(clippy::needless_pass_by_value, reason = "PyO3 extracts Python list arguments into owned Vec values.")]
 fn dispatch_cli(args: Vec<String>) -> CliOutcome {
     CliOutcome::new(interface::dispatch_cli(&args))
@@ -1272,7 +1261,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(write_config_toml, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
-    module.add_function(wrap_pyfunction!(compile_run_request, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;
     Ok(())

@@ -7,15 +7,34 @@ from dataclasses import dataclass
 
 from g import _core, execution_plan, types
 from g.engine import timing as engine_timing
-from g.engine.regenie2_pipeline import backend, compute_config, outputs
 from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.engine.native_dispatch import models as native_dispatch_models
-    from g.engine.regenie2_pipeline import callbacks
+    from g.engine.regenie2_pipeline import callbacks, compute_config, outputs
     from g.runner import events as runner_events
+
+
+@dataclass(frozen=True)
+class AssociationBackendPlan:
+    """Resolved backend choice for one association run.
+
+    Attributes:
+        backend_kind: Concrete backend implementation to execute.
+        association_mode: Statistical association mode using the backend.
+        jax_device: Requested JAX device for the backend.
+        genotype_format: Native genotype delivery format for JAX inputs.
+        uses_variant_major_packed8_delivery: Whether native dispatch should deliver packed8 probability-pair chunks.
+
+    """
+
+    backend_kind: types.AssociationBackendKind
+    association_mode: types.AssociationMode
+    jax_device: types.Device
+    genotype_format: types.GpuGenotypeFormat
+    uses_variant_major_packed8_delivery: bool
 
 
 @dataclass(frozen=True)
@@ -69,7 +88,7 @@ class Regenie2PipelineContext:
     firth_dtype: types.FloatingPointDtype
     requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
-    backend_plan: backend.AssociationBackendPlan
+    backend_plan: AssociationBackendPlan
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
     linear_numerical_config: compute_config.LinearNumericalConfig | None
@@ -161,10 +180,17 @@ def build_regenie2_pipeline_context(
         )
     else:
         resolved_stage_timing_recorder = stage_timing_recorder
-    backend_plan = backend.plan_association_backend(
-        association_mode=association_mode,
-        jax_device=jax_device,
-        gpu_genotype_format=gpu_genotype_format,
+    native_backend_plan = _core.plan_association_backend(
+        association_mode.value,
+        jax_device.value,
+        gpu_genotype_format.value,
+    )
+    backend_plan = AssociationBackendPlan(
+        backend_kind=types.AssociationBackendKind(native_backend_plan.backend_kind),
+        association_mode=types.AssociationMode(native_backend_plan.association_mode),
+        jax_device=types.Device(native_backend_plan.jax_device),
+        genotype_format=types.GpuGenotypeFormat(native_backend_plan.genotype_format),
+        uses_variant_major_packed8_delivery=native_backend_plan.uses_variant_major_packed8_delivery,
     )
     return Regenie2PipelineContext(
         association_mode=association_mode,

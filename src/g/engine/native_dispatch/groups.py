@@ -77,53 +77,6 @@ def build_resolved_phenotype_compute_group(
     return adapt_native_phenotype_compute_group(native_compute_group)
 
 
-def build_resolved_single_phenotype_compute_group(
-    *,
-    phenotype_name: str,
-    run_input: models.NativeBgenRunInput,
-    prediction_list_path: Path,
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> execution_plan.PhenotypeComputeGroup:
-    """Build the alignment-resolved single-phenotype compute group."""
-    native_compute_group = _core.resolve_single_phenotype_compute_group(
-        run_input.native_aligned_sample_data,
-        phenotype_name,
-        str(prediction_list_path),
-        resolve_sample_key_mode(alignment_config).value,
-    )
-    return adapt_native_phenotype_compute_group(native_compute_group)
-
-
-def build_resolved_complete_case_phenotype_compute_group(
-    *,
-    run_input: models.NativeBgenMultiRunInput,
-    prediction_list_path: Path,
-    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
-    alignment_config: models.SampleAlignmentConfigProtocol | None,
-) -> execution_plan.PhenotypeComputeGroup:
-    """Build the alignment-resolved complete-case compute group."""
-    planned_compute_group = find_complete_case_compute_group(planned_compute_groups)
-    native_compute_group = _core.resolve_complete_case_compute_group(
-        run_input.native_multi_aligned_sample_data,
-        list(planned_compute_group.phenotype_indices),
-        list(planned_compute_group.phenotype_names),
-        str(prediction_list_path),
-        resolve_sample_key_mode(alignment_config).value,
-    )
-    return adapt_native_phenotype_compute_group(native_compute_group)
-
-
-def find_complete_case_compute_group(
-    planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
-) -> execution_plan.PhenotypeComputeGroup:
-    """Return the planned complete-case compute group."""
-    for planned_compute_group in planned_compute_groups:
-        if planned_compute_group.group_mode == types.PhenotypeComputeGroupMode.COMPLETE_CASE:
-            return planned_compute_group
-    message = "A complete-case phenotype compute group is required for complete-case execution."
-    raise ValueError(message)
-
-
 def build_planned_phenotype_names_by_index(
     planned_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None,
 ) -> dict[int, str]:

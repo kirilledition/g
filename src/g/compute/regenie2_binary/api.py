@@ -87,26 +87,6 @@ def prepare_regenie2_multi_binary_chromosome_state(
 
 
 @functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "score_dtype"))
-def compute_regenie2_binary_score_test_chunk_from_chromosome_state(
-    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    genotype_matrix: jax.Array,
-    correction_plan: g_types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
-    """Compute the uncorrected score-test result for one binary chunk."""
-    return regenie2_binary_score.compute_binary_score_test_chunk_variant_major(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype.convert_sample_major_to_variant_major(genotype_matrix, score_dtype),
-        correction_plan=correction_plan,
-        kernel_config=kernel_config,
-        dosage_sum=None,
-        observation_count=None,
-        score_dtype=score_dtype,
-    )
-
-
-@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "score_dtype"))
 def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -186,22 +166,6 @@ compute_binary_score_test_variant_major_donating_inputs = (
 compute_multi_binary_score_test_variant_major_donating_inputs = (
     compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_variant_major_donating_inputs
 )
-
-
-@functools.partial(
-    jax.jit,
-    static_argnames=("score_dtype",),
-    donate_argnames=("packed_probability_pairs_by_variant",),
-)
-def decode_packed8_probability_pairs_to_variant_major_dosage_donating_input(
-    packed_probability_pairs_by_variant: jax.Array,
-    score_dtype: g_types.FloatingPointDtype,
-) -> jax.Array:
-    """Decode packed8 probability pairs while donating the packed input buffer."""
-    return genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
-        packed_probability_pairs_by_variant,
-        score_dtype,
-    )
 
 
 @functools.partial(
@@ -730,33 +694,4 @@ def compute_regenie2_binary_chunk_from_chromosome_state(
         stage_duration_recorder=stage_duration_recorder,
         dosage_sum=None,
         observation_count=None,
-    )
-
-
-def compute_regenie2_binary_chunk(
-    state: regenie2_binary_state.Regenie2BinaryState,
-    genotype_matrix: jax.Array,
-    loco_offset: jax.Array,
-    correction_plan: g_types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    sparse_candidate_mask: jax.Array | None,
-    score_dtype: g_types.FloatingPointDtype,
-    stage_duration_recorder: StageDurationRecorder | None,
-) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult | regenie2_binary_result.Regenie2BinaryChunkResult:
-    """Compute REGENIE step 2 binary association for a genotype chunk."""
-    chromosome_state = prepare_regenie2_binary_chromosome_state(
-        state,
-        loco_offset,
-        correction_plan,
-        kernel_config,
-        score_dtype,
-    )
-    return compute_regenie2_binary_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        correction_plan=correction_plan,
-        sparse_candidate_mask=sparse_candidate_mask,
-        kernel_config=kernel_config,
-        score_dtype=score_dtype,
-        stage_duration_recorder=stage_duration_recorder,
     )

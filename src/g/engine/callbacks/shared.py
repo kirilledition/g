@@ -223,4 +223,3 @@ class MultiRegeniePredictionSourceProtocol(typing.Protocol):
     def get_chromosome_predictions(self, chromosome: str) -> npt.NDArray[np.float32]:
         """Return trait-major aligned LOCO predictions for one chromosome."""
         ...
-
