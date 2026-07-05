@@ -6,7 +6,6 @@ import typing
 
 import jax
 import numpy as np
-import numpy.typing as npt
 
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
@@ -40,10 +39,10 @@ def record_null_logistic_chromosome_diagnostics(
 
     host_values = typing.cast("dict[str, object]", jax.device_get(host_value_requests))
     convergence_flags = np.asarray(host_values["converged"], dtype=np.bool_)
-    native_policy_plan = enforce_host_null_logistic_nonconvergence_policy(
+    native_policy_plan = _core.enforce_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
-        convergence_flags=convergence_flags,
-        policy=policy,
+        convergence_values=convergence_flags,
+        policy=policy.value,
         phenotype_names=phenotype_names,
     )
     if stage_timing_recorder is not None:
@@ -69,42 +68,6 @@ def record_null_logistic_chromosome_diagnostics(
                 correction_method=correction_method.value,
             )
     return native_policy_plan.nonconverged_count
-
-
-def enforce_host_null_logistic_nonconvergence_policy(
-    *,
-    chromosome: str,
-    convergence_flags: npt.NDArray[np.bool_],
-    policy: types.NullLogisticNonconvergencePolicy,
-    phenotype_names: tuple[str, ...] | None,
-) -> _core.NativeNullLogisticNonconvergencePlan:
-    """Raise or warn using already materialized null-logistic convergence flags."""
-    native_policy_plan = _core.plan_null_logistic_nonconvergence_from_array(
-        chromosome=chromosome,
-        convergence_values=convergence_flags,
-        phenotype_names=phenotype_names,
-        policy=policy.value,
-    )
-    if native_policy_plan.action == "continue":
-        return native_policy_plan
-    if native_policy_plan.action == "fail":
-        message = native_policy_plan.message
-        if message is None:
-            raise RuntimeError("Native null-logistic nonconvergence fail plan did not include a message.")
-        raise RuntimeError(message)
-    warning_message = native_policy_plan.warning_message
-    if warning_message is None:
-        raise RuntimeError("Native null-logistic nonconvergence warning plan did not include a warning message.")
-    _core.record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
-        message=warning_message,
-        chromosome=chromosome,
-        nonconverged_count=native_policy_plan.nonconverged_count,
-        phenotype_count=0 if phenotype_names is None else len(phenotype_names),
-        policy=policy.value,
-        scalar_convergence=native_policy_plan.scalar_convergence,
-        total_fit_count=native_policy_plan.total_fit_count,
-    )
-    return native_policy_plan
 
 
 def record_binary_chunk_diagnostics_from_count(

@@ -1009,36 +1009,6 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
-    fn release_numpy_dosage_buffer_outcome(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let operation_result = self.release_numpy_dosage_buffer_with_optional_observation(py, dosage_buffer)?;
-        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
-            py,
-            None,
-            false,
-            true,
-            operation_result,
-        )
-    }
-
-    fn discard_dosage_buffer_outcome(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let operation_result = self.discard_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)?;
-        NativeCallbackResourceOperationOutcome::from_dosage_buffer_pool_operation(
-            py,
-            None,
-            true,
-            false,
-            operation_result,
-        )
-    }
-
     fn select_reusable_dosage_buffer_or_discard_outcome(
         &self,
         py: Python<'_>,
@@ -1122,15 +1092,6 @@ impl NativeCallbackRuntimeResources {
         NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
     }
 
-    fn release_result_work_item_in_flight_slot_outcome(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let release_result = self.release_result_work_item_in_flight_slot_for_object(py, work_item)?;
-        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
-    }
-
     #[pyo3(name = "get_releasable_dosage_buffer_owner")]
     fn py_get_releasable_dosage_buffer_owner(
         &self,
@@ -1169,66 +1130,6 @@ impl NativeCallbackRuntimeResources {
         elapsed_seconds: f64,
     ) -> PyResult<NativeDosageWorkItemStageDurationAttribution> {
         self.plan_dosage_work_item_stage_duration_attribution_for_object(py, work_item, elapsed_seconds)
-    }
-
-    #[pyo3(name = "plan_current_queue_backpressure_observation")]
-    fn py_plan_current_queue_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        self.plan_current_queue_backpressure_observation(py, queue_name, operation_name, elapsed_seconds, blocked)
-    }
-
-    #[pyo3(name = "plan_current_queue_stage_backpressure_observation")]
-    fn py_plan_current_queue_stage_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        self.plan_current_queue_stage_backpressure_observation(py, queue_name, operation_name, elapsed_seconds, blocked)
-    }
-
-    #[pyo3(name = "plan_dosage_buffer_pool_backpressure_observation")]
-    fn py_plan_dosage_buffer_pool_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        operation_name: &str,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        self.plan_dosage_buffer_pool_backpressure_observation(
-            py,
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
-    }
-
-    #[pyo3(name = "plan_dosage_buffer_pool_stage_backpressure_observation")]
-    fn py_plan_dosage_buffer_pool_stage_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        operation_name: &str,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        self.plan_dosage_buffer_pool_stage_backpressure_observation(
-            py,
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
     }
 
     #[pyo3(name = "plan_variant_major_dosage_batch_handoff")]
@@ -1586,17 +1487,6 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
-    fn release_numpy_dosage_buffer_with_optional_observation(
-        &self,
-        py: Python<'_>,
-        dosage_buffer: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeDosageBufferPoolOperationResult> {
-        if !is_numpy_ndarray(dosage_buffer)? {
-            return self.dosage_buffer_pool_operation_result(py, None, None);
-        }
-        self.return_dosage_buffer_owner_with_optional_observation(py, dosage_buffer)
-    }
-
     fn discard_dosage_buffer(&self, py: Python<'_>, buffer_identifier: usize) -> PyResult<Option<usize>> {
         let discard_plan = {
             let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
@@ -1883,74 +1773,6 @@ impl NativeCallbackRuntimeResources {
             self.plan_dosage_work_item_stage_duration_for_object(py, work_item, elapsed_seconds)?;
         let metadata_items = dosage_work_item_metadata_items(py, work_item)?;
         NativeDosageWorkItemStageDurationAttribution::from_attribution(py, metadata_items, stage_duration_plan)
-    }
-
-    fn plan_current_queue_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_current_queue_backpressure_observation_value(
-            queue_name,
-            operation_name,
-            elapsed_seconds,
-            blocked,
-        )
-    }
-
-    fn plan_current_queue_stage_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_current_queue_stage_backpressure_observation_value(
-            queue_name,
-            operation_name,
-            elapsed_seconds,
-            blocked,
-        )
-    }
-
-    fn plan_dosage_buffer_pool_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        operation_name: &str,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_backpressure_observation_value(
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
-    }
-
-    fn plan_dosage_buffer_pool_stage_backpressure_observation(
-        &self,
-        py: Python<'_>,
-        operation_name: &str,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
-        scheduler_state.plan_dosage_buffer_pool_stage_backpressure_observation_value(
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
     }
 
     fn plan_variant_major_dosage_batch_handoff(

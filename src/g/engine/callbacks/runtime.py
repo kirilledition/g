@@ -33,11 +33,6 @@ type PreprocessedDosageWorkItem = (
 )
 type QueuedPreprocessedDosageWorkItem = PreprocessedDosageWorkItem | None
 type QueuedResultWriteWorkItem = shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem | None
-DOSAGE_BUFFER_POOL_REUSE_OPERATION = "reuse"
-DOSAGE_BUFFER_POOL_RETURN_OPERATION = "return"
-DOSAGE_BUFFER_POOL_ALLOCATE_OPERATION = "allocate"
-DOSAGE_BUFFER_POOL_DISCARD_OPERATION = "discard"
-DOSAGE_BUFFER_POOL_CONSUMER_WAIT_OPERATION = "consumer_wait"
 
 
 class ResultWriteItemKind(enum.StrEnum):
@@ -112,13 +107,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         """Return the native active progress chromosome."""
         return self.callback_runtime_resources.current_progress_chromosome
 
-    @property
-    def binary_correction_summary_chunk_count(self) -> int:
-        """Return the number of chunks included in binary correction summary telemetry."""
-        return self.callback_runtime_resources.binary_correction_chunk_count_with_pending_diagnostics(
-            self.binary_correction_pending_diagnostics,
-        )
-
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
         start_attempt_plan = self.callback_runtime_resources.start_workers()
@@ -127,11 +115,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             if error_message is None:
                 error_message = "Native callback worker lifecycle failed to mark workers started."
             raise RuntimeError(error_message)
-
-    @property
-    def worker_threads_started(self) -> bool:
-        """Return whether callback worker threads have been started."""
-        return self.callback_runtime_resources.has_started
 
     @property
     def dosage_worker_name(self) -> str:
@@ -203,11 +186,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.callback_runtime_resources.update_result_worker_error(error_message)
 
     @property
-    def dosage_buffer_count(self) -> int:
-        """Return the native dosage-buffer pool allocation count."""
-        return self.callback_runtime_resources.dosage_buffer_allocated_count
-
-    @property
     def dosage_buffer_identifiers(self) -> set[int]:
         """Return the native dosage-buffer pool ownership identifiers."""
         return set(self.callback_runtime_resources.dosage_buffer_identifiers)
@@ -216,21 +194,6 @@ class NativeBgenCallbackRunner(abc.ABC):
     def free_dosage_buffer_count(self) -> int:
         """Return the number of host buffers waiting for reuse."""
         return self.callback_runtime_resources.free_dosage_buffer_count
-
-    @property
-    def result_in_flight_slot_count(self) -> int:
-        """Return the native result in-flight occupied slot count."""
-        return self.callback_runtime_resources.result_in_flight_occupied_count
-
-    @property
-    def result_queue_count(self) -> int:
-        """Return the native result-queue occupancy count."""
-        return self.callback_runtime_resources.result_queue_occupied_count
-
-    @property
-    def dosage_queue_count(self) -> int:
-        """Return the native dosage-queue occupancy count."""
-        return self.callback_runtime_resources.dosage_queue_occupied_count
 
     def record_processed_chunk(
         self,
@@ -323,32 +286,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             return None
         return self.record_stage_duration
 
-    def record_bounded_resource_operation(
-        self,
-        *,
-        resource_name: str,
-        operation_name: str,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> None:
-        """Record aggregate bounded-resource occupancy metadata."""
-        if self.stage_timing_recorder is None:
-            return
-        observation = self.plan_current_queue_backpressure_observation(
-            queue_name=resource_name,
-            operation_name=operation_name,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation.queue_name,
-            operation_name=observation.operation_name,
-            queue_depth=observation.queue_depth,
-            queue_capacity=observation.queue_capacity,
-            elapsed_seconds=observation.elapsed_seconds,
-            blocked_seconds=observation.blocked_seconds,
-        )
-
     def record_queue_backpressure_observation(
         self,
         observation: _core.NativeCallbackQueueBackpressureObservation | None,
@@ -384,212 +321,6 @@ class NativeBgenCallbackRunner(abc.ABC):
             queue_capacity=observation.queue_capacity,
             elapsed_seconds=observation.elapsed_seconds,
             blocked_seconds=observation.blocked_seconds,
-        )
-
-    def record_dosage_buffer_pool_operation(
-        self,
-        *,
-        operation_name: str,
-        free_buffer_count: int,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> None:
-        """Record dosage-buffer pool occupancy metadata."""
-        if self.stage_timing_recorder is None:
-            return
-        observation = self.plan_dosage_buffer_pool_backpressure_observation(
-            operation_name=operation_name,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation.queue_name,
-            operation_name=observation.operation_name,
-            queue_depth=observation.queue_depth,
-            queue_capacity=observation.queue_capacity,
-            elapsed_seconds=observation.elapsed_seconds,
-            blocked_seconds=observation.blocked_seconds,
-        )
-
-    def record_bounded_resource_stage_duration(
-        self,
-        *,
-        resource_name: str,
-        operation_name: str,
-        start_time: float,
-        blocked: bool,
-    ) -> None:
-        """Record a bounded-resource stage duration plus pressure metadata."""
-        if self.stage_timing_recorder is None:
-            return
-        elapsed_seconds = time.perf_counter() - start_time
-        observation = self.plan_current_queue_stage_backpressure_observation(
-            queue_name=resource_name,
-            operation_name=operation_name,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_stage_duration(observation.stage_name, observation.elapsed_seconds)
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation.queue_name,
-            operation_name=observation.operation_name,
-            queue_depth=observation.queue_depth,
-            queue_capacity=observation.queue_capacity,
-            elapsed_seconds=observation.elapsed_seconds,
-            blocked_seconds=observation.blocked_seconds,
-        )
-
-    def plan_current_queue_backpressure_observation(
-        self,
-        *,
-        queue_name: str,
-        operation_name: str,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> _core.NativeCallbackQueueBackpressureObservation:
-        """Plan bounded-resource backpressure observation through the active native owner."""
-        return self.callback_runtime_resources.plan_current_queue_backpressure_observation(
-            queue_name,
-            operation_name,
-            elapsed_seconds,
-            blocked,
-        )
-
-    def plan_current_queue_stage_backpressure_observation(
-        self,
-        *,
-        queue_name: str,
-        operation_name: str,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> _core.NativeCallbackQueueStageBackpressureObservation:
-        """Plan bounded-resource stage backpressure observation through the active native owner."""
-        return self.callback_runtime_resources.plan_current_queue_stage_backpressure_observation(
-            queue_name,
-            operation_name,
-            elapsed_seconds,
-            blocked,
-        )
-
-    def record_dosage_buffer_pool_stage_duration(
-        self,
-        *,
-        operation_name: str,
-        free_buffer_count: int,
-        start_time: float,
-        blocked: bool,
-    ) -> None:
-        """Record dosage-buffer pool stage duration plus pressure metadata."""
-        if self.stage_timing_recorder is None:
-            return
-        elapsed_seconds = time.perf_counter() - start_time
-        observation = self.plan_dosage_buffer_pool_stage_backpressure_observation(
-            operation_name=operation_name,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=elapsed_seconds,
-            blocked=blocked,
-        )
-        self.stage_timing_recorder.add_stage_duration(observation.stage_name, observation.elapsed_seconds)
-        self.stage_timing_recorder.add_queue_backpressure_observation(
-            queue_name=observation.queue_name,
-            operation_name=observation.operation_name,
-            queue_depth=observation.queue_depth,
-            queue_capacity=observation.queue_capacity,
-            elapsed_seconds=observation.elapsed_seconds,
-            blocked_seconds=observation.blocked_seconds,
-        )
-
-    def plan_dosage_buffer_pool_backpressure_observation(
-        self,
-        *,
-        operation_name: str,
-        free_buffer_count: int,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> _core.NativeCallbackQueueBackpressureObservation:
-        """Plan dosage-buffer pool backpressure observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_backpressure_observation(
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
-
-    def plan_dosage_buffer_pool_stage_backpressure_observation(
-        self,
-        *,
-        operation_name: str,
-        free_buffer_count: int,
-        elapsed_seconds: float,
-        blocked: bool,
-    ) -> _core.NativeCallbackQueueStageBackpressureObservation:
-        """Plan dosage-buffer pool stage observation through the active native owner."""
-        return self.callback_runtime_resources.plan_dosage_buffer_pool_stage_backpressure_observation(
-            operation_name,
-            free_buffer_count,
-            elapsed_seconds,
-            blocked,
-        )
-
-    def record_dosage_buffer_pool_reuse_operation(self, *, free_buffer_count: int) -> None:
-        """Record native dosage-buffer reuse accounting."""
-        if self.stage_timing_recorder is None:
-            return
-        self.record_dosage_buffer_pool_operation(
-            operation_name=DOSAGE_BUFFER_POOL_REUSE_OPERATION,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=0.0,
-            blocked=False,
-        )
-
-    def record_dosage_buffer_pool_return_operation(self, *, free_buffer_count: int) -> None:
-        """Record native dosage-buffer return accounting."""
-        if self.stage_timing_recorder is None:
-            return
-        self.record_dosage_buffer_pool_operation(
-            operation_name=DOSAGE_BUFFER_POOL_RETURN_OPERATION,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=0.0,
-            blocked=False,
-        )
-
-    def record_dosage_buffer_pool_allocate_operation(self, *, free_buffer_count: int) -> None:
-        """Record native dosage-buffer allocation accounting."""
-        if self.stage_timing_recorder is None:
-            return
-        self.record_dosage_buffer_pool_operation(
-            operation_name=DOSAGE_BUFFER_POOL_ALLOCATE_OPERATION,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=0.0,
-            blocked=False,
-        )
-
-    def record_dosage_buffer_pool_discard_operation(self, *, free_buffer_count: int) -> None:
-        """Record native dosage-buffer discard accounting."""
-        if self.stage_timing_recorder is None:
-            return
-        self.record_dosage_buffer_pool_operation(
-            operation_name=DOSAGE_BUFFER_POOL_DISCARD_OPERATION,
-            free_buffer_count=free_buffer_count,
-            elapsed_seconds=0.0,
-            blocked=False,
-        )
-
-    def record_dosage_buffer_pool_consumer_wait_stage_duration(
-        self,
-        *,
-        free_buffer_count: int,
-        start_time: float,
-    ) -> None:
-        """Record native dosage-buffer consumer wait accounting."""
-        if self.stage_timing_recorder is None:
-            return
-        self.record_dosage_buffer_pool_stage_duration(
-            operation_name=DOSAGE_BUFFER_POOL_CONSUMER_WAIT_OPERATION,
-            free_buffer_count=free_buffer_count,
-            start_time=start_time,
-            blocked=True,
         )
 
     def record_dosage_buffer_pool_operation_outcome(
@@ -1261,18 +992,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
         return dosage_buffer
 
-    def discard_dosage_buffer_slot(self, dosage_buffer: shared.HostGenotypeBuffer) -> None:
-        """Remove one discarded host genotype buffer slot from pool accounting."""
-        operation_outcome = self.callback_runtime_resources.discard_dosage_buffer_outcome(dosage_buffer)
-        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
-
-    def release_numpy_dosage_buffer(self, dosage_buffer: jax.Array | shared.HostGenotypeBuffer) -> None:
-        """Return a NumPy host dosage buffer to the pool after device transfer."""
-        operation_outcome = self.callback_runtime_resources.release_numpy_dosage_buffer_outcome(
-            dosage_buffer,
-        )
-        self.record_dosage_buffer_pool_operation_outcome(operation_outcome)
-
     def get_releasable_dosage_buffer(
         self,
         dosage_buffer: jax.Array | shared.HostGenotypeBuffer,
@@ -1293,17 +1012,6 @@ class NativeBgenCallbackRunner(abc.ABC):
         )
         self.record_queue_backpressure_observation(
             release_outcome.result_in_flight_backpressure_observation,
-        )
-
-    def release_result_work_item_buffer(
-        self,
-        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
-    ) -> None:
-        """Release resources after a dependent JAX result is materialized."""
-        host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
-        self.release_result_work_item_final_resources(
-            work_item,
-            host_dosage_buffer_released=host_dosage_buffer_released,
         )
 
     def apply_result_write_drain_completion_outcome(
@@ -1349,15 +1057,5 @@ class NativeBgenCallbackRunner(abc.ABC):
         release_outcome = self.callback_runtime_resources.release_result_work_item_final_resources_outcome(
             work_item,
             host_dosage_buffer_released,
-        )
-        self.record_result_work_item_resource_release_result(release_outcome)
-
-    def release_result_work_item_in_flight_slot(
-        self,
-        work_item: shared.Regenie2ResultWriteWorkItem | shared.Regenie2MultiResultWriteWorkItem,
-    ) -> None:
-        """Release the in-flight result slot associated with one result."""
-        release_outcome = self.callback_runtime_resources.release_result_work_item_in_flight_slot_outcome(
-            work_item,
         )
         self.record_result_work_item_resource_release_result(release_outcome)

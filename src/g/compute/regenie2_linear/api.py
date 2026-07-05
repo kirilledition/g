@@ -181,7 +181,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         "genotype_imputed_dosage_square_sum",
     ),
 )
-def compute_regenie2_linear_chunk_from_chromosome_state_packed8_donating_inputs(
+def compute_linear_chunk_packed8_donating_inputs(
     chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     genotype_dosage_sum: jax.Array | None,
@@ -206,11 +206,6 @@ def compute_regenie2_linear_chunk_from_chromosome_state_packed8_donating_inputs(
         linear_minimum_variance=linear_minimum_variance,
         linear_relative_variance_tolerance=linear_relative_variance_tolerance,
     )
-
-
-compute_linear_chunk_packed8_donating_inputs = (
-    compute_regenie2_linear_chunk_from_chromosome_state_packed8_donating_inputs
-)
 
 
 @functools.partial(jax.jit, static_argnames=LINEAR_SCORE_STATIC_ARGNAMES)
@@ -252,7 +247,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
         "genotype_imputed_dosage_square_sum",
     ),
 )
-def compute_regenie2_multi_linear_chunk_from_chromosome_state_packed8_donating_inputs(
+def compute_multi_linear_chunk_packed8_donating_inputs(
     chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     genotype_dosage_sum: jax.Array | None,
@@ -277,8 +272,3 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_packed8_donating_i
         linear_minimum_variance=linear_minimum_variance,
         linear_relative_variance_tolerance=linear_relative_variance_tolerance,
     )
-
-
-compute_multi_linear_chunk_packed8_donating_inputs = (
-    compute_regenie2_multi_linear_chunk_from_chromosome_state_packed8_donating_inputs
-)

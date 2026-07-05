@@ -2,11 +2,14 @@
 
 use numpy::ndarray::IxDyn;
 use numpy::{PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use g_engine::callback_diagnostics as native_callback_diagnostics;
+use g_runtime::run_events as native_run_events;
+
+use super::logging;
 
 #[pyclass]
 pub(crate) struct NativeNullLogisticNonconvergencePlan {
@@ -59,13 +62,58 @@ impl From<native_callback_diagnostics::NullLogisticNonconvergencePlan> for Nativ
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn plan_null_logistic_nonconvergence_from_array(
+pub(crate) fn enforce_null_logistic_nonconvergence_from_array(
     py: Python<'_>,
     chromosome: String,
     convergence_values: &Bound<'_, PyUntypedArray>,
     phenotype_names: Option<Vec<String>>,
     policy: String,
 ) -> PyResult<NativeNullLogisticNonconvergencePlan> {
+    let (convergence_flags, scalar_convergence) = parse_convergence_flags(py, convergence_values)?;
+    let native_plan = native_callback_diagnostics::plan_null_logistic_nonconvergence(
+        &chromosome,
+        &convergence_flags,
+        scalar_convergence,
+        phenotype_names.as_deref(),
+        &policy,
+    )
+    .map_err(|error| callback_diagnostics_error_to_py(&error))?;
+    match native_plan.action {
+        native_callback_diagnostics::NullLogisticNonconvergenceAction::Continue => {}
+        native_callback_diagnostics::NullLogisticNonconvergenceAction::Fail => {
+            let message = native_plan.message.as_ref().ok_or_else(|| {
+                PyRuntimeError::new_err("Native null-logistic nonconvergence fail plan did not include a message.")
+            })?;
+            return Err(PyRuntimeError::new_err(message.clone()));
+        }
+        native_callback_diagnostics::NullLogisticNonconvergenceAction::Warn => {
+            let warning_message = native_plan.warning_message.as_ref().ok_or_else(|| {
+                PyRuntimeError::new_err(
+                    "Native null-logistic nonconvergence warning plan did not include a warning message.",
+                )
+            })?;
+            emit_null_logistic_nonconvergence_warning(
+                warning_message,
+                &chromosome,
+                &native_plan,
+                phenotype_names.as_ref().map_or(0, Vec::len),
+                &policy,
+            )?;
+        }
+    }
+    Ok(native_plan.into())
+}
+
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
+    module.add_function(wrap_pyfunction!(enforce_null_logistic_nonconvergence_from_array, module)?)?;
+    Ok(())
+}
+
+fn parse_convergence_flags(
+    py: Python<'_>,
+    convergence_values: &Bound<'_, PyUntypedArray>,
+) -> PyResult<(Vec<bool>, bool)> {
     let element_type = convergence_values.dtype();
     if !element_type.is_equiv_to(&dtype::<bool>(py)) {
         return Err(PyValueError::new_err("Null logistic convergence values must have bool dtype."));
@@ -74,22 +122,32 @@ pub(crate) fn plan_null_logistic_nonconvergence_from_array(
     let readonly_values = typed_values.readonly();
     let convergence_array = readonly_values.as_array();
     let scalar_convergence = convergence_array.shape().is_empty();
-    let convergence_flags = convergence_array.iter().copied().collect::<Vec<_>>();
-    native_callback_diagnostics::plan_null_logistic_nonconvergence(
-        &chromosome,
-        &convergence_flags,
-        scalar_convergence,
-        phenotype_names.as_deref(),
-        &policy,
-    )
-    .map(Into::into)
-    .map_err(|error| callback_diagnostics_error_to_py(&error))
+    Ok((convergence_array.iter().copied().collect::<Vec<_>>(), scalar_convergence))
 }
 
-pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeNullLogisticNonconvergencePlan>()?;
-    module.add_function(wrap_pyfunction!(plan_null_logistic_nonconvergence_from_array, module)?)?;
-    Ok(())
+fn emit_null_logistic_nonconvergence_warning(
+    warning_message: &str,
+    chromosome: &str,
+    native_plan: &native_callback_diagnostics::NullLogisticNonconvergencePlan,
+    phenotype_count: usize,
+    policy: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
+        warning_message,
+        chromosome,
+        usize_to_i64(native_plan.nonconverged_count, "nonconverged_count")?,
+        usize_to_i64(phenotype_count, "phenotype_count")?,
+        policy,
+        native_plan.scalar_convergence,
+        usize_to_i64(native_plan.total_fit_count, "total_fit_count")?,
+    );
+    let fields_json = native_run_events::serialize_run_diagnostic_fields_json(&payload.fields)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    logging::emit_diagnostic_event(payload.level, payload.event_name, &payload.message, Some(fields_json))
+}
+
+fn usize_to_i64(value: usize, value_name: &str) -> PyResult<i64> {
+    i64::try_from(value).map_err(|_| PyValueError::new_err(format!("{value_name} exceeds i64 range.")))
 }
 
 fn callback_diagnostics_error_to_py(error: &native_callback_diagnostics::CallbackDiagnosticsError) -> PyErr {

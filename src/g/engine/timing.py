@@ -35,223 +35,6 @@ class ChunkTimingIdentity:
     variant_count: int
 
 
-@dataclass(frozen=True)
-class ChunkStageTimingSnapshot:
-    """Timing observation for one stage of one native genotype chunk.
-
-    Attributes:
-        chunk_identifier: Native chunk identifier.
-        chromosome: Chromosome label for the chunk.
-        variant_start_index: Inclusive variant start index.
-        variant_stop_index: Exclusive variant stop index.
-        variant_count: Number of variants in the chunk.
-        stage_name: Timed stage name.
-        duration_seconds: Wall-clock duration for this observation.
-
-    """
-
-    chunk_identifier: int
-    chromosome: str
-    variant_start_index: int
-    variant_stop_index: int
-    variant_count: int
-    stage_name: str
-    duration_seconds: float
-
-
-@dataclass(frozen=True)
-class BinaryChunkDiagnosticsSnapshot:
-    """Host-side binary diagnostics counters for one processed chunk.
-
-    Attributes:
-        score_only_count: Variants that retained score-test statistics.
-        score_test_candidate_count: Variants selected for score-test fallback labels.
-        firth_candidate_count: Variants with a nonzero Firth iteration count.
-        firth_iteration_min: Minimum Firth iteration count among candidates.
-        firth_iteration_median: Median Firth iteration count among candidates.
-        firth_iteration_max: Maximum Firth iteration count among candidates.
-        firth_converged_count: Variants with successful Firth correction.
-        firth_failed_count: Variants labelled as failed candidate tests.
-        firth_numerical_failure_count: Firth numerical failures.
-        firth_max_iteration_failure_count: Firth iteration-limit failures.
-        firth_invalid_statistic_failure_count: Firth invalid-statistic failures.
-        firth_step_halving_failure_count: Firth step-halving failures.
-        pseudo_firth_attempt_count: Scalar pseudo-Firth attempts.
-        pseudo_firth_success_count: Scalar pseudo-Firth successes.
-        nr_zero_start_attempt_count: Zero-start Newton-Raphson attempts.
-        nr_zero_start_success_count: Zero-start Newton-Raphson successes.
-        nr_warm_start_attempt_count: Warm-start Newton-Raphson attempts.
-        nr_warm_start_success_count: Warm-start Newton-Raphson successes.
-        sparse_correction_count: Sparse carrier-only corrections.
-        dense_correction_count: Dense corrections.
-
-    """
-
-    score_only_count: int | float | None
-    score_test_candidate_count: int | float | None
-    firth_candidate_count: int | float | None
-    firth_iteration_min: int | float | None
-    firth_iteration_median: int | float | None
-    firth_iteration_max: int | float | None
-    firth_converged_count: int | float | None
-    firth_failed_count: int | float | None
-    firth_numerical_failure_count: int | float | None
-    firth_max_iteration_failure_count: int | float | None
-    firth_invalid_statistic_failure_count: int | float | None
-    firth_step_halving_failure_count: int | float | None
-    pseudo_firth_attempt_count: int | float | None
-    pseudo_firth_success_count: int | float | None
-    nr_zero_start_attempt_count: int | float | None
-    nr_zero_start_success_count: int | float | None
-    nr_warm_start_attempt_count: int | float | None
-    nr_warm_start_success_count: int | float | None
-    sparse_correction_count: int | float | None
-    dense_correction_count: int | float | None
-
-
-@dataclass(frozen=True)
-class NullLogisticDiagnosticsSnapshot:
-    """Host-side null logistic diagnostics for one chromosome or trait lane.
-
-    Attributes:
-        chromosome: Chromosome label.
-        phenotype: Phenotype name for multi-trait diagnostics.
-        iteration_count: Null logistic iteration count.
-        converged: Whether null logistic fitting converged, encoded as an integer.
-        firth_iteration_count: Null Firth fallback iteration count.
-        firth_convergence_reason_code: Null Firth convergence reason code.
-        correction_method: Binary correction method.
-
-    """
-
-    chromosome: str | None
-    phenotype: str | None
-    iteration_count: int | None
-    converged: int | None
-    firth_iteration_count: int | None
-    firth_convergence_reason_code: int | None
-    correction_method: str | None
-
-
-@dataclass(frozen=True)
-class StageTimingSnapshot:
-    """Diagnostic stage timing snapshot for one native REGENIE step 2 run.
-
-    Attributes:
-        stage_totals_seconds: Total wall time per measured stage.
-        stage_counts: Number of observations per measured stage.
-        chunk_stage_timings: Timing observations keyed to individual chunks.
-        native_bgen_profile: Native BGEN profile counters from the run engine.
-        binary_chunk_diagnostics: Binary score/Firth diagnostics per processed chunk.
-        null_logistic_diagnostics: Binary null logistic fit diagnostics per chromosome.
-        queue_backpressure: Queue and bounded-resource backpressure summaries.
-        transfer_metadata: Host/device transfer metadata summaries.
-
-    """
-
-    stage_totals_seconds: dict[str, float]
-    stage_counts: dict[str, int]
-    chunk_stage_timings: tuple[ChunkStageTimingSnapshot, ...]
-    native_bgen_profile: dict[str, int]
-    binary_chunk_diagnostics: tuple[BinaryChunkDiagnosticsSnapshot, ...]
-    null_logistic_diagnostics: tuple[NullLogisticDiagnosticsSnapshot, ...]
-    queue_backpressure: tuple[QueueBackpressureSnapshot, ...]
-    transfer_metadata: tuple[TransferMetadataSnapshot, ...]
-
-
-@dataclass(frozen=True)
-class QueueBackpressureSnapshot:
-    """Aggregate queue or bounded-resource pressure metadata.
-
-    Attributes:
-        queue_name: Queue or resource being observed.
-        operation_name: Operation that produced this observation.
-        observation_count: Number of observations included in the aggregate.
-        max_depth: Highest observed queue depth or resource occupancy.
-        max_capacity: Configured queue or resource capacity.
-        total_elapsed_seconds: Total elapsed time spent in the operation.
-        total_blocked_seconds: Elapsed time known to be producer/consumer blocking.
-
-    """
-
-    queue_name: str
-    operation_name: str
-    observation_count: int
-    max_depth: int
-    max_capacity: int
-    total_elapsed_seconds: float
-    total_blocked_seconds: float
-
-
-@dataclass(frozen=True)
-class TransferMetadataSnapshot:
-    """Aggregate metadata for one host/device transfer class.
-
-    Attributes:
-        transfer_name: Timed transfer stage name.
-        array_role: Logical role for the transferred array.
-        dtype_name: Data type name for the transferred array.
-        ndim: Number of array dimensions.
-        observation_count: Number of transfers included in the aggregate.
-        total_bytes: Total estimated bytes transferred.
-        max_bytes: Largest estimated single-transfer byte count.
-        total_elements: Total element count across observations.
-
-    """
-
-    transfer_name: str
-    array_role: str
-    dtype_name: str
-    ndim: int
-    observation_count: int
-    total_bytes: int
-    max_bytes: int
-    total_elements: int
-
-
-def binary_chunk_diagnostics_snapshot_from_native(
-    diagnostics: _core.NativeBinaryChunkDiagnosticsSnapshot,
-) -> BinaryChunkDiagnosticsSnapshot:
-    """Build a typed binary diagnostic snapshot from native counters."""
-    return BinaryChunkDiagnosticsSnapshot(
-        score_only_count=diagnostics.score_only_count,
-        score_test_candidate_count=diagnostics.score_test_candidate_count,
-        firth_candidate_count=diagnostics.firth_candidate_count,
-        firth_iteration_min=diagnostics.firth_iteration_min,
-        firth_iteration_median=diagnostics.firth_iteration_median,
-        firth_iteration_max=diagnostics.firth_iteration_max,
-        firth_converged_count=diagnostics.firth_converged_count,
-        firth_failed_count=diagnostics.firth_failed_count,
-        firth_numerical_failure_count=diagnostics.firth_numerical_failure_count,
-        firth_max_iteration_failure_count=diagnostics.firth_max_iteration_failure_count,
-        firth_invalid_statistic_failure_count=diagnostics.firth_invalid_statistic_failure_count,
-        firth_step_halving_failure_count=diagnostics.firth_step_halving_failure_count,
-        pseudo_firth_attempt_count=diagnostics.pseudo_firth_attempt_count,
-        pseudo_firth_success_count=diagnostics.pseudo_firth_success_count,
-        nr_zero_start_attempt_count=diagnostics.nr_zero_start_attempt_count,
-        nr_zero_start_success_count=diagnostics.nr_zero_start_success_count,
-        nr_warm_start_attempt_count=diagnostics.nr_warm_start_attempt_count,
-        nr_warm_start_success_count=diagnostics.nr_warm_start_success_count,
-        sparse_correction_count=diagnostics.sparse_correction_count,
-        dense_correction_count=diagnostics.dense_correction_count,
-    )
-
-
-def null_logistic_diagnostics_snapshot_from_native(
-    diagnostics: _core.NativeNullLogisticDiagnosticsSnapshot,
-) -> NullLogisticDiagnosticsSnapshot:
-    """Build a typed null logistic diagnostic snapshot from native counters."""
-    return NullLogisticDiagnosticsSnapshot(
-        chromosome=diagnostics.chromosome,
-        phenotype=diagnostics.phenotype,
-        iteration_count=diagnostics.iteration_count,
-        converged=diagnostics.converged,
-        firth_iteration_count=diagnostics.firth_iteration_count,
-        firth_convergence_reason_code=diagnostics.firth_convergence_reason_code,
-        correction_method=diagnostics.correction_method,
-    )
-
-
 class StageTimingRecorder:
     """Thread-safe diagnostic wall-time collector for profiling harnesses."""
 
@@ -270,10 +53,6 @@ class StageTimingRecorder:
     def exact_stage_timings(self) -> bool:
         """Return whether exact synchronized stage timings are requested."""
         return self.native_recorder.exact_stage_timings
-
-    def should_collect_exact_stage_timings(self) -> bool:
-        """Return whether timing should force synchronized exact stage measurements."""
-        return self.native_recorder.should_collect_exact_stage_timings()
 
     def add_stage_duration(self, stage_name: str, duration_seconds: float) -> None:
         """Accumulate one measured duration."""
@@ -405,97 +184,6 @@ class StageTimingRecorder:
             item_size,
         )
 
-    def snapshot(self) -> StageTimingSnapshot:
-        """Return an immutable copy of the current timings."""
-        return adapt_stage_timing_snapshot(self.native_recorder.snapshot())
-
-    def write_final_timing_outputs(
-        self,
-        *,
-        stage_timing_path: pathlib.Path | None,
-        profile_summary_path: pathlib.Path | None,
-        run_id: str | None,
-    ) -> dict[str, bool]:
-        """Persist all configured final timing outputs through the native recorder."""
-        return dict(
-            typing.cast(
-                "typing.Mapping[str, bool]",
-                self.native_recorder.write_final_timing_outputs(
-                    None if stage_timing_path is None else str(stage_timing_path),
-                    None if profile_summary_path is None else str(profile_summary_path),
-                    run_id,
-                ),
-            )
-        )
-
-
-def adapt_stage_timing_snapshot(native_snapshot: _core.NativeStageTimingSnapshot) -> StageTimingSnapshot:
-    """Adapt a native timing snapshot to the public Python shape."""
-    return StageTimingSnapshot(
-        stage_totals_seconds=dict(native_snapshot.stage_totals_seconds),
-        stage_counts=dict(native_snapshot.stage_counts),
-        chunk_stage_timings=tuple(
-            adapt_chunk_stage_timing(chunk_stage_timing) for chunk_stage_timing in native_snapshot.chunk_stage_timings
-        ),
-        native_bgen_profile=dict(native_snapshot.native_bgen_profile),
-        binary_chunk_diagnostics=tuple(
-            binary_chunk_diagnostics_snapshot_from_native(binary_diagnostics)
-            for binary_diagnostics in native_snapshot.binary_chunk_diagnostics
-        ),
-        null_logistic_diagnostics=tuple(
-            null_logistic_diagnostics_snapshot_from_native(null_logistic_diagnostics)
-            for null_logistic_diagnostics in native_snapshot.null_logistic_diagnostics
-        ),
-        queue_backpressure=tuple(
-            adapt_queue_backpressure(queue_backpressure) for queue_backpressure in native_snapshot.queue_backpressure
-        ),
-        transfer_metadata=tuple(
-            adapt_transfer_metadata(transfer_metadata) for transfer_metadata in native_snapshot.transfer_metadata
-        ),
-    )
-
-
-def adapt_chunk_stage_timing(
-    chunk_stage_timing: _core.NativeChunkStageTimingSnapshot,
-) -> ChunkStageTimingSnapshot:
-    """Adapt one native chunk-stage timing row."""
-    return ChunkStageTimingSnapshot(
-        chunk_identifier=chunk_stage_timing.chunk_identifier,
-        chromosome=chunk_stage_timing.chromosome,
-        variant_start_index=chunk_stage_timing.variant_start_index,
-        variant_stop_index=chunk_stage_timing.variant_stop_index,
-        variant_count=chunk_stage_timing.variant_count,
-        stage_name=chunk_stage_timing.stage_name,
-        duration_seconds=chunk_stage_timing.duration_seconds,
-    )
-
-
-def adapt_queue_backpressure(queue_backpressure: _core.NativeQueueBackpressureSnapshot) -> QueueBackpressureSnapshot:
-    """Adapt one native queue/backpressure row."""
-    return QueueBackpressureSnapshot(
-        queue_name=queue_backpressure.queue_name,
-        operation_name=queue_backpressure.operation_name,
-        observation_count=queue_backpressure.observation_count,
-        max_depth=queue_backpressure.max_depth,
-        max_capacity=queue_backpressure.max_capacity,
-        total_elapsed_seconds=queue_backpressure.total_elapsed_seconds,
-        total_blocked_seconds=queue_backpressure.total_blocked_seconds,
-    )
-
-
-def adapt_transfer_metadata(transfer_metadata: _core.NativeTransferMetadataSnapshot) -> TransferMetadataSnapshot:
-    """Adapt one native transfer metadata row."""
-    return TransferMetadataSnapshot(
-        transfer_name=transfer_metadata.transfer_name,
-        array_role=transfer_metadata.array_role,
-        dtype_name=transfer_metadata.dtype_name,
-        ndim=transfer_metadata.ndim,
-        observation_count=transfer_metadata.observation_count,
-        total_bytes=transfer_metadata.total_bytes,
-        max_bytes=transfer_metadata.max_bytes,
-        total_elements=transfer_metadata.total_elements,
-    )
-
 
 def build_stage_timing_recorder(
     stage_timing_path: pathlib.Path | None,
@@ -511,7 +199,9 @@ def build_stage_timing_recorder(
 
 def should_collect_exact_stage_timings(stage_timing_recorder: StageTimingRecorder | None) -> bool:
     """Return whether timing should force synchronized exact stage measurements."""
-    return stage_timing_recorder is not None and stage_timing_recorder.should_collect_exact_stage_timings()
+    return (
+        stage_timing_recorder is not None and stage_timing_recorder.native_recorder.should_collect_exact_stage_timings()
+    )
 
 
 def write_final_timing_outputs(
@@ -524,10 +214,15 @@ def write_final_timing_outputs(
     """Persist all configured final timing outputs."""
     if stage_timing_recorder is None:
         return {"wrote_stage_timing_snapshot": False, "wrote_profile_summary": False}
-    return stage_timing_recorder.write_final_timing_outputs(
-        stage_timing_path=stage_timing_path,
-        profile_summary_path=profile_summary_path,
-        run_id=run_id,
+    return dict(
+        typing.cast(
+            "typing.Mapping[str, bool]",
+            stage_timing_recorder.native_recorder.write_final_timing_outputs(
+                None if stage_timing_path is None else str(stage_timing_path),
+                None if profile_summary_path is None else str(profile_summary_path),
+                run_id,
+            ),
+        )
     )
 
 

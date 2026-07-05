@@ -1973,6 +1973,28 @@ impl NativeGpuGenotypeFormatResolutionPlan {
     }
 }
 
+impl NativeGpuGenotypeFormatResolutionPlan {
+    pub(crate) fn requested_gpu_genotype_format_value(&self) -> &str {
+        &self.inner.requested_gpu_genotype_format
+    }
+
+    pub(crate) fn resolved_gpu_genotype_format_value(&self) -> Option<&str> {
+        self.inner.resolved_gpu_genotype_format.as_deref()
+    }
+
+    pub(crate) fn resolution_reason_value(&self) -> Option<&str> {
+        self.inner.resolution_reason.as_deref()
+    }
+
+    pub(crate) fn fallback_error_value(&self) -> Option<&str> {
+        self.inner.fallback_error.as_deref()
+    }
+
+    pub(crate) fn should_log_auto_resolution_value(&self) -> bool {
+        self.inner.should_log_auto_resolution()
+    }
+}
+
 impl NativeCallbackSchedulerState {
     pub(crate) fn from_limits(
         staging_depth: i64,

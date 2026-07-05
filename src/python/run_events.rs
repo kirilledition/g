@@ -1,11 +1,12 @@
 //! PyO3 adapters for runtime-owned run lifecycle events.
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
 use g_runtime::run_events as native_run_events;
 
-use super::logging;
+use super::{logging, schedule};
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -527,8 +528,7 @@ fn record_gpu_genotype_format_resolved_telemetry_event(
 }
 
 #[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_gpu_genotype_format_resolved_events(
+fn record_gpu_genotype_format_resolved_events(
     telemetry_session: &Bound<'_, PyAny>,
     requested_gpu_genotype_format: &str,
     resolved_gpu_genotype_format: &str,
@@ -547,6 +547,29 @@ pub fn record_gpu_genotype_format_resolved_events(
         resolved_gpu_genotype_format,
         resolution_reason,
         fallback_error.as_deref(),
+    )
+}
+
+#[pyfunction]
+pub fn record_gpu_genotype_format_resolved_plan_events(
+    telemetry_session: &Bound<'_, PyAny>,
+    native_resolution_plan: &schedule::NativeGpuGenotypeFormatResolutionPlan,
+) -> PyResult<()> {
+    if !native_resolution_plan.should_log_auto_resolution_value() {
+        return Ok(());
+    }
+    let resolved_gpu_genotype_format = native_resolution_plan
+        .resolved_gpu_genotype_format_value()
+        .ok_or_else(|| PyRuntimeError::new_err("Native GPU genotype-format resolution plan is not resolved."))?;
+    let resolution_reason = native_resolution_plan.resolution_reason_value().ok_or_else(|| {
+        PyRuntimeError::new_err("Native GPU genotype-format resolution plan has no resolution reason.")
+    })?;
+    record_gpu_genotype_format_resolved_events(
+        telemetry_session,
+        native_resolution_plan.requested_gpu_genotype_format_value(),
+        resolved_gpu_genotype_format,
+        resolution_reason,
+        native_resolution_plan.fallback_error_value().map(str::to_string),
     )
 }
 
@@ -863,29 +886,6 @@ fn record_pipeline_gpu_genotype_format_resolved_diagnostic_event(
         resolved_gpu_genotype_format,
         resolution_reason,
         fallback_error,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-pub fn record_callback_null_logistic_nonconvergence_warning_diagnostic_event(
-    message: &str,
-    chromosome: &str,
-    nonconverged_count: i64,
-    phenotype_count: i64,
-    policy: &str,
-    scalar_convergence: bool,
-    total_fit_count: i64,
-) -> PyResult<()> {
-    let payload = native_run_events::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-        message,
-        chromosome,
-        nonconverged_count,
-        phenotype_count,
-        policy,
-        scalar_convergence,
-        total_fit_count,
     );
     emit_run_diagnostic_event_payload(&payload)
 }
@@ -1319,7 +1319,7 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_gpu_genotype_format_resolved_events, module)?)?;
+    module.add_function(wrap_pyfunction!(record_gpu_genotype_format_resolved_plan_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry_event, module)?)?;
     Ok(())
@@ -1364,10 +1364,6 @@ fn register_pipeline_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResul
     module.add_function(wrap_pyfunction!(record_pipeline_output_resume_committed_chunks_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(
         record_pipeline_output_writer_sessions_create_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        record_callback_null_logistic_nonconvergence_warning_diagnostic_event,
         module
     )?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_phenotype_sample_summary_diagnostic_event, module)?)?;

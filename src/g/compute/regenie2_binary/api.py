@@ -113,7 +113,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("genotype_matrix_by_variant", "dosage_sum", "observation_count"),
 )
-def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major_donating_inputs(
+def compute_binary_score_test_variant_major_donating_inputs(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
@@ -139,7 +139,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("genotype_matrix_by_variant", "dosage_sum", "observation_count"),
 )
-def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_variant_major_donating_inputs(
+def compute_multi_binary_score_test_variant_major_donating_inputs(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
@@ -158,14 +158,6 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_variant
         observation_count=observation_count,
         score_dtype=score_dtype,
     )
-
-
-compute_binary_score_test_variant_major_donating_inputs = (
-    compute_regenie2_binary_score_test_chunk_from_chromosome_state_variant_major_donating_inputs
-)
-compute_multi_binary_score_test_variant_major_donating_inputs = (
-    compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_variant_major_donating_inputs
-)
 
 
 @functools.partial(
@@ -202,7 +194,7 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8(
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("packed_probability_pairs_by_variant", "dosage_sum", "observation_count"),
 )
-def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
+def compute_binary_score_test_packed8_donating_inputs(
     chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
@@ -225,11 +217,6 @@ def compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donat
         observation_count=observation_count,
         score_dtype=score_dtype,
     )
-
-
-compute_binary_score_test_packed8_donating_inputs = (
-    compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs
-)
 
 
 @functools.partial(
@@ -266,7 +253,7 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("packed_probability_pairs_by_variant", "dosage_sum", "observation_count"),
 )
-def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
+def compute_multi_binary_score_test_packed8_donating_inputs(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     correction_plan: g_types.BinaryCorrectionPlan,
@@ -289,11 +276,6 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8
         observation_count=observation_count,
         score_dtype=score_dtype,
     )
-
-
-compute_multi_binary_score_test_packed8_donating_inputs = (
-    compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs
-)
 
 
 @functools.partial(
@@ -536,7 +518,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
     """Compute multi-trait binary association from packed8 BGEN probability pairs."""
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-        return compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
+        return compute_multi_binary_score_test_packed8_donating_inputs(
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             correction_plan=correction_plan,
@@ -642,7 +624,7 @@ def compute_regenie2_binary_chunk_from_chromosome_state_packed8(
     canonical variant-major score and approximate-Firth kernels.
     """
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-        return compute_regenie2_binary_score_test_chunk_from_chromosome_state_packed8_donating_inputs(
+        return compute_binary_score_test_packed8_donating_inputs(
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
             correction_plan=correction_plan,

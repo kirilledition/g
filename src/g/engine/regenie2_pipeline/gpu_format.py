@@ -130,18 +130,7 @@ def log_native_auto_resolution(
     native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
 ) -> None:
     """Emit logging and telemetry for a resolved native auto decision."""
-    if not native_resolution_plan.should_log_auto_resolution:
-        return
-    resolution_reason = native_resolution_plan.resolution_reason
-    if resolution_reason is None:
-        raise RuntimeError("Native GPU genotype-format resolution plan has no resolution reason.")
-    _core.record_gpu_genotype_format_resolved_events(
-        telemetry_session,
-        native_resolution_plan.requested_gpu_genotype_format,
-        concrete_gpu_genotype_format_from_native_plan(native_resolution_plan).value,
-        resolution_reason,
-        native_resolution_plan.fallback_error,
-    )
+    _core.record_gpu_genotype_format_resolved_plan_events(telemetry_session, native_resolution_plan)
 
 
 def build_resolution_from_native_plan(
