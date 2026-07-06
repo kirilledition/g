@@ -76,11 +76,6 @@ pub(crate) struct NativeBgenDeliveryCleanupPlan {
 }
 
 #[pyclass]
-pub(crate) struct NativeBgenDeliveryInvocationPlan {
-    inner: native_schedule::BgenDeliveryInvocationPlan,
-}
-
-#[pyclass]
 pub(crate) struct NativeCallbackQueueOperationObservationPlan {
     inner: native_schedule::CallbackQueueOperationObservationPlan,
 }
@@ -1312,19 +1307,6 @@ impl NativeBgenDeliveryCleanupPlan {
     #[getter]
     fn write_stage_timing_snapshot(&self) -> bool {
         self.inner.write_stage_timing_snapshot()
-    }
-}
-
-#[pymethods]
-impl NativeBgenDeliveryInvocationPlan {
-    #[getter]
-    fn delivery_method(&self) -> &str {
-        self.inner.delivery_method.as_value()
-    }
-
-    #[getter]
-    fn callback_batch_size(&self) -> usize {
-        self.inner.callback_batch_size
     }
 }
 
@@ -2820,12 +2802,6 @@ impl From<native_schedule::BgenDeliveryCleanupPlan> for NativeBgenDeliveryCleanu
     }
 }
 
-impl From<native_schedule::BgenDeliveryInvocationPlan> for NativeBgenDeliveryInvocationPlan {
-    fn from(invocation_plan: native_schedule::BgenDeliveryInvocationPlan) -> Self {
-        Self { inner: invocation_plan }
-    }
-}
-
 impl From<native_schedule::CallbackQueueOperationObservationPlan> for NativeCallbackQueueOperationObservationPlan {
     fn from(observation_plan: native_schedule::CallbackQueueOperationObservationPlan) -> Self {
         Self { inner: observation_plan }
@@ -3047,23 +3023,6 @@ fn plan_bgen_delivery_cleanup(
         .map_err(|error| schedule_error_to_py(&error))
 }
 
-#[pyfunction]
-fn plan_bgen_delivery_invocation(
-    callback_batch_size: Option<i64>,
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> PyResult<NativeBgenDeliveryInvocationPlan> {
-    native_schedule::plan_bgen_delivery_invocation(
-        callback_batch_size,
-        variant_major_packed8_probability_pairs,
-        has_native_multi_aligned_sample_data,
-        has_native_aligned_sample_data,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_schedule_function_exports(module)?;
     register_callback_queue_exports(module)?;
@@ -3083,7 +3042,6 @@ fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<
     module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
     module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
     module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_bgen_delivery_invocation, module)?)?;
     Ok(())
 }
 
@@ -3127,7 +3085,6 @@ fn register_result_write_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
-    module.add_class::<NativeBgenDeliveryInvocationPlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeWriterFinishExecutionPlan>()?;
     Ok(())

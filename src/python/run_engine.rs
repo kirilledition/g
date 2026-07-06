@@ -326,113 +326,130 @@ impl Regenie2RunEngine {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None, callback_batch_size=1))]
-    fn run_bgen_variant_major_dosage_buffered_chunks<'py>(
+    #[pyo3(signature = (
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        callback,
+        committed_chunk_identifiers=None,
+        callback_batch_size=1,
+    ))]
+    fn run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source<'py>(
         &self,
         py: Python<'py>,
         sample_indices: PyReadonlyArray1<'py, i64>,
+        native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+        native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
-        callback_batch_size: usize,
+        callback_batch_size: i64,
     ) -> PyResult<usize> {
-        let sample_index_values = sample_indices.as_slice()?.to_vec();
-        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
-            py,
-            &sample_index_values,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
+        let invocation_plan = g_engine::plan_bgen_delivery_invocation(
+            Some(callback_batch_size),
+            false,
+            native_multi_aligned_sample_data.is_some(),
+            native_aligned_sample_data.is_some(),
         )
-    }
-
-    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None, callback_batch_size=1))]
-    #[allow(clippy::needless_pass_by_value)]
-    fn run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples<'py>(
-        &self,
-        py: Python<'py>,
-        aligned_sample_data: PyRef<'py, NativeAlignedSampleData>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-        callback_batch_size: usize,
-    ) -> PyResult<usize> {
-        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
-            py,
-            &aligned_sample_data.data.sample_indices,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )
-    }
-
-    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None, callback_batch_size=1))]
-    #[allow(clippy::needless_pass_by_value)]
-    fn run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples<'py>(
-        &self,
-        py: Python<'py>,
-        aligned_sample_data: PyRef<'py, NativeMultiAlignedSampleData>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-        callback_batch_size: usize,
-    ) -> PyResult<usize> {
-        self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
-            py,
-            &aligned_sample_data.data.sample_indices,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        match invocation_plan.delivery_method {
+            g_engine::BgenDeliveryMethod::DosageNativeMultiAlignedSamples => {
+                let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
+                    PyRuntimeError::new_err("Native BGEN delivery plan selected missing multi-aligned sample data.")
+                })?;
+                self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
+                    py,
+                    &aligned_sample_data.data.sample_indices,
+                    callback,
+                    committed_chunk_identifiers,
+                    invocation_plan.callback_batch_size,
+                )
+            }
+            g_engine::BgenDeliveryMethod::DosageNativeAlignedSamples => {
+                let aligned_sample_data = native_aligned_sample_data.ok_or_else(|| {
+                    PyRuntimeError::new_err("Native BGEN delivery plan selected missing aligned sample data.")
+                })?;
+                self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
+                    py,
+                    &aligned_sample_data.data.sample_indices,
+                    callback,
+                    committed_chunk_identifiers,
+                    invocation_plan.callback_batch_size,
+                )
+            }
+            g_engine::BgenDeliveryMethod::DosageSampleIndices => {
+                let sample_index_values = sample_indices.as_slice()?.to_vec();
+                self.run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices(
+                    py,
+                    &sample_index_values,
+                    callback,
+                    committed_chunk_identifiers,
+                    invocation_plan.callback_batch_size,
+                )
+            }
+            _ => Err(PyRuntimeError::new_err("Native BGEN delivery plan selected a packed8 method for dosage.")),
+        }
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (sample_indices, callback, committed_chunk_identifiers=None))]
-    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>(
+    #[pyo3(signature = (
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        callback,
+        committed_chunk_identifiers=None,
+        callback_batch_size=1,
+    ))]
+    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source<'py>(
         &self,
         py: Python<'py>,
         sample_indices: PyReadonlyArray1<'py, i64>,
+        native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+        native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
         callback: &Bound<'py, PyAny>,
         committed_chunk_identifiers: Option<Vec<usize>>,
+        callback_batch_size: i64,
     ) -> PyResult<usize> {
-        let sample_index_values = sample_indices.as_slice()?.to_vec();
-        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
-            py,
-            &sample_index_values,
-            callback,
-            committed_chunk_identifiers,
+        let invocation_plan = g_engine::plan_bgen_delivery_invocation(
+            Some(callback_batch_size),
+            true,
+            native_multi_aligned_sample_data.is_some(),
+            native_aligned_sample_data.is_some(),
         )
-    }
-
-    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
-    #[allow(clippy::needless_pass_by_value)]
-    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples<'py>(
-        &self,
-        py: Python<'py>,
-        aligned_sample_data: PyRef<'py, NativeAlignedSampleData>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-    ) -> PyResult<usize> {
-        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
-            py,
-            &aligned_sample_data.data.sample_indices,
-            callback,
-            committed_chunk_identifiers,
-        )
-    }
-
-    #[pyo3(signature = (aligned_sample_data, callback, committed_chunk_identifiers=None))]
-    #[allow(clippy::needless_pass_by_value)]
-    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples<'py>(
-        &self,
-        py: Python<'py>,
-        aligned_sample_data: PyRef<'py, NativeMultiAlignedSampleData>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-    ) -> PyResult<usize> {
-        self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
-            py,
-            &aligned_sample_data.data.sample_indices,
-            callback,
-            committed_chunk_identifiers,
-        )
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        match invocation_plan.delivery_method {
+            g_engine::BgenDeliveryMethod::Packed8NativeMultiAlignedSamples => {
+                let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
+                    PyRuntimeError::new_err("Native BGEN delivery plan selected missing multi-aligned sample data.")
+                })?;
+                self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
+                    py,
+                    &aligned_sample_data.data.sample_indices,
+                    callback,
+                    committed_chunk_identifiers,
+                )
+            }
+            g_engine::BgenDeliveryMethod::Packed8NativeAlignedSamples => {
+                let aligned_sample_data = native_aligned_sample_data.ok_or_else(|| {
+                    PyRuntimeError::new_err("Native BGEN delivery plan selected missing aligned sample data.")
+                })?;
+                self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
+                    py,
+                    &aligned_sample_data.data.sample_indices,
+                    callback,
+                    committed_chunk_identifiers,
+                )
+            }
+            g_engine::BgenDeliveryMethod::Packed8SampleIndices => {
+                let sample_index_values = sample_indices.as_slice()?.to_vec();
+                self.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_sample_indices(
+                    py,
+                    &sample_index_values,
+                    callback,
+                    committed_chunk_identifiers,
+                )
+            }
+            _ => Err(PyRuntimeError::new_err("Native BGEN delivery plan selected a dosage method for packed8.")),
+        }
     }
 }
 

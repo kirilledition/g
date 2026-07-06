@@ -549,44 +549,23 @@ class Regenie2RunEngine:
         variant_start: int,
         variant_stop: int,
     ) -> tuple[list[str], list[str], list[int], list[str], list[str]]: ...
-    def run_bgen_variant_major_dosage_buffered_chunks(
+    def run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
         self,
         sample_indices: npt.NDArray[np.int64],
+        native_aligned_sample_data: NativeAlignedSampleData | None,
+        native_multi_aligned_sample_data: NativeMultiAlignedSampleData | None,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
         callback_batch_size: int = 1,
     ) -> int: ...
-    def run_bgen_variant_major_dosage_buffered_chunks_for_native_aligned_samples(
-        self,
-        aligned_sample_data: NativeAlignedSampleData,
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
-        callback_batch_size: int = 1,
-    ) -> int: ...
-    def run_bgen_variant_major_dosage_buffered_chunks_for_native_multi_aligned_samples(
-        self,
-        aligned_sample_data: NativeMultiAlignedSampleData,
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
-        callback_batch_size: int = 1,
-    ) -> int: ...
-    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks(
+    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
         self,
         sample_indices: npt.NDArray[np.int64],
+        native_aligned_sample_data: NativeAlignedSampleData | None,
+        native_multi_aligned_sample_data: NativeMultiAlignedSampleData | None,
         callback: object,
         committed_chunk_identifiers: list[int] | None = None,
-    ) -> int: ...
-    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_aligned_samples(
-        self,
-        aligned_sample_data: NativeAlignedSampleData,
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
-    ) -> int: ...
-    def run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_native_multi_aligned_samples(
-        self,
-        aligned_sample_data: NativeMultiAlignedSampleData,
-        callback: object,
-        committed_chunk_identifiers: list[int] | None = None,
+        callback_batch_size: int = 1,
     ) -> int: ...
 
 class RegeniePredictionSource:
@@ -1397,12 +1376,6 @@ class NativeBgenDeliveryCleanupPlan:
     @property
     def write_stage_timing_snapshot(self) -> bool: ...
 
-class NativeBgenDeliveryInvocationPlan:
-    @property
-    def delivery_method(self) -> str: ...
-    @property
-    def callback_batch_size(self) -> int: ...
-
 def intersect_committed_chunk_identifier_sets(
     committed_chunk_identifier_sets: typing.Sequence[typing.Sequence[int]],
 ) -> list[int]: ...
@@ -1424,12 +1397,6 @@ def plan_bgen_delivery_cleanup(
     cleanup_outcome: str,
     callback_finished: bool,
 ) -> NativeBgenDeliveryCleanupPlan: ...
-def plan_bgen_delivery_invocation(
-    callback_batch_size: int | None,
-    variant_major_packed8_probability_pairs: bool,
-    has_native_multi_aligned_sample_data: bool,
-    has_native_aligned_sample_data: bool,
-) -> NativeBgenDeliveryInvocationPlan: ...
 
 class NativeCallbackWorkerLifecycleState:
     def __init__(self) -> None: ...
