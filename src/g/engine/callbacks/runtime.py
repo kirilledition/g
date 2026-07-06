@@ -721,14 +721,43 @@ class NativeBgenCallbackRunner(abc.ABC):
                 output_statistic_dtype=self.output_statistic_dtype,
             )
             host_dosage_buffer_released = self.release_result_work_item_host_buffer(work_item)
-            writers.write_materialized_regenie2_native_chunk_with_optional_timing(
-                writer_session=typing.cast("typing.Any", self).writer_session,
+            write_start_time = time.perf_counter() if self.stage_timing_recorder is not None else 0.0
+            _core.write_regenie2_native_chunk_with_output_dtype(
+                writer_session=typing.cast("_core.OutputWriterSession", typing.cast("typing.Any", self).writer_session),
                 metadata=work_item.metadata,
                 chunk_stats=work_item.chunk_stats,
-                materialized_chunk=materialized_chunk,
-                stage_timing_recorder=self.stage_timing_recorder,
-                output_statistic_dtype=self.output_statistic_dtype,
+                output_statistic_dtype=self.output_statistic_dtype.value,
+                beta=transfers.cast_statistic_array_for_native_writer(
+                    materialized_chunk.beta,
+                    self.output_statistic_dtype,
+                ),
+                standard_error=transfers.cast_statistic_array_for_native_writer(
+                    materialized_chunk.standard_error,
+                    self.output_statistic_dtype,
+                ),
+                chi_squared=transfers.cast_statistic_array_for_native_writer(
+                    materialized_chunk.chi_squared,
+                    self.output_statistic_dtype,
+                ),
+                log10_p_value=transfers.cast_statistic_array_for_native_writer(
+                    materialized_chunk.log10_p_value,
+                    self.output_statistic_dtype,
+                ),
+                extra_code=typing.cast("typing.Any", materialized_chunk.extra_code),
             )
+            if self.stage_timing_recorder is not None:
+                transfers.record_stage_duration_with_optional_chunk(
+                    stage_timing_recorder=self.stage_timing_recorder,
+                    stage_name="output_write",
+                    start_time=write_start_time,
+                    chunk_metadata=work_item.metadata,
+                )
+                transfers.record_stage_duration_with_optional_chunk(
+                    stage_timing_recorder=self.stage_timing_recorder,
+                    stage_name="single_trait_output_write",
+                    start_time=write_start_time,
+                    chunk_metadata=work_item.metadata,
+                )
             diagnostics.record_binary_chunk_diagnostics_from_count(
                 stage_timing_recorder=self.stage_timing_recorder,
                 diagnostics=work_item.binary_chunk_diagnostics,

@@ -78,7 +78,10 @@ def build_current_run_manifest_header(
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
-    phenotype_compute_group_id: str | None,
+    phenotype_compute_group_mode: types.PhenotypeComputeGroupMode | None,
+    phenotype_compute_group_indices: tuple[int, ...] | None,
+    phenotype_compute_group_names: tuple[str, ...] | None,
+    phenotype_compute_group_sample_mode: types.MultiPhenotypeSampleMode | None,
     sample_set_fingerprint: str | None,
     covariate_design_fingerprint: str | None,
     prediction_alignment_fingerprint: str | None,
@@ -125,7 +128,18 @@ def build_current_run_manifest_header(
         "score_dtype": score_dtype.value,
         "firth_dtype": firth_dtype.value,
         "multi_phenotype_sample_mode": multi_phenotype_sample_mode.value,
-        "phenotype_compute_group_id": phenotype_compute_group_id,
+        "phenotype_compute_group_mode": None
+        if phenotype_compute_group_mode is None
+        else phenotype_compute_group_mode.value,
+        "phenotype_compute_group_indices": None
+        if phenotype_compute_group_indices is None
+        else list(phenotype_compute_group_indices),
+        "phenotype_compute_group_names": None
+        if phenotype_compute_group_names is None
+        else list(phenotype_compute_group_names),
+        "phenotype_compute_group_sample_mode": None
+        if phenotype_compute_group_sample_mode is None
+        else phenotype_compute_group_sample_mode.value,
         "sample_set_fingerprint": sample_set_fingerprint,
         "covariate_design_fingerprint": covariate_design_fingerprint,
         "prediction_alignment_fingerprint": prediction_alignment_fingerprint,

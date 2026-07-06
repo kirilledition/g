@@ -133,24 +133,6 @@ class RunRuntime:
 PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.global_process_runtime_state()
 
 
-def record_jax_runtime_diagnostic_event(
-    diagnostic_event: _core.NativeJaxRuntimeDiagnosticEvent,
-    *,
-    telemetry_session: events.TelemetrySession | None,
-) -> None:
-    """Record one structured JAX runtime diagnostic event.
-
-    Args:
-        diagnostic_event: Runtime diagnostic event to record.
-        telemetry_session: Optional run telemetry session.
-
-    """
-    _core.record_jax_runtime_diagnostic_event(
-        diagnostic_event,
-        telemetry_session,
-    )
-
-
 def configure_runtime_before_jax_import(
     compute_config: config.GComputeConfig,
     telemetry_session: events.TelemetrySession | None,
@@ -164,7 +146,7 @@ def configure_runtime_before_jax_import(
         return None
 
     def record_diagnostic_event(diagnostic_event: _core.NativeJaxRuntimeDiagnosticEvent) -> None:
-        record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session=telemetry_session)
+        _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
 
     setup_module = importlib.import_module("g.jax_runtime.setup")
     setup_report = setup_module.configure_before_backend_init(
@@ -330,14 +312,6 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
     return multi_trait_pipeline_module.run_regenie2_multi_phenotype_bgen_pipeline(request)
-
-
-def configure_runtime(compute_config: config.GComputeConfig, trait_config: config.TraitConfig) -> None:
-    """Apply native runtime knobs before engine execution."""
-    PROCESS_RUNTIME_STATE.configure_runtime_knobs(
-        compute_config.bgen_decode_tile_variant_count,
-        trait_config.threads,
-    )
 
 
 def initialize_logging(

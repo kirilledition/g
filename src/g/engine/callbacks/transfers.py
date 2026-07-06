@@ -145,22 +145,17 @@ def block_compute_result_for_timing(
 
 def build_chunk_timing_identity(metadata: typing.Any) -> engine_timing.ChunkTimingIdentity:
     """Build per-chunk timing identity fields from native metadata."""
-    native_identity = build_native_callback_chunk_identity(metadata)
+    native_identity = _core.build_callback_chunk_identity(
+        chromosome=str(metadata.chromosome_label),
+        variant_start_index=int(metadata.variant_start_index),
+        variant_stop_index=int(metadata.variant_stop_index),
+    )
     return engine_timing.ChunkTimingIdentity(
         chunk_identifier=native_identity.chunk_identifier,
         chromosome=native_identity.chromosome,
         variant_start_index=native_identity.variant_start_index,
         variant_stop_index=native_identity.variant_stop_index,
         variant_count=native_identity.variant_count,
-    )
-
-
-def build_native_callback_chunk_identity(metadata: typing.Any) -> _core.NativeCallbackChunkIdentity:
-    """Build the native callback chunk identity from metadata attributes."""
-    return _core.build_callback_chunk_identity(
-        chromosome=str(metadata.chromosome_label),
-        variant_start_index=int(metadata.variant_start_index),
-        variant_stop_index=int(metadata.variant_stop_index),
     )
 
 
@@ -272,13 +267,4 @@ def get_binary_chunk_stats_arrays(
         dosage_sum=compute_arrays["dosage_sum"],
         observation_count=compute_arrays["observation_count"],
         sparse_candidate_mask=sparse_candidate_mask,
-    )
-
-
-def build_projected_variant_major_dosage_chunk_stats(
-    genotype_matrix_by_variant: npt.NDArray[np.float32],
-) -> _core.ChunkStats:
-    """Build native chunk stats for a projected variant-major dosage buffer."""
-    return _core.summarize_variant_major_dosage_chunk_stats(
-        np.ascontiguousarray(genotype_matrix_by_variant, dtype=np.float32)
     )

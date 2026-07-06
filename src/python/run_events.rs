@@ -1841,6 +1841,9 @@ fn optional_enum_value(source: &Bound<'_, PyAny>, attribute_name: &str) -> PyRes
     if value.is_none() {
         return Ok(None);
     }
+    if let Ok(value_text) = value.extract::<String>() {
+        return Ok(Some(value_text));
+    }
     Ok(Some(value.getattr("value")?.extract::<String>()?))
 }
 

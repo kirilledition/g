@@ -8,7 +8,6 @@ import numpy as np
 import numpy.typing as npt
 
 import g.engine.callbacks.shared as shared
-import g.engine.callbacks.transfers as transfers
 from g import _core
 
 
@@ -88,7 +87,9 @@ class GroupedMultiPhenotypeFanoutCallback:
                 axis=1,
                 out=group_genotype_matrix,
             )
-            group_chunk_stats = transfers.build_projected_variant_major_dosage_chunk_stats(group_genotype_matrix)
+            group_chunk_stats = _core.summarize_variant_major_dosage_chunk_stats(
+                np.ascontiguousarray(group_genotype_matrix, dtype=np.float32)
+            )
             group_callback.compute_preprocessed_variant_major_dosage_chunk(
                 metadata,
                 group_genotype_matrix,

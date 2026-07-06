@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import enum
 import time
@@ -82,11 +83,34 @@ def execute_bgen_delivery_cleanup_plan(
             if shutdown_request is None:
                 message = "Interrupted writer cleanup requires a shutdown request."
                 raise RuntimeError(message)
-            writers.finish_writer_sessions_interrupted(
-                writer_sessions=writer_sessions,
-                shutdown_request=shutdown_request,
-                writer_finish_thread_count=writer_finish_thread_count,
-                stage_timing_recorder=stage_timing_recorder,
+            writer_finish_start_time = time.perf_counter()
+            _core.record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
+                requested_thread_count=writer_finish_thread_count,
+                signal_exit_code=shutdown_request.exit_code,
+                signal_name=shutdown_request.signal_name,
+                signal_number=shutdown_request.shutdown_signal.number,
+                writer_session_count=len(writer_sessions),
+            )
+            finish_plan = _core.plan_writer_finish_execution(len(writer_sessions), writer_finish_thread_count)
+            if not finish_plan.uses_parallel_finish:
+                for writer_session in writer_sessions:
+                    writer_session.finish_interrupted(shutdown_request.signal_name)
+            else:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=finish_plan.thread_count,
+                    thread_name_prefix="g-writer-finish",
+                ) as executor:
+                    futures = tuple(
+                        executor.submit(
+                            writer_session.finish_interrupted,
+                            shutdown_request.signal_name,
+                        )
+                        for writer_session in writer_sessions
+                    )
+                    for future in futures:
+                        future.result()
+            engine_timing.record_stage_duration(
+                stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time
             )
         elif cleanup_action is BgenDeliveryCleanupAction.ABORT_CALLBACK:
             with contextlib.suppress(Exception):
@@ -101,46 +125,6 @@ def execute_bgen_delivery_cleanup_plan(
     return BgenDeliveryCleanupExecution(
         final_parquet_paths=final_parquet_paths,
         callback_finished=resolved_callback_finished,
-    )
-
-
-def run_variant_major_packed8_delivery(
-    *,
-    engine: _core.Regenie2RunEngine,
-    run_input: models.BgenDeliveryRunInputProtocol,
-    callback: models.BgenDeliveryBatchSizeProtocol,
-    committed_chunk_identifier_list: list[int],
-) -> int:
-    """Run packed8 delivery using native sample alignment when available."""
-    return int(
-        engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
-            run_input.sample_indices,
-            run_input.native_aligned_sample_data,
-            run_input.native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers=committed_chunk_identifier_list,
-            callback_batch_size=callback.native_callback_batch_size,
-        )
-    )
-
-
-def run_variant_major_dosage_delivery(
-    *,
-    engine: _core.Regenie2RunEngine,
-    run_input: models.BgenDeliveryRunInputProtocol,
-    callback: models.BgenDeliveryBatchSizeProtocol,
-    committed_chunk_identifier_list: list[int],
-) -> int:
-    """Run dosage delivery using native sample alignment when available."""
-    return int(
-        engine.run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
-            run_input.sample_indices,
-            run_input.native_aligned_sample_data,
-            run_input.native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers=committed_chunk_identifier_list,
-            callback_batch_size=callback.native_callback_batch_size,
-        )
     )
 
 
@@ -171,18 +155,26 @@ def run_bgen_engine_with_writer_sessions(
         )
         callback.start()
         if variant_major_packed8_probability_pairs:
-            processed_chunk_count = run_variant_major_packed8_delivery(
-                engine=engine,
-                run_input=run_input,
-                callback=callback,
-                committed_chunk_identifier_list=committed_chunk_identifier_list,
+            processed_chunk_count = int(
+                engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
+                    run_input.sample_indices,
+                    run_input.native_aligned_sample_data,
+                    run_input.native_multi_aligned_sample_data,
+                    callback,
+                    committed_chunk_identifiers=committed_chunk_identifier_list,
+                    callback_batch_size=callback.native_callback_batch_size,
+                )
             )
         else:
-            processed_chunk_count = run_variant_major_dosage_delivery(
-                engine=engine,
-                run_input=run_input,
-                callback=callback,
-                committed_chunk_identifier_list=committed_chunk_identifier_list,
+            processed_chunk_count = int(
+                engine.run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
+                    run_input.sample_indices,
+                    run_input.native_aligned_sample_data,
+                    run_input.native_multi_aligned_sample_data,
+                    callback,
+                    committed_chunk_identifiers=committed_chunk_identifier_list,
+                    callback_batch_size=callback.native_callback_batch_size,
+                )
             )
         engine_timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
         _core.record_native_dispatch_delivery_finished_diagnostic_event(

@@ -116,7 +116,7 @@ impl error::Error for PreparedPlanError {}
 ///
 /// Returns [`PreparedPlanError::UnresolvedGpuGenotypeFormat`] when
 /// `resolved_genotype_format` is still `auto`.
-pub fn build_prepared_association_backend_plan(
+fn build_prepared_association_backend_plan(
     association_mode: AssociationMode,
     device: Device,
     resolved_genotype_format: GpuGenotypeFormat,

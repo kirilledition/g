@@ -47,27 +47,3 @@ def validate_trusted_bgen_run_engine(
         str(genotype_source_config.source_path),
         trusted_bgen_validation_mode.value,
     )
-
-
-def build_bgen_run_engine(
-    *,
-    genotype_source_config: execution_plan.GenotypeSourceConfig,
-    chunk_size: int,
-    variant_limit: int | None,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
-) -> _core.Regenie2RunEngine:
-    """Open the native BGEN run engine once for alignment and chunk delivery."""
-    engine = open_bgen_run_engine(
-        genotype_source_config=genotype_source_config,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
-        trusted_no_missing_diploid=trusted_no_missing_diploid,
-    )
-    if trusted_no_missing_diploid:
-        validate_trusted_bgen_run_engine(
-            engine=engine,
-            genotype_source_config=genotype_source_config,
-            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
-        )
-    return engine

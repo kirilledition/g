@@ -169,7 +169,7 @@ impl NativePhenotypeRunPlan {
 }
 
 impl NativePhenotypeComputeGroup {
-    fn from_native_group(data: &native_plan::PhenotypeComputeGroup) -> Self {
+    pub(crate) fn from_native_group(data: &native_plan::PhenotypeComputeGroup) -> Self {
         Self {
             group_mode: data.group_mode.as_str().to_string(),
             phenotype_indices: data.phenotype_indices.iter().map(|value| i64::from(*value)).collect(),
@@ -178,18 +178,6 @@ impl NativePhenotypeComputeGroup {
             sample_set_fingerprint: data.sample_set_fingerprint.clone(),
             covariate_design_fingerprint: data.covariate_design_fingerprint.clone(),
             prediction_alignment_fingerprint: data.prediction_alignment_fingerprint.clone(),
-        }
-    }
-
-    pub(crate) fn from_host_policy_payload(data: native_plan::PhenotypeComputeGroupPayload) -> Self {
-        Self {
-            group_mode: data.group_mode.to_string(),
-            phenotype_indices: data.phenotype_indices,
-            phenotype_names: data.phenotype_names,
-            sample_mode: data.sample_mode.to_string(),
-            sample_set_fingerprint: data.sample_set_fingerprint,
-            covariate_design_fingerprint: data.covariate_design_fingerprint,
-            prediction_alignment_fingerprint: data.prediction_alignment_fingerprint,
         }
     }
 }
@@ -1156,6 +1144,13 @@ fn config_from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<RegenieConfig
 }
 
 #[pyfunction]
+fn load_packaged_config() -> PyResult<RegenieConfig> {
+    interface::load_packaged_config_data()
+        .map(RegenieConfig::new)
+        .map_err(|error| config_error_to_py("load_packaged_config", error))
+}
+
+#[pyfunction]
 fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
     interface::validate_config_for_run(config.data())
         .map_err(|error| config_error_to_py("validate_config_for_run", error))
@@ -1206,6 +1201,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePhenotypeComputeGroup>()?;
     module.add_class::<NativeBinaryCorrectionPlan>()?;
     module.add_function(wrap_pyfunction!(config_from_options, module)?)?;
+    module.add_function(wrap_pyfunction!(load_packaged_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     module.add_function(wrap_pyfunction!(run_native_cli_python_bridge, module)?)?;

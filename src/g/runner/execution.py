@@ -23,14 +23,12 @@ def regenie(
     """Run the shared REGENIE-compatible config path."""
     active_telemetry_session = run_telemetry_session or events.build_telemetry_session(regenie_config)
     try:
-        config.validate_config_for_run(regenie_config)
+        _core.validate_regenie_config_for_run(regenie_config)
         runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
         run_runtime = runtime.build_run_runtime(runtime_policy)
         if initialize_logging_on_entry:
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
-        association_mode = types.AssociationMode(
-            _core.resolve_association_mode_value(regenie_config.trait.trait_type.value)
-        )
+        association_mode = association_mode_from_trait_type(regenie_config.trait.trait_type)
         phenotype_count = len(regenie_config.input.pheno_columns)
         output_run_directory = regenie_config.g_output.output_run_directory
         _core.record_runner_run_started_events(
@@ -43,7 +41,10 @@ def regenie(
                 None if output_run_directory is None else str(output_run_directory),
             ),
         )
-        runtime.configure_runtime(regenie_config.g_compute, regenie_config.trait)
+        runtime.PROCESS_RUNTIME_STATE.configure_runtime_knobs(
+            regenie_config.g_compute.bgen_decode_tile_variant_count,
+            regenie_config.trait.threads,
+        )
         artifacts = run_validated_regenie_config(
             regenie_config,
             telemetry_session=active_telemetry_session,
@@ -67,6 +68,13 @@ def regenie(
     finally:
         if close_telemetry_session_on_exit:
             _core.close_telemetry_session_with_event(active_telemetry_session)
+
+
+def association_mode_from_trait_type(trait_type: types.RegenieTraitType) -> types.AssociationMode:
+    """Resolve the association mode implied by the configured trait type."""
+    if trait_type == types.RegenieTraitType.BINARY:
+        return types.AssociationMode.REGENIE2_BINARY
+    return types.AssociationMode.REGENIE2_LINEAR
 
 
 def run_validated_regenie_config(

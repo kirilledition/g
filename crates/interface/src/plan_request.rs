@@ -82,23 +82,14 @@ fn build_correction_plan(config: &RegenieConfigData) -> ConfigResult<plan::Corre
             firth_se: false,
         });
     }
-    let correction_payload = plan::normalize_binary_correction(
+    plan::normalize_binary_correction(
         config.binary.firth,
         config.binary.approx,
         config.binary.spa,
         f64::from(config.binary.p_threshold),
         config.binary.firth_se,
     )
-    .map_err(plan_error_to_config_error)?;
-    Ok(plan::CorrectionPlan {
-        method: match correction_payload.method {
-            "score_only" => plan::BinaryFallbackMethod::ScoreOnly,
-            "firth_approximate" => plan::BinaryFallbackMethod::FirthApproximate,
-            _ => return Err(ConfigError::new("Native binary correction plan returned an unknown method.")),
-        },
-        p_threshold: correction_payload.p_threshold,
-        firth_se: correction_payload.firth_se,
-    })
+    .map_err(plan_error_to_config_error)
 }
 
 fn build_output_writer_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputWriterPlan> {
@@ -142,10 +133,7 @@ fn build_phenotype_run_plans(phenotype_names: &[String]) -> Vec<plan::PhenotypeR
             plan::PhenotypeRunPlan {
                 phenotype_index: output_index,
                 phenotype_name: phenotype_name.clone(),
-                output_directory_name: plan::build_phenotype_output_directory_name(
-                    i64::from(output_index),
-                    phenotype_name,
-                ),
+                output_directory_name: plan::build_phenotype_output_directory_name(output_index, phenotype_name),
             }
         })
         .collect()
@@ -155,28 +143,8 @@ fn build_phenotype_compute_groups(
     phenotype_names: &[String],
     multi_phenotype_sample_mode: MultiPhenotypeSampleModeValue,
 ) -> ConfigResult<Vec<plan::PhenotypeComputeGroup>> {
-    plan::build_phenotype_compute_groups(phenotype_names, multi_phenotype_sample_mode.as_str())
-        .map_err(plan_error_to_config_error)?
-        .into_iter()
-        .map(|group| {
-            Ok(plan::PhenotypeComputeGroup {
-                group_mode: plan_phenotype_compute_group_mode(group.group_mode)?,
-                phenotype_indices: group
-                    .phenotype_indices
-                    .into_iter()
-                    .map(|phenotype_index| {
-                        u32::try_from(phenotype_index)
-                            .map_err(|_| ConfigError::new("Phenotype index does not fit in u32."))
-                    })
-                    .collect::<ConfigResult<Vec<_>>>()?,
-                phenotype_names: group.phenotype_names,
-                sample_mode: plan_multi_phenotype_sample_mode(multi_phenotype_sample_mode),
-                sample_set_fingerprint: group.sample_set_fingerprint,
-                covariate_design_fingerprint: group.covariate_design_fingerprint,
-                prediction_alignment_fingerprint: group.prediction_alignment_fingerprint,
-            })
-        })
-        .collect()
+    plan::build_phenotype_compute_groups(phenotype_names, plan_multi_phenotype_sample_mode(multi_phenotype_sample_mode))
+        .map_err(plan_error_to_config_error)
 }
 
 fn default_output_run_root(output_prefix: &str) -> String {
@@ -283,15 +251,6 @@ fn plan_output_format(value: OutputFormatValue) -> plan::OutputFormat {
         OutputFormatValue::Parquet => plan::OutputFormat::Parquet,
         OutputFormatValue::Arrow => plan::OutputFormat::Arrow,
         OutputFormatValue::Regenie => plan::OutputFormat::Regenie,
-    }
-}
-
-fn plan_phenotype_compute_group_mode(value: &str) -> ConfigResult<plan::PhenotypeComputeGroupMode> {
-    match value {
-        "single-phenotype" => Ok(plan::PhenotypeComputeGroupMode::SinglePhenotype),
-        "complete-case" => Ok(plan::PhenotypeComputeGroupMode::CompleteCase),
-        "per-phenotype-compatible" => Ok(plan::PhenotypeComputeGroupMode::PerPhenotypeCompatible),
-        _ => Err(ConfigError::new("Native phenotype compute group returned an unknown group mode.")),
     }
 }
 

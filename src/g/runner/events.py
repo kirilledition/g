@@ -132,22 +132,16 @@ def resolve_telemetry_paths(regenie_config: config.RegenieConfig) -> TelemetryPa
     diagnostics_config = regenie_config.g_diagnostics
     output_prefix = typing.cast("Path", regenie_config.g_output.out)
     output_run_directory = regenie_config.g_output.output_run_directory
-    return telemetry_paths_from_native_paths(
-        _core.resolve_telemetry_paths(
-            str(output_prefix),
-            None if output_run_directory is None else str(output_run_directory),
-            diagnostics_config.telemetry.value,
-            None if diagnostics_config.log_dir is None else str(diagnostics_config.log_dir),
-            None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
-            None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
-            None if diagnostics_config.profile_summary_json is None else str(diagnostics_config.profile_summary_json),
-            None if diagnostics_config.stage_timings_json is None else str(diagnostics_config.stage_timings_json),
-        )
+    native_paths = _core.resolve_telemetry_paths(
+        str(output_prefix),
+        None if output_run_directory is None else str(output_run_directory),
+        diagnostics_config.telemetry.value,
+        None if diagnostics_config.log_dir is None else str(diagnostics_config.log_dir),
+        None if diagnostics_config.log_file is None else str(diagnostics_config.log_file),
+        None if diagnostics_config.trace_file is None else str(diagnostics_config.trace_file),
+        None if diagnostics_config.profile_summary_json is None else str(diagnostics_config.profile_summary_json),
+        None if diagnostics_config.stage_timings_json is None else str(diagnostics_config.stage_timings_json),
     )
-
-
-def telemetry_paths_from_native_paths(native_paths: _core.NativeTelemetryPaths) -> TelemetryPaths:
-    """Adapt native telemetry paths to the public Python dataclass."""
     return TelemetryPaths(
         log_dir=optional_path_from_native_value(native_paths.log_dir),
         stream_file=optional_path_from_native_value(native_paths.stream_file),

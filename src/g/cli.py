@@ -50,9 +50,14 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
         runner_runtime.require_compatible_runtime_policy(runtime_policy)
         runner_runtime.initialize_logging(outcome.config.g_diagnostics, run_telemetry_session.paths)
         print_native_cli_output(outcome)
-        log_native_cli_output(outcome, max_payload_chars=NATIVE_CLI_OUTPUT_LOG_LIMIT)
+        if outcome.stdout or outcome.stderr:
+            g._core.record_native_cli_output_diagnostic_events(
+                outcome.stdout,
+                outcome.stderr,
+                NATIVE_CLI_OUTPUT_LOG_LIMIT,
+            )
         try:
-            with runner_lifecycle.install_graceful_shutdown_handlers():
+            with runner_lifecycle.GracefulShutdownController(handled_signals=None):
                 cli_lifecycle_state.mark_runner_started()
                 artifacts = runner_execution.regenie(
                     outcome.config,
@@ -62,11 +67,13 @@ def run_args_legacy(arguments: typing.Sequence[str]) -> int:
                 )
         except runner_lifecycle.GracefulShutdownRequested as shutdown_request:
             interrupted_event = g._core.build_run_interrupted_event(shutdown_request)
-            print_and_log_interrupted_lines(interrupted_event)
+            for line in g._core.render_and_record_run_interrupted_lines(interrupted_event):
+                print(line, file=sys.stderr)
             exit_code = shutdown_request.exit_code
         else:
             completed_event = g._core.build_run_completed_event(artifacts)
-            print_and_log_completed_lines(completed_event)
+            for line in g._core.render_and_record_run_completed_lines(completed_event):
+                print(line)
             exit_code = 0
     except Exception as error:  # noqa: BLE001
         exit_code = print_and_log_failed_event(
@@ -101,21 +108,6 @@ def print_native_cli_output(outcome: g._core.CliOutcome) -> None:
         print(outcome.stderr, end="", file=sys.stderr)
 
 
-def log_native_cli_output(outcome: g._core.CliOutcome, *, max_payload_chars: int) -> None:
-    """Emit bounded diagnostics for native CLI stdout and stderr."""
-    if not outcome.stdout and not outcome.stderr:
-        return
-
-    g._core.record_native_cli_output_diagnostic_events(outcome.stdout, outcome.stderr, max_payload_chars)
-
-
-def print_and_log_interrupted_lines(interrupted_event: object) -> None:
-    """Print graceful interruption details and emit diagnostics."""
-    interrupted_lines = g._core.render_and_record_run_interrupted_lines(interrupted_event)
-    for line in interrupted_lines:
-        print(line, file=sys.stderr)
-
-
 def print_and_log_failed_event(
     error: Exception,
     *,
@@ -128,22 +120,9 @@ def print_and_log_failed_event(
         telemetry_session,
         failed_event,
     )
-    print_and_log_failed_lines(failed_event)
-    return RUNTIME_FAILURE_EXIT_CODE
-
-
-def print_and_log_failed_lines(failed_event: object) -> None:
-    """Print failure details and emit best-effort diagnostics."""
-    failed_lines = g._core.render_and_record_run_failed_lines(failed_event)
-    for line in failed_lines:
+    for line in g._core.render_and_record_run_failed_lines(failed_event):
         print(line, file=sys.stderr)
-
-
-def print_and_log_completed_lines(completed_event: object) -> None:
-    """Print completion details and emit diagnostics."""
-    completed_lines = g._core.render_and_record_run_completed_lines(completed_event)
-    for line in completed_lines:
-        print(line)
+    return RUNTIME_FAILURE_EXIT_CODE
 
 
 def main() -> None:

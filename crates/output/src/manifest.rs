@@ -152,7 +152,10 @@ pub struct CurrentRunManifestHeaderInput {
     pub score_dtype: String,
     pub firth_dtype: String,
     pub multi_phenotype_sample_mode: String,
-    pub phenotype_compute_group_id: Option<String>,
+    pub phenotype_compute_group_mode: Option<String>,
+    pub phenotype_compute_group_indices: Option<Vec<u32>>,
+    pub phenotype_compute_group_names: Option<Vec<String>>,
+    pub phenotype_compute_group_sample_mode: Option<String>,
     pub sample_set_fingerprint: Option<String>,
     pub covariate_design_fingerprint: Option<String>,
     pub prediction_alignment_fingerprint: Option<String>,
@@ -345,6 +348,7 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "prediction_list": prediction_list_fingerprint.clone(),
         "loco_files": prediction_loco_files,
     });
+    let phenotype_compute_group_id = build_current_header_phenotype_compute_group_id(&input)?;
     let binary_correction_plan = json!({
         "method": input.binary_correction_plan_method,
         "p_threshold": input.binary_correction_plan_p_threshold,
@@ -405,7 +409,7 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "score_dtype": input.score_dtype,
         "firth_dtype": input.firth_dtype,
         "multi_phenotype_sample_mode": input.multi_phenotype_sample_mode,
-        "phenotype_compute_group_id": input.phenotype_compute_group_id,
+        "phenotype_compute_group_id": phenotype_compute_group_id,
         "sample_set_fingerprint": input.sample_set_fingerprint,
         "covariate_design_fingerprint": input.covariate_design_fingerprint,
         "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint,
@@ -442,7 +446,7 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "score_dtype": input.score_dtype,
         "firth_dtype": input.firth_dtype,
         "multi_phenotype_sample_mode": input.multi_phenotype_sample_mode,
-        "phenotype_compute_group_id": input.phenotype_compute_group_id,
+        "phenotype_compute_group_id": execution_plan["phenotype_compute_group_id"].clone(),
         "sample_set_fingerprint": input.sample_set_fingerprint,
         "covariate_design_fingerprint": input.covariate_design_fingerprint,
         "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint,
@@ -452,6 +456,67 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "execution_plan_hash": execution_plan_hash,
     });
     serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
+}
+
+fn build_current_header_phenotype_compute_group_id(
+    input: &CurrentRunManifestHeaderInput,
+) -> Result<Option<String>, OutputWriterError> {
+    let Some(group_mode) = input.phenotype_compute_group_mode.as_deref() else {
+        return ensure_no_partial_current_header_phenotype_compute_group(input);
+    };
+    let phenotype_indices = input.phenotype_compute_group_indices.as_ref().ok_or_else(|| {
+        OutputWriterError::InvalidInput("phenotype_compute_group_indices is required with group mode.".to_string())
+    })?;
+    let phenotype_names = input.phenotype_compute_group_names.as_ref().ok_or_else(|| {
+        OutputWriterError::InvalidInput("phenotype_compute_group_names is required with group mode.".to_string())
+    })?;
+    let sample_mode = input.phenotype_compute_group_sample_mode.as_deref().ok_or_else(|| {
+        OutputWriterError::InvalidInput("phenotype_compute_group_sample_mode is required with group mode.".to_string())
+    })?;
+    if phenotype_indices.len() != phenotype_names.len() {
+        return Err(OutputWriterError::InvalidInput(
+            "phenotype compute group indices and names must have the same length.".to_string(),
+        ));
+    }
+    let phenotype_compute_group = g_plan::PhenotypeComputeGroup {
+        group_mode: parse_current_header_phenotype_compute_group_mode(group_mode)?,
+        phenotype_indices: phenotype_indices.clone(),
+        phenotype_names: phenotype_names.clone(),
+        sample_mode: parse_current_header_multi_phenotype_sample_mode(sample_mode)?,
+        sample_set_fingerprint: input.sample_set_fingerprint.clone(),
+        covariate_design_fingerprint: input.covariate_design_fingerprint.clone(),
+        prediction_alignment_fingerprint: input.prediction_alignment_fingerprint.clone(),
+    };
+    Ok(Some(g_plan::build_phenotype_compute_group_id(&phenotype_compute_group)))
+}
+
+fn ensure_no_partial_current_header_phenotype_compute_group(
+    input: &CurrentRunManifestHeaderInput,
+) -> Result<Option<String>, OutputWriterError> {
+    if input.phenotype_compute_group_indices.is_some()
+        || input.phenotype_compute_group_names.is_some()
+        || input.phenotype_compute_group_sample_mode.is_some()
+    {
+        return Err(OutputWriterError::InvalidInput(
+            "phenotype compute group fields must be all set or all unset.".to_string(),
+        ));
+    }
+    Ok(None)
+}
+
+fn parse_current_header_phenotype_compute_group_mode(
+    group_mode: &str,
+) -> Result<g_plan::PhenotypeComputeGroupMode, OutputWriterError> {
+    serde_json::from_value(Value::String(group_mode.to_string()))
+        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid phenotype compute group mode: {error}")))
+}
+
+fn parse_current_header_multi_phenotype_sample_mode(
+    sample_mode: &str,
+) -> Result<g_plan::MultiPhenotypeSampleMode, OutputWriterError> {
+    serde_json::from_value(Value::String(sample_mode.to_string())).map_err(|error| {
+        OutputWriterError::InvalidInput(format!("Invalid phenotype compute group sample mode: {error}"))
+    })
 }
 
 pub fn build_prepared_run_manifest_header_json(
@@ -1399,7 +1464,10 @@ mod tests {
             score_dtype: "float32".to_string(),
             firth_dtype: "float64".to_string(),
             multi_phenotype_sample_mode: "single-phenotype".to_string(),
-            phenotype_compute_group_id: None,
+            phenotype_compute_group_mode: None,
+            phenotype_compute_group_indices: None,
+            phenotype_compute_group_names: None,
+            phenotype_compute_group_sample_mode: None,
             sample_set_fingerprint: None,
             covariate_design_fingerprint: None,
             prediction_alignment_fingerprint: None,

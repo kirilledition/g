@@ -1,4 +1,4 @@
-//! Deterministic host-side planning policy shared through the Python boundary.
+//! Deterministic host-side planning policy.
 
 #![allow(clippy::missing_errors_doc)]
 
@@ -8,85 +8,16 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-const ASSOCIATION_BACKEND_JAX_DOSAGE: &str = "jax_dosage";
-const ASSOCIATION_BACKEND_JAX_PACKED8: &str = "jax_packed8";
-const ASSOCIATION_MODE_REGENIE2_BINARY: &str = "regenie2_binary";
-const ASSOCIATION_MODE_REGENIE2_LINEAR: &str = "regenie2_linear";
-const BINARY_FALLBACK_METHOD_FIRTH_APPROXIMATE: &str = "firth_approximate";
-const BINARY_FALLBACK_METHOD_SCORE_ONLY: &str = "score_only";
-const GPU_GENOTYPE_FORMAT_DOSAGE: &str = "dosage";
-const GPU_GENOTYPE_FORMAT_PACKED8: &str = "packed8";
-const MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE: &str = "complete-case";
-const MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE: &str = "per-phenotype";
-const PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE: &str = "complete-case";
-const PHENOTYPE_COMPUTE_GROUP_MODE_PER_PHENOTYPE_COMPATIBLE: &str = "per-phenotype-compatible";
-const PHENOTYPE_COMPUTE_GROUP_MODE_SINGLE_PHENOTYPE: &str = "single-phenotype";
+use crate::request::{
+    BinaryFallbackMethod, CorrectionPlan, MultiPhenotypeSampleMode, PhenotypeComputeGroup, PhenotypeComputeGroupMode,
+};
+
 const PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH: usize = 80;
-const REGENIE_TRAIT_TYPE_BINARY: &str = "binary";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HostPolicyError {
     NotImplemented(String),
     Value(String),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct AssociationBackendPlanPayload {
-    pub backend_kind: &'static str,
-    pub association_mode: String,
-    pub jax_device: String,
-    pub genotype_format: String,
-    pub uses_variant_major_packed8_delivery: bool,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct BinaryCorrectionPlanPayload {
-    pub method: &'static str,
-    pub p_threshold: f64,
-    pub firth_se: bool,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct PhenotypeComputeGroupPayload {
-    pub group_mode: &'static str,
-    pub phenotype_indices: Vec<i64>,
-    pub phenotype_names: Vec<String>,
-    pub sample_mode: &'static str,
-    pub sample_set_fingerprint: Option<String>,
-    pub covariate_design_fingerprint: Option<String>,
-    pub prediction_alignment_fingerprint: Option<String>,
-}
-
-pub fn plan_association_backend(
-    association_mode: &str,
-    jax_device: &str,
-    gpu_genotype_format: &str,
-) -> Result<AssociationBackendPlanPayload, HostPolicyError> {
-    let (backend_kind, uses_variant_major_packed8_delivery) = match gpu_genotype_format {
-        GPU_GENOTYPE_FORMAT_DOSAGE => (ASSOCIATION_BACKEND_JAX_DOSAGE, false),
-        GPU_GENOTYPE_FORMAT_PACKED8 => (ASSOCIATION_BACKEND_JAX_PACKED8, true),
-        _ => {
-            return Err(HostPolicyError::Value(
-                "gpu_genotype_format must be resolved to dosage or packed8 before backend planning.".to_string(),
-            ));
-        }
-    };
-    Ok(AssociationBackendPlanPayload {
-        backend_kind,
-        association_mode: association_mode.to_string(),
-        jax_device: jax_device.to_string(),
-        genotype_format: gpu_genotype_format.to_string(),
-        uses_variant_major_packed8_delivery,
-    })
-}
-
-#[must_use]
-pub fn resolve_association_mode(trait_type: &str) -> &'static str {
-    if trait_type == REGENIE_TRAIT_TYPE_BINARY {
-        ASSOCIATION_MODE_REGENIE2_BINARY
-    } else {
-        ASSOCIATION_MODE_REGENIE2_LINEAR
-    }
 }
 
 #[allow(clippy::fn_params_excessive_bools)]
@@ -96,7 +27,7 @@ pub fn normalize_binary_correction(
     spa: bool,
     p_threshold: f64,
     firth_se: bool,
-) -> Result<BinaryCorrectionPlanPayload, HostPolicyError> {
+) -> Result<CorrectionPlan, HostPolicyError> {
     if !(p_threshold > 0.0 && p_threshold < 1.0) {
         return Err(HostPolicyError::Value("pThresh must be in (0, 1).".to_string()));
     }
@@ -109,45 +40,41 @@ pub fn normalize_binary_correction(
         return Err(HostPolicyError::Value("--approx requires --firth.".to_string()));
     }
     if firth && approx {
-        return Ok(BinaryCorrectionPlanPayload {
-            method: BINARY_FALLBACK_METHOD_FIRTH_APPROXIMATE,
-            p_threshold,
-            firth_se,
-        });
+        return Ok(CorrectionPlan { method: BinaryFallbackMethod::FirthApproximate, p_threshold, firth_se });
     }
     if firth {
         return Err(HostPolicyError::NotImplemented(
             "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx.".to_string(),
         ));
     }
-    Ok(BinaryCorrectionPlanPayload { method: BINARY_FALLBACK_METHOD_SCORE_ONLY, p_threshold, firth_se: false })
+    Ok(CorrectionPlan { method: BinaryFallbackMethod::ScoreOnly, p_threshold, firth_se: false })
 }
 
 pub fn build_phenotype_compute_groups(
     phenotype_names: &[String],
-    multi_phenotype_sample_mode: &str,
-) -> Result<Vec<PhenotypeComputeGroupPayload>, HostPolicyError> {
+    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
+) -> Result<Vec<PhenotypeComputeGroup>, HostPolicyError> {
     if phenotype_names.is_empty() {
         return Err(HostPolicyError::Value("At least one phenotype is required for execution planning.".to_string()));
     }
     if phenotype_names.len() == 1 {
-        return Ok(vec![PhenotypeComputeGroupPayload {
-            group_mode: PHENOTYPE_COMPUTE_GROUP_MODE_SINGLE_PHENOTYPE,
+        return Ok(vec![PhenotypeComputeGroup {
+            group_mode: PhenotypeComputeGroupMode::SinglePhenotype,
             phenotype_indices: vec![0],
             phenotype_names: phenotype_names.to_vec(),
-            sample_mode: MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE,
+            sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
             sample_set_fingerprint: None,
             covariate_design_fingerprint: None,
             prediction_alignment_fingerprint: None,
         }]);
     }
-    let phenotype_indices = (0..phenotype_names.len()).map(phenotype_index_to_i64).collect::<Vec<_>>();
-    if multi_phenotype_sample_mode == MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE {
-        return Ok(vec![PhenotypeComputeGroupPayload {
-            group_mode: PHENOTYPE_COMPUTE_GROUP_MODE_COMPLETE_CASE,
+    let phenotype_indices = (0..phenotype_names.len()).map(phenotype_index_to_u32).collect::<Vec<_>>();
+    if multi_phenotype_sample_mode == MultiPhenotypeSampleMode::CompleteCase {
+        return Ok(vec![PhenotypeComputeGroup {
+            group_mode: PhenotypeComputeGroupMode::CompleteCase,
             phenotype_indices,
             phenotype_names: phenotype_names.to_vec(),
-            sample_mode: MULTI_PHENOTYPE_SAMPLE_MODE_COMPLETE_CASE,
+            sample_mode: MultiPhenotypeSampleMode::CompleteCase,
             sample_set_fingerprint: None,
             covariate_design_fingerprint: None,
             prediction_alignment_fingerprint: None,
@@ -156,11 +83,11 @@ pub fn build_phenotype_compute_groups(
     Ok(phenotype_names
         .iter()
         .enumerate()
-        .map(|(phenotype_index, phenotype_name)| PhenotypeComputeGroupPayload {
-            group_mode: PHENOTYPE_COMPUTE_GROUP_MODE_PER_PHENOTYPE_COMPATIBLE,
-            phenotype_indices: vec![phenotype_index_to_i64(phenotype_index)],
+        .map(|(phenotype_index, phenotype_name)| PhenotypeComputeGroup {
+            group_mode: PhenotypeComputeGroupMode::PerPhenotypeCompatible,
+            phenotype_indices: vec![phenotype_index_to_u32(phenotype_index)],
             phenotype_names: vec![phenotype_name.clone()],
-            sample_mode: MULTI_PHENOTYPE_SAMPLE_MODE_PER_PHENOTYPE,
+            sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
             sample_set_fingerprint: None,
             covariate_design_fingerprint: None,
             prediction_alignment_fingerprint: None,
@@ -168,8 +95,8 @@ pub fn build_phenotype_compute_groups(
         .collect())
 }
 
-fn phenotype_index_to_i64(phenotype_index: usize) -> i64 {
-    i64::try_from(phenotype_index).expect("phenotype count must fit in i64")
+fn phenotype_index_to_u32(phenotype_index: usize) -> u32 {
+    u32::try_from(phenotype_index).expect("phenotype count must fit in u32")
 }
 
 /// Build a deterministic identifier for one phenotype compute group.
@@ -178,29 +105,30 @@ fn phenotype_index_to_i64(phenotype_index: usize) -> i64 {
 ///
 /// Panics only if serializing the internally constructed JSON value fails.
 #[must_use]
-pub fn build_phenotype_compute_group_id(
-    group_mode: &str,
-    phenotype_indices: &[i64],
-    phenotype_names: &[String],
-    sample_mode: &str,
-    sample_set_fingerprint: Option<&str>,
-    covariate_design_fingerprint: Option<&str>,
-    prediction_alignment_fingerprint: Option<&str>,
-) -> String {
+pub fn build_phenotype_compute_group_id(phenotype_compute_group: &PhenotypeComputeGroup) -> String {
     let mut group_payload = BTreeMap::new();
-    group_payload.insert("covariate_design_fingerprint", optional_string_value(covariate_design_fingerprint));
-    group_payload.insert("group_mode", Value::String(group_mode.to_string()));
-    group_payload.insert("phenotype_indices", serde_json::json!(phenotype_indices));
-    group_payload.insert("phenotype_names", serde_json::json!(phenotype_names));
-    group_payload.insert("prediction_alignment_fingerprint", optional_string_value(prediction_alignment_fingerprint));
-    group_payload.insert("sample_mode", Value::String(sample_mode.to_string()));
-    group_payload.insert("sample_set_fingerprint", optional_string_value(sample_set_fingerprint));
+    group_payload.insert(
+        "covariate_design_fingerprint",
+        optional_string_value(phenotype_compute_group.covariate_design_fingerprint.as_deref()),
+    );
+    group_payload.insert("group_mode", Value::String(phenotype_compute_group.group_mode.as_str().to_string()));
+    group_payload.insert("phenotype_indices", serde_json::json!(&phenotype_compute_group.phenotype_indices));
+    group_payload.insert("phenotype_names", serde_json::json!(&phenotype_compute_group.phenotype_names));
+    group_payload.insert(
+        "prediction_alignment_fingerprint",
+        optional_string_value(phenotype_compute_group.prediction_alignment_fingerprint.as_deref()),
+    );
+    group_payload.insert("sample_mode", Value::String(phenotype_compute_group.sample_mode.as_str().to_string()));
+    group_payload.insert(
+        "sample_set_fingerprint",
+        optional_string_value(phenotype_compute_group.sample_set_fingerprint.as_deref()),
+    );
     let group_payload_bytes = serde_json::to_vec(&group_payload).expect("group payload serialization must succeed");
     finalize_sha256_hex(Sha256::digest(group_payload_bytes))
 }
 
 #[must_use]
-pub fn build_phenotype_output_directory_name(phenotype_index: i64, phenotype_name: &str) -> String {
+pub fn build_phenotype_output_directory_name(phenotype_index: u32, phenotype_name: &str) -> String {
     let mut sanitized_slug = String::new();
     let mut previous_character_was_replaced = false;
     for phenotype_character in phenotype_name.chars() {

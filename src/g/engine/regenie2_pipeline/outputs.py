@@ -18,11 +18,6 @@ type RunManifestHeaderInput = output.RunManifestHeaderInput
 type ManifestFileFingerprintCache = output.ManifestFileFingerprintCache
 type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
 
-SINGLE_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE
-PER_PHENOTYPE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.PER_PHENOTYPE
-COMPLETE_CASE_SAMPLE_MODE = output.MultiPhenotypeSampleMode.COMPLETE_CASE
-JAX_ENABLE_X64 = True
-
 
 def open_pipeline_bgen_engine(
     *,
@@ -49,59 +44,22 @@ def open_pipeline_bgen_engine(
         phenotype_name,
         phenotype_count,
     )
-    engine = native_dispatch_engine.build_bgen_run_engine(
+    engine = native_dispatch_engine.open_bgen_run_engine(
         genotype_source_config=context.genotype_source_config,
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-        trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
     )
+    if context.effective_trusted_no_missing_diploid:
+        native_dispatch_engine.validate_trusted_bgen_run_engine(
+            engine=engine,
+            genotype_source_config=context.genotype_source_config,
+            trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
+        )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder,
         "bgen_engine_open_index_setup",
         engine_start_time,
-    )
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
-        phenotype_count=phenotype_count,
-        phenotype_name=phenotype_name,
-        pipeline_label=pipeline_label,
-        sample_count=int(engine.sample_count),
-        variant_count=int(engine.variant_count),
-    )
-    _core.record_bgen_engine_opened_telemetry_event(
-        context.telemetry_session,
-        context.association_mode.value,
-        context.backend_plan.backend_kind.value,
-        int(engine.sample_count),
-        int(engine.variant_count),
-        phenotype_name,
-        phenotype_count,
-    )
-    return engine
-
-
-def use_prepared_pipeline_bgen_engine(
-    *,
-    context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
-    pipeline_label: str,
-    phenotype_name: str | None,
-    phenotype_count: int | None,
-) -> _core.Regenie2RunEngine:
-    """Reuse a prevalidated BGEN engine and emit shared telemetry."""
-    _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
-        phenotype_count=phenotype_count,
-        phenotype_name=phenotype_name,
-        pipeline_label=pipeline_label,
-    )
-    _core.record_association_backend_selected_telemetry_event(
-        context.telemetry_session,
-        context.association_mode.value,
-        context.backend_plan.backend_kind.value,
-        context.backend_plan.jax_device.value,
-        context.backend_plan.genotype_format.value,
-        phenotype_name,
-        phenotype_count,
     )
     _core.record_pipeline_bgen_engine_opened_diagnostic_event(
         phenotype_count=phenotype_count,
@@ -133,19 +91,6 @@ def build_pipeline_manifest_header(
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
 ) -> RunManifestHeaderInput:
     """Build the current manifest header for one output run."""
-    phenotype_compute_group_id = (
-        None
-        if phenotype_compute_group is None
-        else _core.build_phenotype_compute_group_id_value(
-            phenotype_compute_group.group_mode.value,
-            phenotype_compute_group.phenotype_indices,
-            phenotype_compute_group.phenotype_names,
-            phenotype_compute_group.sample_mode.value,
-            phenotype_compute_group.sample_set_fingerprint,
-            phenotype_compute_group.covariate_design_fingerprint,
-            phenotype_compute_group.prediction_alignment_fingerprint,
-        )
-    )
     return output.build_current_run_manifest_header(
         association_mode=context.association_mode,
         association_backend_kind=context.backend_plan.backend_kind,
@@ -171,14 +116,23 @@ def build_pipeline_manifest_header(
         bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
         trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
         jax_device=context.jax_device,
-        jax_enable_x64=JAX_ENABLE_X64,
+        jax_enable_x64=True,
         jax_matmul_precision=context.jax_matmul_precision,
         requested_gpu_genotype_format=context.requested_gpu_genotype_format,
         gpu_genotype_format=context.gpu_genotype_format,
         score_dtype=context.score_dtype,
         firth_dtype=context.firth_dtype,
         multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        phenotype_compute_group_id=phenotype_compute_group_id,
+        phenotype_compute_group_mode=None if phenotype_compute_group is None else phenotype_compute_group.group_mode,
+        phenotype_compute_group_indices=None
+        if phenotype_compute_group is None
+        else phenotype_compute_group.phenotype_indices,
+        phenotype_compute_group_names=None
+        if phenotype_compute_group is None
+        else phenotype_compute_group.phenotype_names,
+        phenotype_compute_group_sample_mode=None
+        if phenotype_compute_group is None
+        else phenotype_compute_group.sample_mode,
         sample_set_fingerprint=None
         if phenotype_compute_group is None
         else phenotype_compute_group.sample_set_fingerprint,

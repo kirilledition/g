@@ -242,10 +242,28 @@ def build_regenie_execution_plan_from_run_request(
 ) -> RegenieExecutionPlan:
     """Build a complete execution plan from a compiled native request."""
     association_mode = types.AssociationMode(run_request.association_mode)
-    output_plan = build_output_plan_from_run_request(run_request)
+    output_plan = OutputPlan(
+        output_prefix=Path(run_request.output_prefix),
+        output_run_root=Path(run_request.output_run_root),
+        resume=run_request.output_resume,
+        writer_settings=OutputWriterPlan(
+            finalize_parquet=run_request.output_finalize_parquet,
+            writer_thread_count=run_request.output_writer_thread_count,
+            writer_queue_depth=run_request.output_writer_queue_depth,
+            chunks_per_arrow_file=run_request.output_chunks_per_arrow_file,
+            arrow_compression=types.ArrowCompression(run_request.output_arrow_compression),
+            parquet_compression=types.ParquetCompression(run_request.output_parquet_compression),
+            output_format=types.OutputFormat(run_request.output_format),
+            output_statistic_dtype=types.FloatingPointDtype(run_request.output_statistic_dtype),
+        ),
+    )
     kernel_config = build_kernel_config_from_run_request(regenie_config, run_request)
     phenotype_run_plans = tuple(
-        adapt_phenotype_run_plan(phenotype_run_request) for phenotype_run_request in run_request.phenotype_runs
+        PhenotypeRunPlan(
+            phenotype_name=phenotype_run_request.phenotype_name,
+            output_directory_name=phenotype_run_request.output_directory_name,
+        )
+        for phenotype_run_request in run_request.phenotype_runs
     )
     return RegenieExecutionPlan(
         association_mode=association_mode,
@@ -261,29 +279,14 @@ def build_regenie_execution_plan_from_run_request(
         phenotype_compute_groups=tuple(
             adapt_phenotype_compute_group(group_plan) for group_plan in run_request.phenotype_compute_groups
         ),
-        binary_correction_plan=adapt_binary_correction_plan(run_request.correction),
+        binary_correction_plan=types.BinaryCorrectionPlan(
+            method=types.BinaryFallbackMethod(run_request.correction.method),
+            p_threshold=run_request.correction.p_threshold,
+            firth_se=run_request.correction.firth_se,
+        ),
         kernel_config=kernel_config,
         output_plan=output_plan,
         stage_timings_json=optional_path_from_request(run_request.stage_timings_json),
-    )
-
-
-def build_output_plan_from_run_request(run_request: _core.NativeRunRequest) -> OutputPlan:
-    """Adapt the native output writer plan into the existing Python dataclass."""
-    return OutputPlan(
-        output_prefix=Path(run_request.output_prefix),
-        output_run_root=Path(run_request.output_run_root),
-        resume=run_request.output_resume,
-        writer_settings=OutputWriterPlan(
-            finalize_parquet=run_request.output_finalize_parquet,
-            writer_thread_count=run_request.output_writer_thread_count,
-            writer_queue_depth=run_request.output_writer_queue_depth,
-            chunks_per_arrow_file=run_request.output_chunks_per_arrow_file,
-            arrow_compression=types.ArrowCompression(run_request.output_arrow_compression),
-            parquet_compression=types.ParquetCompression(run_request.output_parquet_compression),
-            output_format=types.OutputFormat(run_request.output_format),
-            output_statistic_dtype=types.FloatingPointDtype(run_request.output_statistic_dtype),
-        ),
     )
 
 
@@ -324,15 +327,6 @@ def build_kernel_config_from_run_request(
     )
 
 
-def adapt_binary_correction_plan(correction_plan: _core.NativeBinaryCorrectionPlan) -> types.BinaryCorrectionPlan:
-    """Adapt native correction plan to the existing Python correction plan."""
-    return types.BinaryCorrectionPlan(
-        method=types.BinaryFallbackMethod(correction_plan.method),
-        p_threshold=correction_plan.p_threshold,
-        firth_se=correction_plan.firth_se,
-    )
-
-
 def build_phenotype_compute_groups(
     *,
     phenotype_names: tuple[str, ...],
@@ -345,14 +339,6 @@ def build_phenotype_compute_groups(
             phenotype_names,
             multi_phenotype_sample_mode.value,
         )
-    )
-
-
-def adapt_phenotype_run_plan(phenotype_run_plan: _core.NativePhenotypeRunPlan) -> PhenotypeRunPlan:
-    """Adapt a native phenotype-run plan to the Python execution-plan shape."""
-    return PhenotypeRunPlan(
-        phenotype_name=phenotype_run_plan.phenotype_name,
-        output_directory_name=phenotype_run_plan.output_directory_name,
     )
 
 

@@ -100,8 +100,3 @@ def shutdown_signal_from_native_signal(native_signal: _core.NativeShutdownSignal
         name=native_signal.name,
         exit_code=native_signal.exit_code,
     )
-
-
-def install_graceful_shutdown_handlers() -> GracefulShutdownController:
-    """Create a controller that installs default graceful shutdown handlers."""
-    return GracefulShutdownController(handled_signals=None)

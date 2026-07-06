@@ -112,31 +112,6 @@ def build_resolution_from_native_plan(
     )
 
 
-def validate_auto_packed8_bgen_engine(
-    *,
-    genotype_source_config: execution_plan.GenotypeSourceConfig,
-    chunk_size: int,
-    variant_limit: int | None,
-    trusted_bgen_validation_mode: types.TrustedBgenValidationMode,
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-) -> _core.Regenie2RunEngine:
-    """Open and validate the trusted BGEN engine required for packed8 delivery."""
-    engine_start_time = time.perf_counter()
-    engine = native_dispatch_engine.open_bgen_run_engine(
-        genotype_source_config=genotype_source_config,
-        chunk_size=chunk_size,
-        variant_limit=variant_limit,
-        trusted_no_missing_diploid=True,
-    )
-    native_dispatch_engine.validate_trusted_bgen_run_engine(
-        engine=engine,
-        genotype_source_config=genotype_source_config,
-        trusted_bgen_validation_mode=trusted_bgen_validation_mode,
-    )
-    engine_timing.record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
-    return engine
-
-
 def resolve_single_trait_binary_gpu_genotype_format(
     *,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
@@ -175,12 +150,22 @@ def resolve_single_trait_binary_gpu_genotype_format(
         )
 
     try:
-        prepared_engine = validate_auto_packed8_bgen_engine(
+        engine_start_time = time.perf_counter()
+        prepared_engine = native_dispatch_engine.open_bgen_run_engine(
             genotype_source_config=genotype_source_config,
             chunk_size=chunk_size,
             variant_limit=variant_limit,
+            trusted_no_missing_diploid=True,
+        )
+        native_dispatch_engine.validate_trusted_bgen_run_engine(
+            engine=prepared_engine,
+            genotype_source_config=genotype_source_config,
             trusted_bgen_validation_mode=trusted_bgen_validation_mode,
-            stage_timing_recorder=stage_timing_recorder,
+        )
+        engine_timing.record_stage_duration(
+            stage_timing_recorder,
+            "bgen_engine_open_index_setup",
+            engine_start_time,
         )
     except ValueError as error:
         native_resolution_plan = _core.plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(

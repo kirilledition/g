@@ -13,10 +13,11 @@ import g.engine.callbacks.shared as callback_shared
 from g import _core, types
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
-from g.engine.native_dispatch import loaders as native_dispatch_loaders
+from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import models as native_dispatch_models
 from g.engine.regenie2_pipeline import context as pipeline_context
 from g.engine.regenie2_pipeline import multi_group, outputs
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -47,18 +48,69 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         phenotype_count=len(phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    grouped_run_inputs = native_dispatch_loaders.load_native_bgen_grouped_run_inputs(
-        genotype_source_config=context.genotype_source_config,
-        engine=engine,
-        phenotype_path=context.phenotype_path,
-        phenotype_names=phenotype_names,
-        prediction_list_path=context.prediction_list_path,
-        covariate_path=context.covariate_path,
-        covariate_names=covariate_names,
-        is_binary_trait=context.is_binary_trait,
-        alignment_config=context.alignment_config,
-        planned_compute_groups=context.phenotype_compute_groups,
+    sample_path = context.genotype_source_config.sample_path
+    native_grouped_aligned_sample_data = engine.align_grouped_sample_data(
+        str(sample_path) if sample_path is not None else None,
+        str(context.phenotype_path),
+        list(phenotype_names),
+        str(context.covariate_path) if context.covariate_path is not None else None,
+        list(covariate_names) if covariate_names is not None else None,
+        context.is_binary_trait,
+        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
     )
+    prediction_sources = _core.MultiRegeniePredictionSource.from_native_grouped_aligned_sample_data(
+        str(context.prediction_list_path),
+        native_grouped_aligned_sample_data,
+        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+    )
+    if len(native_grouped_aligned_sample_data.groups) != len(prediction_sources):
+        message = (
+            "Grouped prediction source count does not match grouped aligned sample data count: "
+            f"{len(prediction_sources)} prediction source(s), "
+            f"{len(native_grouped_aligned_sample_data.groups)} aligned group(s)."
+        )
+        raise ValueError(message)
+    planned_names_by_index: dict[int, str] = {}
+    if context.phenotype_compute_groups is not None:
+        for planned_compute_group in context.phenotype_compute_groups:
+            for phenotype_index, phenotype_name in zip(
+                planned_compute_group.phenotype_indices,
+                planned_compute_group.phenotype_names,
+                strict=True,
+            ):
+                planned_names_by_index[phenotype_index] = phenotype_name
+    grouped_run_inputs_list: list[native_dispatch_models.NativeBgenGroupedRunInput] = []
+    for native_group, prediction_source in zip(
+        native_grouped_aligned_sample_data.groups,
+        prediction_sources,
+        strict=True,
+    ):
+        phenotype_indices = tuple(int(phenotype_index) for phenotype_index in native_group.phenotype_indices)
+        run_input = native_dispatch_models.build_native_bgen_multi_run_input(native_group.aligned_sample_data)
+        if planned_names_by_index:
+            group_phenotype_names = tuple(
+                planned_names_by_index[phenotype_index] for phenotype_index in phenotype_indices
+            )
+        else:
+            group_phenotype_names = run_input.phenotype_names
+        compute_group = native_dispatch_groups.adapt_native_phenotype_compute_group(
+            _core.resolve_per_phenotype_compute_group(
+                run_input.native_multi_aligned_sample_data,
+                list(phenotype_indices),
+                list(group_phenotype_names),
+                str(context.prediction_list_path),
+                native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+            )
+        )
+        grouped_run_inputs_list.append(
+            native_dispatch_models.NativeBgenGroupedRunInput(
+                compute_group=compute_group,
+                phenotype_indices=compute_group.phenotype_indices,
+                run_input=run_input,
+                prediction_source=prediction_source,
+            )
+        )
+    grouped_run_inputs = tuple(grouped_run_inputs_list)
     engine_timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
@@ -141,7 +193,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
+            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for phenotype_index, final_parquet_path in zip(
             compute_group.phenotype_indices,
@@ -175,7 +227,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
                     covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
                     sample_count=int(run_input.sample_indices.shape[0]),
                     variant_count=int(engine.variant_count),
-                    multi_phenotype_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
+                    multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
                     phenotype_compute_group=compute_group,
                 )
             )
@@ -280,7 +332,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=outputs.PER_PHENOTYPE_SAMPLE_MODE,
+            output_sample_mode=output.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for grouped_run_input in grouped_run_inputs
     )

@@ -37,6 +37,31 @@ class AssociationBackendPlan:
     uses_variant_major_packed8_delivery: bool
 
 
+def build_association_backend_plan(
+    *,
+    association_mode: types.AssociationMode,
+    jax_device: types.Device,
+    gpu_genotype_format: types.GpuGenotypeFormat,
+) -> AssociationBackendPlan:
+    """Resolve the concrete association backend for an already-resolved genotype format."""
+    if gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE:
+        backend_kind = types.AssociationBackendKind.JAX_DOSAGE
+        uses_variant_major_packed8_delivery = False
+    elif gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
+        backend_kind = types.AssociationBackendKind.JAX_PACKED8
+        uses_variant_major_packed8_delivery = True
+    else:
+        message = "gpu_genotype_format must be resolved to dosage or packed8 before backend planning."
+        raise ValueError(message)
+    return AssociationBackendPlan(
+        backend_kind=backend_kind,
+        association_mode=association_mode,
+        jax_device=jax_device,
+        genotype_format=gpu_genotype_format,
+        uses_variant_major_packed8_delivery=uses_variant_major_packed8_delivery,
+    )
+
+
 @dataclass(frozen=True)
 class Regenie2PipelineContext:
     """Resolved lifecycle settings shared by REGENIE step 2 pipelines.
@@ -180,17 +205,10 @@ def build_regenie2_pipeline_context(
         )
     else:
         resolved_stage_timing_recorder = stage_timing_recorder
-    native_backend_plan = _core.plan_association_backend(
-        association_mode.value,
-        jax_device.value,
-        gpu_genotype_format.value,
-    )
-    backend_plan = AssociationBackendPlan(
-        backend_kind=types.AssociationBackendKind(native_backend_plan.backend_kind),
-        association_mode=types.AssociationMode(native_backend_plan.association_mode),
-        jax_device=types.Device(native_backend_plan.jax_device),
-        genotype_format=types.GpuGenotypeFormat(native_backend_plan.genotype_format),
-        uses_variant_major_packed8_delivery=native_backend_plan.uses_variant_major_packed8_delivery,
+    backend_plan = build_association_backend_plan(
+        association_mode=association_mode,
+        jax_device=jax_device,
+        gpu_genotype_format=gpu_genotype_format,
     )
     return Regenie2PipelineContext(
         association_mode=association_mode,

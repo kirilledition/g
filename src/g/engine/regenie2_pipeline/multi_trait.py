@@ -17,6 +17,7 @@ from g.engine.regenie2_pipeline import (
     outputs,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -185,5 +186,5 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
         null_logistic_nonconvergence_policy=request.null_logistic_nonconvergence_policy,
-        output_sample_mode=outputs.COMPLETE_CASE_SAMPLE_MODE,
+        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )

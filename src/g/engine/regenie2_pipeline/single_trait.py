@@ -19,6 +19,7 @@ from g.engine.regenie2_pipeline import (
     preflight,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
+from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -173,12 +174,36 @@ def run_single_trait_bgen_pipeline(
             phenotype_count=None,
         )
     else:
-        engine = outputs.use_prepared_pipeline_bgen_engine(
-            context=context,
-            engine=prepared_engine,
-            pipeline_label=pipeline_label,
-            phenotype_name=phenotype_name,
+        engine = prepared_engine
+        _core.record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
             phenotype_count=None,
+            phenotype_name=phenotype_name,
+            pipeline_label=pipeline_label,
+        )
+        _core.record_association_backend_selected_telemetry_event(
+            context.telemetry_session,
+            context.association_mode.value,
+            context.backend_plan.backend_kind.value,
+            context.backend_plan.jax_device.value,
+            context.backend_plan.genotype_format.value,
+            phenotype_name,
+            None,
+        )
+        _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+            phenotype_count=None,
+            phenotype_name=phenotype_name,
+            pipeline_label=pipeline_label,
+            sample_count=int(engine.sample_count),
+            variant_count=int(engine.variant_count),
+        )
+        _core.record_bgen_engine_opened_telemetry_event(
+            context.telemetry_session,
+            context.association_mode.value,
+            context.backend_plan.backend_kind.value,
+            int(engine.sample_count),
+            int(engine.variant_count),
+            phenotype_name,
+            None,
         )
     run_input = load_single_trait_run_input(
         context=context,
@@ -215,7 +240,7 @@ def run_single_trait_bgen_pipeline(
         covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
-        multi_phenotype_sample_mode=outputs.SINGLE_PHENOTYPE_SAMPLE_MODE,
+        multi_phenotype_sample_mode=output.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
         phenotype_compute_group=resolved_compute_group,
     )
     initialized_outputs = outputs.initialize_pipeline_output_runs(
