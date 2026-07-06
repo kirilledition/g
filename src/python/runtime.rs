@@ -4,10 +4,9 @@ use pyo3::types::{PyAny, PyModule, PyTuple};
 
 use g_runtime as native_runtime;
 use g_runtime::{
-    CLI_RUNTIME_FAILURE_EXIT_CODE, CliRunLifecycleState, CliTelemetryCloseFailurePlan, CliTerminalResult,
-    NATIVE_CLI_OUTPUT_LOG_LIMIT,
     plan_cli_run_failed_telemetry_emission as native_plan_cli_run_failed_telemetry_emission,
-    plan_cli_telemetry_close_failure as native_plan_cli_telemetry_close_failure,
+    plan_cli_telemetry_close_failure as native_plan_cli_telemetry_close_failure, CliRunLifecycleState,
+    CliTelemetryCloseFailurePlan, CliTerminalResult, CLI_RUNTIME_FAILURE_EXIT_CODE, NATIVE_CLI_OUTPUT_LOG_LIMIT,
 };
 
 use super::run_events;
@@ -130,6 +129,7 @@ impl NativeCliRunLifecycleState {
     }
 
     #[allow(clippy::missing_errors_doc)]
+    #[allow(clippy::unused_self)]
     fn finish_telemetry_result<'py>(
         &self,
         py: Python<'py>,
@@ -210,7 +210,7 @@ fn telemetry_close_failure_result(
         return Ok(NativeCliTerminalResult::new(CliTerminalResult::empty(close_failure_plan.exit_code)));
     }
     let error_value = error.value(py);
-    let failed_event = run_events::run_failed_event_payload_from_error(&error_value)?;
+    let failed_event = run_events::run_failed_event_payload_from_error(error_value)?;
     Ok(NativeCliTerminalResult::new(CliTerminalResult::new(
         close_failure_plan.exit_code,
         Vec::new(),
