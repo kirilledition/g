@@ -6,7 +6,7 @@ Genotype source contracts, BGEN reader core, chunk planning, and genotype prepro
 
 ## Public types
 
-BGEN reader/error/profile types, chunk specs/stats, variant metadata columns, and genotype reader trait.
+BGEN reader/error/profile types, `GenotypeError`/`GenotypeResult`, chunk specs/stats, variant metadata columns, and genotype reader trait.
 
 ## Public functions
 

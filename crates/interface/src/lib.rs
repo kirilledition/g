@@ -13,8 +13,7 @@ mod toml;
 mod validation;
 
 pub use api::*;
-pub use error::ConfigError;
-pub(crate) use error::ConfigResult;
+pub use error::{ConfigError, ConfigResult};
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");
 const OPTION_SCHEMA_VERSION: i64 = 2;

@@ -51,7 +51,7 @@ environment that will run the scan:
 ```bash
 uv run g --help
 uv run g regenie --help
-uv run python -c "from g import api; print(api.__name__)"
+uv run python -c "import g; print(g.__name__)"
 ```
 
 ## CPU Install From Source

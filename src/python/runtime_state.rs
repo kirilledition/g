@@ -9,7 +9,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use g_genotype::set_bgen_decode_tile_variant_count;
-use g_runtime as native_rayon_runtime;
 use g_runtime as native_runtime_paths;
 use g_runtime as native_runtime_policy;
 use g_runtime as native_runtime_state;
@@ -442,7 +441,7 @@ impl NativeRuntimeState {
         let plan = self
             .lock_state()?
             .configure_rayon_thread_pool(thread_count)
-            .map_err(|error| rayon_thread_pool_configuration_error_to_py(&error))?;
+            .map_err(|error| errors::convert_rayon_thread_pool_configuration_error(&error))?;
         Ok(Some(NativeRayonThreadPoolConfigurationPlan { inner: plan }))
     }
 
@@ -521,22 +520,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRuntimePolicy>()?;
     module.add_class::<NativeRuntimeState>()?;
     Ok(())
-}
-
-fn rayon_thread_pool_configuration_error_to_py(
-    error: &native_runtime_state::RayonThreadPoolConfigurationError,
-) -> PyErr {
-    let message = error.to_string();
-    match error {
-        native_runtime_state::RayonThreadPoolConfigurationError::RuntimeConfiguration {
-            source: native_rayon_runtime::RayonRuntimeError::InvalidThreadCount,
-            ..
-        } => PyValueError::new_err(message),
-        native_runtime_state::RayonThreadPoolConfigurationError::RuntimeCompatibility(_)
-        | native_runtime_state::RayonThreadPoolConfigurationError::RuntimeConfiguration { .. } => {
-            PyRuntimeError::new_err(message)
-        }
-    }
 }
 
 fn non_negative_i64_to_usize(value: i64, field_name: &str) -> PyResult<usize> {

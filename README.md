@@ -69,7 +69,6 @@ User-facing behavior lives under `documentation/public/`:
 - [Input files](documentation/public/input-files.md)
 - [Output files](documentation/public/output-files.md)
 - [Resume and manifests](documentation/public/resume-and-manifest.md)
-- [Python API](documentation/public/api-python.md)
 - [Performance guide](documentation/public/performance-guide.md)
 - [Troubleshooting](documentation/public/troubleshooting.md)
 

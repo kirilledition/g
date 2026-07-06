@@ -25,13 +25,6 @@ class AssociationBackendKind(enum.StrEnum):
     JAX_PACKED8 = "jax_packed8"
 
 
-class ResumeMode(enum.StrEnum):
-    """Resume validation mode."""
-
-    FAST = "fast"
-    STRICT = "strict"
-
-
 class OutputFormat(enum.StrEnum):
     """User-facing output materialization format."""
 
@@ -163,8 +156,9 @@ class SampleKeyMode(enum.StrEnum):
 
 
 class MultiPhenotypeSampleMode(enum.StrEnum):
-    """Sample handling for requests containing multiple phenotypes."""
+    """Sample handling for phenotype output and compute groups."""
 
+    SINGLE_PHENOTYPE = "single-phenotype"
     PER_PHENOTYPE = "per-phenotype"
     COMPLETE_CASE = "complete-case"
 

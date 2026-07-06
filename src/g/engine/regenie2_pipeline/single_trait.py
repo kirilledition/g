@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import typing
 
-from g import _core, execution_plan, io, types
+from g import _core, execution_plan, types
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import groups as native_dispatch_groups
@@ -240,7 +240,7 @@ def run_single_trait_bgen_pipeline(
         covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         variant_count=int(engine.variant_count),
-        multi_phenotype_sample_mode=io.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
         phenotype_compute_group=resolved_compute_group,
     )
     initialized_outputs = outputs.initialize_pipeline_output_runs(

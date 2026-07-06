@@ -5,9 +5,9 @@
 | Pre-release draft | main branch as of 2026-07-01 public docs | Public user docs |
 
 `g` is a pre-release GWAS engine focused on BGEN-backed REGENIE Step 2
-association scans. It exposes a REGENIE-style CLI, TOML configuration, and a
-Python API while using Rust for native file handling and JAX for quantitative
-and binary association kernels.
+association scans. It exposes a REGENIE-style CLI and TOML configuration while
+using Rust for native file handling and JAX for quantitative and binary
+association kernels.
 
 `g` does not implement REGENIE Step 1. Use upstream `regenie` to produce Step 1
 prediction lists, then use `g` for Step 2 scans.
@@ -36,7 +36,6 @@ prediction lists, then use `g` for Step 2 scans.
 | Genotype, sample, phenotype, covariate, and prediction files | [Input Files](input-files.md) |
 | Run directories, output formats, schema, and telemetry files | [Output Files](output-files.md) |
 | Resume modes, manifest compatibility, and graceful interruption | [Resume and Manifest](resume-and-manifest.md) |
-| Public Python wrapper | [Python API](api-python.md) |
 | Statistical models and result interpretation | [Algorithm](algorithm.md) |
 | GPU, cluster, and SLURM operation | [GPU and Clusters](gpu-and-clusters.md) |
 | Performance tuning and measurement | [Performance Guide](performance-guide.md) |

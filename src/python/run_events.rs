@@ -7,7 +7,7 @@ use pyo3::types::{PyDict, PyModule, PyTuple};
 use g_engine as native_schedule;
 use g_runtime as native_run_events;
 
-use super::{logging, schedule};
+use super::{errors, logging, schedule};
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -64,7 +64,7 @@ impl NativeRunInterruptedEvent {
 }
 
 impl NativeRunFailedEvent {
-    fn new(data: native_run_events::RunFailedEventPayload) -> Self {
+    pub(crate) fn new(data: native_run_events::RunFailedEventPayload) -> Self {
         Self { data }
     }
 }
@@ -451,7 +451,7 @@ pub fn plan_gpu_genotype_format_auto_to_dosage_and_record_events(
 ) -> PyResult<schedule::NativeGpuGenotypeFormatResolutionPlan> {
     let native_resolution_plan =
         native_schedule::plan_gpu_genotype_format_auto_to_dosage(&requested_gpu_genotype_format, &resolution_reason)
-            .map_err(|error| schedule::schedule_error_to_py(&error))?;
+            .map_err(|error| errors::convert_schedule_error(&error))?;
     record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
     Ok(native_resolution_plan.into())
 }
@@ -473,7 +473,7 @@ pub fn plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events
         resume,
         &jax_device,
     )
-    .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    .map_err(|error| errors::convert_schedule_error(&error))?;
     record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
     Ok(native_resolution_plan.into())
 }
@@ -1301,7 +1301,7 @@ pub(crate) fn run_completed_event_from_py(
     })
 }
 
-fn run_interrupted_event_payload_from_shutdown_request(
+pub(crate) fn run_interrupted_event_payload_from_shutdown_request(
     shutdown_request: &Bound<'_, PyAny>,
 ) -> PyResult<native_run_events::RunInterruptedEventPayload> {
     let shutdown_signal = shutdown_request.getattr("shutdown_signal")?;
@@ -1314,7 +1314,9 @@ fn run_interrupted_event_payload_from_shutdown_request(
     ))
 }
 
-fn run_failed_event_payload_from_error(error: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunFailedEventPayload> {
+pub(crate) fn run_failed_event_payload_from_error(
+    error: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunFailedEventPayload> {
     let error_type = error.get_type().name()?.to_string_lossy().into_owned();
     let error_message = error.str()?.to_string_lossy().into_owned();
     Ok(native_run_events::build_run_failed_event_payload(&error_type, &error_message))
@@ -1338,7 +1340,9 @@ pub(crate) fn run_failed_event_from_py(event: &Bound<'_, PyAny>) -> PyResult<nat
     })
 }
 
-fn run_artifacts_payload_from_py(artifacts: &Bound<'_, PyAny>) -> PyResult<native_run_events::RunArtifactsPayload> {
+pub(crate) fn run_artifacts_payload_from_py(
+    artifacts: &Bound<'_, PyAny>,
+) -> PyResult<native_run_events::RunArtifactsPayload> {
     let phenotype_artifacts = artifacts.getattr("phenotype_artifacts")?;
     let mut artifact_payloads = Vec::new();
     for phenotype_artifact in phenotype_artifacts.try_iter()? {
@@ -1378,7 +1382,7 @@ fn artifact_payload_from_py(artifact: &Bound<'_, PyAny>) -> PyResult<native_run_
     })
 }
 
-fn emit_run_diagnostic_event_payload(event: &native_run_events::RunDiagnosticEventPayload) -> PyResult<()> {
+pub(crate) fn emit_run_diagnostic_event_payload(event: &native_run_events::RunDiagnosticEventPayload) -> PyResult<()> {
     let fields_json = native_run_events::serialize_run_diagnostic_fields_json(&event.fields).map_err(|error| {
         pyo3::exceptions::PyValueError::new_err(format!("Failed to serialize diagnostic event fields: {error}"))
     })?;

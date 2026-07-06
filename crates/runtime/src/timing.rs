@@ -7,23 +7,18 @@ use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Serializer};
 
+mod queue_backpressure;
+mod transfer_metadata;
+
+pub use queue_backpressure::{QueueBackpressureAccumulator, QueueBackpressureKey, QueueBackpressureSnapshot};
+pub use transfer_metadata::{
+    TransferMetadataAccumulator, TransferMetadataError, TransferMetadataKey, TransferMetadataObservation,
+    TransferMetadataSnapshot, build_transfer_metadata_observation,
+};
+
 pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL: &str = "debug";
 pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME: &str = "runner_final_timing_outputs_write_started";
 pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE: &str = "Writing final timing outputs.";
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
-pub struct QueueBackpressureKey {
-    pub queue_name: String,
-    pub operation_name: String,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize)]
-pub struct TransferMetadataKey {
-    pub transfer_name: String,
-    pub array_role: String,
-    pub dtype_name: String,
-    pub dimension_count: i64,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NumericDiagnosticValue {
@@ -81,53 +76,6 @@ pub struct ChunkStageTiming {
     pub variant_count: i64,
     pub stage_name: String,
     pub duration_seconds: f64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct QueueBackpressureAccumulator {
-    pub observation_count: i64,
-    pub max_depth: i64,
-    pub max_capacity: i64,
-    pub total_elapsed_seconds: f64,
-    pub total_blocked_seconds: f64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct TransferMetadataAccumulator {
-    pub observation_count: i64,
-    pub total_bytes: i64,
-    pub max_bytes: i64,
-    pub total_elements: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TransferMetadataObservation {
-    pub key: TransferMetadataKey,
-    pub byte_count: i64,
-    pub element_count: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct QueueBackpressureSnapshot {
-    pub queue_name: String,
-    pub operation_name: String,
-    pub observation_count: i64,
-    pub max_depth: i64,
-    pub max_capacity: i64,
-    pub total_elapsed_seconds: f64,
-    pub total_blocked_seconds: f64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct TransferMetadataSnapshot {
-    pub transfer_name: String,
-    pub array_role: String,
-    pub dtype_name: String,
-    pub dimension_count: i64,
-    pub observation_count: i64,
-    pub total_bytes: i64,
-    pub max_bytes: i64,
-    pub total_elements: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -229,15 +177,6 @@ pub enum TimingFileError {
     WriteFile { path: PathBuf, source: std::io::Error },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TransferMetadataError {
-    NegativeDimension { dimension: i64 },
-    NonPositiveItemSize { item_size: i64 },
-    DimensionCountOverflow { dimension_count: usize },
-    ElementCountOverflow,
-    ByteCountOverflow,
-}
-
 impl fmt::Display for TimingFileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -260,26 +199,6 @@ impl Error for TimingFileError {
         }
     }
 }
-
-impl fmt::Display for TransferMetadataError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NegativeDimension { dimension } => {
-                write!(formatter, "Transfer metadata shape dimensions must be nonnegative: {dimension}")
-            }
-            Self::NonPositiveItemSize { item_size } => {
-                write!(formatter, "Transfer metadata dtype item size must be positive: {item_size}")
-            }
-            Self::DimensionCountOverflow { dimension_count } => {
-                write!(formatter, "Transfer metadata dimension count exceeds platform capacity: {dimension_count}")
-            }
-            Self::ElementCountOverflow => write!(formatter, "Transfer metadata element count exceeds i64 capacity."),
-            Self::ByteCountOverflow => write!(formatter, "Transfer metadata byte count exceeds i64 capacity."),
-        }
-    }
-}
-
-impl Error for TransferMetadataError {}
 
 #[must_use]
 pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
@@ -357,44 +276,6 @@ pub fn resolve_final_timing_output_context(
         run_id: None,
         force_stage_timing_recorder: false,
     }
-}
-
-/// Build one transfer metadata observation from array adapter fields.
-///
-/// # Errors
-///
-/// Returns an error when the dtype item size is non-positive, any dimension is
-/// negative, or the dimension/element/byte counts exceed `i64`.
-pub fn build_transfer_metadata_observation(
-    transfer_name: &str,
-    array_role: &str,
-    dtype_name: &str,
-    shape_dimensions: &[i64],
-    item_size: i64,
-) -> Result<TransferMetadataObservation, TransferMetadataError> {
-    if item_size <= 0 {
-        return Err(TransferMetadataError::NonPositiveItemSize { item_size });
-    }
-    let dimension_count = i64::try_from(shape_dimensions.len())
-        .map_err(|_| TransferMetadataError::DimensionCountOverflow { dimension_count: shape_dimensions.len() })?;
-    let mut element_count = 1_i64;
-    for dimension in shape_dimensions {
-        if *dimension < 0 {
-            return Err(TransferMetadataError::NegativeDimension { dimension: *dimension });
-        }
-        element_count = element_count.checked_mul(*dimension).ok_or(TransferMetadataError::ElementCountOverflow)?;
-    }
-    let byte_count = element_count.checked_mul(item_size).ok_or(TransferMetadataError::ByteCountOverflow)?;
-    Ok(TransferMetadataObservation {
-        key: TransferMetadataKey {
-            transfer_name: transfer_name.to_string(),
-            array_role: array_role.to_string(),
-            dtype_name: dtype_name.to_string(),
-            dimension_count,
-        },
-        byte_count,
-        element_count,
-    })
 }
 
 /// Write a stage timing snapshot payload as pretty JSON.

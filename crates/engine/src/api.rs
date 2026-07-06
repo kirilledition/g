@@ -17,10 +17,11 @@ pub use crate::callback_summary::{
     BinaryCorrectionSummaryState,
 };
 pub use crate::coordinator::{
-    EngineChromosomeRunInput, EngineChromosomeRunReport, EngineCoordinator, EngineError, EngineGroupChromosomeInput,
+    EngineChromosomeRunInput, EngineChromosomeRunReport, EngineCoordinator, EngineGroupChromosomeInput,
     EngineGroupRunInput, EngineGroupRunReport, EngineRunInput, EngineRunReport, InjectedCoordinatorFailure,
 };
 pub use crate::effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
+pub use crate::error::{EngineError, EngineResult};
 pub use crate::output_manifest::build_current_run_manifest_header_json_from_value_with_cache;
 pub use crate::phase::RunPhase;
 pub use crate::pipeline::Regenie2RunEngineCore;

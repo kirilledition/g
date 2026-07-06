@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import typing
 
-from g import _core, execution_plan, io
+from g import _core, execution_plan, io, types
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
@@ -16,7 +16,6 @@ if typing.TYPE_CHECKING:
 
 type RunManifestHeaderInput = io.RunManifestHeaderInput
 type ManifestFileFingerprintCache = io.ManifestFileFingerprintCache
-type MultiPhenotypeSampleMode = io.MultiPhenotypeSampleMode
 
 
 def open_pipeline_bgen_engine(
@@ -87,7 +86,7 @@ def build_pipeline_manifest_header(
     covariate_names: tuple[str, ...],
     sample_count: int,
     variant_count: int,
-    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
 ) -> RunManifestHeaderInput:
     """Build the current manifest header for one output run."""

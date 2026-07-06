@@ -11,12 +11,9 @@ from g.engine import dispatch_requests
 from g.engine import timing as engine_timing
 from g.runner import events, lifecycle, runtime
 
-if typing.TYPE_CHECKING:
-    from g import interface
-
 
 def regenie(
-    regenie_config: interface.RegenieConfig,
+    regenie_config: _core.RegenieConfig,
     *,
     run_telemetry_session: events.TelemetrySession | None,
     close_telemetry_session_on_exit: bool,
@@ -89,7 +86,7 @@ def association_mode_from_trait_type(trait_type: types.RegenieTraitType) -> type
 
 
 def run_validated_regenie_config(
-    regenie_config: interface.RegenieConfig,
+    regenie_config: _core.RegenieConfig,
     telemetry_session: events.TelemetrySession | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> events.RunArtifacts:

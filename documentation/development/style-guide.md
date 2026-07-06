@@ -44,11 +44,11 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
   * Not allowed: casual local imports to avoid circular dependencies.
   * Tests may use local imports when there is a concrete reason, such as optional dependencies or fixture isolation.
 * **Rule:** Relative imports are not allowed.
-* **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.  
-  * Good: `from g import api`; `api.ComputeConfig`  
-  * Good: `from g.io import output`; `output.OutputWriterSettings`
-  * Bad: `from g.api import ComputeConfig`  
-  * Bad: `from g.io.output import OutputWriterSettings`
+* **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.
+  * Good: `from g import types`; `types.Device`
+  * Good: `from g import io`; `io.MultiPhenotypeSampleMode`
+  * Bad: `from g.types import Device`
+  * Bad: `from g.io import MultiPhenotypeSampleMode`
 * **Rule:** Internal package initializers under `src/g/**/__init__.py` are package markers only. Do not define `__all__`, import/re-export submodules, assign aliases, or place helper functions there.
 * **Rule:** The top-level `src/g/__init__.py` may keep the lazy public entrypoint boundary required by the console script, but it must not define `__all__`.
 * Run `uv run python -m tooling.cli.debug tool.name=check_internal_init_exports` (or `just check-internal-init-exports`) before reviewing changes that touch package initializers.

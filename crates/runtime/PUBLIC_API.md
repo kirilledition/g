@@ -6,7 +6,7 @@ Process runtime policy, logging sinks, telemetry/session/event helpers, JAX runt
 
 ## Public types
 
-Runtime state/policy/session DTOs, telemetry envelopes/plans/writers/path errors, logging config, JAX setup reports,
+`RuntimeError`/`RuntimeResult`, runtime state/policy/session DTOs, telemetry envelopes/plans/writers/path errors, logging config, JAX setup reports,
 shutdown signal/session/install/restore plans and errors, timing recorders, and trusted-validation cache DTOs.
 
 ## Public functions

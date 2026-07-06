@@ -4,7 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::common::{ChunkSpec, GenotypeError};
+use crate::common::ChunkSpec;
+use crate::error::{GenotypeError, GenotypeResult};
 
 #[must_use]
 pub fn resolve_total_variant_count(variant_count: usize, variant_limit: Option<usize>) -> usize {
@@ -17,7 +18,7 @@ pub fn plan_chromosome_homogeneous_chunks(
     variant_limit: Option<usize>,
     chromosome_boundary_indices: &[usize],
     committed_chunk_identifiers: &BTreeSet<usize>,
-) -> Result<Vec<ChunkSpec>, GenotypeError> {
+) -> GenotypeResult<Vec<ChunkSpec>> {
     if chunk_size == 0 {
         return Err(GenotypeError::InvalidInput("Chunk size must be positive.".to_string()));
     }
@@ -46,7 +47,7 @@ pub fn plan_chromosome_homogeneous_chunks(
 fn normalize_chromosome_boundaries(
     chromosome_boundary_indices: &[usize],
     total_variant_count: usize,
-) -> Result<Vec<usize>, GenotypeError> {
+) -> GenotypeResult<Vec<usize>> {
     let mut boundaries = Vec::with_capacity(chromosome_boundary_indices.len().max(2) + 2);
     boundaries.push(0);
     for boundary_index in chromosome_boundary_indices {

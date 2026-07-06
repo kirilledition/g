@@ -36,7 +36,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: outputs.MultiPhenotypeSampleMode,
+    output_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
     """Prepare one compatible phenotype group for native BGEN delivery."""
     events.record_prediction_source_loaded_telemetry(
@@ -131,7 +131,7 @@ def run_prepared_multi_phenotype_bgen_group(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: outputs.MultiPhenotypeSampleMode,
+    output_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> tuple[Path | None, ...]:
     """Run one prepared compatible phenotype group through one BGEN pass."""
     prepared_delivery = prepare_multi_phenotype_bgen_group_delivery(

@@ -21,6 +21,7 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 use serde_json::json;
 
+use crate::error::OutputError;
 use crate::manifest;
 use crate::schema;
 use crate::schema::OutputStatisticDtype;
@@ -28,7 +29,6 @@ use crate::schema::OutputStatisticDtype;
 mod types;
 
 pub use types::OutputFileFormat;
-pub use types::OutputWriterError;
 pub(crate) use types::{
     RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, RegenieStep2ChunkWriteResult, RegenieStep2ChunkWriteTiming,
     RegenieStep2RecordBatchBuildTiming,
@@ -46,6 +46,8 @@ const CORRECTION_METHOD_SPA_KEY: u8 = 2;
 const CORRECTION_STATUS_SUCCESS_KEY: u8 = 0;
 const CORRECTION_STATUS_FAILED_KEY: u8 = 1;
 
+type OutputWriterResult<T> = Result<T, OutputError>;
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum RegenieStep2CorrectionArrayEncoding {
     String,
@@ -59,7 +61,7 @@ pub(crate) fn write_regenie_step2_chunk_job(
     output_statistic_dtype: OutputStatisticDtype,
     arrow_compression: &str,
     parquet_compression: &str,
-) -> Result<RegenieStep2ChunkWriteResult, String> {
+) -> OutputWriterResult<RegenieStep2ChunkWriteResult> {
     let total_start_time = Instant::now();
     let chunk_file_path = chunks_directory.join(&job.chunk_file_name);
     let temporary_chunk_file_path = match output_format {
@@ -67,12 +69,12 @@ pub(crate) fn write_regenie_step2_chunk_job(
         OutputFileFormat::Parquet => chunk_file_path.with_extension("parquet.tmp"),
         OutputFileFormat::Regenie => chunk_file_path.with_extension("regenie.tmp"),
     };
-    let chunk_count = u64::try_from(job.chunks.len()).map_err(|error| error.to_string())?;
+    let chunk_count = u64::try_from(job.chunks.len()).map_err(OutputError::runtime)?;
     let row_count = job
         .chunks
         .iter()
-        .map(|chunk_job| u64::try_from(chunk_job.chunk_handle.row_count()).map_err(|error| error.to_string()))
-        .sum::<Result<u64, String>>()?;
+        .map(|chunk_job| u64::try_from(chunk_job.chunk_handle.row_count()).map_err(OutputError::runtime))
+        .sum::<OutputWriterResult<u64>>()?;
     let compression = match output_format {
         OutputFileFormat::Arrow => arrow_compression,
         OutputFileFormat::Parquet => parquet_compression,
@@ -109,12 +111,12 @@ pub(crate) fn write_regenie_step2_chunk_job(
         record_batch_build_timing.schema_metadata_build_seconds + stream_write_result.record_batch_build_seconds;
     let arrow_file_write_timing = stream_write_result.arrow_file_write_timing;
     let arrow_file_rename_start_time = Instant::now();
-    std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary_chunk_file_path, &chunk_file_path).map_err(OutputError::runtime)?;
     let arrow_file_rename_seconds = arrow_file_rename_start_time.elapsed().as_secs_f64();
     if output_format == OutputFileFormat::Regenie {
         write_regenie_text_metadata_sidecar(&chunk_file_path, &chunk_commits)?;
     }
-    let arrow_file_bytes = std::fs::metadata(&chunk_file_path).map_err(|error| error.to_string())?.len();
+    let arrow_file_bytes = std::fs::metadata(&chunk_file_path).map_err(OutputError::runtime)?.len();
     let arrow_file_write_seconds = arrow_file_write_timing.total_seconds();
 
     Ok(RegenieStep2ChunkWriteResult {
@@ -148,11 +150,11 @@ fn build_run_manifest_chunk_commits(
     job: &RegenieStep2ChunkWriteBatch,
     output_format: OutputFileFormat,
     compression: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, String> {
+) -> OutputWriterResult<Vec<manifest::RunManifestChunkCommit>> {
     job.chunks
         .iter()
         .map(|chunk_job| {
-            let variant_stop_index = chunk_job.chunk_handle.variant_stop_index().map_err(|error| error.to_string())?;
+            let variant_stop_index = chunk_job.chunk_handle.variant_stop_index()?;
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
                 output_format: output_format.value().to_string(),
@@ -169,7 +171,7 @@ fn build_run_manifest_chunk_commits(
 fn build_regenie_step2_chunk_file_schema(
     chunk_commits: &[manifest::RunManifestChunkCommit],
     output_statistic_dtype: OutputStatisticDtype,
-) -> Result<Arc<Schema>, String> {
+) -> OutputWriterResult<Arc<Schema>> {
     let mut metadata = HashMap::new();
     metadata.insert(schema::CHUNK_COMMITS_METADATA_KEY.to_string(), build_chunk_commit_metadata_text(chunk_commits)?);
     Ok(Arc::new(
@@ -194,7 +196,7 @@ fn build_regenie_step2_parquet_record_batch_schema(chunk_schema: &Schema) -> Arc
     Arc::new(Schema::new_with_metadata(fields, chunk_schema.metadata().clone()))
 }
 
-fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkCommit]) -> Result<String, String> {
+fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkCommit]) -> OutputWriterResult<String> {
     let chunk_commit_values = chunk_commits
         .iter()
         .map(|chunk_commit| {
@@ -209,7 +211,7 @@ fn build_chunk_commit_metadata_text(chunk_commits: &[manifest::RunManifestChunkC
             })
         })
         .collect::<Vec<_>>();
-    serde_json::to_string(&chunk_commit_values).map_err(|error| error.to_string())
+    serde_json::to_string(&chunk_commit_values).map_err(OutputError::runtime)
 }
 
 pub(crate) fn build_chunk_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {
@@ -253,7 +255,7 @@ pub(crate) fn build_output_file_name(
 fn build_regenie_step2_record_batches(
     job: RegenieStep2ChunkWriteBatch,
     chunk_schema: Arc<Schema>,
-) -> Result<RegenieStep2RecordBatchBuildResult, String> {
+) -> OutputWriterResult<RegenieStep2RecordBatchBuildResult> {
     let mut timing = RegenieStep2RecordBatchBuildTiming::default();
     let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
     let record_batches = job
@@ -269,7 +271,7 @@ fn build_regenie_step2_record_batches(
             timing.add(record_batch_build_result.timing);
             Ok(record_batch_build_result.record_batch)
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<OutputWriterResult<Vec<_>>>()?;
     Ok(RegenieStep2RecordBatchBuildResult { record_batches, timing })
 }
 
@@ -332,7 +334,7 @@ impl RegenieStep2RecordBatchArrayCache {
         &mut self,
         cache_key: CorrectionDictionaryArrayCacheKey,
         dictionary_values: ArrayRef,
-    ) -> Result<ArrayRef, String> {
+    ) -> OutputWriterResult<ArrayRef> {
         if let Some(cached_array) = self.constant_correction_dictionary_arrays.get(&cache_key) {
             return Ok(Arc::clone(cached_array));
         }
@@ -348,7 +350,7 @@ fn build_regenie_step2_record_batch(
     chunk_schema: Arc<Schema>,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
     correction_array_encoding: RegenieStep2CorrectionArrayEncoding,
-) -> Result<RegenieStep2SingleRecordBatchBuildResult, String> {
+) -> OutputWriterResult<RegenieStep2SingleRecordBatchBuildResult> {
     let row_count = chunk_job.chunk_handle.row_count();
     let metadata_array_build_start_time = Instant::now();
     let cached_writer_arrays = chunk_job.chunk_handle.writer_arrays();
@@ -420,7 +422,7 @@ fn build_regenie_step2_record_batch(
         total.saturating_add(u64::try_from(column.get_array_memory_size()).unwrap_or(u64::MAX))
     });
     let record_batch_try_new_start_time = Instant::now();
-    let record_batch = RecordBatch::try_new(chunk_schema, columns).map_err(|error| error.to_string())?;
+    let record_batch = RecordBatch::try_new(chunk_schema, columns).map_err(OutputError::runtime)?;
     let record_batch_try_new_seconds = record_batch_try_new_start_time.elapsed().as_secs_f64();
     Ok(RegenieStep2SingleRecordBatchBuildResult {
         record_batch,
@@ -441,7 +443,7 @@ fn build_correction_method_dictionary_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> Result<ArrayRef, String> {
+) -> OutputWriterResult<ArrayRef> {
     build_correction_dictionary_array(
         extra_code,
         row_count,
@@ -462,7 +464,7 @@ fn build_correction_status_dictionary_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> Result<ArrayRef, String> {
+) -> OutputWriterResult<ArrayRef> {
     build_correction_dictionary_array(
         extra_code,
         row_count,
@@ -486,19 +488,20 @@ fn build_correction_dictionary_array(
     dictionary_values: ArrayRef,
     label_kind: &str,
     key_for_code: impl Fn(i32) -> Option<u8>,
-) -> Result<ArrayRef, String> {
+) -> OutputWriterResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
         return array_cache.constant_correction_dictionary_array(
             CorrectionDictionaryArrayCacheKey { row_count, dictionary_kind, dictionary_key: 0 },
             dictionary_values,
         );
     };
-    let extra_code_values = extra_code_array
-        .as_any()
-        .downcast_ref::<Int32Array>()
-        .ok_or_else(|| format!("REGENIE step 2 {label_kind} code must be an int32 array."))?;
+    let extra_code_values = extra_code_array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
+        OutputError::InvalidInput(format!("REGENIE step 2 {label_kind} code must be an int32 array."))
+    })?;
     if extra_code_values.len() != row_count {
-        return Err(format!("REGENIE step 2 {label_kind} row count does not match metadata row count."));
+        return Err(OutputError::InvalidInput(format!(
+            "REGENIE step 2 {label_kind} row count does not match metadata row count."
+        )));
     }
 
     let mut dictionary_keys = Vec::with_capacity(row_count);
@@ -509,8 +512,9 @@ fn build_correction_dictionary_array(
             0
         } else {
             let extra_code_value = extra_code_values.value(row_index);
-            key_for_code(extra_code_value)
-                .ok_or_else(|| format!("Unsupported REGENIE step 2 extra code: {extra_code_value}"))?
+            key_for_code(extra_code_value).ok_or_else(|| {
+                OutputError::InvalidInput(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}"))
+            })?
         };
         if let Some(previous_dictionary_key) = first_dictionary_key {
             all_keys_same &= previous_dictionary_key == dictionary_key;
@@ -541,11 +545,11 @@ fn build_correction_status_dictionary_values() -> ArrayRef {
     Arc::new(StringArray::from_iter_values(["success", "failed"]))
 }
 
-fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> Result<ArrayRef, String> {
+fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> OutputWriterResult<ArrayRef> {
     let key_array = UInt8Array::from(dictionary_keys);
     DictionaryArray::<UInt8Type>::try_new(key_array, dictionary_values)
         .map(|dictionary_array| Arc::new(dictionary_array) as ArrayRef)
-        .map_err(|error| error.to_string())
+        .map_err(OutputError::runtime)
 }
 
 struct RegenieStep2ArrowFileWriteTiming {
@@ -566,15 +570,15 @@ fn write_regenie_step2_chunks_to_arrow_file(
     chunk_schema: Arc<Schema>,
     chunk_file_path: &Path,
     arrow_compression: &str,
-) -> Result<RegenieStep2ChunkStreamWriteResult, String> {
+) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
-    let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
+    let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
     let write_options = build_regenie_step2_ipc_write_options(arrow_compression)?;
-    let mut writer = FileWriter::try_new_with_options(output_file, &chunk_schema, write_options)
-        .map_err(|error| error.to_string())?;
+    let mut writer =
+        FileWriter::try_new_with_options(output_file, &chunk_schema, write_options).map_err(OutputError::runtime)?;
     let writer_init = writer_init_start_time.elapsed().as_secs_f64();
 
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
@@ -593,11 +597,11 @@ fn write_regenie_step2_chunks_to_arrow_file(
         record_batch_build_timing.add(record_batch_build_result.timing);
 
         let batch_write_start_time = Instant::now();
-        writer.write(&record_batch_build_result.record_batch).map_err(|error| error.to_string())?;
+        writer.write(&record_batch_build_result.record_batch).map_err(OutputError::runtime)?;
         batch_write += batch_write_start_time.elapsed().as_secs_f64();
     }
     let writer_finish_start_time = Instant::now();
-    writer.finish().map_err(|error| error.to_string())?;
+    writer.finish().map_err(OutputError::runtime)?;
     let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
     Ok(RegenieStep2ChunkStreamWriteResult {
         record_batch_build_timing,
@@ -617,15 +621,15 @@ fn write_regenie_step2_chunks_to_parquet_file(
     chunk_file_path: &Path,
     parquet_compression: &str,
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> Result<RegenieStep2ChunkStreamWriteResult, String> {
+) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
-    let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
+    let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
     let writer_properties = build_regenie_step2_parquet_writer_properties(parquet_compression)?;
     let mut writer = ArrowWriter::try_new(output_file, Arc::clone(&chunk_schema), Some(writer_properties))
-        .map_err(|error| error.to_string())?;
+        .map_err(OutputError::runtime)?;
     writer.append_key_value_metadata(KeyValue {
         key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
         value: Some(build_chunk_commit_metadata_text(chunk_commits)?),
@@ -649,11 +653,11 @@ fn write_regenie_step2_chunks_to_parquet_file(
         record_batch_build_timing.add(record_batch_build_result.timing);
 
         let batch_write_start_time = Instant::now();
-        writer.write(&record_batch_build_result.record_batch).map_err(|error| error.to_string())?;
+        writer.write(&record_batch_build_result.record_batch).map_err(OutputError::runtime)?;
         batch_write += batch_write_start_time.elapsed().as_secs_f64();
     }
     let writer_finish_start_time = Instant::now();
-    writer.close().map_err(|error| error.to_string())?;
+    writer.close().map_err(OutputError::runtime)?;
     let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
     Ok(RegenieStep2ChunkStreamWriteResult {
         record_batch_build_timing,
@@ -671,14 +675,14 @@ fn write_regenie_step2_chunks_to_regenie_text_file(
     chunks: Vec<RegenieStep2ChunkJob>,
     chunk_schema: Arc<Schema>,
     chunk_file_path: &Path,
-) -> Result<RegenieStep2ChunkStreamWriteResult, String> {
+) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
-    let output_file = File::create(chunk_file_path).map_err(|error| error.to_string())?;
+    let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
     let mut output_writer = BufWriter::new(output_file);
-    output_writer.write_all(REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(|error| error.to_string())?;
+    output_writer.write_all(REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(OutputError::runtime)?;
     let writer_init = writer_init_start_time.elapsed().as_secs_f64();
 
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
@@ -701,7 +705,7 @@ fn write_regenie_step2_chunks_to_regenie_text_file(
         batch_write += batch_write_start_time.elapsed().as_secs_f64();
     }
     let writer_finish_start_time = Instant::now();
-    output_writer.flush().map_err(|error| error.to_string())?;
+    output_writer.flush().map_err(OutputError::runtime)?;
     let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
     Ok(RegenieStep2ChunkStreamWriteResult {
         record_batch_build_timing,
@@ -718,7 +722,7 @@ fn write_regenie_step2_chunks_to_regenie_text_file(
 fn write_regenie_step2_text_record_batch(
     output_writer: &mut BufWriter<File>,
     record_batch: &RecordBatch,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     let chromosome_array = required_string_column(record_batch, "CHROM")?;
     let position_array = required_int64_column(record_batch, "GENPOS")?;
     let variant_identifier_array = required_string_column(record_batch, "ID")?;
@@ -737,53 +741,60 @@ fn write_regenie_step2_text_record_batch(
     let correction_status_array = required_string_column(record_batch, "CORRECTION_STATUS")?;
     for row_index in 0..record_batch.num_rows() {
         write_regenie_text_string_value(output_writer, chromosome_array, row_index, "CHROM")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_int64_value(output_writer, position_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, variant_identifier_array, row_index, "ID")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, allele_zero_array, row_index, "ALLELE0")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, allele_one_array, row_index, "ALLELE1")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_float32_value(output_writer, allele_one_frequency_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_float32_value(output_writer, info_score_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_int32_value(output_writer, observation_count_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, test_array, row_index, "TEST")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_statistic_value(output_writer, beta_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_statistic_value(output_writer, standard_error_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_statistic_value(output_writer, chi_squared_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_statistic_value(output_writer, log10_p_value_array, row_index)?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, extra_array, row_index, "EXTRA")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, correction_method_array, row_index, "CORRECTION_METHOD")?;
-        output_writer.write_all(b"\t").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\t").map_err(OutputError::runtime)?;
         write_regenie_text_string_value(output_writer, correction_status_array, row_index, "CORRECTION_STATUS")?;
-        output_writer.write_all(b"\n").map_err(|error| error.to_string())?;
+        output_writer.write_all(b"\n").map_err(OutputError::runtime)?;
     }
     Ok(())
 }
 
-fn required_string_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> Result<&'a StringArray, String> {
+fn required_string_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a StringArray> {
     record_batch
         .column_by_name(column_name)
         .and_then(|column| column.as_any().downcast_ref::<StringArray>())
-        .ok_or_else(|| format!("REGENIE text writer could not read string column {column_name}."))
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!("REGENIE text writer could not read string column {column_name}."))
+        })
 }
 
-fn required_float32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> Result<&'a Float32Array, String> {
+fn required_float32_column<'a>(
+    record_batch: &'a RecordBatch,
+    column_name: &str,
+) -> OutputWriterResult<&'a Float32Array> {
     record_batch
         .column_by_name(column_name)
         .and_then(|column| column.as_any().downcast_ref::<Float32Array>())
-        .ok_or_else(|| format!("REGENIE text writer could not read float32 column {column_name}."))
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!("REGENIE text writer could not read float32 column {column_name}."))
+        })
 }
 
 #[derive(Clone, Copy)]
@@ -795,9 +806,11 @@ enum StatisticColumnRef<'a> {
 fn required_statistic_column<'a>(
     record_batch: &'a RecordBatch,
     column_name: &str,
-) -> Result<StatisticColumnRef<'a>, String> {
+) -> OutputWriterResult<StatisticColumnRef<'a>> {
     let Some(column) = record_batch.column_by_name(column_name) else {
-        return Err(format!("REGENIE text writer could not read statistic column {column_name}."));
+        return Err(OutputError::InvalidInput(format!(
+            "REGENIE text writer could not read statistic column {column_name}."
+        )));
     };
     if let Some(float32_column) = column.as_any().downcast_ref::<Float32Array>() {
         return Ok(StatisticColumnRef::Float32(float32_column));
@@ -805,21 +818,21 @@ fn required_statistic_column<'a>(
     if let Some(float64_column) = column.as_any().downcast_ref::<Float64Array>() {
         return Ok(StatisticColumnRef::Float64(float64_column));
     }
-    Err(format!("REGENIE text writer could not read float32/float64 statistic column {column_name}."))
+    Err(OutputError::InvalidInput(format!(
+        "REGENIE text writer could not read float32/float64 statistic column {column_name}."
+    )))
 }
 
-fn required_int32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> Result<&'a Int32Array, String> {
-    record_batch
-        .column_by_name(column_name)
-        .and_then(|column| column.as_any().downcast_ref::<Int32Array>())
-        .ok_or_else(|| format!("REGENIE text writer could not read int32 column {column_name}."))
+fn required_int32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a Int32Array> {
+    record_batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int32Array>()).ok_or_else(
+        || OutputError::InvalidInput(format!("REGENIE text writer could not read int32 column {column_name}.")),
+    )
 }
 
-fn required_int64_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> Result<&'a Int64Array, String> {
-    record_batch
-        .column_by_name(column_name)
-        .and_then(|column| column.as_any().downcast_ref::<Int64Array>())
-        .ok_or_else(|| format!("REGENIE text writer could not read int64 column {column_name}."))
+fn required_int64_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a Int64Array> {
+    record_batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int64Array>()).ok_or_else(
+        || OutputError::InvalidInput(format!("REGENIE text writer could not read int64 column {column_name}.")),
+    )
 }
 
 fn write_regenie_text_string_value(
@@ -827,37 +840,39 @@ fn write_regenie_text_string_value(
     array: &StringArray,
     row_index: usize,
     column_name: &str,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     if array.is_null(row_index) {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
     let value = array.value(row_index);
     if value.contains('\t') || value.contains('\n') || value.contains('\r') {
-        return Err(format!("REGENIE text writer found an unsupported separator in {column_name}."));
+        return Err(OutputError::InvalidInput(format!(
+            "REGENIE text writer found an unsupported separator in {column_name}."
+        )));
     }
-    output_writer.write_all(value.as_bytes()).map_err(|error| error.to_string())
+    output_writer.write_all(value.as_bytes()).map_err(OutputError::runtime)
 }
 
 fn write_regenie_text_float32_value(
     output_writer: &mut BufWriter<File>,
     array: &Float32Array,
     row_index: usize,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     if array.is_null(row_index) {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
     let value = array.value(row_index);
     if !value.is_finite() {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
-    write!(output_writer, "{value}").map_err(|error| error.to_string())
+    write!(output_writer, "{value}").map_err(OutputError::runtime)
 }
 
 fn write_regenie_text_statistic_value(
     output_writer: &mut BufWriter<File>,
     array: StatisticColumnRef<'_>,
     row_index: usize,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     match array {
         StatisticColumnRef::Float32(float32_array) => {
             write_regenie_text_float32_value(output_writer, float32_array, row_index)
@@ -872,68 +887,70 @@ fn write_regenie_text_float64_value(
     output_writer: &mut BufWriter<File>,
     array: &Float64Array,
     row_index: usize,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     if array.is_null(row_index) {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
     let value = array.value(row_index);
     if !value.is_finite() {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
-    write!(output_writer, "{value}").map_err(|error| error.to_string())
+    write!(output_writer, "{value}").map_err(OutputError::runtime)
 }
 
 fn write_regenie_text_int32_value(
     output_writer: &mut BufWriter<File>,
     array: &Int32Array,
     row_index: usize,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     if array.is_null(row_index) {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
-    write!(output_writer, "{}", array.value(row_index)).map_err(|error| error.to_string())
+    write!(output_writer, "{}", array.value(row_index)).map_err(OutputError::runtime)
 }
 
 fn write_regenie_text_int64_value(
     output_writer: &mut BufWriter<File>,
     array: &Int64Array,
     row_index: usize,
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     if array.is_null(row_index) {
-        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(|error| error.to_string());
+        return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
-    write!(output_writer, "{}", array.value(row_index)).map_err(|error| error.to_string())
+    write!(output_writer, "{}", array.value(row_index)).map_err(OutputError::runtime)
 }
 
 fn write_regenie_text_metadata_sidecar(
     chunk_file_path: &Path,
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> Result<(), String> {
+) -> OutputWriterResult<()> {
     let sidecar_path = build_regenie_text_metadata_sidecar_path(chunk_file_path);
     let temporary_sidecar_path = sidecar_path.with_extension("json.tmp");
     let metadata_text = build_chunk_commit_metadata_text(chunk_commits)?;
-    std::fs::write(&temporary_sidecar_path, format!("{metadata_text}\n")).map_err(|error| error.to_string())?;
-    std::fs::rename(&temporary_sidecar_path, &sidecar_path).map_err(|error| error.to_string())
+    std::fs::write(&temporary_sidecar_path, format!("{metadata_text}\n")).map_err(OutputError::runtime)?;
+    std::fs::rename(&temporary_sidecar_path, &sidecar_path).map_err(OutputError::runtime)
 }
 
-fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> Result<IpcWriteOptions, String> {
+fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> OutputWriterResult<IpcWriteOptions> {
     match arrow_compression.to_ascii_lowercase().as_str() {
-        "zstd" => IpcWriteOptions::default()
-            .try_with_compression(Some(CompressionType::ZSTD))
-            .map_err(|error| error.to_string()),
-        "none" => Ok(IpcWriteOptions::default()),
-        unsupported_compression => {
-            Err(format!("Arrow compression must be 'zstd' or 'none', observed '{unsupported_compression}'."))
+        "zstd" => {
+            IpcWriteOptions::default().try_with_compression(Some(CompressionType::ZSTD)).map_err(OutputError::runtime)
         }
+        "none" => Ok(IpcWriteOptions::default()),
+        unsupported_compression => Err(OutputError::InvalidInput(format!(
+            "Arrow compression must be 'zstd' or 'none', observed '{unsupported_compression}'."
+        ))),
     }
 }
 
-fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> Result<WriterProperties, String> {
+fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> OutputWriterResult<WriterProperties> {
     let compression = match parquet_compression.to_ascii_lowercase().as_str() {
         "zstd" => Compression::ZSTD(ZstdLevel::default()),
         "none" => Compression::UNCOMPRESSED,
         unsupported_compression => {
-            return Err(format!("Parquet compression must be 'zstd' or 'none', observed '{unsupported_compression}'."));
+            return Err(OutputError::InvalidInput(format!(
+                "Parquet compression must be 'zstd' or 'none', observed '{unsupported_compression}'."
+            )));
         }
     };
     Ok(WriterProperties::builder()

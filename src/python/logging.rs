@@ -4,11 +4,12 @@
 
 use std::ffi::CString;
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use super::callback_progress::NativeCallbackProgressTelemetryEvent;
+use super::errors;
 use super::jax_runtime;
 use super::run_events;
 use g_runtime as native_logging_sink;
@@ -605,12 +606,12 @@ impl NativeTelemetrySession {
             lossy,
             event_cap,
         )
-        .map_err(telemetry_writer_error_to_py)?;
+        .map_err(errors::convert_telemetry_writer_error)?;
         Ok(Self { writer: Mutex::new(writer) })
     }
 
     fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
-        self.lock_writer()?.write_json_line(json_line).map_err(telemetry_writer_error_to_py)?;
+        self.lock_writer()?.write_json_line(json_line).map_err(errors::convert_telemetry_writer_error)?;
         Ok(())
     }
 
@@ -643,7 +644,7 @@ impl NativeTelemetrySession {
     }
 
     fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let metadata = self.lock_writer()?.finish_close_metadata().map_err(telemetry_writer_error_to_py)?;
+        let metadata = self.lock_writer()?.finish_close_metadata().map_err(errors::convert_telemetry_writer_error)?;
         telemetry_close_metadata_to_py_dict(py, &metadata)
     }
 
@@ -925,11 +926,11 @@ pub(crate) fn initialize_logging(
         trace_event_cap,
     };
     native_logging_sink::initialize_logging_sinks(config, || setup_python_logging(py))
-        .map_err(logging_sink_initialization_error_to_py)
+        .map_err(errors::convert_logging_sink_initialization_error)
 }
 
 pub(crate) fn shutdown_logging() -> PyResult<()> {
-    native_logging_sink::shutdown_logging_sinks().map_err(logging_sink_error_to_py)
+    native_logging_sink::shutdown_logging_sinks().map_err(|error| errors::convert_logging_sink_error(&error))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -989,28 +990,4 @@ fn telemetry_event_cap_to_usize(event_cap: Option<i64>) -> PyResult<Option<usize
             usize::try_from(value).map_err(|_| PyValueError::new_err("Telemetry event cap must be non-negative."))
         })
         .transpose()
-}
-
-fn logging_sink_initialization_error_to_py(error: native_logging_sink::LoggingSinkInitializationError<PyErr>) -> PyErr {
-    match error {
-        native_logging_sink::LoggingSinkInitializationError::Sink(sink_error) => logging_sink_error_to_py(sink_error),
-        native_logging_sink::LoggingSinkInitializationError::HostLogging(host_logging_error) => host_logging_error,
-    }
-}
-
-#[expect(clippy::needless_pass_by_value, reason = "map_err passes the native logging sink error by value.")]
-fn logging_sink_error_to_py(error: native_logging_sink::LoggingSinkError) -> PyErr {
-    match error {
-        native_logging_sink::LoggingSinkError::InvalidLogFilter { .. }
-        | native_logging_sink::LoggingSinkError::InvalidTraceFilter { .. } => PyValueError::new_err(error.to_string()),
-        native_logging_sink::LoggingSinkError::Writer(_)
-        | native_logging_sink::LoggingSinkError::LoggingGuardMutexPoisoned => {
-            PyRuntimeError::new_err(error.to_string())
-        }
-    }
-}
-
-#[expect(clippy::needless_pass_by_value, reason = "map_err passes the native writer error by value.")]
-fn telemetry_writer_error_to_py(error: std::io::Error) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
 }

@@ -7,7 +7,7 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "jax[cpu]>=0.10.1",
+    "jax[cuda12]>=0.10.1",
     "numpy>=2.4.6",
 ]
 
@@ -38,10 +38,10 @@ docs = [
     "mkdocstrings-python>=2.0.4",
     "zensical>=0.0.44,<0.0.45",
 ]
-gpu = ["jax[cuda12]>=0.10.1"]
+cpu = ["jax[cpu]>=0.10.1"]
 
 [project.scripts]
-g = "g:main"
+g = "g.runner.cli:main"
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]

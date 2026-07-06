@@ -14,7 +14,7 @@ use g_input::{
     ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
 
-use super::schedule;
+use super::errors::{convert_input_error, convert_schedule_error};
 
 #[pyclass]
 pub(crate) struct NativeAlignedSampleData {
@@ -305,7 +305,7 @@ fn build_grouped_union_sample_indices<'py>(
     native_callback_batch_size: i64,
 ) -> PyResult<Bound<'py, PyArray1<i64>>> {
     native_schedule::resolve_grouped_union_callback_batch_size(native_callback_batch_size)
-        .map_err(|error| schedule::schedule_error_to_py(&error))?;
+        .map_err(|error| convert_schedule_error(&error))?;
     build_union_sample_indices(py, sample_indices_by_group)
 }
 
@@ -319,7 +319,7 @@ fn build_group_sample_position_array<'py>(
     let group_sample_index_values = group_sample_indices.as_slice()?;
     let sample_position_values =
         native_input::build_group_sample_position_array(union_sample_index_values, group_sample_index_values)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| convert_input_error("build_group_sample_position_array", error.into()))?;
     Ok(sample_position_values.into_pyarray(py))
 }
 

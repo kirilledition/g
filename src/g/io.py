@@ -10,14 +10,6 @@ from pathlib import Path
 from g import _core, types
 
 
-class MultiPhenotypeSampleMode(enum.StrEnum):
-    """Sample inclusion policy for one output run."""
-
-    SINGLE_PHENOTYPE = "single-phenotype"
-    PER_PHENOTYPE = "per-phenotype"
-    COMPLETE_CASE = "complete-case"
-
-
 class ManifestFileFingerprintCache:
     """Native run-scoped cache for immutable input file fingerprints."""
 
@@ -77,7 +69,7 @@ def build_current_run_manifest_header(
     gpu_genotype_format: types.GpuGenotypeFormat,
     score_dtype: types.FloatingPointDtype,
     firth_dtype: types.FloatingPointDtype,
-    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
+    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
     phenotype_compute_group_mode: types.PhenotypeComputeGroupMode | None,
     phenotype_compute_group_indices: tuple[int, ...] | None,
     phenotype_compute_group_names: tuple[str, ...] | None,

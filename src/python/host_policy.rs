@@ -7,6 +7,7 @@ use pyo3::types::{PyModule, PyTuple};
 use g_plan as native_host_policy;
 
 use super::config::NativePhenotypeComputeGroup;
+use super::errors;
 
 #[pyclass]
 pub(crate) struct NativeAssociationBackendPlan {
@@ -22,7 +23,7 @@ impl NativeAssociationBackendPlan {
         let gpu_genotype_format = parse_gpu_genotype_format(gpu_genotype_format)?;
         native_host_policy::plan_association_backend(association_mode, jax_device, gpu_genotype_format)
             .map(|inner| Self { inner })
-            .map_err(|error| prepared_plan_error_to_py(&error))
+            .map_err(|error| errors::convert_prepared_plan_error(&error))
     }
 
     #[getter]
@@ -60,7 +61,7 @@ fn build_phenotype_compute_groups<'py>(
 ) -> PyResult<Bound<'py, PyTuple>> {
     let sample_mode = parse_multi_phenotype_sample_mode(&multi_phenotype_sample_mode)?;
     let groups = native_host_policy::build_phenotype_compute_groups(&phenotype_names, sample_mode)
-        .map_err(host_policy_error_to_py)?;
+        .map_err(errors::convert_host_policy_error)?;
     let group_values = groups
         .iter()
         .map(|group| Py::new(py, NativePhenotypeComputeGroup::from_native_group(group)))
@@ -112,16 +113,5 @@ fn parse_multi_phenotype_sample_mode(value: &str) -> PyResult<native_host_policy
         unsupported_value => Err(PyValueError::new_err(format!(
             "multi_phenotype_sample_mode must be per-phenotype or complete-case, observed '{unsupported_value}'."
         ))),
-    }
-}
-
-fn prepared_plan_error_to_py(error: &native_host_policy::PreparedPlanError) -> PyErr {
-    PyValueError::new_err(error.to_string())
-}
-
-fn host_policy_error_to_py(error: native_host_policy::HostPolicyError) -> PyErr {
-    match error {
-        native_host_policy::HostPolicyError::NotImplemented(message)
-        | native_host_policy::HostPolicyError::Value(message) => PyValueError::new_err(message),
     }
 }

@@ -22,7 +22,7 @@ pub enum PipelineResumeCompatibilityError {
     #[error("Resume requires run_manifest.json.")]
     MissingManifest,
     #[error(transparent)]
-    Output(#[from] g_output::OutputWriterError),
+    Output(#[from] g_output::OutputError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

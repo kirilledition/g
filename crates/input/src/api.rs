@@ -1,5 +1,6 @@
 //! Public input crate facade.
 
+pub use crate::error::{InputError, InputResult};
 pub use crate::regenie::{
     ChromosomePredictionMatrix, MultiPredictionSource, PredictionError, PredictionLocoPath, PredictionSource,
     resolve_prediction_loco_paths,

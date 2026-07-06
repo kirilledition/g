@@ -23,7 +23,6 @@ release line exists.
 | Output formats | Arrow, Parquet dataset parts, optional finalized Parquet, and REGENIE Step 2-style text. |
 | GPU execution | Supported through JAX when the environment exposes a compatible accelerator. |
 | TOML config | Supported through `--config`. |
-| Python API | Supported as a small execution wrapper; see [Python API](api-python.md). |
 
 ## Not Implemented
 
@@ -40,6 +39,12 @@ release line exists.
 
 Unsupported flags fail loudly so REGENIE command migration does not silently
 drop scientific intent.
+
+## Future Goals
+
+| Area | Goal |
+| --- | --- |
+| Python embedding API | Expose a supported Python API after the CLI, configuration, output, and runtime contracts stabilize. |
 
 ## REGENIE Command Migration
 

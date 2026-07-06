@@ -9,7 +9,8 @@ use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
-use crate::common::{ChunkStats, GenotypeError, GenotypeReaderCore, VariantMetadataColumns};
+use crate::common::{ChunkStats, GenotypeReaderCore, VariantMetadataColumns};
+use crate::error::GenotypeResult;
 use crate::preprocess;
 
 use super::decode::{
@@ -905,12 +906,12 @@ impl GenotypeReaderCore for BgenReaderCore {
         BgenReaderCore::chromosome_boundary_indices(self)
     }
 
-    fn prepare_sample_selection(&self, sample_indices: &[i64]) -> Result<(), GenotypeError> {
+    fn prepare_sample_selection(&self, sample_indices: &[i64]) -> GenotypeResult<()> {
         BgenReaderCore::prepare_sample_selection(self, sample_indices)
             .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
 
-    fn clear_prepared_sample_selection(&self) -> Result<(), GenotypeError> {
+    fn clear_prepared_sample_selection(&self) -> GenotypeResult<()> {
         BgenReaderCore::clear_prepared_sample_selection(self)
             .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
@@ -919,7 +920,7 @@ impl GenotypeReaderCore for BgenReaderCore {
         &self,
         variant_start: usize,
         variant_stop: usize,
-    ) -> Result<VariantMetadataColumns, GenotypeError> {
+    ) -> GenotypeResult<VariantMetadataColumns> {
         BgenReaderCore::variant_metadata_slice(self, variant_start, variant_stop)
             .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
@@ -930,7 +931,7 @@ impl GenotypeReaderCore for BgenReaderCore {
         variant_stop: usize,
         output_pointer_address: usize,
         output_value_count: usize,
-    ) -> Result<ChunkStats, GenotypeError> {
+    ) -> GenotypeResult<ChunkStats> {
         BgenReaderCore::read_preprocessed_dosage_f32_into_address_prepared(
             self,
             variant_start,

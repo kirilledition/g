@@ -7,7 +7,7 @@ import typing
 
 import g.engine.callbacks.grouped as callback_grouped
 import g.engine.callbacks.shared as callback_shared
-from g import _core, io, types
+from g import _core, types
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import groups as native_dispatch_groups
@@ -193,7 +193,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=io.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for phenotype_index, final_parquet_path in zip(
             compute_group.phenotype_indices,
@@ -227,7 +227,7 @@ def validate_grouped_per_phenotype_resume_compatibility(
                     covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
                     sample_count=int(run_input.sample_indices.shape[0]),
                     variant_count=int(engine.variant_count),
-                    multi_phenotype_sample_mode=io.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                    multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
                     phenotype_compute_group=compute_group,
                 )
             )
@@ -329,7 +329,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=io.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+            output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for grouped_run_input in grouped_run_inputs
     )

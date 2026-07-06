@@ -11,6 +11,7 @@ mod callback_worker_schedule;
 mod coordinator;
 mod delivery_schedule;
 mod effects;
+mod error;
 #[cfg(any(test, feature = "test-support"))]
 mod fake_backend;
 #[cfg(any(test, feature = "test-support"))]

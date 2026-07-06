@@ -1,5 +1,7 @@
 //! Public output crate facade.
 
+pub use crate::chunk::{NativeChunkHandle, NativeChunkStats, VariantMetadataColumns};
+pub use crate::error::{OutputError, OutputResult};
 pub use crate::finalization::finalize_output_run_chunks;
 pub use crate::manifest::{
     CurrentRunManifestHeaderInput, InitializedOutputRun, ManifestFileFingerprint, ManifestFileFingerprintCache,
@@ -15,5 +17,5 @@ pub use crate::manifest::{
 pub use crate::resume::{
     repair_strict_manifest_chunk_commits, scan_committed_chunk_identifiers, validate_strict_manifest_chunks,
 };
-pub use crate::session::{NativeChunkHandle, NativeChunkStats, OutputWriterSession, VariantMetadataColumns};
-pub use crate::writer::{OutputFileFormat, OutputWriterError};
+pub use crate::session::OutputWriterSession;
+pub use crate::writer::OutputFileFormat;

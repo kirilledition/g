@@ -3,8 +3,12 @@ use std::sync::{Arc, OnceLock};
 use arrow::array::{Array, ArrayRef, Int32Array, StringArray, StringBuilder, new_null_array};
 use arrow::datatypes::{DataType, Field, Schema};
 
+use crate::error::OutputError;
+
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
 pub(crate) const OUTPUT_SCHEMA_VERSION: &str = "2";
+
+type OutputSchemaResult<T> = Result<T, OutputError>;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum OutputStatisticDtype {
@@ -14,13 +18,13 @@ pub(crate) enum OutputStatisticDtype {
 }
 
 impl OutputStatisticDtype {
-    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+    pub(crate) fn parse(value: &str) -> OutputSchemaResult<Self> {
         match value {
             "float32" => Ok(Self::Float32),
             "float64" => Ok(Self::Float64),
-            unsupported_value => {
-                Err(format!("Output statistic dtype must be 'float32' or 'float64', observed '{unsupported_value}'."))
-            }
+            unsupported_value => Err(OutputError::InvalidInput(format!(
+                "Output statistic dtype must be 'float32' or 'float64', observed '{unsupported_value}'."
+            ))),
         }
     }
 
@@ -50,16 +54,18 @@ pub(crate) fn get_regenie_step2_chunk_schema(output_statistic_dtype: OutputStati
     }
 }
 
-pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> Result<ArrayRef, String> {
+pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> OutputSchemaResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
         return Ok(build_null_extra_string_array(row_count));
     };
     let extra_code_values = extra_code_array
         .as_any()
         .downcast_ref::<Int32Array>()
-        .ok_or_else(|| "REGENIE step 2 extra code must be an int32 array.".to_string())?;
+        .ok_or_else(|| OutputError::InvalidInput("REGENIE step 2 extra code must be an int32 array.".to_string()))?;
     if extra_code_values.len() != row_count {
-        return Err("REGENIE step 2 extra code row count does not match metadata row count.".to_string());
+        return Err(OutputError::InvalidInput(
+            "REGENIE step 2 extra code row count does not match metadata row count.".to_string(),
+        ));
     }
     if extra_code_values.null_count() == row_count {
         return Ok(build_null_extra_string_array(row_count));
@@ -74,7 +80,9 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
             0..=2 => {}
             3 => has_test_fail = true,
             unsupported_extra_code_value => {
-                return Err(format!("Unsupported REGENIE step 2 extra code: {unsupported_extra_code_value}"));
+                return Err(OutputError::InvalidInput(format!(
+                    "Unsupported REGENIE step 2 extra code: {unsupported_extra_code_value}"
+                )));
             }
         }
     }
@@ -100,7 +108,7 @@ pub(crate) fn build_null_extra_string_array(row_count: usize) -> ArrayRef {
 pub(crate) fn build_correction_method_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
-) -> Result<ArrayRef, String> {
+) -> OutputSchemaResult<ArrayRef> {
     build_correction_label_array(
         extra_code,
         row_count,
@@ -118,7 +126,7 @@ pub(crate) fn build_correction_method_array(
 pub(crate) fn build_correction_status_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
-) -> Result<ArrayRef, String> {
+) -> OutputSchemaResult<ArrayRef> {
     build_correction_label_array(
         extra_code,
         row_count,
@@ -138,16 +146,17 @@ fn build_correction_label_array(
     label_kind: &str,
     label_for_code: impl Fn(i32) -> Option<&'static str>,
     default_label: &'static str,
-) -> Result<ArrayRef, String> {
+) -> OutputSchemaResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
         return Ok(Arc::new(StringArray::from(vec![default_label; row_count])));
     };
-    let extra_code_values = extra_code_array
-        .as_any()
-        .downcast_ref::<Int32Array>()
-        .ok_or_else(|| format!("REGENIE step 2 {label_kind} code must be an int32 array."))?;
+    let extra_code_values = extra_code_array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
+        OutputError::InvalidInput(format!("REGENIE step 2 {label_kind} code must be an int32 array."))
+    })?;
     if extra_code_values.len() != row_count {
-        return Err(format!("REGENIE step 2 {label_kind} row count does not match metadata row count."));
+        return Err(OutputError::InvalidInput(format!(
+            "REGENIE step 2 {label_kind} row count does not match metadata row count."
+        )));
     }
     let mut label_builder = StringBuilder::with_capacity(row_count, row_count * default_label.len());
     for row_index in 0..extra_code_values.len() {
@@ -157,7 +166,9 @@ fn build_correction_label_array(
         }
         let extra_code_value = extra_code_values.value(row_index);
         let Some(label) = label_for_code(extra_code_value) else {
-            return Err(format!("Unsupported REGENIE step 2 extra code: {extra_code_value}"));
+            return Err(OutputError::InvalidInput(format!(
+                "Unsupported REGENIE step 2 extra code: {extra_code_value}"
+            )));
         };
         label_builder.append_value(label);
     }
@@ -175,29 +186,32 @@ pub(crate) fn get_regenie_step2_final_schema(output_statistic_dtype: OutputStati
     }
 }
 
-pub(crate) fn output_statistic_dtype_from_schema(schema: &Schema) -> Result<OutputStatisticDtype, String> {
+pub(crate) fn output_statistic_dtype_from_schema(schema: &Schema) -> OutputSchemaResult<OutputStatisticDtype> {
     let statistic_column_names = ["BETA", "SE", "CHISQ", "LOG10P"];
     let mut observed_dtype: Option<OutputStatisticDtype> = None;
     for column_name in statistic_column_names {
-        let field = schema.field_with_name(column_name).map_err(|error| error.to_string())?;
+        let field = schema.field_with_name(column_name).map_err(OutputError::runtime)?;
         let column_dtype = match field.data_type() {
             DataType::Float32 => OutputStatisticDtype::Float32,
             DataType::Float64 => OutputStatisticDtype::Float64,
             data_type => {
-                return Err(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "REGENIE step 2 public statistic column {column_name} must be Float32 or Float64, observed {data_type}.",
-                ));
+                )));
             }
         };
         if let Some(previous_dtype) = observed_dtype {
             if previous_dtype != column_dtype {
-                return Err("REGENIE step 2 public statistic columns must use one common dtype.".to_string());
+                return Err(OutputError::InvalidInput(
+                    "REGENIE step 2 public statistic columns must use one common dtype.".to_string(),
+                ));
             }
         } else {
             observed_dtype = Some(column_dtype);
         }
     }
-    observed_dtype.ok_or_else(|| "REGENIE step 2 public statistic columns are missing.".to_string())
+    observed_dtype
+        .ok_or_else(|| OutputError::InvalidInput("REGENIE step 2 public statistic columns are missing.".to_string()))
 }
 
 fn build_regenie_step2_chunk_schema(output_statistic_dtype: OutputStatisticDtype) -> Schema {

@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use g_interface as interface;
-use g_output::{OutputFileFormat, OutputResumeMode, OutputWriterError};
+use g_output::{OutputFileFormat, OutputResumeMode};
 use g_runtime as native_run_metadata;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule, PyTuple};
 
 use super::config::{NativeRunRequest, RegenieConfig};
+use super::errors;
 use super::json_bridge;
 use super::run_events::NativeRunArtifacts;
 use super::runtime_state::NativeRuntimeCompatibilityToken;
@@ -92,7 +93,7 @@ impl NativeRunLifecycleSession {
     ) -> PyResult<Self> {
         let _runtime_compatibility_token = runtime_compatibility_token.native_token();
         let run_request = interface::compile_run_request(config.data())
-            .map_err(|error| config_error_to_py("compile_run_request", error))?;
+            .map_err(|error| errors::convert_config_error("compile_run_request", &error))?;
         let prepared_runs = py.detach(|| prepare_phenotype_runs(&run_request))?;
         let prepared_run_indices_by_name = prepared_runs
             .iter()
@@ -163,7 +164,8 @@ impl NativeRunLifecycleSession {
             return Ok(());
         }
         let preparation_batch = self.build_output_preparation_batch(py, &phenotype_names, current_headers)?;
-        py.detach(|| preparation_batch.validate_resume_compatibility()).map_err(pipeline_resume_error_to_py)
+        py.detach(|| preparation_batch.validate_resume_compatibility())
+            .map_err(errors::convert_pipeline_resume_compatibility_error)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -175,7 +177,9 @@ impl NativeRunLifecycleSession {
     ) -> PyResult<NativeRunLifecycleOutputInitialization> {
         self.ensure_not_finalized()?;
         let preparation_batch = self.build_output_preparation_batch(py, &phenotype_names, current_headers)?;
-        let initialization = py.detach(|| preparation_batch.initialize()).map_err(pipeline_resume_error_to_py)?;
+        let initialization = py
+            .detach(|| preparation_batch.initialize())
+            .map_err(errors::convert_pipeline_resume_compatibility_error)?;
         self.write_initialized_metadata(&phenotype_names)?;
         Ok(NativeRunLifecycleOutputInitialization { initialization })
     }
@@ -257,7 +261,7 @@ impl NativeRunLifecycleSession {
             .map(|current_header| json_bridge::json_text_from_py_any(current_header.bind(py)))
             .collect::<PyResult<Vec<_>>>()?;
         let resume_mode = OutputResumeMode::parse(self.run_request.output.resume_mode.as_str())
-            .map_err(|error| output_writer_error_to_py(error, "parse_output_resume_mode"))?;
+            .map_err(|error| errors::convert_output_error("parse_output_resume_mode", error))?;
         g_engine::PipelineOutputPreparationBatch::new(
             prepared_runs.iter().map(|prepared_run| prepared_run.run_directory.clone()).collect(),
             prepared_runs.iter().map(|prepared_run| prepared_run.chunks_directory.clone()).collect(),
@@ -266,7 +270,7 @@ impl NativeRunLifecycleSession {
             self.run_request.output.resume,
             resume_mode,
         )
-        .map_err(pipeline_resume_error_to_py)
+        .map_err(errors::convert_pipeline_resume_compatibility_error)
     }
 
     fn write_initialized_metadata(&self, phenotype_names: &[String]) -> PyResult<()> {
@@ -277,7 +281,7 @@ impl NativeRunLifecycleSession {
             }
             let prepared_run = self.prepared_run_state(phenotype_name)?;
             interface::write_toml(&self.config, &prepared_run.effective_config_path)
-                .map_err(|error| config_error_to_py("write_toml", error))?;
+                .map_err(|error| errors::convert_config_error("write_toml", &error))?;
             extend_run_manifest_metadata(&self.run_request, prepared_run)?;
             initialized_metadata_phenotypes.insert(phenotype_name.clone());
         }
@@ -376,14 +380,14 @@ fn prepare_phenotype_runs(run_request: &g_plan::RunRequest) -> PyResult<Vec<Prep
         .map(|phenotype_run| {
             let output_root = Path::new(&run_request.output.output_run_root).join(&phenotype_run.output_directory_name);
             let output_format = OutputFileFormat::parse(run_request.output.output_format.as_str())
-                .map_err(|error| output_writer_error_to_py(error, "parse_output_format"))?;
+                .map_err(|error| errors::convert_output_error("parse_output_format", error))?;
             let prepared_output_run = g_output::prepare_output_run(
                 &output_root,
                 run_request.association_mode.as_str(),
                 output_format,
                 run_request.output.resume,
             )
-            .map_err(|error| output_writer_error_to_py(error, "prepare_output_run"))?;
+            .map_err(|error| errors::convert_output_error("prepare_output_run", error))?;
             Ok(PreparedPhenotypeRunState {
                 phenotype_name: phenotype_run.phenotype_name.clone(),
                 run_directory: prepared_output_run.output_run_paths.run_directory.clone(),
@@ -420,7 +424,7 @@ fn extend_run_manifest_metadata(
     let command = serde_json::to_value(&extension.command).map_err(|error| PyValueError::new_err(error.to_string()))?;
     let runtime = serde_json::to_value(&extension.runtime).map_err(|error| PyValueError::new_err(error.to_string()))?;
     g_output::extend_run_manifest_metadata(&prepared_run.run_directory, command, runtime)
-        .map_err(|error| output_writer_error_to_py(error, "extend_run_manifest_metadata"))
+        .map_err(|error| errors::convert_output_error("extend_run_manifest_metadata", error))
 }
 
 fn lock_phase(phase: &Mutex<NativeRunLifecyclePhase>) -> PyResult<MutexGuard<'_, NativeRunLifecyclePhase>> {
@@ -433,38 +437,4 @@ fn lock_initialized_metadata(
     initialized_metadata_phenotypes
         .lock()
         .map_err(|_| PyRuntimeError::new_err("Run lifecycle metadata mutex was poisoned."))
-}
-
-fn config_error_to_py(operation: &str, error: interface::ConfigError) -> PyErr {
-    tracing::warn!(
-        target: "g.python.run_lifecycle",
-        g_event = "native_run_lifecycle_config_error",
-        operation = operation,
-        error_message = %error,
-        "Native run lifecycle config error."
-    );
-    PyValueError::new_err(error.to_string())
-}
-
-fn pipeline_resume_error_to_py(error: g_engine::PipelineResumeCompatibilityError) -> PyErr {
-    PyValueError::new_err(error.to_string())
-}
-
-fn output_writer_error_to_py(error: OutputWriterError, operation: &str) -> PyErr {
-    let (error_kind, message) = match &error {
-        OutputWriterError::InvalidInput(message) => ("invalid_input", message.clone()),
-        OutputWriterError::Runtime(message) => ("runtime", message.clone()),
-    };
-    tracing::warn!(
-        target: "g.python.run_lifecycle",
-        g_event = "native_run_lifecycle_output_error",
-        operation = operation,
-        error_kind = error_kind,
-        error_message = %message,
-        "Native run lifecycle output error."
-    );
-    match error {
-        OutputWriterError::InvalidInput(message) => PyValueError::new_err(message),
-        OutputWriterError::Runtime(message) => PyRuntimeError::new_err(message),
-    }
 }

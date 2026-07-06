@@ -4,23 +4,26 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use g_engine::{Regenie2RunEngineCore, TrustedBgenValidationError};
+use g_engine::Regenie2RunEngineCore;
 use g_genotype::ChunkSpec as NativeChunkSpec;
 use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
 use g_runtime as native_trusted_validation;
 use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use super::errors::{convert_bgen_error, convert_genotype_error};
+use super::errors::{
+    convert_bgen_error, convert_genotype_error, convert_input_error, convert_preflight_error, convert_schedule_error,
+    convert_trusted_bgen_validation_error,
+};
 use super::genotype::{
-    ChunkStats, VariantMetadata, VariantMetadataTuple, build_committed_identifier_set,
-    convert_variant_metadata_columns_to_tuple,
+    build_committed_identifier_set, convert_variant_metadata_columns_to_tuple, ChunkStats, VariantMetadata,
+    VariantMetadataTuple,
 };
 use super::profile::build_profile_snapshot_dict;
 use super::sample_alignment::{
-    NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData, parse_sample_key_mode,
+    parse_sample_key_mode, NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData,
 };
 
 #[pyclass]
@@ -109,7 +112,7 @@ impl Regenie2RunEngine {
         };
         py.detach(move || native_input::align_sample_data(inputs))
             .map(NativeAlignedSampleData::new)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| convert_input_error("align_sample_data", error.into()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -149,7 +152,7 @@ impl Regenie2RunEngine {
         };
         py.detach(move || native_input::align_multi_sample_data(inputs))
             .map(NativeMultiAlignedSampleData::new)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| convert_input_error("align_multi_sample_data", error.into()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -189,7 +192,7 @@ impl Regenie2RunEngine {
         };
         py.detach(move || native_input::align_grouped_sample_data(&inputs))
             .map(NativeGroupedAlignedSampleData::new)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| convert_input_error("align_grouped_sample_data", error.into()))
     }
 
     fn chromosome_boundary_indices(&self) -> Vec<usize> {
@@ -209,7 +212,7 @@ impl Regenie2RunEngine {
 
     #[pyo3(signature = (variant_limit=None))]
     fn required_chromosomes(&self, variant_limit: Option<usize>) -> PyResult<Vec<String>> {
-        self.engine.required_chromosomes(variant_limit).map_err(|error| PyValueError::new_err(error.to_string()))
+        self.engine.required_chromosomes(variant_limit).map_err(|error| convert_preflight_error(&error))
     }
 
     fn reset_profile(&self) {
@@ -275,7 +278,7 @@ impl Regenie2RunEngine {
             native_multi_aligned_sample_data.is_some(),
             native_aligned_sample_data.is_some(),
         )
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(|error| convert_schedule_error(&error))?;
         match invocation_plan.delivery_method {
             g_engine::BgenDeliveryMethod::DosageNativeMultiAlignedSamples => {
                 let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
@@ -340,7 +343,7 @@ impl Regenie2RunEngine {
             native_multi_aligned_sample_data.is_some(),
             native_aligned_sample_data.is_some(),
         )
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(|error| convert_schedule_error(&error))?;
         match invocation_plan.delivery_method {
             g_engine::BgenDeliveryMethod::Packed8NativeMultiAlignedSamples => {
                 let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
@@ -394,17 +397,6 @@ fn flush_variant_major_dosage_batch<'py>(
     Ok(())
 }
 
-fn convert_trusted_bgen_validation_error(error: TrustedBgenValidationError) -> PyErr {
-    match error {
-        TrustedBgenValidationError::Bgen(error) => convert_bgen_error("validate_trusted_no_missing_diploid", error),
-        TrustedBgenValidationError::Io(error) => PyOSError::new_err(error.to_string()),
-        TrustedBgenValidationError::CacheLookup(error) => PyValueError::new_err(error.to_string()),
-        TrustedBgenValidationError::SampleCountRange | TrustedBgenValidationError::VariantCountRange => {
-            PyValueError::new_err(error.to_string())
-        }
-    }
-}
-
 impl Regenie2RunEngine {
     fn sample_identifier_data(
         &self,
@@ -420,7 +412,7 @@ impl Regenie2RunEngine {
                         expected_sample_count,
                     )
                 })
-                .map_err(|error| PyValueError::new_err(error.to_string()));
+                .map_err(|error| convert_input_error("load_sample_identifier_data_from_sample_file", error.into()));
         }
         if !self.engine.reader().contains_embedded_samples() {
             return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
@@ -517,7 +509,7 @@ impl Regenie2RunEngine {
             );
         }
         let chunk_batch_plan = g_engine::plan_chunk_batches(&chunk_specs, callback_batch_size)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| convert_schedule_error(&error))?;
         let processed_chunk_count = chunk_batch_plan.chunk_count();
         let compute_dosage_chunk_method = callback.getattr("compute_preprocessed_variant_major_dosage_chunk")?;
         for chunk_batch in chunk_batch_plan.into_chunk_batches() {
@@ -589,7 +581,7 @@ impl Regenie2RunEngine {
         let compute_dosage_chunk_batch_method =
             callback.getattr("compute_preprocessed_variant_major_dosage_chunk_batch")?;
         let chunk_batch_plan = g_engine::plan_chunk_batches(chunk_specs, callback_batch_size)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| convert_schedule_error(&error))?;
         let processed_chunk_count = chunk_batch_plan.chunk_count();
         let mut metadata_batch: Vec<Py<VariantMetadata>> = Vec::with_capacity(callback_batch_size);
         let mut output_array_batch: Vec<Py<PyAny>> = Vec::with_capacity(callback_batch_size);
@@ -672,7 +664,7 @@ impl Regenie2RunEngine {
             .plan_chunks(&committed_identifier_set)
             .map_err(|error| convert_genotype_error("plan_chunks", error))?;
         let chunk_batch_plan =
-            g_engine::plan_chunk_batches(&chunk_specs, 1).map_err(|error| PyValueError::new_err(error.to_string()))?;
+            g_engine::plan_chunk_batches(&chunk_specs, 1).map_err(|error| convert_schedule_error(&error))?;
         let processed_chunk_count = chunk_batch_plan.chunk_count();
         let acquire_packed_buffer_method = callback.getattr("acquire_variant_major_packed8_probability_pair_buffer")?;
         let compute_packed_chunk_method =

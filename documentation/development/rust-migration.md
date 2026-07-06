@@ -45,9 +45,8 @@ legacy Python telemetry fallback methods.
   correction status, and fresh/resumed equivalence unless a separate
   science-change issue explicitly approves the difference.
 - Keep `g --help`, `g regenie --help`, CLI exit codes, TOML merge/default
-  behavior, `effective_config.toml`, the Python `g.api` surface, PyO3 export
-  names, and `_core.pyi` stable unless an interface-change issue approves the
-  change.
+  behavior, `effective_config.toml`, PyO3 export names, and `_core.pyi` stable
+  unless an interface-change issue approves the change.
 - Keep crate dependencies acyclic and phase-aware. Do not introduce generic
   dumping-ground crates such as `g-utils`, `g-common`, or `g-types`.
 - Do not keep permanent production Python fallbacks for Rust-owned behavior.
@@ -58,7 +57,7 @@ legacy Python telemetry fallback methods.
 
 | Area | Current Python owner | Current Rust helper | Target crate | Target owner | Removal status | Primary tests and benchmarks |
 | --- | --- | --- | --- | --- | --- | --- |
-| CLI/TOML/config frontend | `src/g/cli.py`, `src/g/interface/config.py` | `crates/interface/src/`, `crates/cli/src/` | `g-cli`, `g-interface` | Rust | Native frontend prototype owns help, parse errors, `--config` TOML, CLI-over-TOML overrides, and run-config validation through `g-interface`; Cargo binary `g` remains frontend-only and reports the temporary unsupported native-run error for validated configs; the Python console entrypoint calls the Rust parser directly, prints configless output without importing runtime modules, and routes validated configs into `g.runner.cli` for the current Python/JAX backend lifecycle | `cargo test -p g-cli`, `cargo bench -p g-cli --bench frontend`, `tests/test_interface.py`, CLI help/package smoke |
+| CLI/TOML/config frontend | `src/g/runner/cli.py`, `src/g/interface/config.py` | `crates/interface/src/`, `crates/cli/src/` | `g-cli`, `g-interface` | Rust | Native frontend prototype owns help, parse errors, `--config` TOML, CLI-over-TOML overrides, and run-config validation through `g-interface`; Cargo binary `g` remains frontend-only and reports the temporary unsupported native-run error for validated configs; the Python console script points directly at `g.runner.cli`, which calls the Rust parser, prints configless output, and routes validated configs through the current Python/JAX backend lifecycle | `cargo test -p g-cli`, `cargo bench -p g-cli --bench frontend`, `tests/test_interface.py`, CLI help/package smoke |
 | Execution planning | `src/g/execution_plan.py`, `src/g/engine/regenie2_pipeline/backend.py` | `crates/plan/src/`, `crates/interface/src/plan_request.rs`, native metadata helpers | `g-plan`, then `g-engine` | Rust | Started: `g-interface` compiles resolved config into `g-plan::RunRequest`; Python consumes the native run-request payload through a PyO3 value wrapper instead of parsing JSON; `g-plan` now exposes typed correction, phenotype grouping, output directory, prepared-plan, and deterministic group-ID helpers instead of string payload wrappers; thin PyO3 helpers for association-mode, backend selection, and group-ID hashing have been removed, with already-resolved backend enum mapping kept at the Python pipeline boundary and group-ID hashing owned by `g-output`; manifest headers serialize through a Rust-built `g-plan::PreparedRunPlan` consumed by `g-output`, with backend validation, prepared-plan assembly, and backend-kind derivation owned by `g-plan`; Python still supplies other transitional header fields from legacy dataclasses until dynamic preparation moves to Rust | `tests/test_backend_planner.py`, `tests/test_regenie2_pipeline.py`, `tests/test_io_output.py`, `cargo test -p g-plan`, `cargo test -p g-interface`, `cargo test -p g-output` |
 | BGEN and genotype preprocessing | Python native-dispatch wrappers | `crates/genotype/src/` | `g-genotype` | Rust | Extracted as leaf crate | Rust genotype tests, `just benchmark-bgen-reader`, `cargo bench -p g-genotype` |
 | Sample and phenotype alignment | `src/g/io/source.py`, pipeline wrappers | `crates/input/src/sample/` | `g-input` | Rust | Extracted as native crate; Python remains engine adapter | `tests/test_regenie2_pipeline.py`, `tests/test_core.py`, `cargo test -p g-input` |
@@ -376,9 +375,10 @@ Phase 13 wheel installation has also been smoke-tested: a `dev-fast` wheel
 built in `0:41.53` wall time (`29.23s` Cargo target time), installed into a
 temporary Python 3.14 environment, imported `g` and `g._core`, and rendered
 installed `g --help` output through the Python compatibility shim.
-The Python architecture checker now guards that CLI boundary: public
-`g.cli.run_args` must dispatch through the native parser, route validated
-configs to `g.runner.cli`, and avoid legacy bridge or sentinel paths.
+The Python architecture checker now guards that CLI boundary: the console script
+points at `g.runner.cli.main`, and `g.runner.cli.run` dispatches through the
+native parser, routes validated configs through the Python runner, and avoids
+legacy bridge or sentinel paths.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,

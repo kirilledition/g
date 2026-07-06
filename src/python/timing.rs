@@ -5,13 +5,14 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use numpy::ndarray::IxDyn;
-use numpy::{PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
+use numpy::{dtype, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 use g_runtime as native_timing;
 
+use super::errors::{convert_timing_file_error, convert_transfer_metadata_error};
 use super::logging;
 
 #[pyclass]
@@ -223,7 +224,7 @@ impl NativeStageTimingRecorder {
     ) -> PyResult<()> {
         self.lock_recorder()?
             .add_transfer_metadata_for_shape(&transfer_name, &array_role, &dtype_name, &shape_dimensions, item_size)
-            .map_err(|error| transfer_metadata_error_to_py(&error))
+            .map_err(|error| convert_transfer_metadata_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -241,7 +242,7 @@ impl NativeStageTimingRecorder {
                 profile_summary_path.as_deref().map(Path::new),
                 run_id,
             )
-            .map_err(|error| timing_file_error_to_py(&error))?;
+            .map_err(|error| convert_timing_file_error(&error))?;
         final_timing_outputs_write_result_payload_to_dict(py, &result)
     }
 }
@@ -498,14 +499,6 @@ fn parse_numeric_diagnostic_value(value: &Bound<'_, PyAny>) -> PyResult<native_t
 
 fn null_logistic_integer_key(key: &str) -> bool {
     matches!(key, "iteration_count" | "converged" | "firth_iteration_count" | "firth_convergence_reason_code")
-}
-
-fn timing_file_error_to_py(error: &native_timing::TimingFileError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
-}
-
-fn transfer_metadata_error_to_py(error: &native_timing::TransferMetadataError) -> PyErr {
-    PyValueError::new_err(error.to_string())
 }
 
 fn final_timing_outputs_write_result_payload_to_dict<'py>(

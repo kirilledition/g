@@ -8,7 +8,8 @@
 
 use std::sync::Arc;
 
-use crate::common::{ChunkStats, GenotypeError};
+use crate::common::ChunkStats;
+use crate::error::{GenotypeError, GenotypeResult};
 
 const NONZERO_DOSAGE_THRESHOLD: f32 = 1.0e-4;
 const HETEROZYGOUS_DOSAGE_THRESHOLD: f32 = 0.5;
@@ -51,7 +52,7 @@ pub fn preprocess_row_major_dosage_matrix(
     dosage_values: &mut [f32],
     selected_sample_count: usize,
     selected_variant_count: usize,
-) -> Result<ChunkStats, GenotypeError> {
+) -> GenotypeResult<ChunkStats> {
     let expected_value_count = selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
         GenotypeError::InvalidInput("Integer overflow while validating genotype matrix shape.".to_string())
     })?;
@@ -131,7 +132,7 @@ pub fn summarize_variant_major_dosage_matrix(
     dosage_values: &[f32],
     selected_sample_count: usize,
     selected_variant_count: usize,
-) -> Result<ChunkStats, GenotypeError> {
+) -> GenotypeResult<ChunkStats> {
     let expected_value_count = selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
         GenotypeError::InvalidInput("Integer overflow while validating variant-major genotype shape.".to_string())
     })?;
@@ -325,7 +326,7 @@ pub fn build_chunk_stats_from_summaries(
     homozygous_alternate_count: Vec<i32>,
     has_missing_values: bool,
     selected_sample_count: usize,
-) -> Result<ChunkStats, GenotypeError> {
+) -> GenotypeResult<ChunkStats> {
     let selected_variant_count = observation_count.len();
     let selected_sample_count_i32 = i32::try_from(selected_sample_count).map_err(|_| {
         GenotypeError::InvalidInput(format!(

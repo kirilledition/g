@@ -40,7 +40,7 @@ scattered runtime defaults directly. User-controlled behavior flows through
 | `src/python/config/` | PyO3 conversion between Rust-owned config objects and Python classes. |
 | `src/g/interface/config.py` | Thin Python bridge that normalizes Python option dictionaries using Rust metadata. |
 | `src/g/execution_plan.py` | Immutable execution-plan construction from validated config. |
-| `src/g/cli.py` | Thin Python dispatcher into the Rust CLI frontend. |
+| `src/g/runner/cli.py` | Python console-script lifecycle around the Rust CLI frontend and current Python/JAX backend. |
 
 When adding or changing a user-facing option, update the owning source and the
 corresponding tests. Do not introduce a second option table.

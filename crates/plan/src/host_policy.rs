@@ -3,6 +3,8 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
 use std::fmt::Write as _;
 
 use serde_json::Value;
@@ -19,6 +21,16 @@ pub enum HostPolicyError {
     NotImplemented(String),
     Value(String),
 }
+
+impl fmt::Display for HostPolicyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotImplemented(message) | Self::Value(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl Error for HostPolicyError {}
 
 #[allow(clippy::fn_params_excessive_bools)]
 pub fn normalize_binary_correction(

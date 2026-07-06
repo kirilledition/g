@@ -4,6 +4,7 @@ use crate::backend::{
     AssociationBackend, AssociationBatchResult, BackendError, GenotypeBatchView, PredictionView, PreparedGroupInput,
 };
 use crate::effects::{EngineEffectError, EngineEffectOperation, EngineRunEffects, NoopEngineRunEffects};
+use crate::error::{EngineError, EngineResult};
 use crate::phase::RunPhase;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,18 +18,6 @@ impl InjectedCoordinatorFailure {
     pub fn new(phase: RunPhase, message: String) -> Self {
         Self { phase, message }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum EngineError {
-    #[error("backend failed during {phase}: {source}")]
-    Backend { phase: RunPhase, source: BackendError },
-    #[error("coordinator failed during {phase}: {message}")]
-    Coordinator { phase: RunPhase, message: String },
-    #[error("coordinator side effect {operation} failed during {phase}: {source}")]
-    Effect { phase: RunPhase, operation: EngineEffectOperation, source: EngineEffectError },
-    #[error("run interrupted during {phase}")]
-    Interrupted { phase: RunPhase },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,7 +178,7 @@ impl<Backend> EngineCoordinator<Backend> {
         self.backend
     }
 
-    fn enter_phase<Effects>(&mut self, phase: RunPhase, effects: &mut Effects) -> Result<(), EngineError>
+    fn enter_phase<Effects>(&mut self, phase: RunPhase, effects: &mut Effects) -> EngineResult<()>
     where
         Effects: EngineRunEffects,
     {
@@ -258,7 +247,7 @@ where
     ///
     /// Returns an error when a coordinator phase is interrupted, a phase-level
     /// fault is injected, or the backend fails while preparing or computing.
-    pub fn run_single_batch(&mut self, input: &EngineRunInput<'_>) -> Result<EngineRunReport, EngineError> {
+    pub fn run_single_batch(&mut self, input: &EngineRunInput<'_>) -> EngineResult<EngineRunReport> {
         self.run_single_batch_with_effects(input, &mut NoopEngineRunEffects)
     }
 
@@ -272,7 +261,7 @@ where
         &mut self,
         input: &EngineRunInput<'_>,
         effects: &mut Effects,
-    ) -> Result<EngineRunReport, EngineError>
+    ) -> EngineResult<EngineRunReport>
     where
         Effects: EngineRunEffects,
     {
@@ -298,7 +287,7 @@ where
     pub fn run_chromosome_batches(
         &mut self,
         input: &EngineChromosomeRunInput<'_>,
-    ) -> Result<EngineChromosomeRunReport, EngineError> {
+    ) -> EngineResult<EngineChromosomeRunReport> {
         self.run_chromosome_batches_with_effects(input, &mut NoopEngineRunEffects)
     }
 
@@ -313,7 +302,7 @@ where
         &mut self,
         input: &EngineChromosomeRunInput<'_>,
         effects: &mut Effects,
-    ) -> Result<EngineChromosomeRunReport, EngineError>
+    ) -> EngineResult<EngineChromosomeRunReport>
     where
         Effects: EngineRunEffects,
     {
@@ -331,10 +320,7 @@ where
     ///
     /// Returns an error when a coordinator phase is interrupted, a phase-level
     /// fault is injected, or the backend fails while preparing or computing.
-    pub fn run_group_chromosomes(
-        &mut self,
-        input: &EngineGroupRunInput<'_>,
-    ) -> Result<EngineGroupRunReport, EngineError> {
+    pub fn run_group_chromosomes(&mut self, input: &EngineGroupRunInput<'_>) -> EngineResult<EngineGroupRunReport> {
         self.run_group_chromosomes_with_effects(input, &mut NoopEngineRunEffects)
     }
 
@@ -349,7 +335,7 @@ where
         &mut self,
         input: &EngineGroupRunInput<'_>,
         effects: &mut Effects,
-    ) -> Result<EngineGroupRunReport, EngineError>
+    ) -> EngineResult<EngineGroupRunReport>
     where
         Effects: EngineRunEffects,
     {

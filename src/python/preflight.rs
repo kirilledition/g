@@ -2,12 +2,14 @@
 
 use nalgebra::DMatrix;
 use numpy::ndarray::IxDyn;
-use numpy::{Element, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
+use numpy::{dtype, Element, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use g_engine as native_preflight;
+
+use super::errors::convert_preflight_error;
 
 trait NativePreflightNumeric: Copy + Element {
     fn is_finite_value(self) -> bool;
@@ -128,7 +130,11 @@ impl NativePreflightNumeric for bool {
     }
 
     fn to_rank_f64(self) -> f64 {
-        if self { 1.0 } else { 0.0 }
+        if self {
+            1.0
+        } else {
+            0.0
+        }
     }
 }
 
@@ -263,7 +269,7 @@ impl NativePreflightValidator {
     #[allow(clippy::unused_self)]
     fn resolve_preflight_variant_count(&self, variant_count: i64, variant_limit: Option<i64>) -> PyResult<i64> {
         native_preflight::resolve_preflight_variant_count(variant_count, variant_limit)
-            .map_err(|error| preflight_error_to_py(&error))
+            .map_err(|error| convert_preflight_error(&error))
     }
 
     #[allow(clippy::unused_self)]
@@ -280,7 +286,7 @@ impl NativePreflightValidator {
             chromosome_count,
             trusted_no_missing_diploid,
         )
-        .map_err(|error| preflight_error_to_py(&error))?;
+        .map_err(|error| convert_preflight_error(&error))?;
         Ok(NativePreflightReport { report })
     }
 
@@ -298,7 +304,7 @@ impl NativePreflightValidator {
             covariate_sample_count,
             covariate_count,
         )
-        .map_err(|error| preflight_error_to_py(&error))?;
+        .map_err(|error| convert_preflight_error(&error))?;
         Ok(NativeSingleTraitPreflightShape { shape })
     }
 
@@ -320,7 +326,7 @@ impl NativePreflightValidator {
             covariate_sample_count,
             covariate_count,
         )
-        .map_err(|error| preflight_error_to_py(&error))?;
+        .map_err(|error| convert_preflight_error(&error))?;
         Ok(NativeMultiTraitPreflightShape { shape })
     }
 
@@ -337,7 +343,7 @@ impl NativePreflightValidator {
     #[allow(clippy::unused_self)]
     fn validate_covariate_matrix_rank(&self, covariate_rank: i64, covariate_count: i64) -> PyResult<()> {
         native_preflight::validate_covariate_matrix_rank(covariate_rank, covariate_count)
-            .map_err(|error| preflight_error_to_py(&error))
+            .map_err(|error| convert_preflight_error(&error))
     }
 
     #[allow(clippy::unused_self)]
@@ -369,7 +375,7 @@ impl NativePreflightValidator {
     ) -> PyResult<()> {
         let prediction_shape = prediction_shape.into_boxed_slice();
         native_preflight::validate_single_prediction_preflight_shape(chromosome, &prediction_shape, sample_count)
-            .map_err(|error| preflight_error_to_py(&error))
+            .map_err(|error| convert_preflight_error(&error))
     }
 
     #[allow(clippy::unused_self)]
@@ -388,7 +394,7 @@ impl NativePreflightValidator {
             trait_count,
             sample_count,
         )
-        .map_err(|error| preflight_error_to_py(&error))
+        .map_err(|error| convert_preflight_error(&error))
     }
 }
 
@@ -406,7 +412,7 @@ where
 {
     let readonly_values = values.readonly();
     let all_values_finite = readonly_values.as_array().iter().copied().all(NativePreflightNumeric::is_finite_value);
-    native_preflight::validate_finite_array(label, all_values_finite).map_err(|error| preflight_error_to_py(&error))
+    native_preflight::validate_finite_array(label, all_values_finite).map_err(|error| convert_preflight_error(&error))
 }
 
 fn validate_typed_binary_phenotype<T>(phenotype_values: &Bound<'_, PyArray<T, IxDyn>>) -> PyResult<()>
@@ -415,9 +421,9 @@ where
 {
     let summary = summarize_binary_phenotype(phenotype_values);
     native_preflight::validate_binary_phenotype_coding(summary.is_binary_coded)
-        .map_err(|error| preflight_error_to_py(&error))?;
+        .map_err(|error| convert_preflight_error(&error))?;
     native_preflight::validate_binary_phenotype_case_control_counts(summary.case_count, summary.control_count)
-        .map_err(|error| preflight_error_to_py(&error))
+        .map_err(|error| convert_preflight_error(&error))
 }
 
 fn validate_typed_covariate_matrix_rank<T>(
@@ -429,7 +435,7 @@ where
 {
     let covariate_rank = compute_covariate_matrix_rank(covariate_matrix)?;
     native_preflight::validate_covariate_matrix_rank(covariate_rank, covariate_count)
-        .map_err(|error| preflight_error_to_py(&error))
+        .map_err(|error| convert_preflight_error(&error))
 }
 
 fn compute_covariate_matrix_rank<T>(covariate_matrix: &Bound<'_, PyArray<T, IxDyn>>) -> PyResult<i64>
@@ -440,7 +446,7 @@ where
     let matrix_values = readonly_matrix.as_array();
     let matrix_shape = matrix_values.shape();
     if matrix_shape.len() != 2 {
-        return Err(preflight_error_to_py(&native_preflight::PreflightError::CovariateMatrixDimension));
+        return Err(convert_preflight_error(&native_preflight::PreflightError::CovariateMatrixDimension));
     }
 
     let row_count = matrix_shape[0];
@@ -476,8 +482,4 @@ where
         }
     }
     summary
-}
-
-fn preflight_error_to_py(error: &native_preflight::PreflightError) -> PyErr {
-    PyValueError::new_err(error.to_string())
 }

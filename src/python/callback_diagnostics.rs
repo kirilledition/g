@@ -1,7 +1,7 @@
 //! PyO3 adapters for callback diagnostics policy.
 
 use numpy::ndarray::IxDyn;
-use numpy::{PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
+use numpy::{dtype, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -9,6 +9,7 @@ use pyo3::types::PyModule;
 use g_engine as native_callback_diagnostics;
 use g_runtime as native_run_events;
 
+use super::errors::convert_callback_diagnostics_error;
 use super::logging;
 
 #[pyclass]
@@ -77,7 +78,7 @@ pub(crate) fn enforce_null_logistic_nonconvergence_from_array(
         phenotype_names.as_deref(),
         &policy,
     )
-    .map_err(|error| callback_diagnostics_error_to_py(&error))?;
+    .map_err(|error| convert_callback_diagnostics_error(&error))?;
     match native_plan.action {
         native_callback_diagnostics::NullLogisticNonconvergenceAction::Continue => {}
         native_callback_diagnostics::NullLogisticNonconvergenceAction::Fail => {
@@ -148,8 +149,4 @@ fn emit_null_logistic_nonconvergence_warning(
 
 fn usize_to_i64(value: usize, value_name: &str) -> PyResult<i64> {
     i64::try_from(value).map_err(|_| PyValueError::new_err(format!("{value_name} exceeds i64 range.")))
-}
-
-fn callback_diagnostics_error_to_py(error: &native_callback_diagnostics::CallbackDiagnosticsError) -> PyErr {
-    PyValueError::new_err(error.to_string())
 }

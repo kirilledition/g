@@ -54,7 +54,6 @@ documentation/scratchpad/
 | Resume/manifests | `documentation/public/resume-and-manifest.md` |
 | Statistics | `documentation/public/algorithm.md` |
 | Compatibility | `documentation/public/compatibility.md` |
-| Python API | `documentation/public/api-python.md` |
 | GPU/cluster use | `documentation/public/gpu-and-clusters.md` |
 | Performance | `documentation/public/performance-guide.md` |
 | Troubleshooting | `documentation/public/troubleshooting.md` |

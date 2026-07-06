@@ -8,9 +8,6 @@ from pathlib import Path
 
 from g import _core, types
 
-if typing.TYPE_CHECKING:
-    from g import interface
-
 
 @dataclass(frozen=True)
 class TelemetryPaths:
@@ -350,7 +347,7 @@ class RunArtifacts:
     run_id: str | None
 
 
-def build_telemetry_session(regenie_config: interface.RegenieConfig) -> TelemetrySession:
+def build_telemetry_session(regenie_config: _core.RegenieConfig) -> TelemetrySession:
     """Build the run telemetry session for one runner invocation."""
     diagnostics_config = regenie_config.g_diagnostics
     return TelemetrySession(
@@ -365,7 +362,7 @@ def build_telemetry_session(regenie_config: interface.RegenieConfig) -> Telemetr
     )
 
 
-def resolve_telemetry_paths(regenie_config: interface.RegenieConfig) -> TelemetryPaths:
+def resolve_telemetry_paths(regenie_config: _core.RegenieConfig) -> TelemetryPaths:
     """Resolve diagnostics paths using documented log-dir defaults."""
     diagnostics_config = regenie_config.g_diagnostics
     output_prefix = typing.cast("Path", regenie_config.g_output.out)

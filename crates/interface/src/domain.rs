@@ -4,6 +4,8 @@ use std::str::FromStr;
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::{ConfigError, ConfigResult};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PositiveF32(f32);
 
@@ -278,28 +280,31 @@ impl NameList {
         self.0
     }
 
-    fn from_text(raw_value: &str) -> Result<Self, String> {
+    fn from_text(raw_value: &str) -> ConfigResult<Self> {
         Self::from_values(raw_value.split(',').map(ToOwned::to_owned).collect())
     }
 
-    pub(crate) fn from_values(values: Vec<String>) -> Result<Self, String> {
+    pub(crate) fn from_values(values: Vec<String>) -> ConfigResult<Self> {
         let mut normalized_values = Vec::with_capacity(values.len());
         for (zero_based_index, value) in values.into_iter().enumerate() {
             let normalized_value = value.trim();
             if normalized_value.is_empty() {
-                return Err(format!("name list contains an empty entry at position {}.", zero_based_index + 1));
+                return Err(ConfigError::new(format!(
+                    "name list contains an empty entry at position {}.",
+                    zero_based_index + 1
+                )));
             }
             normalized_values.push(normalized_value.to_string());
         }
         if normalized_values.is_empty() {
-            return Err("name list must contain at least one name.".to_string());
+            return Err(ConfigError::new("name list must contain at least one name."));
         }
         Ok(Self(normalized_values))
     }
 }
 
 impl FromStr for NameList {
-    type Err = String;
+    type Err = ConfigError;
 
     fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
         Self::from_text(raw_value)

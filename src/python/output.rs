@@ -9,7 +9,7 @@ use g_engine as native_schedule;
 use g_engine::build_current_run_manifest_header_json_from_value_with_cache;
 use g_output::{
     ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
-    NativeChunkStats as NativeOutputChunkStats, OutputWriterError, OutputWriterSession as NativeOutputWriterSession,
+    NativeChunkStats as NativeOutputChunkStats, OutputError, OutputWriterSession as NativeOutputWriterSession,
     VariantMetadataColumns as NativeOutputVariantMetadataColumns,
 };
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
@@ -18,8 +18,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
 use super::{
+    errors,
     genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
-    json_bridge, schedule,
+    json_bridge,
 };
 
 #[pyclass]
@@ -56,14 +57,14 @@ impl NativeManifestFileFingerprintCache {
         let current_header_json = py
             .detach(|| {
                 let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                    OutputWriterError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
+                    OutputError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
                 })?;
                 build_current_run_manifest_header_json_from_value_with_cache(
                     current_header_input_value,
                     &mut fingerprint_cache,
                 )
             })
-            .map_err(|error| output_writer_error_to_py(error, "build_cached_current_run_manifest_header_payload"))?;
+            .map_err(|error| errors::convert_output_error("build_cached_current_run_manifest_header_payload", error))?;
         json_bridge::json_text_to_py_object(py, &current_header_json, "current-run manifest header")
     }
 }
@@ -100,7 +101,7 @@ impl OutputWriterSession {
             parquet_compression,
             collect_stage_timings,
         )
-        .map_err(|error| output_writer_error_to_py(error, "new_output_writer_session"))?;
+        .map_err(|error| errors::convert_output_error("new_output_writer_session", error))?;
         Ok(Self { inner })
     }
 
@@ -199,17 +200,17 @@ impl OutputWriterSession {
     fn finish(&self, py: Python<'_>) -> PyResult<Option<String>> {
         py.detach(|| self.inner.finish())
             .map(|maybe_path| maybe_path.map(|path| path.display().to_string()))
-            .map_err(|error| output_writer_error_to_py(error, "finish_output_writer"))
+            .map_err(|error| errors::convert_output_error("finish_output_writer", error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
     fn finish_interrupted(&self, py: Python<'_>, signal_name: String) -> PyResult<()> {
         py.detach(|| self.inner.finish_interrupted(&signal_name))
-            .map_err(|error| output_writer_error_to_py(error, "finish_interrupted"))
+            .map_err(|error| errors::convert_output_error("finish_interrupted", error))
     }
 
     fn abort(&self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| self.inner.abort()).map_err(|error| output_writer_error_to_py(error, "abort_output_writer"))
+        py.detach(|| self.inner.abort()).map_err(|error| errors::convert_output_error("abort_output_writer", error))
     }
 }
 
@@ -242,7 +243,7 @@ pub(crate) fn write_regenie2_native_chunk_with_output_dtype<'py>(
     extra_code: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<()> {
     let write_plan = native_schedule::plan_single_trait_output_write(true, &output_statistic_dtype)
-        .map_err(|error| schedule::schedule_error_to_py(&error))?;
+        .map_err(|error| errors::convert_schedule_error(&error))?;
     if write_plan.uses_float64_native_writer {
         return writer_session.write_regenie2_native_chunk_f64(
             py,
@@ -286,7 +287,7 @@ pub(crate) fn write_regenie2_multi_native_chunk_with_output_dtype<'py>(
 ) -> PyResult<()> {
     let write_plan =
         native_schedule::plan_multi_trait_output_write(active_trait_indices.len(), true, &output_statistic_dtype)
-            .map_err(|error| schedule::schedule_error_to_py(&error))?;
+            .map_err(|error| errors::convert_schedule_error(&error))?;
     if !write_plan.use_native_multi_writer {
         return Ok(());
     }
@@ -487,11 +488,11 @@ fn finish_output_writer_sessions(
         writer_session_count_as_i64(writer_sessions.len())?,
         requested_thread_count,
     )
-    .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    .map_err(|error| errors::convert_schedule_error(&error))?;
     let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
     py.detach(|| finish_native_output_writer_sessions(&native_writer_sessions, finish_plan.thread_count))
         .map(optional_path_values_to_strings)
-        .map_err(|error| output_writer_error_to_py(error, "finish_output_writer_sessions"))
+        .map_err(|error| errors::convert_output_error("finish_output_writer_sessions", error))
 }
 
 #[pyfunction]
@@ -506,7 +507,7 @@ fn finish_interrupted_output_writer_sessions(
         writer_session_count_as_i64(writer_sessions.len())?,
         requested_thread_count,
     )
-    .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    .map_err(|error| errors::convert_schedule_error(&error))?;
     let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
     py.detach(|| {
         finish_interrupted_native_output_writer_sessions(
@@ -515,7 +516,7 @@ fn finish_interrupted_output_writer_sessions(
             &signal_name,
         )
     })
-    .map_err(|error| output_writer_error_to_py(error, "finish_interrupted_output_writer_sessions"))
+    .map_err(|error| errors::convert_output_error("finish_interrupted_output_writer_sessions", error))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -536,7 +537,7 @@ fn writer_session_count_as_i64(writer_session_count: usize) -> PyResult<i64> {
 fn finish_native_output_writer_sessions(
     writer_sessions: &[&NativeOutputWriterSession],
     thread_count: usize,
-) -> Result<Vec<Option<PathBuf>>, OutputWriterError> {
+) -> Result<Vec<Option<PathBuf>>, OutputError> {
     if thread_count <= 1 {
         return writer_sessions.iter().map(|writer_session| writer_session.finish()).collect();
     }
@@ -549,7 +550,7 @@ fn finish_native_output_writer_sessions(
 
 fn finish_native_output_writer_session_batch(
     writer_sessions: &[&NativeOutputWriterSession],
-) -> Result<Vec<Option<PathBuf>>, OutputWriterError> {
+) -> Result<Vec<Option<PathBuf>>, OutputError> {
     std::thread::scope(|scope| {
         let writer_handles = writer_sessions
             .iter()
@@ -560,7 +561,7 @@ fn finish_native_output_writer_session_batch(
             .map(|writer_handle| {
                 writer_handle
                     .join()
-                    .map_err(|_| OutputWriterError::Runtime("Output writer finish thread panicked.".to_string()))?
+                    .map_err(|_| OutputError::Runtime("Output writer finish thread panicked.".to_string()))?
             })
             .collect()
     })
@@ -570,7 +571,7 @@ fn finish_interrupted_native_output_writer_sessions(
     writer_sessions: &[&NativeOutputWriterSession],
     thread_count: usize,
     signal_name: &str,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     if thread_count <= 1 {
         for writer_session in writer_sessions {
             writer_session.finish_interrupted(signal_name)?;
@@ -586,16 +587,16 @@ fn finish_interrupted_native_output_writer_sessions(
 fn finish_interrupted_native_output_writer_session_batch(
     writer_sessions: &[&NativeOutputWriterSession],
     signal_name: &str,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     std::thread::scope(|scope| {
         let writer_handles = writer_sessions
             .iter()
             .map(|writer_session| scope.spawn(move || writer_session.finish_interrupted(signal_name)))
             .collect::<Vec<_>>();
         for writer_handle in writer_handles {
-            writer_handle.join().map_err(|_| {
-                OutputWriterError::Runtime("Interrupted output writer finish thread panicked.".to_string())
-            })??;
+            writer_handle
+                .join()
+                .map_err(|_| OutputError::Runtime("Interrupted output writer finish thread panicked.".to_string()))??;
         }
         Ok(())
     })
@@ -622,26 +623,7 @@ fn write_regenie2_chunk_arrays_detached(
             statistic_arrays.extra_code,
         )
     })
-    .map_err(|error| output_writer_error_to_py(error, operation))
-}
-
-fn output_writer_error_to_py(error: OutputWriterError, operation: &str) -> PyErr {
-    let (error_kind, message) = match &error {
-        OutputWriterError::InvalidInput(message) => ("invalid_input", message.clone()),
-        OutputWriterError::Runtime(message) => ("runtime", message.clone()),
-    };
-    tracing::warn!(
-        target: "g.python.output",
-        g_event = "native_output_writer_error",
-        operation = operation,
-        error_kind = error_kind,
-        error_message = %message,
-        "Native output writer conversion error."
-    );
-    match error {
-        OutputWriterError::InvalidInput(message) => PyValueError::new_err(message),
-        OutputWriterError::Runtime(message) => PyRuntimeError::new_err(message),
-    }
+    .map_err(|error| errors::convert_output_error(operation, error))
 }
 
 fn build_native_chunk_handle_from_python(
@@ -728,7 +710,7 @@ where
 mod tests {
     use arrow::array::Array;
 
-    use super::{Float32Type, build_copied_arrow_array};
+    use super::{build_copied_arrow_array, Float32Type};
 
     #[test]
     fn copied_arrow_array_is_independent_from_source_slice() {

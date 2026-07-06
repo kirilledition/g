@@ -15,7 +15,7 @@ The tooling package now has a small internal framework:
 - `tooling.common.commands` owns shell-free subprocess execution, logs, timeouts, and redacted environment reporting.
 - `tooling.common.reports` owns versioned JSON report validation.
 - `tooling.common.artifact_format` owns Tooling Artifact Format v1 report, manifest, metric, event, command, failure, finding, and comparison models.
-- `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and Python API payload rendering.
+- `tooling.common.g_regenie` owns shared `g regenie` CLI rendering and run-option payload rendering.
 - `tooling.common.downloads` owns Pooch-backed retrieval, cache reuse, SHA-256 validation, archive processors, and download manifests for data and server-tool assets.
 - `tooling.profile_deep.models` owns the deep-profile enums and dataclasses so the profiler package can be split without circular imports through the CLI module.
 - `tooling.profile_deep.budget` owns deep-profile list parsing, workload selector expansion, logging perturbation case definitions, and campaign budget accounting; the CLI only re-exports compatibility aliases.

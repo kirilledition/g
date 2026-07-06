@@ -12,28 +12,26 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::{FileReader as ParquetFileReader, SerializedFileReader};
 use serde_json::Value;
 
+use crate::error::OutputError;
 use crate::manifest;
 use crate::schema;
-use crate::writer::{self, OutputWriterError};
+use crate::writer;
 
-pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputWriterError> {
+pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i64>, OutputError> {
     Ok(scan_committed_chunk_commits(chunks_directory)?
         .into_iter()
         .map(|chunk_commit| chunk_commit.chunk_identifier)
         .collect())
 }
 
-pub fn validate_strict_manifest_chunks(
-    chunks_directory: &Path,
-    manifest_json: &str,
-) -> Result<Vec<i64>, OutputWriterError> {
+pub fn validate_strict_manifest_chunks(chunks_directory: &Path, manifest_json: &str) -> Result<Vec<i64>, OutputError> {
     let manifest_commits = read_manifest_chunk_commits(manifest_json)?;
     let mut committed_identifiers = BTreeSet::new();
     let mut expected_schema: Option<Arc<Schema>> = None;
     for (chunk_file_name, chunk_commits) in group_manifest_commits_by_file(manifest_commits) {
         let chunk_file_path = chunks_directory.join(&chunk_file_name);
         if !chunk_file_path.exists() {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume manifest references missing chunk file: {}",
                 chunk_file_path.display()
             )));
@@ -51,7 +49,7 @@ pub fn validate_strict_manifest_chunks(
 pub fn repair_strict_manifest_chunk_commits(
     chunks_directory: &Path,
     manifest_json: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
     let mut repaired_commits = read_manifest_chunk_commits(manifest_json)?
         .into_iter()
         .map(|chunk_commit| (chunk_commit.chunk_identifier, chunk_commit))
@@ -63,7 +61,7 @@ pub fn repair_strict_manifest_chunk_commits(
     for existing_commit in repaired_commits.values() {
         let chunk_file_path = chunks_directory.join(&existing_commit.chunk_file_name);
         if !chunk_file_path.exists() {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume manifest references missing chunk file: {}",
                 chunk_file_path.display()
             )));
@@ -71,13 +69,13 @@ pub fn repair_strict_manifest_chunk_commits(
         match scanned_commits.get(&existing_commit.chunk_identifier) {
             Some(scanned_commit) if scanned_commit == existing_commit => {}
             Some(_) => {
-                return Err(OutputWriterError::InvalidInput(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "Strict resume found conflicting commit metadata for chunk {}.",
                     existing_commit.chunk_identifier
                 )));
             }
             None => {
-                return Err(OutputWriterError::InvalidInput(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "Strict resume manifest references unobserved commit metadata for chunk {}.",
                     existing_commit.chunk_identifier
                 )));
@@ -87,7 +85,7 @@ pub fn repair_strict_manifest_chunk_commits(
     for (chunk_identifier, chunk_commit) in scanned_commits {
         if let Some(existing_commit) = repaired_commits.get(&chunk_identifier) {
             if existing_commit != &chunk_commit {
-                return Err(OutputWriterError::InvalidInput(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "Strict resume found conflicting commit metadata for chunk {chunk_identifier}."
                 )));
             }
@@ -113,30 +111,26 @@ struct ChunkFileCommitObservation {
     chunk_commits: Vec<manifest::RunManifestChunkCommit>,
 }
 
-fn read_manifest_chunk_commits(
-    manifest_json: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
-    manifest::read_run_manifest_chunk_commits_from_text(manifest_json).map_err(OutputWriterError::InvalidInput)
+fn read_manifest_chunk_commits(manifest_json: &str) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
+    manifest::read_run_manifest_chunk_commits_from_text(manifest_json)
 }
 
 fn read_optional_manifest_string(committed_chunk: &Value, field_name: &str) -> Option<String> {
     committed_chunk.get(field_name).and_then(Value::as_str).map(str::to_string)
 }
 
-fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, OutputWriterError> {
+fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, OutputError> {
     committed_chunk.get(field_name).and_then(Value::as_i64).ok_or_else(|| {
-        OutputWriterError::InvalidInput(format!("Run manifest committed chunk entry is missing {field_name}."))
+        OutputError::InvalidInput(format!("Run manifest committed chunk entry is missing {field_name}."))
     })
 }
 
-fn scan_committed_chunk_commits(
-    chunks_directory: &Path,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+fn scan_committed_chunk_commits(chunks_directory: &Path) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
     if !chunks_directory.exists() {
         return Ok(Vec::new());
     }
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(OutputWriterError::runtime)?
+        .map_err(OutputError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
         .filter(|chunk_file_path| {
             chunk_file_path
@@ -151,7 +145,7 @@ fn scan_committed_chunk_commits(
         let chunk_file_observation = inspect_chunk_file_commits(&chunk_file_path)?;
         match expected_schema.as_ref() {
             Some(expected_schema) if expected_schema.fields() != chunk_file_observation.schema.fields() => {
-                return Err(OutputWriterError::InvalidInput(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "Strict resume found incompatible Arrow schema in {}.",
                     chunk_file_path.display()
                 )));
@@ -161,7 +155,7 @@ fn scan_committed_chunk_commits(
         }
         for chunk_commit in chunk_file_observation.chunk_commits {
             if chunk_commits.insert(chunk_commit.chunk_identifier, chunk_commit).is_some() {
-                return Err(OutputWriterError::InvalidInput(
+                return Err(OutputError::InvalidInput(
                     "Strict resume found duplicate Arrow commit metadata for a chunk.".to_string(),
                 ));
             }
@@ -185,11 +179,11 @@ fn validate_manifest_chunk_file_commits(
     expected_commits: &[manifest::RunManifestChunkCommit],
     expected_schema: &mut Option<Arc<Schema>>,
     committed_identifiers: &mut BTreeSet<i64>,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     let chunk_file_observation = inspect_chunk_file_commits(chunk_file_path)?;
     match expected_schema.as_ref() {
         Some(expected_schema) if expected_schema.fields() != chunk_file_observation.schema.fields() => {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume found incompatible Arrow schema in {}.",
                 chunk_file_path.display()
             )));
@@ -203,7 +197,7 @@ fn validate_manifest_chunk_file_commits(
     let observed_commit_identifiers = observed_commits.keys().copied().collect::<BTreeSet<_>>();
     for expected_commit in expected_commits {
         let Some(observed_commit) = observed_commits.get(&expected_commit.chunk_identifier) else {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume manifest commit set does not match chunk file {}.",
                 chunk_file_path.display()
             )));
@@ -212,7 +206,7 @@ fn validate_manifest_chunk_file_commits(
         committed_identifiers.insert(expected_commit.chunk_identifier);
     }
     if observed_commit_identifiers != expected_commit_identifiers {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume manifest commit set does not match chunk file {}.",
             chunk_file_path.display()
         )));
@@ -223,23 +217,23 @@ fn validate_manifest_chunk_file_commits(
 fn validate_manifest_chunk_commit(
     expected_commit: &manifest::RunManifestChunkCommit,
     observed_commit: &manifest::RunManifestChunkCommit,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     if observed_commit.variant_start_index != expected_commit.variant_start_index
         || observed_commit.variant_stop_index != expected_commit.variant_stop_index
     {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume variant range mismatch for chunk {}.",
             expected_commit.chunk_identifier
         )));
     }
     if observed_commit.row_count != expected_commit.row_count {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume row count mismatch for chunk {}.",
             expected_commit.chunk_identifier
         )));
     }
     if observed_commit != expected_commit {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume found conflicting commit metadata for chunk {}.",
             expected_commit.chunk_identifier
         )));
@@ -249,11 +243,11 @@ fn validate_manifest_chunk_commit(
 
 fn collect_chunk_commits_by_identifier(
     chunk_commits: Vec<manifest::RunManifestChunkCommit>,
-) -> Result<BTreeMap<i64, manifest::RunManifestChunkCommit>, OutputWriterError> {
+) -> Result<BTreeMap<i64, manifest::RunManifestChunkCommit>, OutputError> {
     let mut chunk_commits_by_identifier = BTreeMap::new();
     for chunk_commit in chunk_commits {
         if chunk_commits_by_identifier.insert(chunk_commit.chunk_identifier, chunk_commit).is_some() {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "Strict resume found duplicate Arrow commit metadata for a chunk.".to_string(),
             ));
         }
@@ -261,23 +255,23 @@ fn collect_chunk_commits_by_identifier(
     Ok(chunk_commits_by_identifier)
 }
 
-fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+fn inspect_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputError> {
     if chunk_file_path.extension().is_some_and(|extension| extension == "parquet") {
         return inspect_parquet_chunk_file_commits(chunk_file_path);
     }
     if chunk_file_path.extension().is_some_and(|extension| extension == "regenie") {
         return inspect_regenie_text_chunk_file_commits(chunk_file_path);
     }
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
-    let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?;
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
+    let file_reader = ArrowFileReader::try_new(input_file, None).map_err(OutputError::runtime)?;
     let schema = file_reader.schema();
     let chunk_file_name = chunk_file_path
         .file_name()
         .and_then(|file_name| file_name.to_str())
-        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer chunk file name is not UTF-8.".to_string()))?
+        .ok_or_else(|| OutputError::Runtime("Rust output writer chunk file name is not UTF-8.".to_string()))?
         .to_string();
     let Some(chunk_commits) = read_schema_chunk_commits(schema.as_ref())? else {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume Arrow chunk is missing chunk commit metadata: {}",
             chunk_file_path.display()
         )));
@@ -290,21 +284,21 @@ fn inspect_metadata_chunk_file_commits(
     file_reader: ArrowFileReader<File>,
     chunk_commits: Vec<ChunkCommitObservation>,
     chunk_file_name: &str,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
     let mut batch_row_counts = Vec::with_capacity(chunk_commits.len());
     for maybe_batch in file_reader {
-        let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
-        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputWriterError::runtime)?);
+        let batch = maybe_batch.map_err(OutputError::runtime)?;
+        batch_row_counts.push(i64::try_from(batch.num_rows()).map_err(OutputError::runtime)?);
     }
     if batch_row_counts.len() != chunk_commits.len() {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume batch count mismatch for chunk file {chunk_file_name}."
         )));
     }
     let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
     for (observed_row_count, chunk_commit) in batch_row_counts.iter().zip(chunk_commits) {
         if *observed_row_count != chunk_commit.row_count {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume row count mismatch for chunk {}.",
                 chunk_commit.chunk_identifier
             )));
@@ -315,22 +309,22 @@ fn inspect_metadata_chunk_file_commits(
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
             chunk_file_name: chunk_file_name.to_string(),
         });
     }
     Ok(manifest_commits)
 }
 
-fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputError> {
     let schema = read_parquet_arrow_schema(chunk_file_path)?;
     let chunk_file_name = chunk_file_path
         .file_name()
         .and_then(|file_name| file_name.to_str())
-        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer part file name is not UTF-8.".to_string()))?
+        .ok_or_else(|| OutputError::Runtime("Rust output writer part file name is not UTF-8.".to_string()))?
         .to_string();
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
-    let parquet_reader = SerializedFileReader::new(input_file).map_err(OutputWriterError::runtime)?;
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
+    let parquet_reader = SerializedFileReader::new(input_file).map_err(OutputError::runtime)?;
     let file_metadata = parquet_reader.metadata().file_metadata();
     let observed_row_count = file_metadata.num_rows();
     let chunk_commit_text = file_metadata
@@ -338,7 +332,7 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
         .and_then(|metadata| metadata.iter().find(|entry| entry.key == schema::CHUNK_COMMITS_METADATA_KEY))
         .and_then(|entry| entry.value.as_deref())
         .ok_or_else(|| {
-            OutputWriterError::InvalidInput(format!(
+            OutputError::InvalidInput(format!(
                 "Strict resume Parquet part is missing chunk commit metadata: {}",
                 chunk_file_path.display()
             ))
@@ -347,16 +341,16 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
     let summed_row_count = chunk_commits
         .iter()
         .try_fold(0_i64, |total, chunk_commit| total.checked_add(chunk_commit.row_count).ok_or(()))
-        .map_err(|()| OutputWriterError::Runtime("Rust output writer Parquet row count overflowed.".to_string()))?;
+        .map_err(|()| OutputError::Runtime("Rust output writer Parquet row count overflowed.".to_string()))?;
     if summed_row_count != observed_row_count {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume Parquet row count mismatch for part {chunk_file_name}."
         )));
     }
     let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
     for chunk_commit in chunk_commits {
         if chunk_commit.output_format != "parquet" {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume Parquet part has non-Parquet commit metadata for chunk {}.",
                 chunk_commit.chunk_identifier
             )));
@@ -367,25 +361,23 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
             chunk_file_name: chunk_file_name.clone(),
         });
     }
     Ok(ChunkFileCommitObservation { schema, chunk_commits: manifest_commits })
 }
 
-fn inspect_regenie_text_chunk_file_commits(
-    chunk_file_path: &Path,
-) -> Result<ChunkFileCommitObservation, OutputWriterError> {
+fn inspect_regenie_text_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFileCommitObservation, OutputError> {
     let schema = Arc::clone(schema::get_regenie_step2_final_schema(schema::OutputStatisticDtype::Float32));
     let chunk_file_name = chunk_file_path
         .file_name()
         .and_then(|file_name| file_name.to_str())
-        .ok_or_else(|| OutputWriterError::Runtime("Rust output writer text part file name is not UTF-8.".to_string()))?
+        .ok_or_else(|| OutputError::Runtime("Rust output writer text part file name is not UTF-8.".to_string()))?
         .to_string();
     let sidecar_path = writer::build_regenie_text_metadata_sidecar_path(chunk_file_path);
     let chunk_commit_text = std::fs::read_to_string(&sidecar_path).map_err(|error| {
-        OutputWriterError::InvalidInput(format!(
+        OutputError::InvalidInput(format!(
             "Strict resume REGENIE text part is missing chunk commit metadata: {} ({error})",
             sidecar_path.display()
         ))
@@ -395,18 +387,16 @@ fn inspect_regenie_text_chunk_file_commits(
     let summed_row_count = chunk_commits
         .iter()
         .try_fold(0_i64, |total, chunk_commit| total.checked_add(chunk_commit.row_count).ok_or(()))
-        .map_err(|()| {
-            OutputWriterError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string())
-        })?;
+        .map_err(|()| OutputError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string()))?;
     if summed_row_count != observed_row_count {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume REGENIE text row count mismatch for part {chunk_file_name}."
         )));
     }
     let mut manifest_commits = Vec::with_capacity(chunk_commits.len());
     for chunk_commit in chunk_commits {
         if chunk_commit.output_format != "regenie" {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume REGENIE text part has non-REGENIE commit metadata for chunk {}.",
                 chunk_commit.chunk_identifier
             )));
@@ -417,22 +407,22 @@ fn inspect_regenie_text_chunk_file_commits(
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputWriterError::runtime)?,
+            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
             chunk_file_name: chunk_file_name.clone(),
         });
     }
     Ok(ChunkFileCommitObservation { schema, chunk_commits: manifest_commits })
 }
 
-fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterError> {
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputError> {
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
     let mut input_reader = BufReader::new(input_file);
     let mut header_line = String::new();
-    input_reader.read_line(&mut header_line).map_err(OutputWriterError::runtime)?;
+    input_reader.read_line(&mut header_line).map_err(OutputError::runtime)?;
     let observed_header = header_line.trim_end_matches(['\r', '\n']);
     let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
     if observed_header != expected_header {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Strict resume REGENIE text part has an unexpected header: {}",
             chunk_file_path.display()
         )));
@@ -442,44 +432,42 @@ fn count_regenie_text_rows(chunk_file_path: &Path) -> Result<i64, OutputWriterEr
     let expected_column_count = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n').split('\t').count();
     loop {
         row_line.clear();
-        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputWriterError::runtime)?;
+        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputError::runtime)?;
         if read_byte_count == 0 {
             break;
         }
         let row = row_line.trim_end_matches(['\r', '\n']);
         if row.split('\t').count() != expected_column_count {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Strict resume REGENIE text part has a row with an unexpected column count: {}",
                 chunk_file_path.display()
             )));
         }
-        row_count = row_count.checked_add(1).ok_or_else(|| {
-            OutputWriterError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string())
-        })?;
+        row_count = row_count
+            .checked_add(1)
+            .ok_or_else(|| OutputError::Runtime("Rust output writer REGENIE text row count overflowed.".to_string()))?;
     }
     Ok(row_count)
 }
 
-fn read_parquet_arrow_schema(chunk_file_path: &Path) -> Result<Arc<Schema>, OutputWriterError> {
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
-    let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file).map_err(OutputWriterError::runtime)?;
+fn read_parquet_arrow_schema(chunk_file_path: &Path) -> Result<Arc<Schema>, OutputError> {
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
+    let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file).map_err(OutputError::runtime)?;
     Ok(parquet_reader.schema().clone())
 }
 
-fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCommitObservation>>, OutputWriterError> {
+fn read_schema_chunk_commits(chunk_schema: &Schema) -> Result<Option<Vec<ChunkCommitObservation>>, OutputError> {
     let Some(chunk_commits_text) = chunk_schema.metadata().get(schema::CHUNK_COMMITS_METADATA_KEY) else {
         return Ok(None);
     };
     Ok(Some(read_chunk_commit_observations_text(chunk_commits_text)?))
 }
 
-fn read_chunk_commit_observations_text(
-    chunk_commits_text: &str,
-) -> Result<Vec<ChunkCommitObservation>, OutputWriterError> {
-    let chunk_commit_values = serde_json::from_str::<Value>(chunk_commits_text).map_err(OutputWriterError::runtime)?;
-    let chunk_commit_array = chunk_commit_values.as_array().ok_or_else(|| {
-        OutputWriterError::Runtime("Rust output writer chunk commit metadata must be a list.".to_string())
-    })?;
+fn read_chunk_commit_observations_text(chunk_commits_text: &str) -> Result<Vec<ChunkCommitObservation>, OutputError> {
+    let chunk_commit_values = serde_json::from_str::<Value>(chunk_commits_text).map_err(OutputError::runtime)?;
+    let chunk_commit_array = chunk_commit_values
+        .as_array()
+        .ok_or_else(|| OutputError::Runtime("Rust output writer chunk commit metadata must be a list.".to_string()))?;
     let mut chunk_commits = Vec::with_capacity(chunk_commit_array.len());
     for chunk_commit_value in chunk_commit_array {
         chunk_commits.push(ChunkCommitObservation {

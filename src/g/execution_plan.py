@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core, types
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_linear import config as regenie2_linear_config
-
-if typing.TYPE_CHECKING:
-    from g import interface
 
 
 @dataclass(frozen=True)
@@ -70,7 +66,7 @@ class KernelConfig:
     gpu_genotype_format: types.GpuGenotypeFormat
     trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
-    alignment_config: interface.GComputeConfig
+    alignment_config: _core.GComputeConfig
     multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode
     binary_kernel_config: regenie2_binary_config.BinaryKernelConfig | None
     linear_numerical_config: regenie2_linear_config.LinearNumericalConfig | None
@@ -193,7 +189,7 @@ class RegenieExecutionPlan:
 
 
 def build_binary_kernel_config(
-    compute_config: interface.GComputeConfig,
+    compute_config: _core.GComputeConfig,
 ) -> regenie2_binary_config.BinaryKernelConfig:
     """Build immutable binary JAX kernel settings from public compute config."""
     return regenie2_binary_config.BinaryKernelConfig(
@@ -239,7 +235,7 @@ def build_binary_kernel_config(
 
 
 def build_regenie_execution_plan_from_run_request(
-    regenie_config: interface.RegenieConfig,
+    regenie_config: _core.RegenieConfig,
     run_request: _core.NativeRunRequest,
 ) -> RegenieExecutionPlan:
     """Build a complete execution plan from a compiled native request."""
@@ -293,7 +289,7 @@ def build_regenie_execution_plan_from_run_request(
 
 
 def build_kernel_config_from_run_request(
-    regenie_config: interface.RegenieConfig,
+    regenie_config: _core.RegenieConfig,
     run_request: _core.NativeRunRequest,
 ) -> KernelConfig:
     """Adapt native requested-run compute fields into the existing kernel config."""

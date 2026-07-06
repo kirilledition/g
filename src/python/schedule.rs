@@ -8,6 +8,8 @@ use pyo3::types::PyModule;
 
 use g_engine as native_schedule;
 
+use super::errors::convert_schedule_error;
+
 #[pyclass]
 pub(crate) struct NativeCallbackQueueLimits {
     #[pyo3(get)]
@@ -650,7 +652,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> NativeDosageWorkDrainCompletionPlan {
@@ -664,7 +666,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_dosage_work_item_dispatch(dosage_work_item_kind)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     fn plan_dosage_work_item_stage_duration(
@@ -676,7 +678,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[getter]
@@ -782,11 +784,11 @@ impl NativeCallbackSchedulerState {
                 chunk_stats_count,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     fn plan_dosage_work_handoff(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
-        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
+        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| convert_schedule_error(&error))
     }
 
     #[getter]
@@ -861,7 +863,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_queue_operation_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -884,7 +886,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -898,7 +900,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_current_queue_backpressure_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -917,7 +919,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -931,7 +933,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -954,7 +956,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -968,7 +970,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_current_queue_stage_backpressure_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -987,7 +989,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
@@ -1268,7 +1270,7 @@ impl NativeMultiTraitChunkWritePlanner {
             &self.committed_chunk_identifier_sets,
         )
         .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
+        .map_err(|error| convert_schedule_error(&error))
     }
 }
 
@@ -1280,7 +1282,7 @@ impl NativeMultiTraitChunkWritePlanner {
         let committed_chunk_identifier_sets =
             native_committed_chunk_identifier_sets_from_i64_sequences(committed_chunk_identifier_sets)?;
         native_schedule::plan_multi_trait_chunk_write(writer_session_count, 0, &committed_chunk_identifier_sets)
-            .map_err(|error| schedule_error_to_py(&error))?;
+            .map_err(|error| convert_schedule_error(&error))?;
         Ok(Self { writer_session_count, committed_chunk_identifier_sets })
     }
 }
@@ -1979,7 +1981,7 @@ impl NativeCallbackSchedulerState {
             dosage_buffer_limit,
         )
         .map(|inner| Self { inner })
-        .map_err(|error| schedule_error_to_py(&error))
+        .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn has_started_value(&self) -> bool {
@@ -2249,7 +2251,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_result_queue_put_attempt_value(
@@ -2291,11 +2293,11 @@ impl NativeCallbackSchedulerState {
                 chunk_stats_count,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_work_handoff_value(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
-        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| schedule_error_to_py(&error))
+        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_work_drain_completion_value(
@@ -2312,7 +2314,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_dosage_work_item_dispatch(dosage_work_item_kind)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_work_item_stage_duration_value(
@@ -2324,7 +2326,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_current_queue_backpressure_observation_value(
@@ -2337,7 +2339,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_current_queue_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_current_queue_stage_backpressure_observation_value(
@@ -2350,7 +2352,7 @@ impl NativeCallbackSchedulerState {
         self.inner
             .plan_current_queue_stage_backpressure_observation(queue_name, operation_name, elapsed_seconds, blocked)
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_buffer_pool_reuse_observation_value(&self) -> NativeDosageBufferPoolObservationPlan {
@@ -2390,7 +2392,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_buffer_pool_stage_backpressure_observation_value(
@@ -2408,7 +2410,7 @@ impl NativeCallbackSchedulerState {
                 blocked,
             )
             .map(Into::into)
-            .map_err(|error| schedule_error_to_py(&error))
+            .map_err(|error| convert_schedule_error(&error))
     }
 }
 
@@ -3019,7 +3021,7 @@ fn plan_bgen_delivery_cleanup_outcome(
 ) -> PyResult<NativeBgenDeliveryCleanupPlan> {
     native_schedule::plan_bgen_delivery_cleanup(cleanup_outcome, callback_finished)
         .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
+        .map_err(|error| convert_schedule_error(&error))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -3081,8 +3083,4 @@ fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResul
 fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
     Ok(())
-}
-
-pub(crate) fn schedule_error_to_py(error: &native_schedule::ScheduleError) -> PyErr {
-    PyValueError::new_err(error.to_string())
 }

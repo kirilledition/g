@@ -8,7 +8,7 @@ Output run preparation, manifest compatibility, resume validation, chunk writing
 
 Output writer session, native chunk handle/stats, variant metadata columns, manifest fingerprints,
 output run path/preparation/initialization payloads, committed chunk records, output format,
-resume mode, and writer error.
+resume mode, and `OutputError`/`OutputResult`.
 
 ## Public functions
 

@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyTuple};
 
@@ -14,6 +13,7 @@ use g_plan as native_plan;
 
 mod conversion;
 
+use super::errors;
 use conversion::{
     enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
 };
@@ -941,8 +941,8 @@ impl GOutputConfig {
     }
 
     #[getter]
-    fn resume_mode(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        enum_value(py, "ResumeMode", self.data.resume_mode.as_str())
+    fn resume_mode(&self) -> &str {
+        self.data.resume_mode.as_str()
     }
 
     #[getter]
@@ -1049,7 +1049,9 @@ impl RegenieConfig {
     #[staticmethod]
     fn from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<Self> {
         let option_table = normalized_toml_table_from_py_options(raw_options)?;
-        interface::from_options(&option_table).map(Self::new).map_err(|error| config_error_to_py("from_options", error))
+        interface::from_options(&option_table)
+            .map(Self::new)
+            .map_err(|error| errors::convert_config_error("from_options", &error))
     }
 
     #[staticmethod]
@@ -1057,7 +1059,7 @@ impl RegenieConfig {
         let path_text = path_to_string(path)?;
         interface::from_toml_path(Path::new(&path_text))
             .map(Self::new)
-            .map_err(|error| config_error_to_py("from_toml", error))
+            .map_err(|error| errors::convert_config_error("from_toml", &error))
     }
 
     #[getter]
@@ -1101,7 +1103,7 @@ impl RegenieConfig {
     }
 
     fn to_toml(&self) -> PyResult<String> {
-        interface::dumps_toml(&self.data).map_err(|error| config_error_to_py("to_toml", error))
+        interface::dumps_toml(&self.data).map_err(|error| errors::convert_config_error("to_toml", &error))
     }
 
     #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
@@ -1140,13 +1142,13 @@ impl CliOutcome {
 fn load_packaged_config() -> PyResult<RegenieConfig> {
     interface::load_packaged_config_data()
         .map(RegenieConfig::new)
-        .map_err(|error| config_error_to_py("load_packaged_config", error))
+        .map_err(|error| errors::convert_config_error("load_packaged_config", &error))
 }
 
 #[pyfunction]
 fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
     interface::validate_config_for_run(config.data())
-        .map_err(|error| config_error_to_py("validate_config_for_run", error))
+        .map_err(|error| errors::convert_config_error("validate_config_for_run", &error))
 }
 
 #[pyfunction]
@@ -1189,17 +1191,4 @@ fn regenie_config_data_equal(left: &RegenieConfigData, right: &RegenieConfigData
         && left.g_compute == right.g_compute
         && left.g_output == right.g_output
         && left.g_diagnostics == right.g_diagnostics
-}
-
-#[expect(clippy::needless_pass_by_value, reason = "Result::map_err passes owned errors to the adapter.")]
-fn config_error_to_py(operation: &str, error: interface::ConfigError) -> PyErr {
-    let error_message = error.to_string();
-    tracing::warn!(
-        target: "g.python.config",
-        g_event = "native_config_error",
-        operation = operation,
-        error_message = %error_message,
-        "Converting Rust config error to Python."
-    );
-    PyValueError::new_err(error_message)
 }

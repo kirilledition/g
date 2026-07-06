@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import typing
 
-from g import _core, io, types
+from g import _core, types
 from g.engine import dispatch_requests
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
@@ -185,7 +185,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-        output_sample_mode=io.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        output_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )
 
 

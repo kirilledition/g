@@ -1114,8 +1114,8 @@ uv run --no-sync python -m tooling.cli.profile_regenie2_deep \
 Use the linear fresh-process script when a profile shows quantitative Step 2 is
 dominated by one-time Python or JAX backend startup. The deep profiler's headline
 trials are isolated subprocesses; this is the right baseline for separate CLI
-invocations, but it overstates repeated Python API workflows and batched
-multi-phenotype runs.
+invocations, but it can overstate future in-process embedding workflows and
+batched multi-phenotype runs.
 
 Run CPU checks on a CPU compute node and GPU checks through `landau`:
 
@@ -1457,12 +1457,10 @@ handling, and environment redaction.
 
 - `RegenieRunSpec`
 - `render_g_regenie_cli(spec)`
-- `render_python_api_options(spec)`
 - `expected_output_run_directory(spec)`
 
-Any tool that launches `g regenie` or calls `api.regenie.from_options()` should
-render through this module so benchmark/profiler commands stay aligned with the
-production config surface.
+Any tool that launches `g regenie` should render through this module so
+benchmark/profiler commands stay aligned with the production config surface.
 
 `tooling.common.registry`
 

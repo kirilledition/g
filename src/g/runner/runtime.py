@@ -10,7 +10,6 @@ from pathlib import Path
 from g import _core, types
 
 if typing.TYPE_CHECKING:
-    from g import interface
     from g.engine import dispatch_requests
     from g.runner import events
 
@@ -83,8 +82,8 @@ class RuntimePolicyRequest:
 
     """
 
-    diagnostics_config: interface.GDiagnosticsConfig
-    compute_config: interface.GComputeConfig
+    diagnostics_config: _core.GDiagnosticsConfig
+    compute_config: _core.GComputeConfig
     rayon_thread_count: int | None
     telemetry_paths: events.TelemetryPaths | None
 
@@ -152,7 +151,7 @@ PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.globa
 
 
 def configure_runtime_before_jax_import(
-    compute_config: interface.GComputeConfig,
+    compute_config: _core.GComputeConfig,
     telemetry_session: events.TelemetrySession | None,
 ) -> _core.NativeJaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
@@ -179,7 +178,7 @@ def configure_runtime_before_jax_import(
 
 
 def build_logging_runtime_policy(
-    diagnostics_config: interface.GDiagnosticsConfig,
+    diagnostics_config: _core.GDiagnosticsConfig,
     telemetry_paths: events.TelemetryPaths | None,
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
@@ -235,7 +234,7 @@ def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _co
     )
 
 
-def build_jax_runtime_policy(compute_config: interface.GComputeConfig) -> _core.NativeJaxRuntimePolicy:
+def build_jax_runtime_policy(compute_config: _core.GComputeConfig) -> _core.NativeJaxRuntimePolicy:
     """Build the process-global native JAX runtime policy requested by a run."""
     return PROCESS_RUNTIME_STATE.build_jax_runtime_policy(
         device=compute_config.device.value,
@@ -330,7 +329,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
 
 
 def initialize_logging(
-    diagnostics_config: interface.GDiagnosticsConfig,
+    diagnostics_config: _core.GDiagnosticsConfig,
     telemetry_paths: events.TelemetryPaths | None,
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""

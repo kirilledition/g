@@ -1,27 +1,46 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::fs::File;
-use std::io::{Read, Write};
-use std::os::unix::fs::MetadataExt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
+use crate::error::OutputError;
 use crate::resume;
-use crate::writer::{OutputFileFormat, OutputWriterError};
+use crate::writer::OutputFileFormat;
+
+mod chunks;
+mod contract;
+mod fingerprint;
+mod validation;
+
+pub use chunks::RunManifestChunkCommit;
+use chunks::{chunk_commit_to_value, insert_or_validate_chunk_commit, read_run_manifest_chunk_commit};
+pub use contract::{
+    build_prepared_run_manifest_header_json, build_prepared_run_manifest_header_json_from_current_header_json,
+    build_prepared_run_plan_from_current_header_json, build_prepared_run_plan_json_from_current_header_json,
+};
+pub use fingerprint::{
+    ManifestFileFingerprint, ManifestFileFingerprintCache, build_file_content_sha256, build_manifest_file_fingerprint,
+    build_manifest_json_sha256,
+};
+pub(crate) use fingerprint::{build_manifest_value_sha256, manifest_file_fingerprint_to_value};
+use validation::validate_manifest_compatibility_values;
+
+#[cfg(test)]
+use fingerprint::FILE_FINGERPRINT_METADATA_ONLY;
+
+type ManifestResult<T> = Result<T, OutputError>;
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 const RUN_MANIFEST_SCHEMA_VERSION: i64 = 9;
 const OUTPUT_SCHEMA_VERSION: i64 = 2;
 const JAX_MATMUL_PRECISION_WHEN_UNSET: &str = "float32";
 const RESUME_POLICY: &str = "manifest_committed_chunks";
-const FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM: &str = "sha256";
-const FILE_FINGERPRINT_METADATA_ONLY: &str = "metadata-only";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputRunPaths {
@@ -47,75 +66,14 @@ pub enum OutputResumeMode {
 }
 
 impl OutputResumeMode {
-    pub fn parse(resume_mode: &str) -> Result<Self, OutputWriterError> {
+    pub fn parse(resume_mode: &str) -> Result<Self, OutputError> {
         match resume_mode {
             "fast" => Ok(Self::Fast),
             "strict" => Ok(Self::Strict),
-            unsupported_resume_mode => Err(OutputWriterError::InvalidInput(format!(
+            unsupported_resume_mode => Err(OutputError::InvalidInput(format!(
                 "Resume mode must be 'fast' or 'strict', observed '{unsupported_resume_mode}'."
             ))),
         }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunManifestChunkCommit {
-    pub chunk_identifier: i64,
-    pub output_format: String,
-    pub compression: String,
-    pub variant_start_index: i64,
-    pub variant_stop_index: i64,
-    pub row_count: usize,
-    pub chunk_file_name: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ManifestFileFingerprint {
-    pub path: String,
-    pub size: u64,
-    pub mtime_ns: i64,
-    pub content_hash_algorithm: String,
-    pub content_sha256: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ManifestFileFingerprintCacheKey {
-    path: PathBuf,
-    include_content_hash: bool,
-    size: u64,
-    mtime_ns: i64,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ManifestFileFingerprintCache {
-    fingerprints_by_key: BTreeMap<ManifestFileFingerprintCacheKey, ManifestFileFingerprint>,
-}
-
-impl ManifestFileFingerprintCache {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn build_file_fingerprint(
-        &mut self,
-        file_path: &Path,
-        include_content_hash: bool,
-    ) -> Result<ManifestFileFingerprint, OutputWriterError> {
-        let canonical_path = file_path.canonicalize().map_err(OutputWriterError::runtime)?;
-        let metadata = canonical_path.metadata().map_err(OutputWriterError::runtime)?;
-        let cache_key = ManifestFileFingerprintCacheKey {
-            path: canonical_path.clone(),
-            include_content_hash,
-            size: metadata.len(),
-            mtime_ns: file_metadata_mtime_ns(&metadata)?,
-        };
-        if let Some(cached_fingerprint) = self.fingerprints_by_key.get(&cache_key) {
-            return Ok(cached_fingerprint.clone());
-        }
-        let file_fingerprint = build_manifest_file_fingerprint(&canonical_path, include_content_hash)?;
-        self.fingerprints_by_key.insert(cache_key, file_fingerprint.clone());
-        Ok(file_fingerprint)
     }
 }
 
@@ -169,151 +127,8 @@ pub struct CurrentRunManifestHeaderInput {
     pub output_statistic_dtype: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-struct CurrentRunManifestHeaderContract {
-    association_mode: g_plan::AssociationMode,
-    bgen: g_plan::ManifestFileFingerprint,
-    #[serde(default)]
-    sample: Option<g_plan::ManifestFileFingerprint>,
-    phenotype_file: g_plan::ManifestFileFingerprint,
-    phenotype_name: String,
-    #[serde(default)]
-    covariate_file: Option<g_plan::ManifestFileFingerprint>,
-    covariate_names: Vec<String>,
-    prediction_list: g_plan::ManifestFileFingerprint,
-    prediction_inputs: g_plan::PredictionInputsIdentity,
-    sample_count: i64,
-    variant_count: i64,
-    chunk_size: i64,
-    #[serde(default)]
-    variant_limit: Option<i64>,
-    binary_correction_plan: g_plan::CorrectionPlan,
-    #[serde(default)]
-    binary_kernel_config: Option<Value>,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: g_plan::TrustedBgenValidationMode,
-    sample_key_mode: g_plan::SampleKeyMode,
-    bgen_decode_tile_variant_count: i64,
-    jax_policy: CurrentJaxPolicyManifest,
-    #[serde(default)]
-    requested_gpu_genotype_format: Option<g_plan::GpuGenotypeFormat>,
-    gpu_genotype_format: g_plan::GpuGenotypeFormat,
-    score_dtype: g_plan::FloatingPointDtype,
-    firth_dtype: g_plan::FloatingPointDtype,
-    multi_phenotype_sample_mode: g_plan::PreparedSampleMode,
-    #[serde(default)]
-    phenotype_compute_group_id: Option<String>,
-    #[serde(default)]
-    sample_set_fingerprint: Option<String>,
-    #[serde(default)]
-    covariate_design_fingerprint: Option<String>,
-    #[serde(default)]
-    prediction_alignment_fingerprint: Option<String>,
-    output_writer: CurrentOutputWriterManifest,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct CurrentJaxPolicyManifest {
-    device: g_plan::Device,
-    enable_x64: bool,
-    matmul_precision: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct CurrentOutputWriterManifest {
-    output_format: g_plan::OutputFormat,
-    finalize_parquet: bool,
-    writer_thread_count: i64,
-    writer_queue_depth: i64,
-    chunks_per_arrow_file: i64,
-    arrow_compression: g_plan::ArrowCompression,
-    parquet_compression: g_plan::ParquetCompression,
-    result_statistic_dtype: g_plan::FloatingPointDtype,
-}
-
-impl CurrentRunManifestHeaderContract {
-    fn into_prepared_run_plan_input(self) -> Result<g_plan::PreparedRunPlanInput, OutputWriterError> {
-        let requested_gpu_genotype_format = self.requested_gpu_genotype_format.unwrap_or(self.gpu_genotype_format);
-        let phenotype_compute_group =
-            self.phenotype_compute_group_id.map(|group_id| g_plan::PreparedPhenotypeComputeGroup {
-                group_id,
-                sample_set_fingerprint: self.sample_set_fingerprint,
-                covariate_design_fingerprint: self.covariate_design_fingerprint,
-                prediction_alignment_fingerprint: self.prediction_alignment_fingerprint,
-            });
-        Ok(g_plan::PreparedRunPlanInput {
-            association_mode: self.association_mode,
-            input_identity: g_plan::PreparedInputIdentity {
-                bgen: self.bgen,
-                sample: self.sample,
-                phenotype_file: self.phenotype_file,
-                covariate_file: self.covariate_file,
-                prediction_list: self.prediction_list,
-                prediction_inputs: self.prediction_inputs,
-            },
-            phenotype_name: self.phenotype_name,
-            covariate_names: self.covariate_names,
-            sample_count: self.sample_count,
-            variant_count: self.variant_count,
-            chunk_size: self.chunk_size,
-            variant_limit: self.variant_limit,
-            correction: self.binary_correction_plan,
-            binary_kernel_config: self.binary_kernel_config,
-            compute: g_plan::PreparedComputePlan {
-                trusted_no_missing_diploid: self.trusted_no_missing_diploid,
-                trusted_bgen_validation_mode: self.trusted_bgen_validation_mode,
-                sample_key_mode: self.sample_key_mode,
-                bgen_decode_tile_variant_count: self.bgen_decode_tile_variant_count,
-                jax_policy: self.jax_policy.into_prepared_jax_policy()?,
-                requested_gpu_genotype_format,
-                resolved_gpu_genotype_format: self.gpu_genotype_format,
-                score_dtype: self.score_dtype,
-                firth_dtype: self.firth_dtype,
-                sample_mode: self.multi_phenotype_sample_mode,
-            },
-            phenotype_compute_group,
-            output_writer: self.output_writer.into_prepared_output_writer_plan(),
-        })
-    }
-}
-
-impl CurrentJaxPolicyManifest {
-    fn into_prepared_jax_policy(self) -> Result<g_plan::JaxPolicyPlan, OutputWriterError> {
-        let matmul_precision = if self.matmul_precision == JAX_MATMUL_PRECISION_WHEN_UNSET {
-            None
-        } else {
-            Some(parse_current_header_matmul_precision(self.matmul_precision)?)
-        };
-        Ok(g_plan::JaxPolicyPlan { device: self.device, enable_x64: self.enable_x64, matmul_precision })
-    }
-}
-
-impl CurrentOutputWriterManifest {
-    fn into_prepared_output_writer_plan(self) -> g_plan::PreparedOutputWriterPlan {
-        g_plan::PreparedOutputWriterPlan {
-            output_format: self.output_format,
-            finalize_parquet: self.finalize_parquet,
-            writer_thread_count: self.writer_thread_count,
-            writer_queue_depth: self.writer_queue_depth,
-            chunks_per_arrow_file: self.chunks_per_arrow_file,
-            arrow_compression: self.arrow_compression,
-            parquet_compression: self.parquet_compression,
-            output_statistic_dtype: self.result_statistic_dtype,
-        }
-    }
-}
-
-fn parse_current_header_matmul_precision(
-    matmul_precision: String,
-) -> Result<g_plan::JaxMatmulPrecision, OutputWriterError> {
-    serde_json::from_value(Value::String(matmul_precision))
-        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid JAX matmul precision: {error}")))
-}
-
 #[allow(clippy::too_many_lines)]
-pub fn build_current_run_manifest_header_json(
-    input: CurrentRunManifestHeaderInput,
-) -> Result<String, OutputWriterError> {
+pub fn build_current_run_manifest_header_json(input: CurrentRunManifestHeaderInput) -> Result<String, OutputError> {
     let mut fingerprint_cache = ManifestFileFingerprintCache::new();
     build_current_run_manifest_header_json_with_cache(input, &mut fingerprint_cache)
 }
@@ -322,7 +137,7 @@ pub fn build_current_run_manifest_header_json(
 pub fn build_current_run_manifest_header_json_with_cache(
     input: CurrentRunManifestHeaderInput,
     fingerprint_cache: &mut ManifestFileFingerprintCache,
-) -> Result<String, OutputWriterError> {
+) -> Result<String, OutputError> {
     let bgen_fingerprint =
         build_required_file_fingerprint_with_cache(fingerprint_cache, &input.bgen_path, false, "BGEN")?;
     let sample_fingerprint =
@@ -338,11 +153,9 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "prediction list",
     )?;
     let prediction_loco_files = serde_json::from_str::<Value>(&input.prediction_loco_files_json)
-        .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?;
+        .map_err(|error| OutputError::InvalidInput(error.to_string()))?;
     if !prediction_loco_files.is_array() {
-        return Err(OutputWriterError::InvalidInput(
-            "prediction_loco_files_json must contain a JSON array.".to_string(),
-        ));
+        return Err(OutputError::InvalidInput("prediction_loco_files_json must contain a JSON array.".to_string()));
     }
     let prediction_inputs = json!({
         "prediction_list": prediction_list_fingerprint.clone(),
@@ -356,7 +169,7 @@ pub fn build_current_run_manifest_header_json_with_cache(
     });
     let binary_kernel_config = match input.binary_kernel_config_json {
         Some(binary_kernel_config_json) => serde_json::from_str::<Value>(&binary_kernel_config_json)
-            .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?,
+            .map_err(|error| OutputError::InvalidInput(error.to_string()))?,
         None => Value::Null,
     };
     let association_backend = json!({
@@ -455,26 +268,26 @@ pub fn build_current_run_manifest_header_json_with_cache(
         "execution_plan": execution_plan,
         "execution_plan_hash": execution_plan_hash,
     });
-    serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
+    serde_json::to_string(&current_header).map_err(OutputError::runtime)
 }
 
 fn build_current_header_phenotype_compute_group_id(
     input: &CurrentRunManifestHeaderInput,
-) -> Result<Option<String>, OutputWriterError> {
+) -> Result<Option<String>, OutputError> {
     let Some(group_mode) = input.phenotype_compute_group_mode.as_deref() else {
         return ensure_no_partial_current_header_phenotype_compute_group(input);
     };
     let phenotype_indices = input.phenotype_compute_group_indices.as_ref().ok_or_else(|| {
-        OutputWriterError::InvalidInput("phenotype_compute_group_indices is required with group mode.".to_string())
+        OutputError::InvalidInput("phenotype_compute_group_indices is required with group mode.".to_string())
     })?;
     let phenotype_names = input.phenotype_compute_group_names.as_ref().ok_or_else(|| {
-        OutputWriterError::InvalidInput("phenotype_compute_group_names is required with group mode.".to_string())
+        OutputError::InvalidInput("phenotype_compute_group_names is required with group mode.".to_string())
     })?;
     let sample_mode = input.phenotype_compute_group_sample_mode.as_deref().ok_or_else(|| {
-        OutputWriterError::InvalidInput("phenotype_compute_group_sample_mode is required with group mode.".to_string())
+        OutputError::InvalidInput("phenotype_compute_group_sample_mode is required with group mode.".to_string())
     })?;
     if phenotype_indices.len() != phenotype_names.len() {
-        return Err(OutputWriterError::InvalidInput(
+        return Err(OutputError::InvalidInput(
             "phenotype compute group indices and names must have the same length.".to_string(),
         ));
     }
@@ -492,12 +305,12 @@ fn build_current_header_phenotype_compute_group_id(
 
 fn ensure_no_partial_current_header_phenotype_compute_group(
     input: &CurrentRunManifestHeaderInput,
-) -> Result<Option<String>, OutputWriterError> {
+) -> Result<Option<String>, OutputError> {
     if input.phenotype_compute_group_indices.is_some()
         || input.phenotype_compute_group_names.is_some()
         || input.phenotype_compute_group_sample_mode.is_some()
     {
-        return Err(OutputWriterError::InvalidInput(
+        return Err(OutputError::InvalidInput(
             "phenotype compute group fields must be all set or all unset.".to_string(),
         ));
     }
@@ -506,180 +319,16 @@ fn ensure_no_partial_current_header_phenotype_compute_group(
 
 fn parse_current_header_phenotype_compute_group_mode(
     group_mode: &str,
-) -> Result<g_plan::PhenotypeComputeGroupMode, OutputWriterError> {
+) -> Result<g_plan::PhenotypeComputeGroupMode, OutputError> {
     serde_json::from_value(Value::String(group_mode.to_string()))
-        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid phenotype compute group mode: {error}")))
+        .map_err(|error| OutputError::InvalidInput(format!("Invalid phenotype compute group mode: {error}")))
 }
 
 fn parse_current_header_multi_phenotype_sample_mode(
     sample_mode: &str,
-) -> Result<g_plan::MultiPhenotypeSampleMode, OutputWriterError> {
-    serde_json::from_value(Value::String(sample_mode.to_string())).map_err(|error| {
-        OutputWriterError::InvalidInput(format!("Invalid phenotype compute group sample mode: {error}"))
-    })
-}
-
-pub fn build_prepared_run_manifest_header_json(
-    prepared_run_plan: &g_plan::PreparedRunPlan,
-) -> Result<String, OutputWriterError> {
-    let execution_plan = build_prepared_run_execution_plan(prepared_run_plan)?;
-    let current_header = build_prepared_run_manifest_header(prepared_run_plan, &execution_plan)?;
-    serde_json::to_string(&current_header).map_err(OutputWriterError::runtime)
-}
-
-pub fn build_prepared_run_plan_from_current_header_json(
-    current_header_json: &str,
-) -> Result<g_plan::PreparedRunPlan, OutputWriterError> {
-    let current_header =
-        serde_json::from_str::<CurrentRunManifestHeaderContract>(current_header_json).map_err(|error| {
-            OutputWriterError::InvalidInput(format!("Invalid current run manifest header JSON: {error}"))
-        })?;
-    let prepared_run_plan_input = current_header.into_prepared_run_plan_input()?;
-    g_plan::build_prepared_run_plan(prepared_run_plan_input)
-        .map_err(|error| OutputWriterError::InvalidInput(format!("Invalid prepared run plan input: {error}")))
-}
-
-pub fn build_prepared_run_plan_json_from_current_header_json(
-    current_header_json: &str,
-) -> Result<String, OutputWriterError> {
-    let prepared_run_plan = build_prepared_run_plan_from_current_header_json(current_header_json)?;
-    serde_json::to_string(&prepared_run_plan).map_err(OutputWriterError::runtime)
-}
-
-pub fn build_prepared_run_manifest_header_json_from_current_header_json(
-    current_header_json: &str,
-) -> Result<String, OutputWriterError> {
-    let prepared_run_plan = build_prepared_run_plan_from_current_header_json(current_header_json)?;
-    build_prepared_run_manifest_header_json(&prepared_run_plan)
-}
-
-fn build_prepared_run_execution_plan(prepared_run_plan: &g_plan::PreparedRunPlan) -> Result<Value, OutputWriterError> {
-    let input_identity = &prepared_run_plan.input_identity;
-    let phenotype_compute_group = prepared_run_plan.phenotype_compute_group.as_ref();
-    let binary_kernel_config = prepared_run_plan.binary_kernel_config.clone().unwrap_or(Value::Null);
-    let prediction_inputs =
-        serde_json::to_value(&input_identity.prediction_inputs).map_err(OutputWriterError::runtime)?;
-    let binary_correction_plan =
-        serde_json::to_value(&prepared_run_plan.correction).map_err(OutputWriterError::runtime)?;
-    Ok(json!({
-        "manifest_schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-        "output_schema_version": OUTPUT_SCHEMA_VERSION,
-        "association_mode": prepared_run_plan.association_mode.as_str(),
-        "association_backend": build_prepared_association_backend(prepared_run_plan),
-        "bgen": &input_identity.bgen,
-        "sample": &input_identity.sample,
-        "phenotype_file": &input_identity.phenotype_file,
-        "phenotype_name": prepared_run_plan.phenotype_name.as_str(),
-        "covariate_file": &input_identity.covariate_file,
-        "covariate_names": &prepared_run_plan.covariate_names,
-        "prediction_list": &input_identity.prediction_list,
-        "prediction_inputs": prediction_inputs,
-        "sample_count": prepared_run_plan.sample_count,
-        "variant_count": prepared_run_plan.variant_count,
-        "chunk_size": prepared_run_plan.chunk_size,
-        "variant_limit": prepared_run_plan.variant_limit,
-        "binary_correction_plan": binary_correction_plan,
-        "binary_kernel_config": binary_kernel_config,
-        "trusted_no_missing_diploid": prepared_run_plan.compute.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": prepared_run_plan.compute.trusted_bgen_validation_mode.as_str(),
-        "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
-        "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
-        "jax_policy": build_prepared_jax_policy(prepared_run_plan),
-        "requested_gpu_genotype_format": prepared_run_plan.compute.requested_gpu_genotype_format.as_str(),
-        "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
-        "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
-        "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
-        "multi_phenotype_sample_mode": prepared_run_plan.compute.sample_mode.as_str(),
-        "phenotype_compute_group_id": phenotype_compute_group.map(|group| group.group_id.as_str()),
-        "sample_set_fingerprint": phenotype_compute_group.and_then(|group| group.sample_set_fingerprint.as_deref()),
-        "covariate_design_fingerprint": phenotype_compute_group
-            .and_then(|group| group.covariate_design_fingerprint.as_deref()),
-        "prediction_alignment_fingerprint": phenotype_compute_group
-            .and_then(|group| group.prediction_alignment_fingerprint.as_deref()),
-        "output_writer": build_prepared_output_writer(prepared_run_plan),
-        "resume_policy": RESUME_POLICY,
-    }))
-}
-
-fn build_prepared_run_manifest_header(
-    prepared_run_plan: &g_plan::PreparedRunPlan,
-    execution_plan: &Value,
-) -> Result<Value, OutputWriterError> {
-    let phenotype_compute_group = prepared_run_plan.phenotype_compute_group.as_ref();
-    let execution_plan_hash = build_manifest_value_sha256(execution_plan)?;
-    Ok(json!({
-        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-        "output_schema_version": OUTPUT_SCHEMA_VERSION,
-        "association_mode": prepared_run_plan.association_mode.as_str(),
-        "association_backend": execution_plan["association_backend"].clone(),
-        "bgen": execution_plan["bgen"].clone(),
-        "sample": execution_plan["sample"].clone(),
-        "phenotype_file": execution_plan["phenotype_file"].clone(),
-        "phenotype_name": prepared_run_plan.phenotype_name.as_str(),
-        "covariate_file": execution_plan["covariate_file"].clone(),
-        "covariate_names": execution_plan["covariate_names"].clone(),
-        "prediction_list": execution_plan["prediction_list"].clone(),
-        "prediction_inputs": execution_plan["prediction_inputs"].clone(),
-        "sample_count": prepared_run_plan.sample_count,
-        "variant_count": prepared_run_plan.variant_count,
-        "chunk_size": prepared_run_plan.chunk_size,
-        "variant_limit": prepared_run_plan.variant_limit,
-        "binary_correction_plan": execution_plan["binary_correction_plan"].clone(),
-        "binary_kernel_config": execution_plan["binary_kernel_config"].clone(),
-        "trusted_no_missing_diploid": prepared_run_plan.compute.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": prepared_run_plan.compute.trusted_bgen_validation_mode.as_str(),
-        "sample_key_mode": prepared_run_plan.compute.sample_key_mode.as_str(),
-        "bgen_decode_tile_variant_count": prepared_run_plan.compute.bgen_decode_tile_variant_count,
-        "jax_policy": execution_plan["jax_policy"].clone(),
-        "requested_gpu_genotype_format": execution_plan["requested_gpu_genotype_format"].clone(),
-        "gpu_genotype_format": prepared_run_plan.compute.resolved_gpu_genotype_format.as_str(),
-        "score_dtype": prepared_run_plan.compute.score_dtype.as_str(),
-        "firth_dtype": prepared_run_plan.compute.firth_dtype.as_str(),
-        "multi_phenotype_sample_mode": prepared_run_plan.compute.sample_mode.as_str(),
-        "phenotype_compute_group_id": phenotype_compute_group.map(|group| group.group_id.as_str()),
-        "sample_set_fingerprint": phenotype_compute_group.and_then(|group| group.sample_set_fingerprint.as_deref()),
-        "covariate_design_fingerprint": phenotype_compute_group
-            .and_then(|group| group.covariate_design_fingerprint.as_deref()),
-        "prediction_alignment_fingerprint": phenotype_compute_group
-            .and_then(|group| group.prediction_alignment_fingerprint.as_deref()),
-        "output_writer": execution_plan["output_writer"].clone(),
-        "resume_policy": RESUME_POLICY,
-        "execution_plan": execution_plan.clone(),
-        "execution_plan_hash": execution_plan_hash,
-    }))
-}
-
-fn build_prepared_association_backend(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
-    json!({
-        "kind": prepared_run_plan.association_backend.kind.as_str(),
-        "association_mode": prepared_run_plan.association_backend.association_mode.as_str(),
-        "device": prepared_run_plan.association_backend.device.as_str(),
-        "genotype_format": prepared_run_plan.association_backend.resolved_genotype_format.as_str(),
-    })
-}
-
-fn build_prepared_jax_policy(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
-    json!({
-        "device": prepared_run_plan.compute.jax_policy.device.as_str(),
-        "enable_x64": prepared_run_plan.compute.jax_policy.enable_x64,
-        "matmul_precision": prepared_run_plan.compute.jax_policy.matmul_precision.map_or(
-            JAX_MATMUL_PRECISION_WHEN_UNSET,
-            g_plan::JaxMatmulPrecision::as_str,
-        ),
-    })
-}
-
-fn build_prepared_output_writer(prepared_run_plan: &g_plan::PreparedRunPlan) -> Value {
-    json!({
-        "output_format": prepared_run_plan.output_writer.output_format.as_str(),
-        "finalize_parquet": prepared_run_plan.output_writer.finalize_parquet,
-        "writer_thread_count": prepared_run_plan.output_writer.writer_thread_count,
-        "writer_queue_depth": prepared_run_plan.output_writer.writer_queue_depth,
-        "chunks_per_arrow_file": prepared_run_plan.output_writer.chunks_per_arrow_file,
-        "arrow_compression": prepared_run_plan.output_writer.arrow_compression.as_str(),
-        "parquet_compression": prepared_run_plan.output_writer.parquet_compression.as_str(),
-        "result_statistic_dtype": prepared_run_plan.output_writer.output_statistic_dtype.as_str(),
-    })
+) -> Result<g_plan::MultiPhenotypeSampleMode, OutputError> {
+    serde_json::from_value(Value::String(sample_mode.to_string()))
+        .map_err(|error| OutputError::InvalidInput(format!("Invalid phenotype compute group sample mode: {error}")))
 }
 
 #[must_use]
@@ -706,64 +355,55 @@ pub fn prepare_output_run(
     association_mode: &str,
     output_format: OutputFileFormat,
     resume: bool,
-) -> Result<PreparedOutputRun, OutputWriterError> {
+) -> Result<PreparedOutputRun, OutputError> {
     let output_run_paths = resolve_output_run_paths(output_root, association_mode, output_format);
     if !resume && directory_exists_and_is_non_empty(&output_run_paths.run_directory)? {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Output run directory '{}' already exists and is not empty. Use --resume or choose a new output path.",
             output_run_paths.run_directory.display()
         )));
     }
-    std::fs::create_dir_all(&output_run_paths.chunks_directory).map_err(OutputWriterError::runtime)?;
+    std::fs::create_dir_all(&output_run_paths.chunks_directory).map_err(OutputError::runtime)?;
     let existing_manifest_json = load_run_manifest_json(&output_run_paths.run_directory)?;
     if resume && existing_manifest_json.is_none() {
-        return Err(OutputWriterError::InvalidInput("Resume requires run_manifest.json.".to_string()));
+        return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
     }
     Ok(PreparedOutputRun { output_run_paths, existing_manifest_json })
 }
 
-pub fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputWriterError> {
+pub fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputError> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     if !manifest_path.exists() {
         return Ok(None);
     }
-    let manifest_json = std::fs::read_to_string(&manifest_path).map_err(OutputWriterError::runtime)?;
+    let manifest_json = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
     parse_run_manifest_text(&manifest_json, Some(&manifest_path))?;
     Ok(Some(manifest_json))
 }
 
-pub fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Result<(), OutputWriterError> {
+pub fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Result<(), OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
-    write_run_manifest_value(run_directory, &manifest).map_err(OutputWriterError::runtime)
+    write_run_manifest_value(run_directory, &manifest)
 }
 
-pub fn extend_run_manifest_metadata(
-    run_directory: &Path,
-    command: Value,
-    runtime: Value,
-) -> Result<(), OutputWriterError> {
+pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtime: Value) -> Result<(), OutputError> {
     upsert_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
         manifest_object.insert("command".to_string(), command);
         manifest_object.insert("runtime".to_string(), runtime);
         Ok(())
     })
-    .map_err(OutputWriterError::runtime)
 }
 
-pub fn validate_run_manifest_compatibility(
-    manifest_json: &str,
-    current_header_json: &str,
-) -> Result<(), OutputWriterError> {
+pub fn validate_run_manifest_compatibility(manifest_json: &str, current_header_json: &str) -> Result<(), OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     let current_header = parse_current_header_text(current_header_json)?;
     validate_manifest_compatibility_values(&manifest, &current_header)
 }
 
-pub fn read_run_manifest_committed_chunk_identifiers_from_text(
-    manifest_json: &str,
-) -> Result<Vec<i64>, OutputWriterError> {
+pub fn read_run_manifest_committed_chunk_identifiers_from_text(manifest_json: &str) -> Result<Vec<i64>, OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     read_run_manifest_committed_chunk_identifiers(&manifest)
 }
@@ -775,7 +415,7 @@ pub fn initialize_output_run(
     current_header_json: &str,
     resume: bool,
     resume_mode: OutputResumeMode,
-) -> Result<InitializedOutputRun, OutputWriterError> {
+) -> Result<InitializedOutputRun, OutputError> {
     let current_header = parse_current_header_text(current_header_json)?;
     let (mut manifest, committed_chunks, committed_chunk_identifiers) = if let Some(existing_manifest_text) =
         existing_manifest_json
@@ -805,7 +445,7 @@ pub fn initialize_output_run(
         }
     } else {
         if resume {
-            return Err(OutputWriterError::InvalidInput("Resume requires run_manifest.json.".to_string()));
+            return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
         }
         let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
         (manifest, Vec::new(), Vec::new())
@@ -813,27 +453,27 @@ pub fn initialize_output_run(
     merge_manifest_header(&mut manifest, &current_header)?;
     let manifest_object = manifest
         .as_object_mut()
-        .ok_or_else(|| OutputWriterError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
+        .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
     manifest_object.insert("committed_chunks".to_string(), Value::Array(committed_chunks));
     manifest_object.entry("finalized".to_string()).or_insert(Value::Bool(false));
-    write_run_manifest_value(run_directory, &manifest).map_err(OutputWriterError::runtime)?;
+    write_run_manifest_value(run_directory, &manifest)?;
     Ok(InitializedOutputRun { committed_chunk_identifiers })
 }
 
-pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> Result<Vec<RunManifestChunkCommit>, String> {
+pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> ManifestResult<Vec<RunManifestChunkCommit>> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
+    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
     read_run_manifest_chunk_commits_from_text(&manifest_text)
 }
 
 pub(crate) fn read_run_manifest_chunk_commits_from_text(
     manifest_json: &str,
-) -> Result<Vec<RunManifestChunkCommit>, String> {
-    let manifest = serde_json::from_str::<Value>(manifest_json).map_err(|error| error.to_string())?;
+) -> ManifestResult<Vec<RunManifestChunkCommit>> {
+    let manifest = parse_run_manifest_text(manifest_json, None)?;
     let committed_chunks = manifest
         .get("committed_chunks")
         .and_then(Value::as_array)
-        .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
+        .ok_or_else(|| OutputError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string()))?;
     let mut committed_chunks_by_identifier = BTreeMap::new();
     for committed_chunk in committed_chunks {
         insert_or_validate_chunk_commit(
@@ -849,16 +489,16 @@ fn build_required_file_fingerprint_with_cache(
     path: &Path,
     include_content_hash: bool,
     role_name: &str,
-) -> Result<Value, OutputWriterError> {
+) -> Result<Value, OutputError> {
     build_optional_file_fingerprint_with_cache(fingerprint_cache, Some(path), include_content_hash)?
-        .ok_or_else(|| OutputWriterError::InvalidInput(format!("{role_name} fingerprint is required.")))
+        .ok_or_else(|| OutputError::InvalidInput(format!("{role_name} fingerprint is required.")))
 }
 
 fn build_optional_file_fingerprint_with_cache(
     fingerprint_cache: &mut ManifestFileFingerprintCache,
     path: Option<&Path>,
     include_content_hash: bool,
-) -> Result<Option<Value>, OutputWriterError> {
+) -> Result<Option<Value>, OutputError> {
     let Some(file_path) = path else {
         return Ok(None);
     };
@@ -867,102 +507,28 @@ fn build_optional_file_fingerprint_with_cache(
         .map(|fingerprint| Some(manifest_file_fingerprint_to_value(&fingerprint)))
 }
 
-pub fn build_manifest_file_fingerprint(
-    file_path: &Path,
-    include_content_hash: bool,
-) -> Result<ManifestFileFingerprint, OutputWriterError> {
-    let metadata = file_path.metadata().map_err(OutputWriterError::runtime)?;
-    let content_hash_algorithm =
-        if include_content_hash { FILE_FINGERPRINT_CONTENT_HASH_ALGORITHM } else { FILE_FINGERPRINT_METADATA_ONLY };
-    let content_sha256 = if include_content_hash { Some(build_file_content_sha256(file_path)?) } else { None };
-    let mtime_ns = file_metadata_mtime_ns(&metadata)?;
-    let resolved_path = file_path.canonicalize().map_err(OutputWriterError::runtime)?;
-    Ok(ManifestFileFingerprint {
-        path: resolved_path.display().to_string(),
-        size: metadata.len(),
-        mtime_ns,
-        content_hash_algorithm: content_hash_algorithm.to_string(),
-        content_sha256,
-    })
-}
-
-fn file_metadata_mtime_ns(metadata: &std::fs::Metadata) -> Result<i64, OutputWriterError> {
-    metadata
-        .mtime()
-        .checked_mul(1_000_000_000)
-        .and_then(|mtime_seconds_ns| mtime_seconds_ns.checked_add(metadata.mtime_nsec()))
-        .ok_or_else(|| OutputWriterError::Runtime("File modification timestamp overflowed nanoseconds.".to_string()))
-}
-
-pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFileFingerprint) -> Value {
-    json!({
-        "path": &file_fingerprint.path,
-        "size": file_fingerprint.size,
-        "mtime_ns": file_fingerprint.mtime_ns,
-        "content_hash_algorithm": &file_fingerprint.content_hash_algorithm,
-        "content_sha256": &file_fingerprint.content_sha256,
-    })
-}
-
-pub fn build_file_content_sha256(path: &Path) -> Result<String, OutputWriterError> {
-    let mut file = File::open(path).map_err(OutputWriterError::runtime)?;
-    let mut digest = Sha256::new();
-    let mut buffer = vec![0_u8; 1024 * 1024];
-    loop {
-        let bytes_read = file.read(&mut buffer).map_err(OutputWriterError::runtime)?;
-        if bytes_read == 0 {
-            break;
-        }
-        digest.update(&buffer[..bytes_read]);
-    }
-    Ok(encode_sha256_hex(digest))
-}
-
-#[must_use]
-pub fn build_manifest_json_sha256(manifest_json: &str) -> String {
-    let mut digest = Sha256::new();
-    digest.update(manifest_json.as_bytes());
-    encode_sha256_hex(digest)
-}
-
-fn build_manifest_value_sha256(value: &Value) -> Result<String, OutputWriterError> {
-    let manifest_bytes = serde_json::to_vec(value).map_err(OutputWriterError::runtime)?;
-    let mut digest = Sha256::new();
-    digest.update(manifest_bytes);
-    Ok(encode_sha256_hex(digest))
-}
-
-fn encode_sha256_hex(digest: Sha256) -> String {
-    let digest_bytes = digest.finalize();
-    let mut digest_text = String::with_capacity(digest_bytes.len() * 2);
-    for digest_byte in digest_bytes {
-        write!(&mut digest_text, "{digest_byte:02x}").expect("writing to String must succeed");
-    }
-    digest_text
-}
-
-fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputWriterError> {
+fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputError> {
     if !directory_path.exists() {
         return Ok(false);
     }
-    let mut directory_entries = std::fs::read_dir(directory_path).map_err(OutputWriterError::runtime)?;
+    let mut directory_entries = std::fs::read_dir(directory_path).map_err(OutputError::runtime)?;
     match directory_entries.next() {
         Some(Ok(_directory_entry)) => Ok(true),
-        Some(Err(error)) => Err(OutputWriterError::runtime(error)),
+        Some(Err(error)) => Err(OutputError::runtime(error)),
         None => Ok(false),
     }
 }
 
-fn load_run_manifest_value(run_directory: &Path) -> Result<Option<Value>, OutputWriterError> {
+fn load_run_manifest_value(run_directory: &Path) -> Result<Option<Value>, OutputError> {
     let Some(manifest_json) = load_run_manifest_json(run_directory)? else {
         return Ok(None);
     };
     parse_run_manifest_text(&manifest_json, Some(&run_directory.join(RUN_MANIFEST_FILE_NAME))).map(Some)
 }
 
-fn parse_run_manifest_text(manifest_json: &str, manifest_path: Option<&Path>) -> Result<Value, OutputWriterError> {
-    let manifest = serde_json::from_str::<Value>(manifest_json)
-        .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?;
+fn parse_run_manifest_text(manifest_json: &str, manifest_path: Option<&Path>) -> Result<Value, OutputError> {
+    let manifest =
+        serde_json::from_str::<Value>(manifest_json).map_err(|error| OutputError::InvalidInput(error.to_string()))?;
     if manifest.is_object() {
         return Ok(manifest);
     }
@@ -970,120 +536,39 @@ fn parse_run_manifest_text(manifest_json: &str, manifest_path: Option<&Path>) ->
         Some(path) => format!("Run manifest '{}' must contain a JSON object.", path.display()),
         None => "Run manifest must contain a JSON object.".to_string(),
     };
-    Err(OutputWriterError::InvalidInput(message))
+    Err(OutputError::InvalidInput(message))
 }
 
-fn parse_current_header_text(current_header_json: &str) -> Result<Value, OutputWriterError> {
+fn parse_current_header_text(current_header_json: &str) -> Result<Value, OutputError> {
     let current_header = serde_json::from_str::<Value>(current_header_json)
-        .map_err(|error| OutputWriterError::InvalidInput(error.to_string()))?;
+        .map_err(|error| OutputError::InvalidInput(error.to_string()))?;
     if current_header.is_object() {
         return Ok(current_header);
     }
-    Err(OutputWriterError::InvalidInput("Current run manifest header must contain a JSON object.".to_string()))
+    Err(OutputError::InvalidInput("Current run manifest header must contain a JSON object.".to_string()))
 }
 
-fn validate_manifest_compatibility_values(manifest: &Value, current_header: &Value) -> Result<(), OutputWriterError> {
-    let manifest_object = manifest
-        .as_object()
-        .ok_or_else(|| OutputWriterError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-    let current_header_object = current_header.as_object().ok_or_else(|| {
-        OutputWriterError::InvalidInput("Current run manifest header must contain a JSON object.".to_string())
-    })?;
-    for (field_name, current_value) in current_header_object {
-        let Some(manifest_value) = manifest_object.get(field_name) else {
-            return Err(OutputWriterError::InvalidInput(format!("Run manifest field '{field_name}' is missing.")));
-        };
-        if let Some(mismatch_path) = find_first_manifest_mismatch_path(manifest_value, current_value, field_name) {
-            return Err(OutputWriterError::InvalidInput(format!(
-                "Run manifest field '{mismatch_path}' is incompatible with the requested run."
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn find_first_manifest_mismatch_path(
-    manifest_value: &Value,
-    current_value: &Value,
-    field_path: &str,
-) -> Option<String> {
-    match (manifest_value, current_value) {
-        (Value::Object(manifest_object), Value::Object(current_object)) => {
-            let field_names = manifest_object.keys().chain(current_object.keys()).collect::<BTreeSet<_>>();
-            for field_name in field_names {
-                let nested_path = format!("{field_path}.{field_name}");
-                match (manifest_object.get(field_name), current_object.get(field_name)) {
-                    (Some(nested_manifest_value), Some(nested_current_value)) => {
-                        if let Some(mismatch_path) =
-                            find_first_manifest_mismatch_path(nested_manifest_value, nested_current_value, &nested_path)
-                        {
-                            return Some(mismatch_path);
-                        }
-                    }
-                    _ => return Some(nested_path),
-                }
-            }
-            None
-        }
-        (Value::Array(manifest_array), Value::Array(current_array)) => {
-            for (index, (manifest_item, current_item)) in manifest_array.iter().zip(current_array).enumerate() {
-                let nested_path = format!("{field_path}[{index}]");
-                if let Some(mismatch_path) =
-                    find_first_manifest_mismatch_path(manifest_item, current_item, &nested_path)
-                {
-                    return Some(mismatch_path);
-                }
-            }
-            if manifest_array.len() != current_array.len() {
-                return Some(field_path.to_string());
-            }
-            None
-        }
-        _ if manifest_scalar_values_match(manifest_value, current_value) => None,
-        _ => Some(field_path.to_string()),
-    }
-}
-
-fn manifest_scalar_values_match(manifest_value: &Value, current_value: &Value) -> bool {
-    match (manifest_value, current_value) {
-        (Value::Number(manifest_number), Value::Number(current_number)) => {
-            if let (Some(manifest_integer), Some(current_integer)) = (manifest_number.as_i64(), current_number.as_i64())
-            {
-                return manifest_integer == current_integer;
-            }
-            if let (Some(manifest_integer), Some(current_integer)) = (manifest_number.as_u64(), current_number.as_u64())
-            {
-                return manifest_integer == current_integer;
-            }
-            manifest_number.as_f64() == current_number.as_f64()
-        }
-        _ => manifest_value == current_value,
-    }
-}
-
-fn read_run_manifest_committed_chunks(manifest: &Value) -> Result<Vec<Value>, OutputWriterError> {
+fn read_run_manifest_committed_chunks(manifest: &Value) -> Result<Vec<Value>, OutputError> {
     let Some(committed_chunks) = manifest.get("committed_chunks") else {
         return Ok(Vec::new());
     };
-    let committed_chunks_array = committed_chunks.as_array().ok_or_else(|| {
-        OutputWriterError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string())
-    })?;
+    let committed_chunks_array = committed_chunks
+        .as_array()
+        .ok_or_else(|| OutputError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string()))?;
     for committed_chunk in committed_chunks_array {
         if !committed_chunk.is_object() {
-            return Err(OutputWriterError::InvalidInput(
-                "Run manifest committed chunk entries must be objects.".to_string(),
-            ));
+            return Err(OutputError::InvalidInput("Run manifest committed chunk entries must be objects.".to_string()));
         }
     }
     Ok(committed_chunks_array.clone())
 }
 
-fn read_run_manifest_committed_chunk_identifiers(manifest: &Value) -> Result<Vec<i64>, OutputWriterError> {
+fn read_run_manifest_committed_chunk_identifiers(manifest: &Value) -> Result<Vec<i64>, OutputError> {
     let committed_chunks = read_run_manifest_committed_chunks(manifest)?;
     let mut committed_chunk_identifiers = BTreeSet::new();
     for committed_chunk in committed_chunks {
         let Some(chunk_identifier) = committed_chunk.get("chunk_identifier").and_then(Value::as_i64) else {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "Run manifest committed chunk entry is missing chunk_identifier.".to_string(),
             ));
         };
@@ -1092,12 +577,12 @@ fn read_run_manifest_committed_chunk_identifiers(manifest: &Value) -> Result<Vec
     Ok(committed_chunk_identifiers.into_iter().collect())
 }
 
-fn merge_manifest_header(manifest: &mut Value, current_header: &Value) -> Result<(), OutputWriterError> {
+fn merge_manifest_header(manifest: &mut Value, current_header: &Value) -> Result<(), OutputError> {
     let manifest_object = manifest
         .as_object_mut()
-        .ok_or_else(|| OutputWriterError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
+        .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
     let current_header_object = current_header.as_object().ok_or_else(|| {
-        OutputWriterError::InvalidInput("Current run manifest header must contain a JSON object.".to_string())
+        OutputError::InvalidInput("Current run manifest header must contain a JSON object.".to_string())
     })?;
     for (field_name, field_value) in current_header_object {
         manifest_object.insert(field_name.clone(), field_value.clone());
@@ -1105,28 +590,32 @@ fn merge_manifest_header(manifest: &mut Value, current_header: &Value) -> Result
     Ok(())
 }
 
-fn write_run_manifest_value(run_directory: &Path, manifest: &Value) -> Result<(), String> {
+fn write_run_manifest_value(run_directory: &Path, manifest: &Value) -> ManifestResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
+    let _manifest_guard =
+        manifest_lock.lock().map_err(|_| OutputError::runtime("Run manifest update lock was poisoned."))?;
     write_run_manifest_value_atomic(&manifest_path, manifest)
 }
 
 pub(crate) fn record_run_manifest_chunk_commits(
     run_directory: &Path,
     chunk_commits: Vec<RunManifestChunkCommit>,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     if chunk_commits.is_empty() {
         return Ok(());
     }
     update_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
         let committed_chunks = manifest_object
             .entry("committed_chunks")
             .or_insert_with(|| Value::Array(Vec::new()))
             .as_array_mut()
-            .ok_or_else(|| "Run manifest committed_chunks field must be a list.".to_string())?;
+            .ok_or_else(|| {
+                OutputError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string())
+            })?;
         let mut committed_chunks_by_identifier = BTreeMap::new();
         for committed_chunk in committed_chunks.iter() {
             let existing_commit = read_run_manifest_chunk_commit(committed_chunk)?;
@@ -1140,83 +629,11 @@ pub(crate) fn record_run_manifest_chunk_commits(
     })
 }
 
-fn insert_or_validate_chunk_commit(
-    committed_chunks_by_identifier: &mut BTreeMap<i64, RunManifestChunkCommit>,
-    chunk_commit: RunManifestChunkCommit,
-) -> Result<(), String> {
-    match committed_chunks_by_identifier.get(&chunk_commit.chunk_identifier) {
-        Some(existing_commit) if existing_commit != &chunk_commit => {
-            Err(format!("Run manifest has conflicting commit metadata for chunk {}.", chunk_commit.chunk_identifier))
-        }
-        Some(_) => Ok(()),
-        None => {
-            committed_chunks_by_identifier.insert(chunk_commit.chunk_identifier, chunk_commit);
-            Ok(())
-        }
-    }
-}
-
-fn chunk_commit_to_value(chunk_commit: &RunManifestChunkCommit) -> Value {
-    json!({
-        "chunk_identifier": chunk_commit.chunk_identifier,
-        "output_format": chunk_commit.output_format,
-        "compression": chunk_commit.compression,
-        "variant_start_index": chunk_commit.variant_start_index,
-        "variant_stop_index": chunk_commit.variant_stop_index,
-        "row_count": chunk_commit.row_count,
-        "chunk_file_name": chunk_commit.chunk_file_name,
-    })
-}
-
-fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> Result<RunManifestChunkCommit, String> {
-    let chunk_file_name = committed_chunk
-        .get("chunk_file_name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Run manifest committed chunk entry is missing chunk_file_name.".to_string())?;
-    Ok(RunManifestChunkCommit {
-        chunk_identifier: read_manifest_integer(committed_chunk, "chunk_identifier")?,
-        output_format: read_optional_manifest_string(committed_chunk, "output_format")
-            .unwrap_or_else(|| infer_output_format_from_file_name(chunk_file_name).to_string()),
-        compression: read_optional_manifest_string(committed_chunk, "compression")
-            .unwrap_or_else(|| "none".to_string()),
-        variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
-        variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
-        row_count: read_manifest_usize(committed_chunk, "row_count")?,
-        chunk_file_name: chunk_file_name.to_string(),
-    })
-}
-
-fn read_optional_manifest_string(committed_chunk: &Value, field_name: &str) -> Option<String> {
-    committed_chunk.get(field_name).and_then(Value::as_str).map(str::to_string)
-}
-
-fn infer_output_format_from_file_name(chunk_file_name: &str) -> &'static str {
-    if chunk_file_name.ends_with(".regenie") {
-        return "regenie";
-    }
-    if chunk_file_name.ends_with(".parquet") {
-        return "parquet";
-    }
-    "arrow"
-}
-
-fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> Result<i64, String> {
-    committed_chunk
-        .get(field_name)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| format!("Run manifest committed chunk entry is missing {field_name}."))
-}
-
-fn read_manifest_usize(committed_chunk: &Value, field_name: &str) -> Result<usize, String> {
-    let value = read_manifest_integer(committed_chunk, field_name)?;
-    usize::try_from(value).map_err(|_| format!("Run manifest committed chunk entry {field_name} must be non-negative."))
-}
-
 pub(crate) fn mark_run_manifest_finalized(
     final_parquet_path: &Path,
     row_count: usize,
     chunk_file_count: usize,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     mark_run_manifest_finalized_output(final_parquet_path, row_count, chunk_file_count, "parquet")
 }
 
@@ -1225,13 +642,14 @@ pub(crate) fn mark_run_manifest_finalized_output(
     row_count: usize,
     chunk_file_count: usize,
     output_format: &str,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     let Some(run_directory) = final_output_path.parent() else {
         return Ok(());
     };
     update_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
         manifest_object.insert("finalized".to_string(), Value::Bool(true));
         manifest_object.insert("final_output".to_string(), Value::String(final_output_path.display().to_string()));
         manifest_object.insert("final_output_format".to_string(), Value::String(output_format.to_string()));
@@ -1259,10 +677,11 @@ pub(crate) fn mark_run_manifest_finalized_output(
     })
 }
 
-pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> Result<(), String> {
+pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> ManifestResult<()> {
     update_run_manifest(run_directory, |manifest| {
-        let manifest_object =
-            manifest.as_object_mut().ok_or_else(|| "Run manifest must contain a JSON object.".to_string())?;
+        let manifest_object = manifest
+            .as_object_mut()
+            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
         manifest_object.insert("finalized".to_string(), Value::Bool(false));
         manifest_object.insert("interrupted".to_string(), Value::Bool(true));
         manifest_object.insert("interrupted_signal".to_string(), Value::String(signal_name.to_string()));
@@ -1278,30 +697,32 @@ pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &
 
 fn update_run_manifest(
     run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
+    update_manifest: impl FnOnce(&mut Value) -> ManifestResult<()>,
+) -> ManifestResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     if !manifest_path.exists() {
         return Ok(());
     }
     let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
-    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
-    let mut manifest = serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?;
+    let _manifest_guard =
+        manifest_lock.lock().map_err(|_| OutputError::runtime("Run manifest update lock was poisoned."))?;
+    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
+    let mut manifest = parse_run_manifest_text(&manifest_text, Some(&manifest_path))?;
     update_manifest(&mut manifest)?;
     write_run_manifest_value_atomic(&manifest_path, &manifest)
 }
 
 fn upsert_run_manifest(
     run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> Result<(), String>,
-) -> Result<(), String> {
+    update_manifest: impl FnOnce(&mut Value) -> ManifestResult<()>,
+) -> ManifestResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard = manifest_lock.lock().map_err(|_| "Run manifest update lock was poisoned.".to_string())?;
+    let _manifest_guard =
+        manifest_lock.lock().map_err(|_| OutputError::runtime("Run manifest update lock was poisoned."))?;
     let mut manifest = if manifest_path.exists() {
-        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
-        serde_json::from_str::<Value>(&manifest_text).map_err(|error| error.to_string())?
+        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
+        parse_run_manifest_text(&manifest_text, Some(&manifest_path))?
     } else {
         Value::Object(Map::new())
     };
@@ -1309,14 +730,14 @@ fn upsert_run_manifest(
     write_run_manifest_value_atomic(&manifest_path, &manifest)
 }
 
-fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> Result<(), String> {
+fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> ManifestResult<()> {
     let temporary_manifest_path = manifest_path.with_extension("json.tmp");
-    let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(|error| error.to_string())?;
-    let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(|error| error.to_string())?;
-    temporary_manifest_file.write_all(&manifest_bytes).map_err(|error| error.to_string())?;
-    temporary_manifest_file.write_all(b"\n").map_err(|error| error.to_string())?;
-    temporary_manifest_file.sync_all().map_err(|error| error.to_string())?;
-    std::fs::rename(&temporary_manifest_path, manifest_path).map_err(|error| error.to_string())
+    let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(OutputError::runtime)?;
+    let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(OutputError::runtime)?;
+    temporary_manifest_file.write_all(&manifest_bytes).map_err(OutputError::runtime)?;
+    temporary_manifest_file.write_all(b"\n").map_err(OutputError::runtime)?;
+    temporary_manifest_file.sync_all().map_err(OutputError::runtime)?;
+    std::fs::rename(&temporary_manifest_path, manifest_path).map_err(OutputError::runtime)
 }
 
 fn get_run_manifest_update_lock() -> &'static Mutex<()> {

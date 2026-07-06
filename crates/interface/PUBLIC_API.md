@@ -6,7 +6,7 @@ Frontend configuration normalization for CLI, TOML, and Python options.
 
 ## Public types
 
-Resolved config data, resolved config enum values, config metadata, CLI outcome payloads, and config-validation errors.
+Resolved config data, resolved config enum values, config metadata, CLI outcome payloads, and `ConfigError`/`ConfigResult`.
 
 ## Public functions
 

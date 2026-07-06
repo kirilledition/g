@@ -1,117 +1,24 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array, Int64Array, StringArray};
-use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use serde_json::json;
+use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array};
+use crossbeam_channel::{Sender, bounded};
 
 use crate::OutputStatisticDtype;
+use crate::chunk::{NativeChunkHandle, NativeChunkStats, VariantMetadataColumns};
+use crate::error::OutputError;
 use crate::finalization;
 use crate::manifest;
-use crate::writer::{
-    OutputFileFormat, OutputWriterError, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch,
-    RegenieStep2ChunkWriteTiming, build_output_file_name, write_regenie_step2_chunk_job,
-};
+use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot};
+use crate::writer::{OutputFileFormat, RegenieStep2ChunkJob};
 
-const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
+mod coordinator;
+mod worker_pool;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct NativeChunkStats {
-    pub allele_one_frequency: Vec<f32>,
-    pub observation_count: Vec<i32>,
-    pub has_missing_values: bool,
-    pub dosage_sum: Arc<[f32]>,
-    pub dosage_square_sum: Vec<f32>,
-    pub imputed_dosage_square_sum: Vec<f32>,
-    pub dosage_variance_numerator: Vec<f32>,
-    pub info_score: Vec<Option<f32>>,
-    pub allele_count: Arc<[f32]>,
-    pub minor_allele_count: Vec<f32>,
-    pub zero_count: Vec<i32>,
-    pub nonzero_count: Vec<i32>,
-    pub homozygous_reference_count: Vec<i32>,
-    pub heterozygous_count: Vec<i32>,
-    pub homozygous_alternate_count: Vec<i32>,
-    pub is_sparse_candidate: Vec<bool>,
-    pub is_rare_sparse_firth_candidate: Vec<bool>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VariantMetadataColumns {
-    pub chromosome: Vec<String>,
-    pub variant_identifier: Vec<String>,
-    pub position: Vec<i64>,
-    pub allele_one: Vec<String>,
-    pub allele_two: Vec<String>,
-}
-
-#[derive(Clone)]
-pub struct NativeChunkHandle {
-    pub(crate) metadata: Arc<VariantMetadataColumns>,
-    pub(crate) stats: Arc<NativeChunkStats>,
-    pub(crate) chunk_identifier: i64,
-    writer_arrays: Arc<OnceLock<NativeChunkWriterArrays>>,
-}
-
-#[derive(Clone)]
-pub(crate) struct NativeChunkWriterArrays {
-    pub(crate) chromosome: ArrayRef,
-    pub(crate) position: ArrayRef,
-    pub(crate) variant_identifier: ArrayRef,
-    pub(crate) allele_two: ArrayRef,
-    pub(crate) allele_one: ArrayRef,
-    pub(crate) allele_one_frequency: ArrayRef,
-    pub(crate) info_score: ArrayRef,
-    pub(crate) observation_count: ArrayRef,
-}
-
-impl NativeChunkWriterArrays {
-    fn from_chunk_sources(metadata: &VariantMetadataColumns, stats: &NativeChunkStats) -> Self {
-        Self {
-            chromosome: Arc::new(StringArray::from(metadata.chromosome.clone())),
-            position: Arc::new(Int64Array::from(metadata.position.clone())),
-            variant_identifier: Arc::new(StringArray::from(metadata.variant_identifier.clone())),
-            allele_two: Arc::new(StringArray::from(metadata.allele_two.clone())),
-            allele_one: Arc::new(StringArray::from(metadata.allele_one.clone())),
-            allele_one_frequency: Arc::new(Float32Array::from(stats.allele_one_frequency.clone())),
-            info_score: Arc::new(Float32Array::from(stats.info_score.clone())),
-            observation_count: Arc::new(Int32Array::from(stats.observation_count.clone())),
-        }
-    }
-}
-
-impl NativeChunkHandle {
-    #[must_use]
-    pub fn new(metadata: Arc<VariantMetadataColumns>, stats: Arc<NativeChunkStats>, chunk_identifier: i64) -> Self {
-        Self { metadata, stats, chunk_identifier, writer_arrays: Arc::new(OnceLock::new()) }
-    }
-
-    #[must_use]
-    pub fn row_count(&self) -> usize {
-        self.metadata.position.len()
-    }
-
-    pub(crate) fn variant_start_index(&self) -> i64 {
-        self.chunk_identifier
-    }
-
-    pub(crate) fn variant_stop_index(&self) -> Result<i64, OutputWriterError> {
-        let row_count = i64::try_from(self.row_count()).map_err(|_| {
-            OutputWriterError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
-        })?;
-        self.chunk_identifier.checked_add(row_count).ok_or_else(|| {
-            OutputWriterError::InvalidInput(
-                "Rust output writer variant stop index does not fit into int64.".to_string(),
-            )
-        })
-    }
-
-    pub(crate) fn writer_arrays(&self) -> &NativeChunkWriterArrays {
-        self.writer_arrays.get_or_init(|| NativeChunkWriterArrays::from_chunk_sources(&self.metadata, &self.stats))
-    }
-}
+use coordinator::{OutputCoordinatorJob, run_output_writer_coordinator};
+use worker_pool::{OutputWriteCompletionTracker, get_output_writer_pool};
 
 #[derive(Clone)]
 struct OutputWriterConfig {
@@ -125,233 +32,6 @@ struct OutputWriterConfig {
     arrow_compression: String,
     parquet_compression: String,
     collect_stage_timings: bool,
-}
-
-#[derive(Default)]
-struct OutputStageTimingAccumulator {
-    metadata_clone_seconds: f64,
-    result_buffer_copy_seconds: f64,
-    enqueue_seconds: f64,
-    coordinator_flush_seconds: f64,
-    writer_record_batch_build_seconds: f64,
-    writer_schema_metadata_build_seconds: f64,
-    writer_metadata_array_build_seconds: f64,
-    writer_statistic_array_build_seconds: f64,
-    writer_test_array_build_seconds: f64,
-    writer_result_array_build_seconds: f64,
-    writer_extra_array_build_seconds: f64,
-    writer_record_batch_try_new_seconds: f64,
-    writer_arrow_file_write_seconds: f64,
-    writer_arrow_file_create_seconds: f64,
-    writer_arrow_init_seconds: f64,
-    writer_arrow_batch_write_seconds: f64,
-    writer_arrow_finish_seconds: f64,
-    writer_arrow_rename_seconds: f64,
-    writer_total_seconds: f64,
-    manifest_commit_seconds: f64,
-    finish_total_seconds: f64,
-    finalization_list_chunk_files_seconds: f64,
-    finalization_parquet_writer_properties_seconds: f64,
-    finalization_parquet_file_create_seconds: f64,
-    finalization_parquet_writer_init_seconds: f64,
-    finalization_arrow_file_open_seconds: f64,
-    finalization_arrow_reader_init_seconds: f64,
-    finalization_arrow_batch_read_seconds: f64,
-    finalization_read_arrow_seconds: f64,
-    finalization_project_batch_seconds: f64,
-    finalization_write_parquet_seconds: f64,
-    finalization_footer_metadata_seconds: f64,
-    finalization_close_writer_seconds: f64,
-    finalization_manifest_update_seconds: f64,
-    finalization_total_seconds: f64,
-    metadata_clone_count: u64,
-    result_buffer_copy_count: u64,
-    enqueue_count: u64,
-    coordinator_flush_count: u64,
-    writer_chunk_file_count: u64,
-    writer_chunk_count: u64,
-    writer_row_count: u64,
-    writer_arrow_array_memory_bytes: u64,
-    writer_arrow_file_bytes: u64,
-    manifest_commit_count: u64,
-    finish_count: u64,
-    finalization_chunk_file_count: u64,
-    finalization_batch_count: u64,
-    finalization_row_count: u64,
-    finalization_arrow_file_bytes: u64,
-    finalization_parquet_file_bytes: u64,
-    finalization_count: u64,
-}
-
-impl OutputStageTimingAccumulator {
-    fn add_writer_timing(&mut self, timing: RegenieStep2ChunkWriteTiming) {
-        self.writer_record_batch_build_seconds += timing.record_batch_build_seconds;
-        self.writer_schema_metadata_build_seconds += timing.schema_metadata_build_seconds;
-        self.writer_metadata_array_build_seconds += timing.metadata_array_build_seconds;
-        self.writer_statistic_array_build_seconds += timing.statistic_array_build_seconds;
-        self.writer_test_array_build_seconds += timing.test_array_build_seconds;
-        self.writer_result_array_build_seconds += timing.result_array_build_seconds;
-        self.writer_extra_array_build_seconds += timing.extra_array_build_seconds;
-        self.writer_record_batch_try_new_seconds += timing.record_batch_try_new_seconds;
-        self.writer_arrow_file_write_seconds += timing.arrow_file_write_seconds;
-        self.writer_arrow_file_create_seconds += timing.arrow_file_create_seconds;
-        self.writer_arrow_init_seconds += timing.arrow_writer_init_seconds;
-        self.writer_arrow_batch_write_seconds += timing.arrow_batch_write_seconds;
-        self.writer_arrow_finish_seconds += timing.arrow_writer_finish_seconds;
-        self.writer_arrow_rename_seconds += timing.arrow_file_rename_seconds;
-        self.writer_total_seconds += timing.total_seconds;
-        self.writer_chunk_file_count += timing.chunk_file_count;
-        self.writer_chunk_count += timing.chunk_count;
-        self.writer_row_count += timing.row_count;
-        self.writer_arrow_array_memory_bytes =
-            self.writer_arrow_array_memory_bytes.saturating_add(timing.arrow_array_memory_bytes);
-        self.writer_arrow_file_bytes = self.writer_arrow_file_bytes.saturating_add(timing.arrow_file_bytes);
-    }
-
-    fn add_finalization_timing(&mut self, timing: finalization::RegenieStep2FinalizationTiming) {
-        self.finalization_list_chunk_files_seconds += timing.list_chunk_files_seconds;
-        self.finalization_parquet_writer_properties_seconds += timing.parquet_writer_properties_seconds;
-        self.finalization_parquet_file_create_seconds += timing.parquet_file_create_seconds;
-        self.finalization_parquet_writer_init_seconds += timing.parquet_writer_init_seconds;
-        self.finalization_arrow_file_open_seconds += timing.arrow_file_open_seconds;
-        self.finalization_arrow_reader_init_seconds += timing.arrow_reader_init_seconds;
-        self.finalization_arrow_batch_read_seconds += timing.arrow_batch_read_seconds;
-        self.finalization_read_arrow_seconds += timing.read_arrow_seconds;
-        self.finalization_project_batch_seconds += timing.project_batch_seconds;
-        self.finalization_write_parquet_seconds += timing.write_parquet_seconds;
-        self.finalization_footer_metadata_seconds += timing.footer_metadata_seconds;
-        self.finalization_close_writer_seconds += timing.close_writer_seconds;
-        self.finalization_manifest_update_seconds += timing.manifest_update_seconds;
-        self.finalization_total_seconds += timing.total_seconds;
-        self.finalization_chunk_file_count += timing.chunk_file_count;
-        self.finalization_batch_count += timing.batch_count;
-        self.finalization_row_count += timing.row_count;
-        self.finalization_arrow_file_bytes = self.finalization_arrow_file_bytes.saturating_add(timing.arrow_file_bytes);
-        self.finalization_parquet_file_bytes =
-            self.finalization_parquet_file_bytes.saturating_add(timing.parquet_file_bytes);
-        self.finalization_count += 1;
-    }
-}
-
-enum OutputCoordinatorJob {
-    RegenieStep2(Box<RegenieStep2ChunkJob>),
-    Finish,
-    Abort,
-}
-
-enum OutputWriteJob {
-    RegenieStep2(Box<OutputWriteTask>),
-}
-
-struct OutputWriteTask {
-    write_batch: RegenieStep2ChunkWriteBatch,
-    config: OutputWriterConfig,
-    worker_errors: Arc<Mutex<Vec<String>>>,
-    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
-    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
-    completion_tracker: OutputWriteCompletionTracker,
-}
-
-struct OutputWriterPool {
-    sender: Sender<OutputWriteJob>,
-    receiver: Receiver<OutputWriteJob>,
-    worker_count: Mutex<usize>,
-}
-
-#[derive(Clone)]
-struct OutputWriteCompletionTracker {
-    inner: Arc<(Mutex<usize>, Condvar)>,
-}
-
-struct OutputWriteCompletionGuard {
-    completion_tracker: OutputWriteCompletionTracker,
-}
-
-impl OutputWriterPool {
-    fn new() -> Self {
-        let (sender, receiver) = unbounded();
-        Self { sender, receiver, worker_count: Mutex::new(0) }
-    }
-
-    fn sender(&self) -> Sender<OutputWriteJob> {
-        self.sender.clone()
-    }
-
-    fn ensure_worker_count(&self, requested_worker_count: usize) -> Result<(), OutputWriterError> {
-        let mut worker_count = self
-            .worker_count
-            .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer pool lock was poisoned.".to_string()))?;
-        while *worker_count < requested_worker_count {
-            let receiver_clone = self.receiver.clone();
-            std::thread::spawn(move || run_output_writer_worker(receiver_clone));
-            *worker_count += 1;
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn current_worker_count(&self) -> usize {
-        *self.worker_count.lock().expect("pool worker count should not be poisoned")
-    }
-}
-
-impl OutputWriteCompletionTracker {
-    fn new() -> Self {
-        Self { inner: Arc::new((Mutex::new(0), Condvar::new())) }
-    }
-
-    fn increment(&self) -> Result<(), OutputWriterError> {
-        let (pending_write_count_lock, _) = &*self.inner;
-        let mut pending_write_count = pending_write_count_lock
-            .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string()))?;
-        *pending_write_count += 1;
-        Ok(())
-    }
-
-    fn decrement(&self) {
-        let (pending_write_count_lock, pending_write_condvar) = &*self.inner;
-        if let Ok(mut pending_write_count) = pending_write_count_lock.lock() {
-            *pending_write_count = pending_write_count.saturating_sub(1);
-            if *pending_write_count == 0 {
-                pending_write_condvar.notify_all();
-            }
-        }
-    }
-
-    fn wait(&self) -> Result<(), OutputWriterError> {
-        let (pending_write_count_lock, pending_write_condvar) = &*self.inner;
-        let mut pending_write_count = pending_write_count_lock
-            .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string()))?;
-        while *pending_write_count > 0 {
-            pending_write_count = pending_write_condvar.wait(pending_write_count).map_err(|_| {
-                OutputWriterError::Runtime("Rust output writer completion lock was poisoned.".to_string())
-            })?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for OutputWriteCompletionGuard {
-    fn drop(&mut self) {
-        self.completion_tracker.decrement();
-    }
-}
-
-fn output_writer_pool() -> Arc<OutputWriterPool> {
-    static OUTPUT_WRITER_POOL: OnceLock<Arc<OutputWriterPool>> = OnceLock::new();
-    Arc::clone(OUTPUT_WRITER_POOL.get_or_init(|| Arc::new(OutputWriterPool::new())))
-}
-
-fn get_output_writer_pool(worker_count: usize) -> Result<Arc<OutputWriterPool>, OutputWriterError> {
-    if worker_count == 0 {
-        return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
-    }
-    let pool = output_writer_pool();
-    pool.ensure_worker_count(worker_count)?;
-    Ok(pool)
 }
 
 pub struct OutputWriterSession {
@@ -380,20 +60,19 @@ impl OutputWriterSession {
         arrow_compression: String,
         parquet_compression: String,
         collect_stage_timings: bool,
-    ) -> Result<Self, OutputWriterError> {
+    ) -> Result<Self, OutputError> {
         if writer_thread_count == 0 {
-            return Err(OutputWriterError::InvalidInput("Writer thread count must be at least 1.".to_string()));
+            return Err(OutputError::InvalidInput("Writer thread count must be at least 1.".to_string()));
         }
         if chunks_per_arrow_file == 0 {
-            return Err(OutputWriterError::InvalidInput("Chunks per Arrow file must be at least 1.".to_string()));
+            return Err(OutputError::InvalidInput("Chunks per Arrow file must be at least 1.".to_string()));
         }
         let config = OutputWriterConfig {
             run_directory: PathBuf::from(run_directory),
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
             output_format: OutputFileFormat::parse(output_format)?,
-            output_statistic_dtype: OutputStatisticDtype::parse(output_statistic_dtype)
-                .map_err(OutputWriterError::InvalidInput)?,
+            output_statistic_dtype: OutputStatisticDtype::parse(output_statistic_dtype)?,
             finalize_parquet,
             chunks_per_arrow_file,
             arrow_compression,
@@ -434,7 +113,7 @@ impl OutputWriterSession {
         })
     }
 
-    pub fn finish(&self) -> Result<Option<PathBuf>, OutputWriterError> {
+    pub fn finish(&self) -> Result<Option<PathBuf>, OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
@@ -442,8 +121,7 @@ impl OutputWriterSession {
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
-        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
-            .map_err(OutputWriterError::runtime)?;
+        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)?;
         if let Some(start_time) = manifest_commit_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.manifest_commit_seconds += start_time.elapsed().as_secs_f64();
@@ -482,7 +160,7 @@ impl OutputWriterSession {
         Ok(Some(final_parquet_path))
     }
 
-    pub fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputWriterError> {
+    pub fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.close_writer_sender(OutputCoordinatorJob::Finish)?;
         self.join_coordinator_thread()?;
@@ -490,32 +168,30 @@ impl OutputWriterSession {
         self.raise_if_worker_failed()?;
         let chunk_commits = self.take_worker_commits()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
-        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)
-            .map_err(OutputWriterError::runtime)?;
+        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, chunk_commits)?;
         if let Some(start_time) = manifest_commit_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.manifest_commit_seconds += start_time.elapsed().as_secs_f64();
                 stage_timings.manifest_commit_count += 1;
             })?;
         }
-        manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)
-            .map_err(OutputWriterError::runtime)?;
+        manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)?;
         self.record_finish_timing(finish_start_time)?;
         self.write_stage_timing_snapshot()
     }
 
-    pub fn abort(&self) -> Result<(), OutputWriterError> {
+    pub fn abort(&self) -> Result<(), OutputError> {
         self.close_writer_sender(OutputCoordinatorJob::Abort)?;
         self.join_coordinator_thread()?;
         self.wait_for_writer_tasks()?;
         Ok(())
     }
 
-    fn take_worker_commits(&self) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputWriterError> {
+    fn take_worker_commits(&self) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
         let mut worker_commits = self
             .worker_commits
             .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer commit lock was poisoned.".to_string()))?;
+            .map_err(|_| OutputError::Runtime("Rust output writer commit lock was poisoned.".to_string()))?;
         Ok(std::mem::take(&mut *worker_commits))
     }
 
@@ -531,18 +207,16 @@ impl OutputWriterSession {
         chi_squared: &[f32],
         log10_p_value: &[f32],
         extra_code: Option<&[i32]>,
-    ) -> Result<(), OutputWriterError> {
+    ) -> Result<(), OutputError> {
         let expected_variant_stop_index = variant_start_index
             .checked_add(i64::try_from(metadata.position.len()).map_err(|_| {
-                OutputWriterError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
+                OutputError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
             })?)
             .ok_or_else(|| {
-                OutputWriterError::InvalidInput(
-                    "Rust output writer variant stop index does not fit into int64.".to_string(),
-                )
+                OutputError::InvalidInput("Rust output writer variant stop index does not fit into int64.".to_string())
             })?;
         if variant_stop_index != expected_variant_stop_index {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "Rust output writer metadata bounds do not match metadata row count.".to_string(),
             ));
         }
@@ -574,9 +248,9 @@ impl OutputWriterSession {
         chi_squared: &[f32],
         log10_p_value: &[f32],
         extra_code: Option<&[i32]>,
-    ) -> Result<(), OutputWriterError> {
+    ) -> Result<(), OutputError> {
         if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
             ));
         }
@@ -629,9 +303,9 @@ impl OutputWriterSession {
         chi_squared: ArrayRef,
         log10_p_value: ArrayRef,
         extra_code: Option<ArrayRef>,
-    ) -> Result<(), OutputWriterError> {
+    ) -> Result<(), OutputError> {
         if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
             ));
         }
@@ -669,12 +343,12 @@ impl OutputWriterSession {
         let sender_guard = self
             .sender
             .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
+            .map_err(|_| OutputError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
         let sender = sender_guard
             .as_ref()
-            .ok_or_else(|| OutputWriterError::Runtime("Rust output writer session is already closed.".to_string()))?;
+            .ok_or_else(|| OutputError::Runtime("Rust output writer session is already closed.".to_string()))?;
         let enqueue_start_time = start_optional_timing(self.config.collect_stage_timings);
-        sender.send(OutputCoordinatorJob::RegenieStep2(Box::new(job))).map_err(OutputWriterError::runtime)?;
+        sender.send(OutputCoordinatorJob::RegenieStep2(Box::new(job))).map_err(OutputError::runtime)?;
         if let Some(start_time) = enqueue_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.enqueue_seconds += start_time.elapsed().as_secs_f64();
@@ -684,7 +358,7 @@ impl OutputWriterSession {
         Ok(())
     }
 
-    fn record_finish_timing(&self, finish_start_time: Option<Instant>) -> Result<(), OutputWriterError> {
+    fn record_finish_timing(&self, finish_start_time: Option<Instant>) -> Result<(), OutputError> {
         if let Some(start_time) = finish_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.finish_total_seconds += start_time.elapsed().as_secs_f64();
@@ -697,154 +371,64 @@ impl OutputWriterSession {
     fn record_stage_timing(
         &self,
         update_stage_timings: impl FnOnce(&mut OutputStageTimingAccumulator),
-    ) -> Result<(), OutputWriterError> {
+    ) -> Result<(), OutputError> {
         if !self.config.collect_stage_timings {
             return Ok(());
         }
-        let mut stage_timings = self.stage_timings.lock().map_err(|_| {
-            OutputWriterError::Runtime("Rust output writer stage timing lock was poisoned.".to_string())
-        })?;
+        let mut stage_timings = self
+            .stage_timings
+            .lock()
+            .map_err(|_| OutputError::Runtime("Rust output writer stage timing lock was poisoned.".to_string()))?;
         update_stage_timings(&mut stage_timings);
         Ok(())
     }
 
-    fn write_stage_timing_snapshot(&self) -> Result<(), OutputWriterError> {
+    fn write_stage_timing_snapshot(&self) -> Result<(), OutputError> {
         if !self.config.collect_stage_timings {
             return Ok(());
         }
-        let stage_timings = self.stage_timings.lock().map_err(|_| {
-            OutputWriterError::Runtime("Rust output writer stage timing lock was poisoned.".to_string())
-        })?;
-        let payload = json!({
-            "stage_totals_seconds": {
-                "rust_output_metadata_clone": stage_timings.metadata_clone_seconds,
-                "rust_output_result_buffer_copy": stage_timings.result_buffer_copy_seconds,
-                "rust_output_enqueue": stage_timings.enqueue_seconds,
-                "rust_output_coordinator_flush": stage_timings.coordinator_flush_seconds,
-                "rust_output_writer_record_batch_build": stage_timings.writer_record_batch_build_seconds,
-                "rust_output_writer_schema_metadata_build": stage_timings.writer_schema_metadata_build_seconds,
-                "rust_output_writer_metadata_arrays": stage_timings.writer_metadata_array_build_seconds,
-                "rust_output_writer_statistic_arrays": stage_timings.writer_statistic_array_build_seconds,
-                "rust_output_writer_test_array": stage_timings.writer_test_array_build_seconds,
-                "rust_output_writer_result_arrays": stage_timings.writer_result_array_build_seconds,
-                "rust_output_writer_extra_array": stage_timings.writer_extra_array_build_seconds,
-                "rust_output_writer_record_batch_try_new": stage_timings.writer_record_batch_try_new_seconds,
-                "rust_output_writer_arrow_file_write": stage_timings.writer_arrow_file_write_seconds,
-                "rust_output_writer_arrow_file_create": stage_timings.writer_arrow_file_create_seconds,
-                "rust_output_writer_arrow_init": stage_timings.writer_arrow_init_seconds,
-                "rust_output_writer_arrow_batch_write": stage_timings.writer_arrow_batch_write_seconds,
-                "rust_output_writer_arrow_finish": stage_timings.writer_arrow_finish_seconds,
-                "rust_output_writer_arrow_rename": stage_timings.writer_arrow_rename_seconds,
-                "rust_output_writer_total": stage_timings.writer_total_seconds,
-                "rust_output_manifest_commit": stage_timings.manifest_commit_seconds,
-                "rust_output_finish_total": stage_timings.finish_total_seconds,
-                "rust_output_finalization_list_chunk_files": stage_timings.finalization_list_chunk_files_seconds,
-                "rust_output_finalization_parquet_writer_properties": stage_timings.finalization_parquet_writer_properties_seconds,
-                "rust_output_finalization_parquet_file_create": stage_timings.finalization_parquet_file_create_seconds,
-                "rust_output_finalization_parquet_writer_init": stage_timings.finalization_parquet_writer_init_seconds,
-                "rust_output_finalization_arrow_file_open": stage_timings.finalization_arrow_file_open_seconds,
-                "rust_output_finalization_arrow_reader_init": stage_timings.finalization_arrow_reader_init_seconds,
-                "rust_output_finalization_arrow_batch_read": stage_timings.finalization_arrow_batch_read_seconds,
-                "rust_output_finalization_read_arrow": stage_timings.finalization_read_arrow_seconds,
-                "rust_output_finalization_project_batch": stage_timings.finalization_project_batch_seconds,
-                "rust_output_finalization_write_parquet": stage_timings.finalization_write_parquet_seconds,
-                "rust_output_finalization_footer_metadata": stage_timings.finalization_footer_metadata_seconds,
-                "rust_output_finalization_close_writer": stage_timings.finalization_close_writer_seconds,
-                "rust_output_finalization_manifest_update": stage_timings.finalization_manifest_update_seconds,
-                "rust_output_finalization_total": stage_timings.finalization_total_seconds,
-            },
-            "stage_counts": {
-                "rust_output_metadata_clone": stage_timings.metadata_clone_count,
-                "rust_output_result_buffer_copy": stage_timings.result_buffer_copy_count,
-                "rust_output_enqueue": stage_timings.enqueue_count,
-                "rust_output_coordinator_flush": stage_timings.coordinator_flush_count,
-                "rust_output_writer_record_batch_build": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_schema_metadata_build": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_metadata_arrays": stage_timings.writer_chunk_count,
-                "rust_output_writer_statistic_arrays": stage_timings.writer_chunk_count,
-                "rust_output_writer_test_array": stage_timings.writer_chunk_count,
-                "rust_output_writer_result_arrays": stage_timings.writer_chunk_count,
-                "rust_output_writer_extra_array": stage_timings.writer_chunk_count,
-                "rust_output_writer_record_batch_try_new": stage_timings.writer_chunk_count,
-                "rust_output_writer_arrow_file_write": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_arrow_file_create": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_arrow_init": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_arrow_batch_write": stage_timings.writer_chunk_count,
-                "rust_output_writer_arrow_finish": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_arrow_rename": stage_timings.writer_chunk_file_count,
-                "rust_output_writer_total": stage_timings.writer_chunk_file_count,
-                "rust_output_manifest_commit": stage_timings.manifest_commit_count,
-                "rust_output_finish_total": stage_timings.finish_count,
-                "rust_output_finalization_list_chunk_files": stage_timings.finalization_count,
-                "rust_output_finalization_parquet_writer_properties": stage_timings.finalization_count,
-                "rust_output_finalization_parquet_file_create": stage_timings.finalization_count,
-                "rust_output_finalization_parquet_writer_init": stage_timings.finalization_count,
-                "rust_output_finalization_arrow_file_open": stage_timings.finalization_chunk_file_count,
-                "rust_output_finalization_arrow_reader_init": stage_timings.finalization_chunk_file_count,
-                "rust_output_finalization_arrow_batch_read": stage_timings.finalization_batch_count,
-                "rust_output_finalization_read_arrow": stage_timings.finalization_chunk_file_count,
-                "rust_output_finalization_project_batch": stage_timings.finalization_batch_count,
-                "rust_output_finalization_write_parquet": stage_timings.finalization_batch_count,
-                "rust_output_finalization_footer_metadata": stage_timings.finalization_count,
-                "rust_output_finalization_close_writer": stage_timings.finalization_count,
-                "rust_output_finalization_manifest_update": stage_timings.finalization_count,
-                "rust_output_finalization_total": stage_timings.finalization_count,
-            },
-            "output_metrics": {
-                "writer_chunk_file_count": stage_timings.writer_chunk_file_count,
-                "writer_chunk_count": stage_timings.writer_chunk_count,
-                "writer_row_count": stage_timings.writer_row_count,
-                "writer_arrow_array_memory_bytes": stage_timings.writer_arrow_array_memory_bytes,
-                "writer_arrow_file_bytes": stage_timings.writer_arrow_file_bytes,
-                "finalization_chunk_file_count": stage_timings.finalization_chunk_file_count,
-                "finalization_batch_count": stage_timings.finalization_batch_count,
-                "finalization_row_count": stage_timings.finalization_row_count,
-                "finalization_arrow_file_bytes": stage_timings.finalization_arrow_file_bytes,
-                "finalization_parquet_file_bytes": stage_timings.finalization_parquet_file_bytes,
-            },
-        });
-        let timing_path = self.config.run_directory.join(OUTPUT_STAGE_TIMING_FILE_NAME);
-        let temporary_timing_path = timing_path.with_extension("json.tmp");
-        let timing_text = serde_json::to_string_pretty(&payload).map_err(OutputWriterError::runtime)?;
-        std::fs::write(&temporary_timing_path, format!("{timing_text}\n")).map_err(OutputWriterError::runtime)?;
-        std::fs::rename(&temporary_timing_path, &timing_path).map_err(OutputWriterError::runtime)
+        let stage_timings = self
+            .stage_timings
+            .lock()
+            .map_err(|_| OutputError::Runtime("Rust output writer stage timing lock was poisoned.".to_string()))?;
+        write_stage_timing_snapshot(&self.config.run_directory, &stage_timings)
     }
 
-    fn raise_if_worker_failed(&self) -> Result<(), OutputWriterError> {
+    fn raise_if_worker_failed(&self) -> Result<(), OutputError> {
         let worker_errors = self
             .worker_errors
             .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer error lock was poisoned.".to_string()))?;
+            .map_err(|_| OutputError::Runtime("Rust output writer error lock was poisoned.".to_string()))?;
         if let Some(first_error) = worker_errors.first() {
-            return Err(OutputWriterError::Runtime(first_error.clone()));
+            return Err(OutputError::Runtime(first_error.clone()));
         }
         Ok(())
     }
 
-    fn close_writer_sender(&self, close_job: OutputCoordinatorJob) -> Result<(), OutputWriterError> {
+    fn close_writer_sender(&self, close_job: OutputCoordinatorJob) -> Result<(), OutputError> {
         let mut sender_guard = self
             .sender
             .lock()
-            .map_err(|_| OutputWriterError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
+            .map_err(|_| OutputError::Runtime("Rust output writer sender lock was poisoned.".to_string()))?;
         if let Some(active_sender) = sender_guard.take() {
-            active_sender.send(close_job).map_err(OutputWriterError::runtime)?;
+            active_sender.send(close_job).map_err(OutputError::runtime)?;
         }
         Ok(())
     }
 
-    fn join_coordinator_thread(&self) -> Result<(), OutputWriterError> {
+    fn join_coordinator_thread(&self) -> Result<(), OutputError> {
         let mut coordinator_handle_guard = self.coordinator_handle.lock().map_err(|_| {
-            OutputWriterError::Runtime("Rust output writer coordinator handle lock was poisoned.".to_string())
+            OutputError::Runtime("Rust output writer coordinator handle lock was poisoned.".to_string())
         })?;
         if let Some(handle) = coordinator_handle_guard.take() {
-            handle.join().map_err(|_| {
-                OutputWriterError::Runtime("Rust output writer coordinator thread panicked.".to_string())
-            })?;
+            handle
+                .join()
+                .map_err(|_| OutputError::Runtime("Rust output writer coordinator thread panicked.".to_string()))?;
         }
         Ok(())
     }
 
-    fn wait_for_writer_tasks(&self) -> Result<(), OutputWriterError> {
+    fn wait_for_writer_tasks(&self) -> Result<(), OutputError> {
         self.completion_tracker.wait()
     }
 }
@@ -857,11 +441,11 @@ fn build_int32_result_array(values: &[i32]) -> ArrayRef {
     Arc::new(Int32Array::from(values.to_vec()))
 }
 
-fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> Result<(), OutputWriterError> {
+fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> Result<(), OutputError> {
     if observed_lengths.iter().all(|observed_length| *observed_length == expected_row_count) {
         return Ok(());
     }
-    Err(OutputWriterError::InvalidInput(
+    Err(OutputError::InvalidInput(
         "Rust output writer batch column lengths do not all match the expected row count.".to_string(),
     ))
 }
@@ -870,7 +454,7 @@ fn validate_statistic_array_type(
     column_name: &str,
     array: &ArrayRef,
     output_statistic_dtype: OutputStatisticDtype,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     let type_matches = match output_statistic_dtype {
         OutputStatisticDtype::Float32 => array.as_any().is::<Float32Array>(),
         OutputStatisticDtype::Float64 => array.as_any().is::<Float64Array>(),
@@ -878,157 +462,10 @@ fn validate_statistic_array_type(
     if type_matches {
         return Ok(());
     }
-    Err(OutputWriterError::InvalidInput(format!(
+    Err(OutputError::InvalidInput(format!(
         "Rust output writer column {column_name} must be {} for the configured output statistic dtype.",
         output_statistic_dtype.as_str(),
     )))
-}
-
-fn start_optional_timing(collect_stage_timings: bool) -> Option<Instant> {
-    collect_stage_timings.then(Instant::now)
-}
-
-#[allow(clippy::needless_pass_by_value)]
-fn run_output_writer_coordinator(
-    receiver: Receiver<OutputCoordinatorJob>,
-    writer_pool: Arc<OutputWriterPool>,
-    config: OutputWriterConfig,
-    worker_errors: Arc<Mutex<Vec<String>>>,
-    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
-    stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
-    completion_tracker: OutputWriteCompletionTracker,
-) {
-    let mut pending_chunks = Vec::with_capacity(config.chunks_per_arrow_file);
-    while let Ok(job) = receiver.recv() {
-        match job {
-            OutputCoordinatorJob::RegenieStep2(chunk_job) => {
-                pending_chunks.push(*chunk_job);
-                if pending_chunks.len() >= config.chunks_per_arrow_file
-                    && flush_pending_regenie_step2_chunks(
-                        &writer_pool,
-                        &mut pending_chunks,
-                        &config,
-                        &worker_errors,
-                        &worker_commits,
-                        &stage_timings,
-                        &completion_tracker,
-                    )
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            OutputCoordinatorJob::Finish => {
-                let _ = flush_pending_regenie_step2_chunks(
-                    &writer_pool,
-                    &mut pending_chunks,
-                    &config,
-                    &worker_errors,
-                    &worker_commits,
-                    &stage_timings,
-                    &completion_tracker,
-                );
-                break;
-            }
-            OutputCoordinatorJob::Abort => break,
-        }
-    }
-}
-
-fn flush_pending_regenie_step2_chunks(
-    writer_pool: &OutputWriterPool,
-    pending_chunks: &mut Vec<RegenieStep2ChunkJob>,
-    config: &OutputWriterConfig,
-    worker_errors: &Arc<Mutex<Vec<String>>>,
-    worker_commits: &Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
-    stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
-    completion_tracker: &OutputWriteCompletionTracker,
-) -> Result<(), ()> {
-    if pending_chunks.is_empty() {
-        return Ok(());
-    }
-    let flush_start_time = start_optional_timing(config.collect_stage_timings);
-    let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
-    let last_chunk_identifier =
-        pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
-    let chunk_file_name = build_output_file_name(config.output_format, first_chunk_identifier, last_chunk_identifier);
-    let write_batch = RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) };
-    completion_tracker.increment().map_err(|error| {
-        push_worker_error(worker_errors, error.to_string());
-    })?;
-    let write_task = OutputWriteTask {
-        write_batch,
-        config: config.clone(),
-        worker_errors: Arc::clone(worker_errors),
-        worker_commits: Arc::clone(worker_commits),
-        stage_timings: Arc::clone(stage_timings),
-        completion_tracker: completion_tracker.clone(),
-    };
-    writer_pool.sender().send(OutputWriteJob::RegenieStep2(Box::new(write_task))).map_err(|error| {
-        completion_tracker.decrement();
-        push_worker_error(worker_errors, error.to_string());
-    })?;
-    if let Some(start_time) = flush_start_time {
-        let mut stage_timings_guard = stage_timings.lock().map_err(|_| {
-            push_worker_error(worker_errors, "Rust output writer stage timing lock was poisoned.".to_string());
-        })?;
-        stage_timings_guard.coordinator_flush_seconds += start_time.elapsed().as_secs_f64();
-        stage_timings_guard.coordinator_flush_count += 1;
-    }
-    Ok(())
-}
-
-fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
-    if let Ok(mut worker_errors_guard) = worker_errors.lock() {
-        worker_errors_guard.push(error);
-    }
-}
-
-#[allow(clippy::needless_pass_by_value)]
-fn run_output_writer_worker(receiver: Receiver<OutputWriteJob>) {
-    while let Ok(job) = receiver.recv() {
-        match job {
-            OutputWriteJob::RegenieStep2(output_write_task) => run_output_write_task(*output_write_task),
-        }
-    }
-}
-
-fn run_output_write_task(output_write_task: OutputWriteTask) {
-    let _completion_guard =
-        OutputWriteCompletionGuard { completion_tracker: output_write_task.completion_tracker.clone() };
-    let write_result = write_regenie_step2_chunk_job(
-        &output_write_task.config.chunks_directory,
-        output_write_task.write_batch,
-        output_write_task.config.output_format,
-        output_write_task.config.output_statistic_dtype,
-        &output_write_task.config.arrow_compression,
-        &output_write_task.config.parquet_compression,
-    );
-    match write_result {
-        Ok(write_result) => {
-            if output_write_task.config.collect_stage_timings {
-                let Ok(mut stage_timings_guard) = output_write_task.stage_timings.lock() else {
-                    push_worker_error(
-                        &output_write_task.worker_errors,
-                        "Rust output writer stage timing lock was poisoned.".to_string(),
-                    );
-                    return;
-                };
-                stage_timings_guard.add_writer_timing(write_result.timing);
-            }
-            let Ok(mut worker_commits_guard) = output_write_task.worker_commits.lock() else {
-                push_worker_error(
-                    &output_write_task.worker_errors,
-                    "Rust output writer commit lock was poisoned.".to_string(),
-                );
-                return;
-            };
-            worker_commits_guard.extend(write_result.chunk_commits);
-        }
-        Err(error) => {
-            push_worker_error(&output_write_task.worker_errors, error);
-        }
-    }
 }
 
 #[cfg(test)]

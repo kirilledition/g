@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::common::GenotypeError;
+use crate::error::GenotypeError;
 
 #[derive(Error, Debug)]
 pub enum BgenError {

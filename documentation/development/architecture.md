@@ -9,7 +9,7 @@
 ## High-level Flow
 
 ```text
-CLI / TOML / Python API
+CLI / TOML
         |
 RegenieConfig
         |
@@ -26,13 +26,10 @@ Arrow chunks + optional finalized Parquet
 
 ```text
 src/g/
-  api.py                         public Python API
   cli.py                         thin Python dispatcher into the Rust CLI frontend
-  interface/
-    config.py                    thin Python bridge around Rust-owned config objects
   execution_plan.py              immutable normalized run plans
   runner/                        runtime orchestration, telemetry, dispatch, artifacts
-  jax_runtime/                   JAX runtime policy, resolution, diagnostics, setup
+  jax_runtime.py                 JAX runtime policy, resolution, diagnostics, setup
   engine/
     regenie2_pipeline/           native-driven BGEN pipeline wrappers
       backend.py                 association backend selection before dispatch
@@ -44,8 +41,7 @@ src/g/
   compute/
     regenie2_linear/             quantitative state and score kernels
     regenie2_binary/             binary score, candidates, Firth, diagnostics
-  io/
-    output.py                    output paths, manifest, writer bridge
+  io.py                          output paths, manifest, writer bridge
 ```
 
 ## Native Runtime

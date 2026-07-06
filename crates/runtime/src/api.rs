@@ -1,14 +1,17 @@
 //! Public runtime crate facade.
 
 use crate::{
-    cli_runtime, jax_runtime, logging_sink, rayon_runtime, run_events, run_metadata, runtime_paths, runtime_policy,
-    runtime_state, shutdown, telemetry_policy, telemetry_session, telemetry_writer, timing, trusted_validation,
+    cli_runtime, error, jax_runtime, logging_sink, rayon_runtime, run_events, run_metadata, runtime_paths,
+    runtime_policy, runtime_state, shutdown, telemetry_policy, telemetry_session, telemetry_writer, timing,
+    trusted_validation,
 };
 
 pub use cli_runtime::{
-    CliRunFailedTelemetryEmissionPlan, CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan,
+    CLI_RUNTIME_FAILURE_EXIT_CODE, CliRunFailedTelemetryEmissionPlan, CliRunFailureTelemetryPlan, CliRunLifecycleState,
+    CliTelemetryCloseFailurePlan, CliTerminalResult, NATIVE_CLI_OUTPUT_LOG_LIMIT,
     plan_cli_run_failed_telemetry_emission, plan_cli_telemetry_close_failure,
 };
+pub use error::{RuntimeCompatibilityError, RuntimeError, RuntimeResult};
 pub use jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
     JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan,
@@ -180,8 +183,8 @@ pub use runtime_paths::{
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,
-    RayonThreadPoolConfigurationPlan, RunRuntime, RuntimeCompatibilityError, RuntimeCompatibilityToken,
-    RuntimePolicyPayload, RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
+    RayonThreadPoolConfigurationPlan, RunRuntime, RuntimeCompatibilityToken, RuntimePolicyPayload,
+    RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
     resolve_jax_runtime_cache_directory,
 };
 pub use shutdown::{

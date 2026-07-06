@@ -18,9 +18,10 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 use serde_json::Value;
 
+use crate::error::OutputError;
 use crate::manifest;
 use crate::schema;
-use crate::writer::{self, OutputFileFormat, OutputWriterError};
+use crate::writer::{self, OutputFileFormat};
 
 const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
@@ -52,7 +53,7 @@ pub fn finalize_output_run_chunks(
     chunks_directory: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
-) -> Result<PathBuf, OutputWriterError> {
+) -> Result<PathBuf, OutputError> {
     match output_format {
         OutputFileFormat::Arrow | OutputFileFormat::Parquet => {
             let final_parquet_path = run_directory.join("final.parquet");
@@ -82,7 +83,7 @@ pub(crate) fn write_final_parquet_from_chunk_files(
     final_parquet_path: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     write_final_parquet_from_chunk_files_with_timing(
         chunks_directory,
         final_parquet_path,
@@ -97,7 +98,7 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     final_parquet_path: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
-) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+) -> Result<RegenieStep2FinalizationTiming, OutputError> {
     write_final_parquet_from_chunk_files_with_optional_dtype(
         chunks_directory,
         final_parquet_path,
@@ -113,7 +114,7 @@ pub(crate) fn write_final_parquet_from_chunk_files_with_timing_for_dtype(
     association_mode: &str,
     output_format: OutputFileFormat,
     output_statistic_dtype: schema::OutputStatisticDtype,
-) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+) -> Result<RegenieStep2FinalizationTiming, OutputError> {
     write_final_parquet_from_chunk_files_with_optional_dtype(
         chunks_directory,
         final_parquet_path,
@@ -129,20 +130,19 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     association_mode: &str,
     output_format: OutputFileFormat,
     output_statistic_dtype_override: Option<schema::OutputStatisticDtype>,
-) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+) -> Result<RegenieStep2FinalizationTiming, OutputError> {
     let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Unsupported association mode for Rust output writer finalization: {association_mode}",
         )));
     }
 
     let list_chunk_files_start_time = Instant::now();
-    let run_directory = final_parquet_path.parent().ok_or_else(|| {
-        OutputWriterError::InvalidInput("Final Parquet path must have a parent run directory.".to_string())
-    })?;
-    let manifest_commits =
-        manifest::read_run_manifest_chunk_commits(run_directory).map_err(OutputWriterError::runtime)?;
+    let run_directory = final_parquet_path
+        .parent()
+        .ok_or_else(|| OutputError::InvalidInput("Final Parquet path must have a parent run directory.".to_string()))?;
+    let manifest_commits = manifest::read_run_manifest_chunk_commits(run_directory)?;
     let chunk_file_paths = manifest_output_chunk_file_paths(chunks_directory, output_format, &manifest_commits)?;
     let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
 
@@ -151,7 +151,7 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let parquet_writer_properties_seconds = parquet_writer_properties_start_time.elapsed().as_secs_f64();
 
     let parquet_file_create_start_time = Instant::now();
-    let output_file = File::create(final_parquet_path).map_err(OutputWriterError::runtime)?;
+    let output_file = File::create(final_parquet_path).map_err(OutputError::runtime)?;
     let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
 
     let output_statistic_dtype = match output_statistic_dtype_override {
@@ -161,7 +161,7 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let final_schema = Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype));
     let parquet_writer_init_start_time = Instant::now();
     let mut parquet_writer =
-        ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputWriterError::runtime)?;
+        ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputError::runtime)?;
     let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
 
     let chunk_file_count = chunk_file_paths.len();
@@ -175,8 +175,8 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let mut write_parquet_seconds = 0.0;
     let mut arrow_file_bytes = 0u64;
     for chunk_file_path in chunk_file_paths {
-        arrow_file_bytes = arrow_file_bytes
-            .saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputWriterError::runtime)?.len());
+        arrow_file_bytes =
+            arrow_file_bytes.saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputError::runtime)?.len());
         for maybe_batch in read_output_chunk_file_batches(
             &chunk_file_path,
             output_format,
@@ -185,7 +185,7 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
             &mut read_arrow_seconds,
         )? {
             let read_batch_start_time = Instant::now();
-            let batch = maybe_batch.map_err(OutputWriterError::runtime)?;
+            let batch = maybe_batch.map_err(OutputError::runtime)?;
             let current_arrow_batch_read_seconds = read_batch_start_time.elapsed().as_secs_f64();
             arrow_batch_read_seconds += current_arrow_batch_read_seconds;
             read_arrow_seconds += current_arrow_batch_read_seconds;
@@ -196,7 +196,7 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
             output_row_count += projected_batch.num_rows();
 
             let write_parquet_start_time = Instant::now();
-            parquet_writer.write(&projected_batch).map_err(OutputWriterError::runtime)?;
+            parquet_writer.write(&projected_batch).map_err(OutputError::runtime)?;
             write_parquet_seconds += write_parquet_start_time.elapsed().as_secs_f64();
             batch_count += 1;
         }
@@ -207,19 +207,18 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let footer_metadata_seconds = footer_metadata_start_time.elapsed().as_secs_f64();
 
     let close_writer_start_time = Instant::now();
-    parquet_writer.close().map_err(OutputWriterError::runtime)?;
+    parquet_writer.close().map_err(OutputError::runtime)?;
     let close_writer_seconds = close_writer_start_time.elapsed().as_secs_f64();
-    let parquet_file_bytes = std::fs::metadata(final_parquet_path).map_err(OutputWriterError::runtime)?.len();
+    let parquet_file_bytes = std::fs::metadata(final_parquet_path).map_err(OutputError::runtime)?.len();
 
     let manifest_update_start_time = Instant::now();
-    manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)
-        .map_err(OutputWriterError::runtime)?;
+    manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)?;
     let manifest_update_seconds = manifest_update_start_time.elapsed().as_secs_f64();
 
     Ok(RegenieStep2FinalizationTiming {
-        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputWriterError::runtime)?,
+        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputError::runtime)?,
         batch_count,
-        row_count: u64::try_from(output_row_count).map_err(OutputWriterError::runtime)?,
+        row_count: u64::try_from(output_row_count).map_err(OutputError::runtime)?,
         list_chunk_files_seconds,
         parquet_writer_properties_seconds,
         parquet_file_create_seconds,
@@ -244,7 +243,7 @@ pub(crate) fn write_final_regenie_from_chunk_files(
     final_regenie_path: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     write_final_regenie_from_chunk_files_with_timing(
         chunks_directory,
         final_regenie_path,
@@ -259,36 +258,33 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
     final_regenie_path: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
-) -> Result<RegenieStep2FinalizationTiming, OutputWriterError> {
+) -> Result<RegenieStep2FinalizationTiming, OutputError> {
     let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
-        return Err(OutputWriterError::InvalidInput(format!(
+        return Err(OutputError::InvalidInput(format!(
             "Unsupported association mode for Rust output writer finalization: {association_mode}",
         )));
     }
     if output_format != OutputFileFormat::Regenie {
-        return Err(OutputWriterError::InvalidInput(
-            "REGENIE text finalization requires output_format=regenie.".to_string(),
-        ));
+        return Err(OutputError::InvalidInput("REGENIE text finalization requires output_format=regenie.".to_string()));
     }
 
     let list_chunk_files_start_time = Instant::now();
     let run_directory = final_regenie_path.parent().ok_or_else(|| {
-        OutputWriterError::InvalidInput("Final REGENIE text path must have a parent run directory.".to_string())
+        OutputError::InvalidInput("Final REGENIE text path must have a parent run directory.".to_string())
     })?;
-    let manifest_commits =
-        manifest::read_run_manifest_chunk_commits(run_directory).map_err(OutputWriterError::runtime)?;
+    let manifest_commits = manifest::read_run_manifest_chunk_commits(run_directory)?;
     let chunk_file_paths = manifest_output_chunk_file_paths(chunks_directory, output_format, &manifest_commits)?;
     let list_chunk_files_seconds = list_chunk_files_start_time.elapsed().as_secs_f64();
 
     let parquet_file_create_start_time = Instant::now();
     let temporary_final_path = final_regenie_path.with_extension("regenie.tmp");
-    let output_file = File::create(&temporary_final_path).map_err(OutputWriterError::runtime)?;
+    let output_file = File::create(&temporary_final_path).map_err(OutputError::runtime)?;
     let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
 
     let parquet_writer_init_start_time = Instant::now();
     let mut output_writer = BufWriter::new(output_file);
-    output_writer.write_all(writer::REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(OutputWriterError::runtime)?;
+    output_writer.write_all(writer::REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(OutputError::runtime)?;
     let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
 
     let chunk_file_count = chunk_file_paths.len();
@@ -300,8 +296,8 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
     let mut write_parquet_seconds = 0.0;
     let mut arrow_file_bytes = 0u64;
     for chunk_file_path in chunk_file_paths {
-        arrow_file_bytes = arrow_file_bytes
-            .saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputWriterError::runtime)?.len());
+        arrow_file_bytes =
+            arrow_file_bytes.saturating_add(std::fs::metadata(&chunk_file_path).map_err(OutputError::runtime)?.len());
         let append_result = append_regenie_text_part_rows(
             &chunk_file_path,
             &mut output_writer,
@@ -315,11 +311,11 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
     }
 
     let close_writer_start_time = Instant::now();
-    output_writer.flush().map_err(OutputWriterError::runtime)?;
+    output_writer.flush().map_err(OutputError::runtime)?;
     drop(output_writer);
     let close_writer_seconds = close_writer_start_time.elapsed().as_secs_f64();
-    std::fs::rename(&temporary_final_path, final_regenie_path).map_err(OutputWriterError::runtime)?;
-    let parquet_file_bytes = std::fs::metadata(final_regenie_path).map_err(OutputWriterError::runtime)?.len();
+    std::fs::rename(&temporary_final_path, final_regenie_path).map_err(OutputError::runtime)?;
+    let parquet_file_bytes = std::fs::metadata(final_regenie_path).map_err(OutputError::runtime)?.len();
 
     let manifest_update_start_time = Instant::now();
     manifest::mark_run_manifest_finalized_output(
@@ -327,14 +323,13 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
         output_row_count,
         chunk_file_count,
         output_format_name(output_format),
-    )
-    .map_err(OutputWriterError::runtime)?;
+    )?;
     let manifest_update_seconds = manifest_update_start_time.elapsed().as_secs_f64();
 
     Ok(RegenieStep2FinalizationTiming {
-        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputWriterError::runtime)?,
+        chunk_file_count: u64::try_from(chunk_file_count).map_err(OutputError::runtime)?,
         batch_count,
-        row_count: u64::try_from(output_row_count).map_err(OutputWriterError::runtime)?,
+        row_count: u64::try_from(output_row_count).map_err(OutputError::runtime)?,
         list_chunk_files_seconds,
         parquet_writer_properties_seconds: 0.0,
         parquet_file_create_seconds,
@@ -361,9 +356,9 @@ fn append_regenie_text_part_rows(
     arrow_batch_read_seconds: &mut f64,
     read_arrow_seconds: &mut f64,
     write_parquet_seconds: &mut f64,
-) -> Result<usize, OutputWriterError> {
+) -> Result<usize, OutputError> {
     let arrow_file_open_start_time = Instant::now();
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
     let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
     *arrow_file_open_seconds += current_arrow_file_open_seconds;
     *read_arrow_seconds += current_arrow_file_open_seconds;
@@ -371,7 +366,7 @@ fn append_regenie_text_part_rows(
     let mut input_reader = BufReader::new(input_file);
     let mut header_line = String::new();
     let header_read_start_time = Instant::now();
-    input_reader.read_line(&mut header_line).map_err(OutputWriterError::runtime)?;
+    input_reader.read_line(&mut header_line).map_err(OutputError::runtime)?;
     let header_read_seconds = header_read_start_time.elapsed().as_secs_f64();
     *arrow_batch_read_seconds += header_read_seconds;
     *read_arrow_seconds += header_read_seconds;
@@ -382,7 +377,7 @@ fn append_regenie_text_part_rows(
     loop {
         row_line.clear();
         let row_read_start_time = Instant::now();
-        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputWriterError::runtime)?;
+        let read_byte_count = input_reader.read_line(&mut row_line).map_err(OutputError::runtime)?;
         let row_read_seconds = row_read_start_time.elapsed().as_secs_f64();
         *arrow_batch_read_seconds += row_read_seconds;
         *read_arrow_seconds += row_read_seconds;
@@ -391,9 +386,9 @@ fn append_regenie_text_part_rows(
         }
         validate_regenie_text_row(&row_line, chunk_file_path)?;
         let write_start_time = Instant::now();
-        output_writer.write_all(row_line.as_bytes()).map_err(OutputWriterError::runtime)?;
+        output_writer.write_all(row_line.as_bytes()).map_err(OutputError::runtime)?;
         if !row_line.ends_with('\n') {
-            output_writer.write_all(b"\n").map_err(OutputWriterError::runtime)?;
+            output_writer.write_all(b"\n").map_err(OutputError::runtime)?;
         }
         *write_parquet_seconds += write_start_time.elapsed().as_secs_f64();
         row_count += 1;
@@ -401,25 +396,22 @@ fn append_regenie_text_part_rows(
     Ok(row_count)
 }
 
-fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
+fn validate_regenie_text_header(header_line: &str, chunk_file_path: &Path) -> Result<(), OutputError> {
     let observed_header = header_line.trim_end_matches(['\r', '\n']);
     let expected_header = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n');
     if observed_header == expected_header {
         return Ok(());
     }
-    Err(OutputWriterError::InvalidInput(format!(
-        "REGENIE text part has an unexpected header: {}",
-        chunk_file_path.display()
-    )))
+    Err(OutputError::InvalidInput(format!("REGENIE text part has an unexpected header: {}", chunk_file_path.display())))
 }
 
-fn validate_regenie_text_row(row_line: &str, chunk_file_path: &Path) -> Result<(), OutputWriterError> {
+fn validate_regenie_text_row(row_line: &str, chunk_file_path: &Path) -> Result<(), OutputError> {
     let row = row_line.trim_end_matches(['\r', '\n']);
     let expected_column_count = writer::REGENIE_STEP2_TEXT_HEADER.trim_end_matches('\n').split('\t').count();
     if row.split('\t').count() == expected_column_count {
         return Ok(());
     }
-    Err(OutputWriterError::InvalidInput(format!(
+    Err(OutputError::InvalidInput(format!(
         "REGENIE text part has a row with an unexpected column count: {}",
         chunk_file_path.display()
     )))
@@ -429,7 +421,7 @@ fn manifest_output_chunk_file_paths(
     chunks_directory: &Path,
     output_format: OutputFileFormat,
     manifest_commits: &[manifest::RunManifestChunkCommit],
-) -> Result<Vec<PathBuf>, OutputWriterError> {
+) -> Result<Vec<PathBuf>, OutputError> {
     let expected_output_format = output_format_name(output_format);
     let manifest_file_names = manifest_commits
         .iter()
@@ -441,7 +433,7 @@ fn manifest_output_chunk_file_paths(
     let mut chunk_file_paths = Vec::new();
     for chunk_commit in manifest_commits {
         if chunk_commit.output_format != expected_output_format {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Run manifest chunk {} has output_format={}, expected {expected_output_format}.",
                 chunk_commit.chunk_identifier, chunk_commit.output_format
             )));
@@ -449,7 +441,7 @@ fn manifest_output_chunk_file_paths(
         if observed_file_names.insert(chunk_commit.chunk_file_name.clone()) {
             let chunk_file_path = chunks_directory.join(&chunk_commit.chunk_file_name);
             if !chunk_file_path.exists() {
-                return Err(OutputWriterError::InvalidInput(format!(
+                return Err(OutputError::InvalidInput(format!(
                     "Run manifest references missing chunk file: {}",
                     chunk_file_path.display()
                 )));
@@ -464,13 +456,13 @@ fn reject_unmanifested_output_chunk_files(
     chunks_directory: &Path,
     output_format: OutputFileFormat,
     manifest_file_names: &BTreeSet<String>,
-) -> Result<(), OutputWriterError> {
+) -> Result<(), OutputError> {
     for chunk_file_path in sorted_output_chunk_file_paths(chunks_directory, output_format)? {
         let Some(file_name) = chunk_file_path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         if !manifest_file_names.contains(file_name) {
-            return Err(OutputWriterError::InvalidInput(format!(
+            return Err(OutputError::InvalidInput(format!(
                 "Output chunk file is not recorded in run manifest: {}",
                 chunk_file_path.display()
             )));
@@ -490,9 +482,9 @@ fn output_format_name(output_format: OutputFileFormat) -> &'static str {
 fn sorted_output_chunk_file_paths(
     chunks_directory: &Path,
     output_format: OutputFileFormat,
-) -> Result<Vec<PathBuf>, OutputWriterError> {
+) -> Result<Vec<PathBuf>, OutputError> {
     let mut chunk_file_paths = std::fs::read_dir(chunks_directory)
-        .map_err(OutputWriterError::runtime)?
+        .map_err(OutputError::runtime)?
         .filter_map(|directory_entry| directory_entry.ok().map(|entry| entry.path()))
         .filter(|chunk_file_path| is_output_chunk_file_path(chunk_file_path, output_format))
         .collect::<Vec<_>>();
@@ -523,27 +515,25 @@ fn read_output_chunk_file_batches(
     arrow_file_open_seconds: &mut f64,
     arrow_reader_init_seconds: &mut f64,
     read_arrow_seconds: &mut f64,
-) -> Result<Box<dyn Iterator<Item = Result<RecordBatch, arrow::error::ArrowError>>>, OutputWriterError> {
+) -> Result<Box<dyn Iterator<Item = Result<RecordBatch, arrow::error::ArrowError>>>, OutputError> {
     let arrow_file_open_start_time = Instant::now();
-    let input_file = File::open(chunk_file_path).map_err(OutputWriterError::runtime)?;
+    let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
     let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
     *arrow_file_open_seconds += current_arrow_file_open_seconds;
     *read_arrow_seconds += current_arrow_file_open_seconds;
 
     let arrow_reader_init_start_time = Instant::now();
     let batch_reader: Box<dyn Iterator<Item = Result<RecordBatch, arrow::error::ArrowError>>> = match output_format {
-        OutputFileFormat::Arrow => {
-            Box::new(ArrowFileReader::try_new(input_file, None).map_err(OutputWriterError::runtime)?)
-        }
+        OutputFileFormat::Arrow => Box::new(ArrowFileReader::try_new(input_file, None).map_err(OutputError::runtime)?),
         OutputFileFormat::Parquet => {
             let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(input_file)
-                .map_err(OutputWriterError::runtime)?
+                .map_err(OutputError::runtime)?
                 .build()
-                .map_err(OutputWriterError::runtime)?;
+                .map_err(OutputError::runtime)?;
             Box::new(parquet_reader)
         }
         OutputFileFormat::Regenie => {
-            return Err(OutputWriterError::InvalidInput(
+            return Err(OutputError::InvalidInput(
                 "REGENIE text chunks cannot be read by the Parquet finalizer.".to_string(),
             ));
         }
@@ -593,13 +583,11 @@ fn append_output_footer_metadata(
     }
 }
 
-fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatch, OutputWriterError> {
-    let output_statistic_dtype =
-        schema::output_statistic_dtype_from_schema(batch.schema().as_ref()).map_err(OutputWriterError::InvalidInput)?;
+fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatch, OutputError> {
+    let output_statistic_dtype = schema::output_statistic_dtype_from_schema(batch.schema().as_ref())?;
     let final_schema = schema::get_regenie_step2_final_schema(output_statistic_dtype);
     if batch.schema().fields() == final_schema.fields() {
-        return RecordBatch::try_new(Arc::clone(final_schema), batch.columns().to_vec())
-            .map_err(OutputWriterError::runtime);
+        return RecordBatch::try_new(Arc::clone(final_schema), batch.columns().to_vec()).map_err(OutputError::runtime);
     }
     project_chunk_batch_to_final_batch(batch, output_statistic_dtype)
 }
@@ -607,7 +595,7 @@ fn prepare_chunk_batch_for_final_writer(batch: RecordBatch) -> Result<RecordBatc
 fn project_chunk_batch_to_final_batch(
     batch: RecordBatch,
     output_statistic_dtype: schema::OutputStatisticDtype,
-) -> Result<RecordBatch, OutputWriterError> {
+) -> Result<RecordBatch, OutputError> {
     let final_column_names = [
         "CHROM",
         "GENPOS",
@@ -631,25 +619,25 @@ fn project_chunk_batch_to_final_batch(
         .map(|column_name| batch.column_by_name(column_name).cloned())
         .collect::<Option<Vec<ArrayRef>>>()
         .ok_or_else(|| {
-            OutputWriterError::Runtime("Rust output writer could not project chunk batch to final schema.".to_string())
+            OutputError::Runtime("Rust output writer could not project chunk batch to final schema.".to_string())
         })?;
     RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype)), projected_columns)
-        .map_err(OutputWriterError::runtime)
+        .map_err(OutputError::runtime)
 }
 
 fn read_output_statistic_dtype_from_manifest(
     run_directory: &Path,
-) -> Result<schema::OutputStatisticDtype, OutputWriterError> {
+) -> Result<schema::OutputStatisticDtype, OutputError> {
     let Some(manifest_json) = manifest::load_run_manifest_json(run_directory)? else {
         return Ok(schema::OutputStatisticDtype::default());
     };
-    let manifest_value = serde_json::from_str::<Value>(&manifest_json).map_err(OutputWriterError::runtime)?;
+    let manifest_value = serde_json::from_str::<Value>(&manifest_json).map_err(OutputError::runtime)?;
     let output_statistic_dtype_text = manifest_value
         .pointer("/output_writer/result_statistic_dtype")
         .or_else(|| manifest_value.pointer("/execution_plan/output_writer/result_statistic_dtype"))
         .and_then(Value::as_str)
         .unwrap_or_else(|| schema::OutputStatisticDtype::default().as_str());
-    schema::OutputStatisticDtype::parse(output_statistic_dtype_text).map_err(OutputWriterError::InvalidInput)
+    schema::OutputStatisticDtype::parse(output_statistic_dtype_text)
 }
 
 #[cfg(test)]

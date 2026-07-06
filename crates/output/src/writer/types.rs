@@ -1,22 +1,8 @@
 use arrow::array::ArrayRef;
-use thiserror::Error;
 
 use crate::NativeChunkHandle;
+use crate::error::OutputError;
 use crate::manifest;
-
-#[derive(Debug, Error)]
-pub enum OutputWriterError {
-    #[error("{0}")]
-    InvalidInput(String),
-    #[error("{0}")]
-    Runtime(String),
-}
-
-impl OutputWriterError {
-    pub(crate) fn runtime(error: impl ToString) -> Self {
-        Self::Runtime(error.to_string())
-    }
-}
 
 pub(crate) struct RegenieStep2ChunkJob {
     pub(crate) chunk_handle: NativeChunkHandle,
@@ -41,12 +27,12 @@ pub enum OutputFileFormat {
 
 impl OutputFileFormat {
     #[allow(clippy::missing_errors_doc)]
-    pub fn parse(output_format: &str) -> Result<Self, OutputWriterError> {
+    pub fn parse(output_format: &str) -> Result<Self, OutputError> {
         match output_format {
             "arrow" => Ok(Self::Arrow),
             "parquet" => Ok(Self::Parquet),
             "regenie" => Ok(Self::Regenie),
-            unsupported_output_format => Err(OutputWriterError::InvalidInput(format!(
+            unsupported_output_format => Err(OutputError::InvalidInput(format!(
                 "Output format must be 'arrow', 'parquet', or 'regenie', observed '{unsupported_output_format}'."
             ))),
         }
