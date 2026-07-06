@@ -19,7 +19,7 @@ pub(super) fn convert_schedule_error(error: &ScheduleError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
-pub(super) fn convert_pipeline_resume_compatibility_error(error: PipelineResumeCompatibilityError) -> PyErr {
+pub(super) fn convert_pipeline_resume_compatibility_error(error: &PipelineResumeCompatibilityError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
@@ -69,7 +69,7 @@ pub(super) fn convert_logging_sink_error(error: &LoggingSinkError) -> PyErr {
     }
 }
 
-pub(super) fn convert_telemetry_writer_error(error: std::io::Error) -> PyErr {
+pub(super) fn convert_telemetry_writer_error(error: &std::io::Error) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 

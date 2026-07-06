@@ -606,12 +606,14 @@ impl NativeTelemetrySession {
             lossy,
             event_cap,
         )
-        .map_err(errors::convert_telemetry_writer_error)?;
+        .map_err(|error| errors::convert_telemetry_writer_error(&error))?;
         Ok(Self { writer: Mutex::new(writer) })
     }
 
     fn emit_json_line(&self, json_line: &str) -> PyResult<()> {
-        self.lock_writer()?.write_json_line(json_line).map_err(errors::convert_telemetry_writer_error)?;
+        self.lock_writer()?
+            .write_json_line(json_line)
+            .map_err(|error| errors::convert_telemetry_writer_error(&error))?;
         Ok(())
     }
 
@@ -644,7 +646,10 @@ impl NativeTelemetrySession {
     }
 
     fn finish_close_metadata<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let metadata = self.lock_writer()?.finish_close_metadata().map_err(errors::convert_telemetry_writer_error)?;
+        let metadata = self
+            .lock_writer()?
+            .finish_close_metadata()
+            .map_err(|error| errors::convert_telemetry_writer_error(&error))?;
         telemetry_close_metadata_to_py_dict(py, &metadata)
     }
 

@@ -165,7 +165,7 @@ impl NativeRunLifecycleSession {
         }
         let preparation_batch = self.build_output_preparation_batch(py, &phenotype_names, current_headers)?;
         py.detach(|| preparation_batch.validate_resume_compatibility())
-            .map_err(errors::convert_pipeline_resume_compatibility_error)
+            .map_err(|error| errors::convert_pipeline_resume_compatibility_error(&error))
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -179,7 +179,7 @@ impl NativeRunLifecycleSession {
         let preparation_batch = self.build_output_preparation_batch(py, &phenotype_names, current_headers)?;
         let initialization = py
             .detach(|| preparation_batch.initialize())
-            .map_err(errors::convert_pipeline_resume_compatibility_error)?;
+            .map_err(|error| errors::convert_pipeline_resume_compatibility_error(&error))?;
         self.write_initialized_metadata(&phenotype_names)?;
         Ok(NativeRunLifecycleOutputInitialization { initialization })
     }
@@ -270,7 +270,7 @@ impl NativeRunLifecycleSession {
             self.run_request.output.resume,
             resume_mode,
         )
-        .map_err(errors::convert_pipeline_resume_compatibility_error)
+        .map_err(|error| errors::convert_pipeline_resume_compatibility_error(&error))
     }
 
     fn write_initialized_metadata(&self, phenotype_names: &[String]) -> PyResult<()> {
