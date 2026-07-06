@@ -6,7 +6,7 @@ use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValu
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
-use g_runtime::shutdown as native_shutdown;
+use g_runtime as native_shutdown;
 
 #[pyclass]
 pub(crate) struct NativeShutdownController {
@@ -32,7 +32,7 @@ impl NativeShutdownController {
         Ok(Self {
             session: Mutex::new(
                 native_shutdown::ShutdownHandlerSession::new(&resolved_signal_numbers)
-                    .map_err(PyValueError::new_err)?,
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?,
             ),
         })
     }
@@ -57,7 +57,10 @@ impl NativeShutdownController {
         py: Python<'_>,
         signal_number: i32,
     ) -> PyResult<NativeShutdownSignal> {
-        let decision = self.lock_session()?.request_shutdown(signal_number).map_err(PyValueError::new_err)?;
+        let decision = self
+            .lock_session()?
+            .request_shutdown(signal_number)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
         if decision.action == native_shutdown::ShutdownRequestAction::Force {
             self.restore_python_signal_handlers(py)?;
             return raise_second_signal_exception_from_plan(signal_number);
@@ -153,7 +156,8 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn raise_second_signal_exception_from_plan<T>(signal_number: i32) -> PyResult<T> {
-    let plan = native_shutdown::plan_second_signal_exception(signal_number).map_err(PyValueError::new_err)?;
+    let plan = native_shutdown::plan_second_signal_exception(signal_number)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     if plan.raise_keyboard_interrupt {
         return Err(PyKeyboardInterrupt::new_err(()));
     }

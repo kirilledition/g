@@ -4,8 +4,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple};
 
-use g_engine::schedule as native_schedule;
-use g_runtime::run_events as native_run_events;
+use g_engine as native_schedule;
+use g_runtime as native_run_events;
 
 use super::{logging, schedule};
 
@@ -378,138 +378,6 @@ pub fn record_execution_plan_prepared_events(
 }
 
 #[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_writer_finished_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype: &str,
-    final_output_path: Option<String>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1("emit_phenotype_writer_finished_event", (association_mode, phenotype, final_output_path))
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_multi_writer_finished_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype_count: i64,
-    final_output_paths: Vec<Option<String>>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_multi_phenotype_writer_finished_event",
-            (association_mode, phenotype_count, final_output_paths),
-        )
-        .map(|_| ())
-}
-
-#[pyfunction]
-pub fn record_single_trait_preflight_completed_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype: &str,
-    sample_count: i64,
-    covariate_count: i64,
-    chromosome_count: i64,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_single_trait_preflight_completed_event",
-            (association_mode, phenotype, sample_count, covariate_count, chromosome_count),
-        )
-        .map(|_| ())
-}
-
-#[pyfunction]
-pub fn record_multi_phenotype_preflight_completed_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype_count: i64,
-    sample_count: i64,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_multi_phenotype_preflight_completed_event",
-            (association_mode, phenotype_count, sample_count),
-        )
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_sample_alignment_completed_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype: Option<String>,
-    phenotype_count: Option<i64>,
-    sample_count: Option<i64>,
-    covariate_count: Option<i64>,
-    phenotype_group_count: Option<i64>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_sample_alignment_completed_event",
-            (association_mode, phenotype, phenotype_count, sample_count, covariate_count, phenotype_group_count),
-        )
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_prediction_source_loaded_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    phenotype: Option<String>,
-    phenotype_count: Option<i64>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1("emit_prediction_source_loaded_event", (association_mode, phenotype, phenotype_count))
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_multi_phenotype_sample_summary_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    sample_mode: &str,
-    sample_counts: Vec<i64>,
-    sample_set_fingerprints: Vec<Option<String>>,
-    phenotype_group_count: i64,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_multi_phenotype_sample_summary_event",
-            (association_mode, sample_mode, sample_counts, sample_set_fingerprints, phenotype_group_count),
-        )
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
 fn record_gpu_genotype_format_resolved_telemetry_event(
     telemetry_session: &Bound<'_, PyAny>,
     requested_gpu_genotype_format: &str,
@@ -620,50 +488,6 @@ pub fn plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events(
         native_schedule::plan_auto_gpu_genotype_format_after_trusted_validation(fallback_error.as_deref());
     record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
     Ok(native_resolution_plan.into())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_association_backend_selected_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    association_backend_kind: &str,
-    device: &str,
-    genotype_format: &str,
-    phenotype: Option<String>,
-    phenotype_count: Option<i64>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_association_backend_selected_event",
-            (association_mode, association_backend_kind, device, genotype_format, phenotype, phenotype_count),
-        )
-        .map(|_| ())
-}
-
-#[allow(clippy::needless_pass_by_value)]
-#[pyfunction]
-pub fn record_bgen_engine_opened_telemetry_event(
-    telemetry_session: &Bound<'_, PyAny>,
-    association_mode: &str,
-    association_backend_kind: &str,
-    sample_count: i64,
-    variant_count: i64,
-    phenotype: Option<String>,
-    phenotype_count: Option<i64>,
-) -> PyResult<()> {
-    let Some(native_session_handle) = optional_native_session_handle(telemetry_session)? else {
-        return Ok(());
-    };
-    native_session_handle
-        .call_method1(
-            "emit_bgen_engine_opened_event",
-            (association_mode, association_backend_kind, sample_count, variant_count, phenotype, phenotype_count),
-        )
-        .map(|_| ())
 }
 
 fn record_runner_run_started_diagnostic_event(
@@ -1361,13 +1185,6 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_function(wrap_pyfunction!(record_runner_run_failed_events, module)?)?;
     module.add_function(wrap_pyfunction!(attach_run_metadata_and_record_completed_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_execution_plan_prepared_events, module)?)?;
-    module.add_function(wrap_pyfunction!(record_writer_finished_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_writer_finished_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_single_trait_preflight_completed_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_phenotype_preflight_completed_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry_event, module)?)?;
     module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage_and_record_events, module)?)?;
     module.add_function(wrap_pyfunction!(
         plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events,
@@ -1377,8 +1194,6 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
         plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events,
         module
     )?)?;
-    module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry_event, module)?)?;
     Ok(())
 }
 

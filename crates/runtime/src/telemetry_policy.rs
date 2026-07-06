@@ -1,11 +1,36 @@
 //! Deterministic telemetry path and counter policy helpers.
 
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, SecondsFormat};
 
 const EVENTS_JSONL_FILE_NAME: &str = "events.jsonl";
 const PROFILE_SUMMARY_JSON_FILE_NAME: &str = "profile.summary.json";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TelemetryPathError {
+    message: String,
+}
+
+impl TelemetryPathError {
+    fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for TelemetryPathError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for TelemetryPathError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TelemetryPathsPayload {
@@ -73,7 +98,7 @@ pub fn resolve_telemetry_paths(
     trace_file: Option<&Path>,
     profile_summary_json: Option<&Path>,
     stage_timings_json: Option<&Path>,
-) -> Result<TelemetryPathsPayload, String> {
+) -> Result<TelemetryPathsPayload, TelemetryPathError> {
     let resolved_log_dir = match (log_dir, telemetry_mode) {
         (Some(path), _) => Some(path.to_path_buf()),
         (None, "off") => None,
@@ -103,14 +128,16 @@ pub fn resolve_telemetry_stream_file(
     log_dir: Option<&Path>,
     log_file: Option<&Path>,
     trace_file: Option<&Path>,
-) -> Result<Option<PathBuf>, String> {
+) -> Result<Option<PathBuf>, TelemetryPathError> {
     if telemetry_mode == "off" {
         return Ok(None);
     }
     if let (Some(log_file_path), Some(trace_file_path)) = (log_file, trace_file)
         && !paths_refer_to_same_file(log_file_path, trace_file_path)
     {
-        return Err("log_file and trace_file both configure the unified telemetry stream; use one path.".to_string());
+        return Err(TelemetryPathError::new(
+            "log_file and trace_file both configure the unified telemetry stream; use one path.",
+        ));
     }
     if let Some(path) = log_file {
         return Ok(Some(path.to_path_buf()));

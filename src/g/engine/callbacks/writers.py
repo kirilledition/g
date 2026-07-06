@@ -122,7 +122,7 @@ def materialize_regenie2_native_chunk_with_optional_timing(
 def materialize_regenie2_multi_native_chunk_with_optional_timing(
     *,
     writer_sessions: tuple[typing.Any, ...],
-    committed_chunk_identifier_sets: tuple[set[int], ...],
+    chunk_write_planner: _core.NativeMultiTraitChunkWritePlanner,
     metadata: _core.VariantMetadata,
     beta: jax.Array,
     standard_error: jax.Array,
@@ -134,14 +134,7 @@ def materialize_regenie2_multi_native_chunk_with_optional_timing(
 ) -> MaterializedRegenie2MultiNativeChunk:
     """Materialize one multi-trait REGENIE result chunk on host."""
     chunk_identifier = int(metadata.variant_start_index)
-    committed_chunk_identifier_batches = tuple(
-        tuple(committed_chunk_identifier_set) for committed_chunk_identifier_set in committed_chunk_identifier_sets
-    )
-    write_plan = _core.plan_multi_trait_chunk_write(
-        writer_session_count=len(writer_sessions),
-        chunk_identifier=chunk_identifier,
-        committed_chunk_identifier_sets=committed_chunk_identifier_batches,
-    )
+    write_plan = chunk_write_planner.plan_chunk_write(chunk_identifier)
     active_trait_indices = tuple(write_plan.active_trait_indices)
     use_native_multi_writer = all(
         isinstance(writer_session, _core.OutputWriterSession) for writer_session in writer_sessions

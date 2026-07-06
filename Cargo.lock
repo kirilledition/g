@@ -737,7 +737,6 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "arrow",
- "g-cli",
  "g-engine",
  "g-genotype",
  "g-input",
@@ -760,7 +759,6 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "g-interface",
- "signal-hook",
 ]
 
 [[package]]
@@ -771,6 +769,7 @@ dependencies = [
  "g-genotype",
  "g-input",
  "g-output",
+ "g-plan",
  "g-runtime",
  "serde_json",
  "thiserror",

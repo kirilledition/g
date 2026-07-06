@@ -1,12 +1,14 @@
 //! Coarse PyO3 boundary for Rust-owned run lifecycle state.
 
+#![allow(clippy::needless_pass_by_value)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use g_interface as interface;
 use g_output::{OutputFileFormat, OutputResumeMode, OutputWriterError};
-use g_runtime::run_metadata as native_run_metadata;
+use g_runtime as native_run_metadata;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule, PyTuple};
@@ -15,6 +17,7 @@ use super::config::{NativeRunRequest, RegenieConfig};
 use super::json_bridge;
 use super::run_events::NativeRunArtifacts;
 use super::runtime_state::NativeRuntimeCompatibilityToken;
+use super::schedule::NativeMultiTraitChunkWritePlanner;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeRunLifecyclePhase {
@@ -321,8 +324,8 @@ impl NativeRunLifecycleOutputInitialization {
         self.initialization.output_count()
     }
 
-    fn committed_chunk_identifier_sets(&self) -> Vec<Vec<i64>> {
-        self.initialization.committed_chunk_identifier_sets().to_vec()
+    fn committed_chunk_counts(&self) -> Vec<usize> {
+        self.initialization.committed_chunk_counts()
     }
 
     fn committed_chunk_identifiers(&self, output_index: usize) -> PyResult<Vec<i64>> {
@@ -330,6 +333,32 @@ impl NativeRunLifecycleOutputInitialization {
             .committed_chunk_identifiers(output_index)
             .map(<[i64]>::to_vec)
             .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))
+    }
+
+    fn shared_committed_chunk_identifiers(&self) -> Vec<i64> {
+        self.initialization.shared_committed_chunk_identifiers()
+    }
+
+    fn shared_committed_chunk_identifiers_with(
+        &self,
+        other_initializations: Vec<PyRef<'_, NativeRunLifecycleOutputInitialization>>,
+    ) -> Vec<i64> {
+        let mut initializations = Vec::with_capacity(other_initializations.len() + 1);
+        initializations.push(&self.initialization);
+        for other_initialization in &other_initializations {
+            initializations.push(&other_initialization.initialization);
+        }
+        g_engine::PipelineOutputInitialization::shared_committed_chunk_identifiers_across(initializations)
+    }
+
+    fn multi_trait_chunk_write_planner(
+        &self,
+        writer_session_count: usize,
+    ) -> PyResult<NativeMultiTraitChunkWritePlanner> {
+        NativeMultiTraitChunkWritePlanner::from_i64_committed_chunk_identifier_sets(
+            writer_session_count,
+            self.initialization.committed_chunk_identifier_sets(),
+        )
     }
 }
 
@@ -347,7 +376,7 @@ fn prepare_phenotype_runs(run_request: &g_plan::RunRequest) -> PyResult<Vec<Prep
         .map(|phenotype_run| {
             let output_root = Path::new(&run_request.output.output_run_root).join(&phenotype_run.output_directory_name);
             let output_format = OutputFileFormat::parse(run_request.output.output_format.as_str())
-                .map_err(|error| PyValueError::new_err(format!("Invalid output format: {error}")))?;
+                .map_err(|error| output_writer_error_to_py(error, "parse_output_format"))?;
             let prepared_output_run = g_output::prepare_output_run(
                 &output_root,
                 run_request.association_mode.as_str(),

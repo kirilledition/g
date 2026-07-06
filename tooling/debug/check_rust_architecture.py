@@ -306,6 +306,20 @@ ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-runtime": {"g-plan"},
     "g-engine": {"g-genotype", "g-input", "g-output", "g-plan", "g-runtime"},
 }
+CRATE_ROOT_BY_PACKAGE: dict[str, Path] = {
+    "g-cli": Path("crates/cli"),
+    "g-engine": Path("crates/engine"),
+    "g-genotype": Path("crates/genotype"),
+    "g-input": Path("crates/input"),
+    "g-interface": Path("crates/interface"),
+    "g-output": Path("crates/output"),
+    "g-plan": Path("crates/plan"),
+    "g-runtime": Path("crates/runtime"),
+}
+ALLOWED_PUBLIC_ROOT_MODULES_BY_PACKAGE: dict[str, set[str]] = {
+    "g-engine": {"test_support"},
+}
+CRATE_ROOT_PUBLIC_MODULE_PATTERN = re.compile(r"(?m)^\s*pub\s+mod\s+(?P<module_name>[A-Za-z0-9_]+)\s*;")
 
 
 @dataclass(frozen=True)
@@ -335,6 +349,24 @@ class RootCrateBoundaryViolation:
 
     """
 
+    source_path: Path
+    marker: str
+    message: str
+
+
+@dataclass(frozen=True)
+class CratePublicApiBoundaryViolation:
+    """A crate public API boundary violation.
+
+    Attributes:
+        package_name: Workspace package containing the violation.
+        source_path: Source file containing the violation.
+        marker: Source marker that violates or proves the policy.
+        message: Human-readable violation description.
+
+    """
+
+    package_name: str
     source_path: Path
     marker: str
     message: str
@@ -444,6 +476,52 @@ def collect_rust_architecture_violations(
                     package_name=package_name,
                     dependency_name=dependency_name,
                     message="workspace package depends on a forbidden internal crate",
+                )
+            )
+
+    return tuple(violations)
+
+
+def collect_crate_public_api_boundary_violations(repository_root: Path) -> tuple[CratePublicApiBoundaryViolation, ...]:
+    """Collect crate facade and public API documentation violations."""
+    violations: list[CratePublicApiBoundaryViolation] = []
+    for package_name, crate_root in CRATE_ROOT_BY_PACKAGE.items():
+        public_api_path = crate_root / "PUBLIC_API.md"
+        if not (repository_root / public_api_path).is_file():
+            violations.append(
+                CratePublicApiBoundaryViolation(
+                    package_name=package_name,
+                    source_path=public_api_path,
+                    marker="missing",
+                    message="crate public API contract document is required",
+                )
+            )
+
+        lib_path = crate_root / "src/lib.rs"
+        try:
+            lib_text = (repository_root / lib_path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            violations.append(
+                CratePublicApiBoundaryViolation(
+                    package_name=package_name,
+                    source_path=lib_path,
+                    marker="missing",
+                    message="crate root library file is missing",
+                )
+            )
+            continue
+
+        allowed_public_modules = ALLOWED_PUBLIC_ROOT_MODULES_BY_PACKAGE.get(package_name, set())
+        for public_module_match in CRATE_ROOT_PUBLIC_MODULE_PATTERN.finditer(lib_text):
+            module_name = public_module_match.group("module_name")
+            if module_name in allowed_public_modules:
+                continue
+            violations.append(
+                CratePublicApiBoundaryViolation(
+                    package_name=package_name,
+                    source_path=lib_path,
+                    marker=f"pub mod {module_name};",
+                    message="crate root must expose facade re-exports, not implementation modules",
                 )
             )
 
@@ -635,6 +713,14 @@ def format_root_crate_boundary_violations(violations: tuple[RootCrateBoundaryVio
     return "\n".join(f"- {violation.source_path} [{violation.marker}]: {violation.message}" for violation in violations)
 
 
+def format_crate_public_api_boundary_violations(violations: tuple[CratePublicApiBoundaryViolation, ...]) -> str:
+    """Format crate public API boundary violations for command-line output."""
+    return "\n".join(
+        f"- {violation.package_name} {violation.source_path} [{violation.marker}]: {violation.message}"
+        for violation in violations
+    )
+
+
 def format_python_telemetry_fallback_violations(violations: tuple[PythonTelemetryFallbackViolation, ...]) -> str:
     """Format root PyO3 telemetry fallback violations for command-line output."""
     return "\n".join(
@@ -660,13 +746,22 @@ def run_tool(repository_root: Path) -> int:
         return 1
 
     dependency_violations = collect_rust_architecture_violations(metadata_payload)
+    crate_public_api_violations = collect_crate_public_api_boundary_violations(repository_root)
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
     telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
     root_pyo3_export_violations = collect_root_pyo3_export_violations(repository_root)
-    if dependency_violations or root_crate_violations or telemetry_fallback_violations or root_pyo3_export_violations:
+    if (
+        dependency_violations
+        or crate_public_api_violations
+        or root_crate_violations
+        or telemetry_fallback_violations
+        or root_pyo3_export_violations
+    ):
         print("Rust workspace architecture violations:")
         if dependency_violations:
             print(format_violations(dependency_violations))
+        if crate_public_api_violations:
+            print(format_crate_public_api_boundary_violations(crate_public_api_violations))
         if root_crate_violations:
             print(format_root_crate_boundary_violations(root_crate_violations))
         if telemetry_fallback_violations:

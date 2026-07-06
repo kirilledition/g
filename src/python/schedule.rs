@@ -6,7 +6,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine::schedule as native_schedule;
+use g_engine as native_schedule;
 
 #[pyclass]
 pub(crate) struct NativeCallbackQueueLimits {
@@ -66,13 +66,23 @@ pub(crate) struct NativeMultiTraitChunkWritePlan {
 }
 
 #[pyclass]
-pub(crate) struct NativeWriterFinishExecutionPlan {
-    inner: native_schedule::WriterFinishExecutionPlan,
+pub(crate) struct NativeMultiTraitChunkWritePlanner {
+    writer_session_count: usize,
+    committed_chunk_identifier_sets: Vec<BTreeSet<usize>>,
 }
 
 #[pyclass]
 pub(crate) struct NativeBgenDeliveryCleanupPlan {
     inner: native_schedule::BgenDeliveryCleanupPlan,
+}
+
+#[pyclass]
+pub(crate) struct NativeBgenDeliveryCleanupPlanner;
+
+#[pyclass]
+pub(crate) struct NativeBgenDeliveryPolicy {
+    #[pyo3(get)]
+    effective_trusted_no_missing_diploid: bool,
 }
 
 #[pyclass]
@@ -1250,25 +1260,28 @@ impl NativeMultiTraitChunkWritePlan {
 }
 
 #[pymethods]
-impl NativeWriterFinishExecutionPlan {
-    #[getter]
-    fn writer_session_count(&self) -> usize {
-        self.inner.writer_session_count
+impl NativeMultiTraitChunkWritePlanner {
+    fn plan_chunk_write(&self, chunk_identifier: usize) -> PyResult<NativeMultiTraitChunkWritePlan> {
+        native_schedule::plan_multi_trait_chunk_write(
+            self.writer_session_count,
+            chunk_identifier,
+            &self.committed_chunk_identifier_sets,
+        )
+        .map(Into::into)
+        .map_err(|error| schedule_error_to_py(&error))
     }
+}
 
-    #[getter]
-    fn thread_count(&self) -> usize {
-        self.inner.thread_count
-    }
-
-    #[getter]
-    fn has_writer_sessions(&self) -> bool {
-        self.inner.has_writer_sessions()
-    }
-
-    #[getter]
-    fn uses_parallel_finish(&self) -> bool {
-        self.inner.uses_parallel_finish()
+impl NativeMultiTraitChunkWritePlanner {
+    pub(crate) fn from_i64_committed_chunk_identifier_sets(
+        writer_session_count: usize,
+        committed_chunk_identifier_sets: &[Vec<i64>],
+    ) -> PyResult<Self> {
+        let committed_chunk_identifier_sets =
+            native_committed_chunk_identifier_sets_from_i64_sequences(committed_chunk_identifier_sets)?;
+        native_schedule::plan_multi_trait_chunk_write(writer_session_count, 0, &committed_chunk_identifier_sets)
+            .map_err(|error| schedule_error_to_py(&error))?;
+        Ok(Self { writer_session_count, committed_chunk_identifier_sets })
     }
 }
 
@@ -1307,6 +1320,44 @@ impl NativeBgenDeliveryCleanupPlan {
     #[getter]
     fn write_stage_timing_snapshot(&self) -> bool {
         self.inner.write_stage_timing_snapshot()
+    }
+}
+
+#[pymethods]
+#[allow(clippy::unused_self)]
+impl NativeBgenDeliveryCleanupPlanner {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn success(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+        plan_bgen_delivery_cleanup_outcome("success", callback_finished)
+    }
+
+    fn interrupted(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+        plan_bgen_delivery_cleanup_outcome("interrupted", callback_finished)
+    }
+
+    fn failure(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+        plan_bgen_delivery_cleanup_outcome("failure", callback_finished)
+    }
+
+    fn interrupted_cleanup_failure(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
+        plan_bgen_delivery_cleanup_outcome("interrupted_cleanup_failure", callback_finished)
+    }
+}
+
+#[pymethods]
+impl NativeBgenDeliveryPolicy {
+    #[new]
+    fn new(requested_trusted_no_missing_diploid: bool, variant_major_packed8_probability_pairs: bool) -> Self {
+        Self {
+            effective_trusted_no_missing_diploid: native_schedule::resolve_effective_trusted_no_missing_diploid(
+                requested_trusted_no_missing_diploid,
+                variant_major_packed8_probability_pairs,
+            ),
+        }
     }
 }
 
@@ -2790,12 +2841,6 @@ impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWr
     }
 }
 
-impl From<native_schedule::WriterFinishExecutionPlan> for NativeWriterFinishExecutionPlan {
-    fn from(finish_plan: native_schedule::WriterFinishExecutionPlan) -> Self {
-        Self { inner: finish_plan }
-    }
-}
-
 impl From<native_schedule::BgenDeliveryCleanupPlan> for NativeBgenDeliveryCleanupPlan {
     fn from(cleanup_plan: native_schedule::BgenDeliveryCleanupPlan) -> Self {
         Self { inner: cleanup_plan }
@@ -2948,100 +2993,43 @@ impl From<native_schedule::DosageWorkItemStageDurationPlan> for NativeDosageWork
     }
 }
 
-fn native_committed_chunk_identifier_sets_from_sequences(
-    committed_chunk_identifier_sets: Vec<Vec<usize>>,
-) -> Vec<BTreeSet<usize>> {
+fn native_committed_chunk_identifier_sets_from_i64_sequences(
+    committed_chunk_identifier_sets: &[Vec<i64>],
+) -> PyResult<Vec<BTreeSet<usize>>> {
     committed_chunk_identifier_sets
-        .into_iter()
-        .map(|chunk_identifiers| chunk_identifiers.into_iter().collect())
+        .iter()
+        .map(|chunk_identifiers| {
+            chunk_identifiers
+                .iter()
+                .map(|chunk_identifier| {
+                    usize::try_from(*chunk_identifier).map_err(|_| {
+                        PyValueError::new_err(format!(
+                            "Committed chunk identifier {chunk_identifier} cannot be represented as a platform index."
+                        ))
+                    })
+                })
+                .collect()
+        })
         .collect()
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn intersect_committed_chunk_identifier_sets(committed_chunk_identifier_sets: Vec<Vec<usize>>) -> Vec<usize> {
-    let native_committed_chunk_identifier_sets =
-        native_committed_chunk_identifier_sets_from_sequences(committed_chunk_identifier_sets);
-    native_schedule::intersect_committed_chunk_identifier_sets(&native_committed_chunk_identifier_sets)
-        .into_iter()
-        .collect()
-}
-
-#[pyfunction]
-fn resolve_effective_trusted_no_missing_diploid(
-    requested_trusted_no_missing_diploid: bool,
-    variant_major_packed8_probability_pairs: bool,
-) -> bool {
-    native_schedule::resolve_effective_trusted_no_missing_diploid(
-        requested_trusted_no_missing_diploid,
-        variant_major_packed8_probability_pairs,
-    )
-}
-
-#[pyfunction]
-fn resolve_grouped_union_callback_batch_size(native_callback_batch_size: i64) -> PyResult<usize> {
-    native_schedule::resolve_grouped_union_callback_batch_size(native_callback_batch_size)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_multi_trait_chunk_write(
-    writer_session_count: usize,
-    chunk_identifier: usize,
-    committed_chunk_identifier_sets: Vec<Vec<usize>>,
-) -> PyResult<NativeMultiTraitChunkWritePlan> {
-    let native_committed_chunk_identifier_sets =
-        native_committed_chunk_identifier_sets_from_sequences(committed_chunk_identifier_sets);
-    native_schedule::plan_multi_trait_chunk_write(
-        writer_session_count,
-        chunk_identifier,
-        &native_committed_chunk_identifier_sets,
-    )
-    .map(Into::into)
-    .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-fn plan_writer_finish_execution(
-    writer_session_count: i64,
-    requested_thread_count: i64,
-) -> PyResult<NativeWriterFinishExecutionPlan> {
-    native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
-        .map(Into::into)
-        .map_err(|error| schedule_error_to_py(&error))
-}
-
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn plan_bgen_delivery_cleanup(
-    cleanup_outcome: String,
+fn plan_bgen_delivery_cleanup_outcome(
+    cleanup_outcome: &str,
     callback_finished: bool,
 ) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-    native_schedule::plan_bgen_delivery_cleanup(&cleanup_outcome, callback_finished)
+    native_schedule::plan_bgen_delivery_cleanup(cleanup_outcome, callback_finished)
         .map(Into::into)
         .map_err(|error| schedule_error_to_py(&error))
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    register_schedule_function_exports(module)?;
     register_callback_queue_exports(module)?;
     register_callback_worker_exports(module)?;
-    register_dosage_buffer_exports(module)?;
+    register_dosage_buffer_exports(module);
     register_dosage_work_exports(module)?;
-    register_result_write_exports(module)?;
+    register_result_write_exports(module);
     register_output_and_delivery_exports(module)?;
     register_gpu_format_exports(module)?;
-    Ok(())
-}
-
-fn register_schedule_function_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(intersect_committed_chunk_identifier_sets, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_effective_trusted_no_missing_diploid, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_grouped_union_callback_batch_size, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_multi_trait_chunk_write, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_writer_finish_execution, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup, module)?)?;
     Ok(())
 }
 
@@ -3066,9 +3054,8 @@ fn register_callback_worker_exports(module: &Bound<'_, PyModule>) -> PyResult<()
     Ok(())
 }
 
-fn register_dosage_buffer_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_dosage_buffer_exports(module: &Bound<'_, PyModule>) {
     let _ = module;
-    Ok(())
 }
 
 fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -3078,15 +3065,16 @@ fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn register_result_write_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_result_write_exports(module: &Bound<'_, PyModule>) {
     let _ = module;
-    Ok(())
 }
 
 fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
+    module.add_class::<NativeBgenDeliveryCleanupPlanner>()?;
+    module.add_class::<NativeBgenDeliveryPolicy>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
-    module.add_class::<NativeWriterFinishExecutionPlan>()?;
+    module.add_class::<NativeMultiTraitChunkWritePlanner>()?;
     Ok(())
 }
 

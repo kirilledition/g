@@ -116,7 +116,7 @@ impl error::Error for PreparedPlanError {}
 ///
 /// Returns [`PreparedPlanError::UnresolvedGpuGenotypeFormat`] when
 /// `resolved_genotype_format` is still `auto`.
-fn build_prepared_association_backend_plan(
+pub fn plan_association_backend(
     association_mode: AssociationMode,
     device: Device,
     resolved_genotype_format: GpuGenotypeFormat,
@@ -136,7 +136,7 @@ fn build_prepared_association_backend_plan(
 /// Returns [`PreparedPlanError::UnresolvedGpuGenotypeFormat`] when the input
 /// compute plan still contains `resolved_gpu_genotype_format=auto`.
 pub fn build_prepared_run_plan(input: PreparedRunPlanInput) -> Result<PreparedRunPlan, PreparedPlanError> {
-    let association_backend = build_prepared_association_backend_plan(
+    let association_backend = plan_association_backend(
         input.association_mode,
         input.compute.jax_policy.device,
         input.compute.resolved_gpu_genotype_format,

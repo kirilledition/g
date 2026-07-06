@@ -1,10 +1,9 @@
 //! PyO3 adapters for callback progress state.
 
-use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyModule;
 
-use g_engine::callback_progress as native_callback_progress;
+use g_engine as native_callback_progress;
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -310,7 +309,6 @@ impl From<native_callback_progress::CallbackProgressCompletion> for NativeCallba
     }
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_callback_chunk_identity(
     chromosome: String,
@@ -318,85 +316,6 @@ pub(crate) fn build_callback_chunk_identity(
     variant_stop_index: i64,
 ) -> NativeCallbackChunkIdentity {
     native_callback_progress::CallbackChunkIdentity::new(chromosome, variant_start_index, variant_stop_index).into()
-}
-
-#[pyfunction]
-pub(crate) fn emit_callback_progress_update_telemetry(
-    telemetry_session: &Bound<'_, PyAny>,
-    progress_update: &Bound<'_, PyAny>,
-) -> PyResult<()> {
-    if progress_update.is_none() {
-        return Ok(());
-    }
-    let Some(native_telemetry_session) = require_native_telemetry_session(
-        telemetry_session,
-        "Native callback progress plan selected a missing telemetry session.",
-    )?
-    else {
-        return Ok(());
-    };
-
-    let telemetry_plan = progress_update.getattr("telemetry_plan")?;
-    let progress_events = telemetry_plan.getattr("events")?;
-    for progress_event in progress_events.try_iter()? {
-        native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event?,))?;
-    }
-
-    let py = telemetry_session.py();
-    let progress_record = telemetry_plan.getattr("progress")?;
-    let progress_fields = PyDict::new(py);
-    progress_fields.set_item("chromosome", progress_record.getattr("chromosome")?)?;
-    progress_fields.set_item("chunk_identifier", progress_record.getattr("chunk_identifier")?)?;
-    progress_fields.set_item("variant_start_index", progress_record.getattr("variant_start_index")?)?;
-    progress_fields.set_item("variant_stop_index", progress_record.getattr("variant_stop_index")?)?;
-    progress_fields.set_item("variant_count", progress_record.getattr("variant_count")?)?;
-    native_telemetry_session
-        .call_method1("emit_progress", (progress_record.getattr("processed_chunk_count")?, progress_fields))?;
-    Ok(())
-}
-
-#[pyfunction]
-pub(crate) fn emit_callback_progress_event_telemetry(
-    telemetry_session: &Bound<'_, PyAny>,
-    progress_event: &Bound<'_, PyAny>,
-    missing_session_message: &str,
-) -> PyResult<()> {
-    if progress_event.is_none() {
-        return Ok(());
-    }
-    let Some(native_telemetry_session) = require_native_telemetry_session(telemetry_session, missing_session_message)?
-    else {
-        return Ok(());
-    };
-    native_telemetry_session.call_method1("emit_callback_progress_event", (progress_event,))?;
-    Ok(())
-}
-
-fn require_native_telemetry_session<'py>(
-    telemetry_session: &Bound<'py, PyAny>,
-    missing_session_message: &str,
-) -> PyResult<Option<Bound<'py, PyAny>>> {
-    if telemetry_session.is_none() {
-        return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
-    }
-    optional_native_telemetry_session(telemetry_session.py(), telemetry_session)
-}
-
-fn optional_native_telemetry_session<'py>(
-    py: Python<'py>,
-    telemetry_session: &Bound<'py, PyAny>,
-) -> PyResult<Option<Bound<'py, PyAny>>> {
-    if telemetry_session.is_none() {
-        return Ok(None);
-    }
-    match telemetry_session.getattr("native_telemetry_session") {
-        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
-        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
-        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
-            "callback progress telemetry requires a TelemetrySession with a native telemetry session handle.",
-        )),
-        Err(error) => Err(error),
-    }
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -407,8 +326,5 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
     module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
-    module.add_function(wrap_pyfunction!(build_callback_chunk_identity, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_callback_progress_update_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(emit_callback_progress_event_telemetry, module)?)?;
     Ok(())
 }

@@ -72,17 +72,35 @@ class PipelineCommonRequest:
 
 
 @dataclass(frozen=True)
-class SingleTraitPipelineRequest:
-    """Request for one-phenotype REGENIE step 2 execution.
+class SingleTraitLinearPipelineRequest:
+    """Request for one-phenotype linear REGENIE step 2 execution.
 
     Attributes:
         common: Shared dispatch settings.
         phenotype_name: Phenotype column to run.
         prepared_run: Native lifecycle output run handle.
-        association_mode: Statistical association mode.
+        linear_numerical_config: Linear numerical config.
+        gpu_genotype_format: Requested native genotype delivery format.
+
+    """
+
+    common: PipelineCommonRequest
+    phenotype_name: str
+    prepared_run: _core.NativeRunLifecyclePhenotypeRun
+    linear_numerical_config: compute_config.LinearNumericalConfig | None
+    gpu_genotype_format: types.GpuGenotypeFormat
+
+
+@dataclass(frozen=True)
+class SingleTraitBinaryPipelineRequest:
+    """Request for one-phenotype binary REGENIE step 2 execution.
+
+    Attributes:
+        common: Shared dispatch settings.
+        phenotype_name: Phenotype column to run.
+        prepared_run: Native lifecycle output run handle.
         correction_plan: Binary correction settings.
-        binary_kernel_config: Binary kernel config when binary.
-        linear_numerical_config: Linear numerical config when quantitative.
+        binary_kernel_config: Binary kernel config.
         gpu_genotype_format: Requested native genotype delivery format.
         null_logistic_nonconvergence_policy: Binary null-model nonconvergence policy.
 
@@ -91,26 +109,46 @@ class SingleTraitPipelineRequest:
     common: PipelineCommonRequest
     phenotype_name: str
     prepared_run: _core.NativeRunLifecyclePhenotypeRun
-    association_mode: types.AssociationMode
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
-    linear_numerical_config: compute_config.LinearNumericalConfig | None
     gpu_genotype_format: types.GpuGenotypeFormat
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
 
 
 @dataclass(frozen=True)
-class MultiTraitPipelineRequest:
-    """Request for multi-phenotype REGENIE step 2 execution.
+class MultiTraitLinearPipelineRequest:
+    """Request for multi-phenotype linear REGENIE step 2 execution.
 
     Attributes:
         common: Shared dispatch settings.
         phenotype_names: Phenotype columns to run.
         prepared_runs: Native lifecycle output run handles in phenotype order.
-        association_mode: Statistical association mode.
+        linear_numerical_config: Linear numerical config.
+        gpu_genotype_format: Requested native genotype delivery format.
+        sample_mode: Multi-phenotype sample mode.
+        phenotype_compute_groups: Planned phenotype compute groups.
+
+    """
+
+    common: PipelineCommonRequest
+    phenotype_names: tuple[str, ...]
+    prepared_runs: tuple[_core.NativeRunLifecyclePhenotypeRun, ...]
+    linear_numerical_config: compute_config.LinearNumericalConfig | None
+    gpu_genotype_format: types.GpuGenotypeFormat
+    sample_mode: types.MultiPhenotypeSampleMode | None
+    phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None
+
+
+@dataclass(frozen=True)
+class MultiTraitBinaryPipelineRequest:
+    """Request for multi-phenotype binary REGENIE step 2 execution.
+
+    Attributes:
+        common: Shared dispatch settings.
+        phenotype_names: Phenotype columns to run.
+        prepared_runs: Native lifecycle output run handles in phenotype order.
         correction_plan: Binary correction settings.
-        binary_kernel_config: Binary kernel config when binary.
-        linear_numerical_config: Linear numerical config when quantitative.
+        binary_kernel_config: Binary kernel config.
         gpu_genotype_format: Requested native genotype delivery format.
         null_logistic_nonconvergence_policy: Binary null-model nonconvergence policy.
         sample_mode: Multi-phenotype sample mode.
@@ -121,11 +159,17 @@ class MultiTraitPipelineRequest:
     common: PipelineCommonRequest
     phenotype_names: tuple[str, ...]
     prepared_runs: tuple[_core.NativeRunLifecyclePhenotypeRun, ...]
-    association_mode: types.AssociationMode
     correction_plan: types.BinaryCorrectionPlan
     binary_kernel_config: compute_config.BinaryKernelConfig | None
-    linear_numerical_config: compute_config.LinearNumericalConfig | None
     gpu_genotype_format: types.GpuGenotypeFormat
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy
     sample_mode: types.MultiPhenotypeSampleMode | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...] | None
+
+
+type EngineWorkload = (
+    SingleTraitLinearPipelineRequest
+    | SingleTraitBinaryPipelineRequest
+    | MultiTraitLinearPipelineRequest
+    | MultiTraitBinaryPipelineRequest
+)

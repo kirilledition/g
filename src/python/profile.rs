@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use g_genotype::bgen::ReaderProfileSnapshot;
+use g_genotype::ReaderProfileSnapshot;
 
 pub(super) fn build_profile_snapshot_dict(profile_snapshot: &ReaderProfileSnapshot) -> HashMap<String, u64> {
     HashMap::from([

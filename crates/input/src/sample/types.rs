@@ -1,3 +1,35 @@
+use std::fmt;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SampleAlignmentError {
+    message: String,
+}
+
+impl SampleAlignmentError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for SampleAlignmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SampleAlignmentError {}
+
+impl From<String> for SampleAlignmentError {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SampleKeyMode {
     Iid,
@@ -54,6 +86,13 @@ pub struct ResolvedPhenotypeComputeGroup {
     pub sample_set_fingerprint: String,
     pub covariate_design_fingerprint: String,
     pub prediction_alignment_fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SampleIdentifierData {
+    pub sample_indices: Vec<i64>,
+    pub family_identifiers: Vec<String>,
+    pub individual_identifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]

@@ -10,8 +10,8 @@ from pathlib import Path
 from g import _core, types
 
 if typing.TYPE_CHECKING:
+    from g import interface
     from g.engine import dispatch_requests
-    from g.interface import config
     from g.runner import events
 
 
@@ -69,6 +69,24 @@ class JaxRuntimePolicy:
     persistent_cache_min_compile_time_seconds: int
     xla_autotune_cache: bool
     transfer_guard: bool
+
+
+@dataclass(frozen=True)
+class RuntimePolicyRequest:
+    """Narrow process-runtime policy request.
+
+    Attributes:
+        diagnostics_config: Logging, tracing, and telemetry runtime settings.
+        compute_config: JAX runtime settings.
+        rayon_thread_count: Requested Rayon worker thread count.
+        telemetry_paths: Resolved telemetry output paths.
+
+    """
+
+    diagnostics_config: interface.GDiagnosticsConfig
+    compute_config: interface.GComputeConfig
+    rayon_thread_count: int | None
+    telemetry_paths: events.TelemetryPaths | None
 
 
 @dataclass(frozen=True)
@@ -134,7 +152,7 @@ PROCESS_RUNTIME_STATE: _core.NativeRuntimeState = _core.NativeRuntimeState.globa
 
 
 def configure_runtime_before_jax_import(
-    compute_config: config.GComputeConfig,
+    compute_config: interface.GComputeConfig,
     telemetry_session: events.TelemetrySession | None,
 ) -> _core.NativeJaxRuntimeSetupReport | None:
     """Configure JAX platform and runtime before compute modules are imported."""
@@ -148,7 +166,7 @@ def configure_runtime_before_jax_import(
     def record_diagnostic_event(diagnostic_event: _core.NativeJaxRuntimeDiagnosticEvent) -> None:
         _core.record_jax_runtime_diagnostic_event(diagnostic_event, telemetry_session)
 
-    setup_module = importlib.import_module("g.jax_runtime.setup")
+    setup_module = importlib.import_module("g.jax_runtime")
     setup_report = setup_module.configure_before_backend_init(
         native_setup_session=native_setup_session,
         diagnostic_sink=record_diagnostic_event,
@@ -161,7 +179,7 @@ def configure_runtime_before_jax_import(
 
 
 def build_logging_runtime_policy(
-    diagnostics_config: config.GDiagnosticsConfig,
+    diagnostics_config: interface.GDiagnosticsConfig,
     telemetry_paths: events.TelemetryPaths | None,
 ) -> LoggingRuntimePolicy:
     """Build the process-global logging policy requested by a run."""
@@ -217,7 +235,7 @@ def logging_runtime_policy_to_native_policy(policy: LoggingRuntimePolicy) -> _co
     )
 
 
-def build_jax_runtime_policy(compute_config: config.GComputeConfig) -> _core.NativeJaxRuntimePolicy:
+def build_jax_runtime_policy(compute_config: interface.GComputeConfig) -> _core.NativeJaxRuntimePolicy:
     """Build the process-global native JAX runtime policy requested by a run."""
     return PROCESS_RUNTIME_STATE.build_jax_runtime_policy(
         device=compute_config.device.value,
@@ -260,17 +278,14 @@ def optional_path_from_native_value(path_value: str | None) -> Path | None:
     return Path(path_value)
 
 
-def build_runtime_policy(
-    regenie_config: config.RegenieConfig,
-    telemetry_paths: events.TelemetryPaths,
-) -> RuntimePolicy:
+def build_runtime_policy(request: RuntimePolicyRequest) -> RuntimePolicy:
     """Build the process-global runtime policy requested by a run."""
-    logging_policy = build_logging_runtime_policy(regenie_config.g_diagnostics, telemetry_paths)
-    jax_policy = build_jax_runtime_policy(regenie_config.g_compute)
+    logging_policy = build_logging_runtime_policy(request.diagnostics_config, request.telemetry_paths)
+    jax_policy = build_jax_runtime_policy(request.compute_config)
     return RuntimePolicy(
         native_policy=PROCESS_RUNTIME_STATE.build_runtime_policy_handle(
             logging_runtime_policy_to_native_policy(logging_policy),
-            regenie_config.trait.threads,
+            request.rayon_thread_count,
             jax_policy,
         )
     )
@@ -286,20 +301,20 @@ def build_run_runtime(runtime_policy: RuntimePolicy) -> RunRuntime:
     return RunRuntime(native_runtime=PROCESS_RUNTIME_STATE.build_run_runtime(runtime_policy.native_policy))
 
 
-def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitPipelineRequest) -> Path | None:
+def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitLinearPipelineRequest) -> Path | None:
     """Run the linear native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
     return single_trait_pipeline_module.run_regenie2_linear_bgen_pipeline(request)
 
 
-def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitPipelineRequest) -> Path | None:
+def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitBinaryPipelineRequest) -> Path | None:
     """Run the binary native pipeline after JAX runtime setup."""
     single_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.single_trait")
     return single_trait_pipeline_module.run_regenie2_binary_bgen_pipeline(request)
 
 
 def run_regenie2_multi_phenotype_linear_bgen_pipeline(
-    request: dispatch_requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitLinearPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype linear native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
@@ -307,7 +322,7 @@ def run_regenie2_multi_phenotype_linear_bgen_pipeline(
 
 
 def run_regenie2_multi_phenotype_binary_bgen_pipeline(
-    request: dispatch_requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitBinaryPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Run the multi-phenotype binary native pipeline after JAX runtime setup."""
     multi_trait_pipeline_module = importlib.import_module("g.engine.regenie2_pipeline.multi_trait")
@@ -315,7 +330,7 @@ def run_regenie2_multi_phenotype_binary_bgen_pipeline(
 
 
 def initialize_logging(
-    diagnostics_config: config.GDiagnosticsConfig,
+    diagnostics_config: interface.GDiagnosticsConfig,
     telemetry_paths: events.TelemetryPaths | None,
 ) -> None:
     """Initialize unified Rust/Python logging before runtime setup."""

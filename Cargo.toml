@@ -38,7 +38,6 @@ criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
-g-cli = { path = "crates/cli" }
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
 g-input = { path = "crates/input" }
@@ -75,7 +74,6 @@ pyo3 = { workspace = true }
 numpy = { workspace = true }
 arrow = { workspace = true }
 g-engine = { workspace = true }
-g-cli = { workspace = true }
 g-genotype = { workspace = true }
 g-input = { workspace = true }
 g-interface = { workspace = true }

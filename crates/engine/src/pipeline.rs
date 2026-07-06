@@ -3,9 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use g_genotype::bgen::{BgenError, BgenReaderCore};
-use g_genotype::common::{ChunkSpec, GenotypeError};
-use g_genotype::planner;
+use g_genotype::{BgenError, BgenReaderCore, ChunkSpec, GenotypeError};
 
 use crate::preflight::PreflightError;
 use crate::trusted_validation::TrustedBgenValidationError;
@@ -45,7 +43,7 @@ impl Regenie2RunEngineCore {
     /// Returns an error when chunk sizing, variant limits, or committed chunk
     /// identifiers are inconsistent with the opened reader.
     pub fn plan_chunks(&self, committed_chunk_identifiers: &BTreeSet<usize>) -> Result<Vec<ChunkSpec>, GenotypeError> {
-        planner::plan_chromosome_homogeneous_chunks(
+        g_genotype::plan_chromosome_homogeneous_chunks(
             self.reader.variant_count(),
             self.chunk_size,
             self.variant_limit,

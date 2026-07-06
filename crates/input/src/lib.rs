@@ -1,4 +1,7 @@
 #![warn(clippy::pedantic)]
 
-pub mod regenie;
-pub mod sample;
+mod api;
+mod regenie;
+mod sample;
+
+pub use api::*;

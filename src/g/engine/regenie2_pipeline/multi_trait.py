@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 import typing
 
-from g import _core, types
+from g import _core, io, types
+from g.engine import dispatch_requests
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 from g.engine.native_dispatch import loaders as native_dispatch_loaders
@@ -17,19 +18,21 @@ from g.engine.regenie2_pipeline import (
     outputs,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.io import output
+from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g.engine import dispatch_requests
-
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
-    request: dispatch_requests.MultiTraitPipelineRequest,
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
 ) -> tuple[Path | None, ...]:
     """Shared implementation for multi-phenotype BGEN pipelines."""
     common_request = request.common
+    association_mode = association_mode_from_multi_trait_request(request)
+    correction_plan = correction_plan_from_multi_trait_request(request)
+    linear_numerical_config = linear_numerical_config_from_multi_trait_request(request)
+    null_logistic_nonconvergence_policy = null_logistic_policy_from_multi_trait_request(request)
     resolved_gpu_genotype_format = gpu_format.resolve_auto_to_dosage(
         requested_gpu_genotype_format=request.gpu_genotype_format,
         telemetry_session=common_request.telemetry_session,
@@ -40,13 +43,9 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         sample_mode=request.sample_mode,
         phenotype_compute_groups=request.phenotype_compute_groups,
     )
-    resolved_kernel_config = (
-        compute_config.require_binary_kernel_config(request.binary_kernel_config)
-        if request.association_mode == types.AssociationMode.REGENIE2_BINARY
-        else None
-    )
+    resolved_kernel_config = binary_kernel_config_from_multi_trait_request(request)
     context = pipeline_context.build_regenie2_pipeline_context(
-        association_mode=request.association_mode,
+        association_mode=association_mode,
         genotype_source_config=common_request.genotype_source_config,
         phenotype_path=common_request.phenotype_path,
         prediction_list_path=common_request.prediction_list_path,
@@ -62,9 +61,9 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         firth_dtype=common_request.firth_dtype,
         requested_gpu_genotype_format=request.gpu_genotype_format,
         gpu_genotype_format=resolved_gpu_genotype_format,
-        correction_plan=request.correction_plan,
+        correction_plan=correction_plan,
         binary_kernel_config=resolved_kernel_config,
-        linear_numerical_config=request.linear_numerical_config,
+        linear_numerical_config=linear_numerical_config,
         writer_settings=common_request.writer_settings,
         stage_timing_recorder=common_request.stage_timing_recorder,
         telemetry_session=common_request.telemetry_session,
@@ -82,7 +81,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
             dosage_buffer_limit=common_request.dosage_buffer_limit,
-            null_logistic_nonconvergence_policy=request.null_logistic_nonconvergence_policy,
+            null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
         )
     if request.sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
@@ -133,7 +132,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=phenotype_count,
         sample_count=sample_count,
     )
-    _core.record_sample_alignment_completed_telemetry_event(
+    events.record_sample_alignment_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         None,
@@ -152,7 +151,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         sample_counts_differ=len(set(sample_counts)) > 1,
         sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
     )
-    _core.record_multi_phenotype_sample_summary_telemetry_event(
+    events.record_multi_phenotype_sample_summary_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
@@ -185,6 +184,51 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
-        null_logistic_nonconvergence_policy=request.null_logistic_nonconvergence_policy,
-        output_sample_mode=output.MultiPhenotypeSampleMode.COMPLETE_CASE,
+        null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
+        output_sample_mode=io.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )
+
+
+def association_mode_from_multi_trait_request(
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
+) -> types.AssociationMode:
+    """Resolve association mode from the request variant."""
+    if isinstance(request, dispatch_requests.MultiTraitBinaryPipelineRequest):
+        return types.AssociationMode.REGENIE2_BINARY
+    return types.AssociationMode.REGENIE2_LINEAR
+
+
+def correction_plan_from_multi_trait_request(
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
+) -> types.BinaryCorrectionPlan | None:
+    """Return binary correction settings when the request is binary."""
+    if isinstance(request, dispatch_requests.MultiTraitBinaryPipelineRequest):
+        return request.correction_plan
+    return None
+
+
+def linear_numerical_config_from_multi_trait_request(
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
+) -> compute_config.LinearNumericalConfig | None:
+    """Return linear numerical settings when the request is linear."""
+    if isinstance(request, dispatch_requests.MultiTraitLinearPipelineRequest):
+        return request.linear_numerical_config
+    return None
+
+
+def binary_kernel_config_from_multi_trait_request(
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
+) -> compute_config.BinaryKernelConfig | None:
+    """Return binary kernel settings when the request is binary."""
+    if isinstance(request, dispatch_requests.MultiTraitBinaryPipelineRequest):
+        return compute_config.require_binary_kernel_config(request.binary_kernel_config)
+    return None
+
+
+def null_logistic_policy_from_multi_trait_request(
+    request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
+) -> types.NullLogisticNonconvergencePolicy:
+    """Return null-logistic policy for callback construction."""
+    if isinstance(request, dispatch_requests.MultiTraitBinaryPipelineRequest):
+        return request.null_logistic_nonconvergence_policy
+    return types.NullLogisticNonconvergencePolicy.FAIL

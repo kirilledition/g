@@ -7,7 +7,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine::preflight as native_preflight;
+use g_engine as native_preflight;
 
 trait NativePreflightNumeric: Copy + Element {
     fn is_finite_value(self) -> bool;

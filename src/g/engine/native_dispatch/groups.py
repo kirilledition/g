@@ -5,7 +5,9 @@ from __future__ import annotations
 import typing
 
 from g import execution_plan, types
-from g.engine.native_dispatch import models
+
+if typing.TYPE_CHECKING:
+    from g.engine.native_dispatch import models
 
 
 def resolve_sample_key_mode(alignment_config: models.SampleAlignmentConfigProtocol | None) -> types.SampleKeyMode:

@@ -8,7 +8,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_input::regenie::{MultiPredictionSource as NativeMultiPredictionSource, PredictionSource};
+use g_input::{MultiPredictionSource as NativeMultiPredictionSource, PredictionSource};
 
 use super::{
     errors::convert_prediction_error,
@@ -181,12 +181,15 @@ impl MultiRegeniePredictionSource {
         py: Python<'py>,
         chromosome: String,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let (trait_count, sample_count, prediction_values) = self
+        let prediction_matrix_data = self
             .source
             .chromosome_prediction_matrix(&chromosome)
             .map_err(|error| convert_prediction_error("chromosome_prediction_matrix", &error))?;
-        let prediction_matrix = Array2::from_shape_vec((trait_count, sample_count), prediction_values)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let prediction_matrix = Array2::from_shape_vec(
+            (prediction_matrix_data.trait_count, prediction_matrix_data.sample_count),
+            prediction_matrix_data.prediction_values,
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         Ok(prediction_matrix.into_pyarray(py))
     }
 }

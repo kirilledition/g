@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use g_genotype::bgen::{BgenError, BgenReaderCore};
-use g_runtime::trusted_validation as native_trusted_validation;
+use g_genotype::{BgenError, BgenReaderCore};
+use g_runtime as native_trusted_validation;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrustedBgenValidationError {

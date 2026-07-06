@@ -1,5 +1,9 @@
 //! PyO3 owner for callback runtime native resources.
 
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::unnecessary_wraps)]
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -14,9 +18,7 @@ use super::callback_progress::{
 use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
-use super::callback_summary::{
-    NativeBinaryCorrectionDiagnosticsRecordPlan, NativeBinaryCorrectionSummary, NativeBinaryCorrectionSummaryEmitPlan,
-};
+use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
@@ -497,44 +499,26 @@ impl NativeCallbackRuntimeResources {
         self.binary_correction_summary.bind(py).borrow().add_null_model_failure_count_value(failure_count)
     }
 
-    fn plan_binary_correction_diagnostics_record(
+    fn should_record_binary_correction_diagnostics_for_object(
         &self,
-        py: Python<'_>,
-        has_diagnostics: bool,
-    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
-        self.binary_correction_summary
-            .bind(py)
-            .borrow()
-            .plan_diagnostics_record_value(self.has_telemetry_session, has_diagnostics)
-    }
-
-    fn plan_binary_correction_diagnostics_record_for_object(
-        &self,
-        py: Python<'_>,
         binary_chunk_diagnostics: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
+    ) -> bool {
         let has_diagnostics = !binary_chunk_diagnostics.is_none();
-        self.plan_binary_correction_diagnostics_record(py, has_diagnostics)
+        NativeBinaryCorrectionSummary::should_record_diagnostics_value(self.has_telemetry_session, has_diagnostics)
     }
 
-    fn plan_binary_correction_summary_emit(
-        &self,
-        py: Python<'_>,
-        pending_diagnostics_count: i64,
-    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
-        self.binary_correction_summary
-            .bind(py)
-            .borrow()
-            .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)
-    }
-
-    fn plan_binary_correction_summary_emit_for_pending_diagnostics(
+    fn should_flush_binary_correction_pending_diagnostics(
         &self,
         py: Python<'_>,
         pending_diagnostics: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
+    ) -> PyResult<bool> {
         let pending_diagnostics_count = pending_diagnostics_count_from_object(pending_diagnostics)?;
-        self.plan_binary_correction_summary_emit(py, pending_diagnostics_count)
+        let summary_emit_plan = self
+            .binary_correction_summary
+            .bind(py)
+            .borrow()
+            .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)?;
+        Ok(summary_emit_plan.should_flush_pending_diagnostics)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -752,12 +736,9 @@ impl NativeCallbackRuntimeResources {
                 .bind(py)
                 .borrow()
                 .plan_summary_emit_value(self.has_telemetry_session, pending_diagnostics_count)?;
-            finish_result.record_binary_correction_pending_diagnostics_flush(
-                summary_emit_plan.should_flush_pending_diagnostics_value(),
-            );
-            if summary_emit_plan.should_emit_summary_value()
-                && !summary_emit_plan.should_flush_pending_diagnostics_value()
-            {
+            finish_result
+                .record_binary_correction_pending_diagnostics_flush(summary_emit_plan.should_flush_pending_diagnostics);
+            if summary_emit_plan.should_emit_summary && !summary_emit_plan.should_flush_pending_diagnostics {
                 let summary_payload = self.binary_correction_summary.bind(py).borrow().summary_payload_value(py)?;
                 finish_result.record_binary_correction_summary_payload(summary_payload.unbind());
             }
@@ -2477,8 +2458,7 @@ impl NativeCallbackResourceOperationOutcome {
             .as_ref()
             .map(|observation| observation.clone_ref(py));
         let backpressure_observation = match (dosage_backpressure, result_backpressure) {
-            (Some(observation), _) => Some(observation),
-            (None, Some(observation)) => Some(observation),
+            (Some(observation), _) | (None, Some(observation)) => Some(observation),
             (None, None) => None,
         };
         Ok(Self {

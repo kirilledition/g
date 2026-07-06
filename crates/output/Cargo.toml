@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 arrow = { workspace = true }
 crossbeam-channel = { workspace = true }
-g-plan = { path = "../plan" }
+g-plan = { workspace = true }
 parquet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

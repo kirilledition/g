@@ -145,17 +145,14 @@ def block_compute_result_for_timing(
 
 def build_chunk_timing_identity(metadata: typing.Any) -> engine_timing.ChunkTimingIdentity:
     """Build per-chunk timing identity fields from native metadata."""
-    native_identity = _core.build_callback_chunk_identity(
-        chromosome=str(metadata.chromosome_label),
-        variant_start_index=int(metadata.variant_start_index),
-        variant_stop_index=int(metadata.variant_stop_index),
-    )
+    variant_start_index = int(metadata.variant_start_index)
+    variant_stop_index = int(metadata.variant_stop_index)
     return engine_timing.ChunkTimingIdentity(
-        chunk_identifier=native_identity.chunk_identifier,
-        chromosome=native_identity.chromosome,
-        variant_start_index=native_identity.variant_start_index,
-        variant_stop_index=native_identity.variant_stop_index,
-        variant_count=native_identity.variant_count,
+        chunk_identifier=variant_start_index,
+        chromosome=str(metadata.chromosome_label),
+        variant_start_index=variant_start_index,
+        variant_stop_index=variant_stop_index,
+        variant_count=variant_stop_index - variant_start_index,
     )
 
 

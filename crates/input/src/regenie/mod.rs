@@ -63,6 +63,13 @@ pub struct MultiPredictionSource {
 }
 
 #[derive(Debug, Clone)]
+pub struct ChromosomePredictionMatrix {
+    pub trait_count: usize,
+    pub sample_count: usize,
+    pub prediction_values: Vec<f32>,
+}
+
+#[derive(Debug, Clone)]
 struct CachedChromosomePredictionMatrix {
     trait_count: usize,
     sample_count: usize,
@@ -232,19 +239,20 @@ impl MultiPredictionSource {
         })
     }
 
-    pub fn chromosome_prediction_matrix(&self, chromosome: &str) -> Result<(usize, usize, Vec<f32>), PredictionError> {
+    pub fn chromosome_prediction_matrix(
+        &self,
+        chromosome: &str,
+    ) -> Result<ChromosomePredictionMatrix, PredictionError> {
         let normalized_chromosome = normalize_chromosome(chromosome);
-        if let Some(cached_matrix) = self.lock_chromosome_prediction_matrix_cache().get(&normalized_chromosome).cloned()
         {
-            return Ok((
-                cached_matrix.trait_count,
-                cached_matrix.sample_count,
-                cached_matrix.prediction_values.to_vec(),
-            ));
+            let chromosome_prediction_matrix_cache = self.lock_chromosome_prediction_matrix_cache();
+            if let Some(cached_matrix) = chromosome_prediction_matrix_cache.get(&normalized_chromosome) {
+                return Ok(chromosome_prediction_matrix_from_cached(cached_matrix));
+            }
         }
         let cached_matrix = self.build_chromosome_prediction_matrix(&normalized_chromosome, chromosome)?;
         self.lock_chromosome_prediction_matrix_cache().insert(normalized_chromosome, cached_matrix.clone());
-        Ok((cached_matrix.trait_count, cached_matrix.sample_count, cached_matrix.prediction_values.to_vec()))
+        Ok(chromosome_prediction_matrix_from_cached(&cached_matrix))
     }
 
     fn build_chromosome_prediction_matrix(
@@ -316,13 +324,23 @@ pub fn resolve_prediction_loco_paths(
 }
 
 #[must_use]
-pub fn normalize_chromosome(chromosome: &str) -> String {
+fn normalize_chromosome(chromosome: &str) -> String {
     let normalized = chromosome.to_ascii_lowercase();
     let without_prefix = normalized.strip_prefix("chr").unwrap_or(&normalized);
     if without_prefix.chars().all(|character| character.is_ascii_digit()) {
         without_prefix.parse::<u64>().map_or_else(|_| without_prefix.to_string(), |value| value.to_string())
     } else {
         without_prefix.to_string()
+    }
+}
+
+fn chromosome_prediction_matrix_from_cached(
+    cached_matrix: &CachedChromosomePredictionMatrix,
+) -> ChromosomePredictionMatrix {
+    ChromosomePredictionMatrix {
+        trait_count: cached_matrix.trait_count,
+        sample_count: cached_matrix.sample_count,
+        prediction_values: cached_matrix.prediction_values.to_vec(),
     }
 }
 

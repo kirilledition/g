@@ -15,6 +15,7 @@ from g.engine.regenie2_pipeline import (
     preflight,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
+from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -38,7 +39,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     output_sample_mode: outputs.MultiPhenotypeSampleMode,
 ) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
     """Prepare one compatible phenotype group for native BGEN delivery."""
-    _core.record_prediction_source_loaded_telemetry_event(
+    events.record_prediction_source_loaded_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         None,
@@ -66,7 +67,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    _core.record_multi_phenotype_preflight_completed_telemetry_event(
+    events.record_multi_phenotype_preflight_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         len(run_input.phenotype_names),
@@ -89,18 +90,18 @@ def prepare_multi_phenotype_bgen_group_delivery(
         phenotype_names=compute_group.phenotype_names,
         current_headers_by_trait=current_headers,
     )
-    committed_chunk_identifier_sets = outputs.committed_chunk_identifier_sets(initialized_outputs)
     writer_sessions = outputs.create_pipeline_writer_sessions(
         context=context,
         prepared_runs_by_trait=prepared_runs_by_phenotype,
     )
     writer_session_tuple = writer_sessions
+    chunk_write_planner = initialized_outputs.multi_trait_chunk_write_planner(len(writer_session_tuple))
     callback = callbacks.build_multi_phenotype_group_callback(
         context=context,
         run_input=run_input,
         prediction_source=prediction_source,
         writer_sessions=writer_session_tuple,
-        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        chunk_write_planner=chunk_write_planner,
         staging_depth=staging_depth,
         native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
@@ -113,7 +114,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         run_input=run_input,
         callback=callback,
         writer_sessions=writer_session_tuple,
-        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        output_initialization=initialized_outputs,
     )
 
 
@@ -150,14 +151,7 @@ def run_prepared_multi_phenotype_bgen_group(
     return native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=set(
-            _core.intersect_committed_chunk_identifier_sets(
-                tuple(
-                    tuple(committed_chunk_identifier_set)
-                    for committed_chunk_identifier_set in prepared_delivery.committed_chunk_identifier_sets
-                )
-            )
-        ),
+        committed_chunk_identifiers=outputs.shared_committed_chunk_identifiers(prepared_delivery.output_initialization),
         writer_sessions=prepared_delivery.writer_sessions,
         callback=prepared_delivery.callback,
         stage_timing_recorder=context.stage_timing_recorder,

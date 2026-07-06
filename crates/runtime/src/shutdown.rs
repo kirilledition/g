@@ -1,6 +1,7 @@
 //! Deterministic graceful-shutdown signal metadata helpers.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use signal_hook::consts::signal;
 
@@ -9,6 +10,30 @@ const SIGPWR_NUMBER: i32 = 30;
 const SIGRTMIN_NUMBER: i32 = 34;
 const SIGRTMAX_NUMBER: i32 = 64;
 const DEFAULT_SHUTDOWN_SIGNAL_NUMBERS: [i32; 2] = [signal::SIGINT, signal::SIGTERM];
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShutdownError {
+    message: String,
+}
+
+impl ShutdownError {
+    fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for ShutdownError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ShutdownError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShutdownSignalPayload {
@@ -51,7 +76,7 @@ pub struct ShutdownControllerState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ShutdownController {
+struct ShutdownController {
     state: ShutdownControllerState,
     handled_signals: Vec<ShutdownSignalPayload>,
     handlers_installed: bool,
@@ -80,7 +105,7 @@ impl ShutdownControllerState {
     /// # Errors
     ///
     /// Returns an error when `signal_number` is not a supported Linux signal.
-    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
+    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, ShutdownError> {
         let signal = build_shutdown_signal(signal_number)?;
         let action = if self.requested_signal.is_none() {
             self.requested_signal = Some(signal.clone());
@@ -102,7 +127,7 @@ impl ShutdownController {
     /// # Errors
     ///
     /// Returns an error when any signal number is unsupported.
-    pub fn new(handled_signal_numbers: &[i32]) -> Result<Self, String> {
+    pub fn new(handled_signal_numbers: &[i32]) -> Result<Self, ShutdownError> {
         let handled_signals =
             handled_signal_numbers.iter().copied().map(build_shutdown_signal).collect::<Result<Vec<_>, _>>()?;
         Ok(Self { state: ShutdownControllerState::default(), handled_signals, handlers_installed: false })
@@ -155,7 +180,7 @@ impl ShutdownController {
     /// # Errors
     ///
     /// Returns an error when `signal_number` is not a supported Linux signal.
-    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
+    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, ShutdownError> {
         self.state.request_shutdown(signal_number)
     }
 }
@@ -166,7 +191,7 @@ impl<Handler> ShutdownHandlerSession<Handler> {
     /// # Errors
     ///
     /// Returns an error when any signal number is unsupported.
-    pub fn new(handled_signal_numbers: &[i32]) -> Result<Self, String> {
+    pub fn new(handled_signal_numbers: &[i32]) -> Result<Self, ShutdownError> {
         Ok(Self { controller: ShutdownController::new(handled_signal_numbers)?, previous_handlers: BTreeMap::new() })
     }
 
@@ -223,7 +248,7 @@ impl<Handler> ShutdownHandlerSession<Handler> {
     /// # Errors
     ///
     /// Returns an error when `signal_number` is not a supported Linux signal.
-    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, String> {
+    pub fn request_shutdown(&mut self, signal_number: i32) -> Result<ShutdownRequestDecisionPayload, ShutdownError> {
         self.controller.request_shutdown(signal_number)
     }
 }
@@ -239,9 +264,9 @@ pub fn default_shutdown_signal_numbers() -> Vec<i32> {
 ///
 /// Returns an error when `signal_number` is not one of the supported Linux
 /// signal constants.
-pub fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload, String> {
-    let signal_name =
-        linux_signal_name(signal_number).ok_or_else(|| format!("{signal_number} is not a valid Signals"))?;
+pub fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload, ShutdownError> {
+    let signal_name = linux_signal_name(signal_number)
+        .ok_or_else(|| ShutdownError::new(format!("{signal_number} is not a valid Signals")))?;
     Ok(ShutdownSignalPayload { number: signal_number, name: signal_name.to_string(), exit_code: 128 + signal_number })
 }
 
@@ -251,7 +276,7 @@ pub fn build_shutdown_signal(signal_number: i32) -> Result<ShutdownSignalPayload
 ///
 /// Returns an error when `signal_number` is not one of the supported Linux
 /// signal constants.
-pub fn plan_second_signal_exception(signal_number: i32) -> Result<SecondSignalExceptionPlan, String> {
+pub fn plan_second_signal_exception(signal_number: i32) -> Result<SecondSignalExceptionPlan, ShutdownError> {
     let signal = build_shutdown_signal(signal_number)?;
     Ok(SecondSignalExceptionPlan {
         raise_keyboard_interrupt: signal_number == signal::SIGINT,

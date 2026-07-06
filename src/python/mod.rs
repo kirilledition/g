@@ -31,30 +31,54 @@ mod telemetry_policy;
 mod timing;
 
 #[allow(clippy::missing_errors_doc)]
-#[allow(clippy::too_many_lines)]
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_config_domain(module)?;
+    register_input_domain(module)?;
+    register_engine_domain(module)?;
+    register_runtime_domain(module)?;
+    register_output_domain(module)?;
+    Ok(())
+}
+
+fn register_config_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
     config::register_module(module)?;
+    host_policy::register_module(module)?;
+    Ok(())
+}
+
+fn register_input_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
     genotype::register_module(module)?;
     sample_alignment::register_module(module)?;
+    prediction_sources::register_module(module)?;
+    Ok(())
+}
+
+fn register_engine_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
     callback_summary::register_module(module)?;
     callback_progress::register_module(module)?;
-    callback_queue::register_module(module)?;
+    callback_queue::register_module(module);
     callback_runtime_resources::register_module(module)?;
     callback_diagnostics::register_module(module)?;
     schedule::register_module(module)?;
+    run_engine::register_module(module)?;
+    run_lifecycle::register_module(module)?;
+    preflight::register_module(module)?;
+    Ok(())
+}
+
+fn register_runtime_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
     jax_runtime::register_module(module)?;
     runtime_state::register_module(module)?;
     shutdown::register_module(module)?;
     timing::register_module(module)?;
-    output::register_module(module)?;
-    run_engine::register_module(module)?;
-    prediction_sources::register_module(module)?;
     logging::register_module(module)?;
     telemetry_policy::register_module(module)?;
     run_events::register_module(module)?;
-    run_lifecycle::register_module(module)?;
-    preflight::register_module(module)?;
-    host_policy::register_module(module)?;
     runtime::register_module(module)?;
+    Ok(())
+}
+
+fn register_output_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    output::register_module(module)?;
     Ok(())
 }

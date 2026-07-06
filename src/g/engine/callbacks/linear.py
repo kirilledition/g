@@ -359,7 +359,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         run_input: shared.NativeBgenMultiRunInputProtocol,
         prediction_source: shared.MultiRegeniePredictionSourceProtocol,
         writer_sessions: tuple[typing.Any, ...],
-        committed_chunk_identifier_sets: tuple[set[int], ...],
+        chunk_write_planner: _core.NativeMultiTraitChunkWritePlanner,
         staging_depth: int,
         native_callback_batch_size: int,
         result_in_flight_limit: int | None,
@@ -374,7 +374,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_sessions = writer_sessions
-        self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
+        self.chunk_write_planner = chunk_write_planner
         self.score_dtype = score_dtype
         self.linear_numerical_config = linear_numerical_config or regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
         covariate_matrix = transfers.put_compute_array_on_device(run_input.covariate_matrix)
@@ -412,7 +412,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         try:
             materialized_chunk = writers.materialize_regenie2_multi_native_chunk_with_optional_timing(
                 writer_sessions=self.writer_sessions,
-                committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
+                chunk_write_planner=self.chunk_write_planner,
                 metadata=multi_work_item.metadata,
                 beta=multi_work_item.beta,
                 standard_error=multi_work_item.standard_error,

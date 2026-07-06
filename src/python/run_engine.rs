@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use g_engine::{Regenie2RunEngineCore, TrustedBgenValidationError};
-use g_genotype::common::ChunkSpec as NativeChunkSpec;
-use g_input::sample::{self, AlignmentInputs, MultiAlignmentInputs};
-use g_runtime::trusted_validation as native_trusted_validation;
+use g_genotype::ChunkSpec as NativeChunkSpec;
+use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
+use g_runtime as native_trusted_validation;
 use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -95,36 +95,11 @@ impl Regenie2RunEngine {
         sample_key_mode: String,
     ) -> PyResult<NativeAlignedSampleData> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-        if let Some(sample_path) = sample_path {
-            let expected_sample_count = self.engine.reader().sample_count();
-            return py
-                .detach(move || {
-                    sample::align_sample_data_from_sample_file(
-                        Path::new(&sample_path),
-                        expected_sample_count,
-                        phenotype_path,
-                        phenotype_name,
-                        covariate_path,
-                        covariate_names,
-                        is_binary_trait,
-                        parsed_sample_key_mode,
-                    )
-                })
-                .map(NativeAlignedSampleData::new)
-                .map_err(PyValueError::new_err);
-        }
-        if !self.engine.reader().contains_embedded_samples() {
-            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
-        }
-        let sample_identifiers = self.engine.reader().sample_identifiers();
-        let sample_indices = (0..sample_identifiers.len())
-            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PyValueError::new_err)?;
+        let sample_identifier_data = self.sample_identifier_data(py, sample_path)?;
         let inputs = AlignmentInputs {
-            sample_indices,
-            family_identifiers: sample_identifiers.clone(),
-            individual_identifiers: sample_identifiers,
+            sample_indices: sample_identifier_data.sample_indices,
+            family_identifiers: sample_identifier_data.family_identifiers,
+            individual_identifiers: sample_identifier_data.individual_identifiers,
             phenotype_path,
             phenotype_name,
             covariate_path,
@@ -132,9 +107,9 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || sample::align_sample_data(inputs))
+        py.detach(move || native_input::align_sample_data(inputs))
             .map(NativeAlignedSampleData::new)
-            .map_err(PyValueError::new_err)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -160,36 +135,11 @@ impl Regenie2RunEngine {
         sample_key_mode: String,
     ) -> PyResult<NativeMultiAlignedSampleData> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-        if let Some(sample_path) = sample_path {
-            let expected_sample_count = self.engine.reader().sample_count();
-            return py
-                .detach(move || {
-                    sample::align_multi_sample_data_from_sample_file(
-                        Path::new(&sample_path),
-                        expected_sample_count,
-                        phenotype_path,
-                        phenotype_names,
-                        covariate_path,
-                        covariate_names,
-                        is_binary_trait,
-                        parsed_sample_key_mode,
-                    )
-                })
-                .map(NativeMultiAlignedSampleData::new)
-                .map_err(PyValueError::new_err);
-        }
-        if !self.engine.reader().contains_embedded_samples() {
-            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
-        }
-        let sample_identifiers = self.engine.reader().sample_identifiers();
-        let sample_indices = (0..sample_identifiers.len())
-            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PyValueError::new_err)?;
+        let sample_identifier_data = self.sample_identifier_data(py, sample_path)?;
         let inputs = MultiAlignmentInputs {
-            sample_indices,
-            family_identifiers: sample_identifiers.clone(),
-            individual_identifiers: sample_identifiers,
+            sample_indices: sample_identifier_data.sample_indices,
+            family_identifiers: sample_identifier_data.family_identifiers,
+            individual_identifiers: sample_identifier_data.individual_identifiers,
             phenotype_path,
             phenotype_names,
             covariate_path,
@@ -197,9 +147,9 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || sample::align_multi_sample_data(inputs))
+        py.detach(move || native_input::align_multi_sample_data(inputs))
             .map(NativeMultiAlignedSampleData::new)
-            .map_err(PyValueError::new_err)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -225,36 +175,11 @@ impl Regenie2RunEngine {
         sample_key_mode: String,
     ) -> PyResult<NativeGroupedAlignedSampleData> {
         let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-        if let Some(sample_path) = sample_path {
-            let expected_sample_count = self.engine.reader().sample_count();
-            return py
-                .detach(move || {
-                    sample::align_grouped_sample_data_from_sample_file(
-                        Path::new(&sample_path),
-                        expected_sample_count,
-                        phenotype_path,
-                        phenotype_names,
-                        covariate_path,
-                        covariate_names,
-                        is_binary_trait,
-                        parsed_sample_key_mode,
-                    )
-                })
-                .map(NativeGroupedAlignedSampleData::new)
-                .map_err(PyValueError::new_err);
-        }
-        if !self.engine.reader().contains_embedded_samples() {
-            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
-        }
-        let sample_identifiers = self.engine.reader().sample_identifiers();
-        let sample_indices = (0..sample_identifiers.len())
-            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(PyValueError::new_err)?;
+        let sample_identifier_data = self.sample_identifier_data(py, sample_path)?;
         let inputs = MultiAlignmentInputs {
-            sample_indices,
-            family_identifiers: sample_identifiers.clone(),
-            individual_identifiers: sample_identifiers,
+            sample_indices: sample_identifier_data.sample_indices,
+            family_identifiers: sample_identifier_data.family_identifiers,
+            individual_identifiers: sample_identifier_data.individual_identifiers,
             phenotype_path,
             phenotype_names,
             covariate_path,
@@ -262,9 +187,9 @@ impl Regenie2RunEngine {
             is_binary_trait,
             sample_key_mode: parsed_sample_key_mode,
         };
-        py.detach(move || sample::align_grouped_sample_data(&inputs))
+        py.detach(move || native_input::align_grouped_sample_data(&inputs))
             .map(NativeGroupedAlignedSampleData::new)
-            .map_err(PyValueError::new_err)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     fn chromosome_boundary_indices(&self) -> Vec<usize> {
@@ -481,6 +406,37 @@ fn convert_trusted_bgen_validation_error(error: TrustedBgenValidationError) -> P
 }
 
 impl Regenie2RunEngine {
+    fn sample_identifier_data(
+        &self,
+        py: Python<'_>,
+        sample_path: Option<String>,
+    ) -> PyResult<native_input::SampleIdentifierData> {
+        if let Some(sample_path) = sample_path {
+            let expected_sample_count = self.engine.reader().sample_count();
+            return py
+                .detach(move || {
+                    native_input::load_sample_identifier_data_from_sample_file(
+                        Path::new(&sample_path),
+                        expected_sample_count,
+                    )
+                })
+                .map_err(|error| PyValueError::new_err(error.to_string()));
+        }
+        if !self.engine.reader().contains_embedded_samples() {
+            return Err(PyValueError::new_err("BGEN file does not contain samples and no .sample file was found."));
+        }
+        let sample_identifiers = self.engine.reader().sample_identifiers();
+        let sample_indices = (0..sample_identifiers.len())
+            .map(|sample_index| i64::try_from(sample_index).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PyValueError::new_err)?;
+        Ok(native_input::SampleIdentifierData {
+            sample_indices,
+            family_identifiers: sample_identifiers.clone(),
+            individual_identifiers: sample_identifiers,
+        })
+    }
+
     fn run_bgen_variant_major_dosage_buffered_chunks_for_sample_indices<'py>(
         &self,
         py: Python<'py>,

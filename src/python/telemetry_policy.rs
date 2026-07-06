@@ -6,7 +6,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_runtime::telemetry_policy as native_telemetry_policy;
+use g_runtime as native_telemetry_policy;
 
 #[pyclass(skip_from_py_object)]
 pub(crate) struct NativeTelemetryPaths {
@@ -70,7 +70,7 @@ pub(crate) fn resolve_telemetry_paths(
         profile_summary_json.as_deref().map(Path::new),
         stage_timings_json.as_deref().map(Path::new),
     )
-    .map_err(PyValueError::new_err)?;
+    .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(NativeTelemetryPaths { payload })
 }
 

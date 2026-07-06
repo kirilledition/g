@@ -8,7 +8,6 @@ import typing
 import jax
 
 from g.compute.common import genotype
-from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
@@ -19,8 +18,8 @@ Regenie2LinearState = regenie2_linear_state.Regenie2LinearState
 Regenie2LinearChromosomeState = regenie2_linear_state.Regenie2LinearChromosomeState
 Regenie2MultiLinearState = regenie2_linear_state.Regenie2MultiLinearState
 Regenie2MultiLinearChromosomeState = regenie2_linear_state.Regenie2MultiLinearChromosomeState
-Regenie2LinearChunkResult = regenie2_linear_result.Regenie2LinearChunkResult
-Regenie2MultiLinearChunkResult = regenie2_linear_result.Regenie2MultiLinearChunkResult
+Regenie2LinearChunkResult = regenie2_linear_score.Regenie2LinearChunkResult
+Regenie2MultiLinearChunkResult = regenie2_linear_score.Regenie2MultiLinearChunkResult
 
 LINEAR_SCORE_STATIC_ARGNAMES = (
     "score_dtype",
@@ -88,7 +87,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
+) -> regenie2_linear_score.Regenie2LinearChunkResult:
     """Compute REGENIE step 2 linear association using chromosome-cached state."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -107,7 +106,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state(
         linear_minimum_variance=linear_minimum_variance,
         linear_relative_variance_tolerance=linear_relative_variance_tolerance,
     )
-    return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
+    return regenie2_linear_score.squeeze_single_trait_linear_result(multi_result)
 
 
 @functools.partial(jax.jit, static_argnames=LINEAR_SCORE_STATIC_ARGNAMES)
@@ -120,7 +119,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_score.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 association."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -149,7 +148,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
+) -> regenie2_linear_score.Regenie2LinearChunkResult:
     """Compute quantitative REGENIE step 2 association from variant-major genotypes."""
     multi_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -168,7 +167,7 @@ def compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
         linear_minimum_variance=linear_minimum_variance,
         linear_relative_variance_tolerance=linear_relative_variance_tolerance,
     )
-    return regenie2_linear_result.squeeze_single_trait_linear_result(multi_result)
+    return regenie2_linear_score.squeeze_single_trait_linear_result(multi_result)
 
 
 @functools.partial(
@@ -190,7 +189,7 @@ def compute_linear_chunk_packed8_donating_inputs(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
+) -> regenie2_linear_score.Regenie2LinearChunkResult:
     """Decode packed8 probabilities on device and compute quantitative statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
         packed_probability_pairs_by_variant,
@@ -218,7 +217,7 @@ def compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_score.Regenie2MultiLinearChunkResult:
     """Compute multi-trait quantitative REGENIE step 2 from variant-major genotypes."""
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
@@ -256,7 +255,7 @@ def compute_multi_linear_chunk_packed8_donating_inputs(
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+) -> regenie2_linear_score.Regenie2MultiLinearChunkResult:
     """Decode packed8 probabilities on device and compute multi-trait quantitative statistics."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
         packed_probability_pairs_by_variant,

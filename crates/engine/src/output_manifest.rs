@@ -2,12 +2,12 @@
 
 use std::path::Path;
 
-use g_input::regenie::resolve_prediction_loco_paths;
+use g_input::resolve_prediction_loco_paths;
 use g_output::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprint, ManifestFileFingerprintCache, OutputWriterError,
     build_current_run_manifest_header_json_with_cache,
 };
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 struct PredictionLocoFileFingerprint {
     phenotype: String,
@@ -85,7 +85,60 @@ fn normalize_current_header_input_json_fields(
         };
         input_object.insert("binary_kernel_config_json".to_string(), binary_kernel_config_json);
     }
+    normalize_current_header_binary_correction_plan(input_object)?;
     Ok(())
+}
+
+fn normalize_current_header_binary_correction_plan(
+    input_object: &mut Map<String, Value>,
+) -> Result<(), OutputWriterError> {
+    let has_method = input_object.contains_key("binary_correction_plan_method");
+    let has_p_threshold = input_object.contains_key("binary_correction_plan_p_threshold");
+    let has_firth_se = input_object.contains_key("binary_correction_plan_firth_se");
+    let legacy_field_count =
+        [has_method, has_p_threshold, has_firth_se].into_iter().filter(|has_field| *has_field).count();
+    if legacy_field_count == 3 {
+        return Ok(());
+    }
+    if legacy_field_count != 0 {
+        return Err(OutputWriterError::Runtime(
+            "Current header input must provide all binary_correction_plan legacy fields or none.".to_string(),
+        ));
+    }
+    let correction_plan = match input_object.remove("binary_correction_plan") {
+        Some(Value::Null) | None => legacy_linear_current_header_binary_correction_plan(input_object)?,
+        Some(correction_plan_value) => serde_json::from_value::<g_plan::CorrectionPlan>(correction_plan_value)
+            .map_err(|error| OutputWriterError::Runtime(format!("Invalid binary_correction_plan: {error}")))?,
+    };
+    insert_current_header_binary_correction_plan_fields(input_object, &correction_plan);
+    Ok(())
+}
+
+fn legacy_linear_current_header_binary_correction_plan(
+    input_object: &Map<String, Value>,
+) -> Result<g_plan::CorrectionPlan, OutputWriterError> {
+    let association_mode = input_object
+        .get("association_mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| OutputWriterError::Runtime("Current header input must include association_mode.".to_string()))?;
+    if association_mode != g_plan::AssociationMode::Regenie2Linear.as_str() {
+        return Err(OutputWriterError::Runtime(
+            "Binary association manifest input must include binary_correction_plan.".to_string(),
+        ));
+    }
+    Ok(g_plan::CorrectionPlan { method: g_plan::BinaryFallbackMethod::ScoreOnly, p_threshold: 0.05, firth_se: false })
+}
+
+fn insert_current_header_binary_correction_plan_fields(
+    input_object: &mut Map<String, Value>,
+    correction_plan: &g_plan::CorrectionPlan,
+) {
+    input_object.insert(
+        "binary_correction_plan_method".to_string(),
+        Value::String(correction_plan.method.as_str().to_string()),
+    );
+    input_object.insert("binary_correction_plan_p_threshold".to_string(), Value::from(correction_plan.p_threshold));
+    input_object.insert("binary_correction_plan_firth_se".to_string(), Value::Bool(correction_plan.firth_se));
 }
 
 fn json_string_array_from_value(value: &Value) -> Result<Vec<String>, OutputWriterError> {

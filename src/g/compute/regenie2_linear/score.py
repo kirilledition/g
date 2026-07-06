@@ -2,13 +2,69 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
 
 from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
-from g.compute.regenie2_linear import result as regenie2_linear_result
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2LinearChunkResult:
+    """Association outputs for a REGENIE step 2 linear chunk.
+
+    Attributes:
+        beta: Estimated effect sizes.
+        standard_error: Standard errors of estimates.
+        chi_squared: Chi-squared statistics.
+        log10_p_value: Negative log10 p-values.
+        valid_mask: Boolean mask for valid statistics.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    valid_mask: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiLinearChunkResult:
+    """Trait-major association outputs for a multi-trait linear chunk.
+
+    Attributes:
+        beta: Estimated effect sizes with shape ``traits x variants``.
+        standard_error: Standard errors with shape ``traits x variants``.
+        chi_squared: Chi-squared statistics with shape ``traits x variants``.
+        log10_p_value: Negative log10 p-values with shape ``traits x variants``.
+        valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
+
+    """
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    log10_p_value: jax.Array
+    valid_mask: jax.Array
+
+
+def squeeze_single_trait_linear_result(
+    result: Regenie2MultiLinearChunkResult,
+) -> Regenie2LinearChunkResult:
+    """Remove the trait axis from a single-trait linear result."""
+    return Regenie2LinearChunkResult(
+        beta=result.beta[0],
+        standard_error=result.standard_error[0],
+        chi_squared=result.chi_squared[0],
+        log10_p_value=result.log10_p_value[0],
+        valid_mask=result.valid_mask[0],
+    )
 
 
 def compute_positive_residual_variance_mask(
@@ -86,7 +142,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
     score_dtype: types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
+) -> Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
     if genotype_dosage_sum is None or genotype_observation_count is None:
         normalized_genotype_matrix_by_variant = genotype.normalize_high_frequency_diploid_genotypes_variant_major(
@@ -174,7 +230,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         jnp.nan,
     )
     valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_linear_result.Regenie2MultiLinearChunkResult(
+    return Regenie2MultiLinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,

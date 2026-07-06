@@ -9,9 +9,14 @@ publish.workspace = true
 g-genotype = { workspace = true }
 g-input = { workspace = true }
 g-output = { workspace = true }
+g-plan = { workspace = true }
 g-runtime = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[features]
+default = []
+test-support = []
 
 [dev-dependencies]
 criterion = { workspace = true }

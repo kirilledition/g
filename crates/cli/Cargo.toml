@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 g-interface = { workspace = true }
-signal-hook = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -323,4 +323,4 @@ mode.
 
 Open telemetry implementation work is tracked in Linear instead of this page.
 Durable telemetry lessons from historical task notes are consolidated in
-[Agent Learning](../scratchpad/agent-learning.md).
+[Agent Memory](../scratchpad/memory.md).

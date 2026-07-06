@@ -1,16 +1,18 @@
 //! PyO3 handle for native process runtime state.
 
+#![allow(clippy::needless_pass_by_value)]
+
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_genotype::bgen::set_bgen_decode_tile_variant_count;
-use g_runtime::rayon_runtime as native_rayon_runtime;
-use g_runtime::runtime_paths as native_runtime_paths;
-use g_runtime::runtime_policy as native_runtime_policy;
-use g_runtime::runtime_state as native_runtime_state;
+use g_genotype::set_bgen_decode_tile_variant_count;
+use g_runtime as native_rayon_runtime;
+use g_runtime as native_runtime_paths;
+use g_runtime as native_runtime_policy;
+use g_runtime as native_runtime_state;
 
 use super::errors;
 use super::jax_runtime::NativeJaxRuntimeSetupSession;

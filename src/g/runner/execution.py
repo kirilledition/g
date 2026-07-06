@@ -9,12 +9,14 @@ from pathlib import Path
 from g import _core, execution_plan, types
 from g.engine import dispatch_requests
 from g.engine import timing as engine_timing
-from g.interface import config
 from g.runner import events, lifecycle, runtime
+
+if typing.TYPE_CHECKING:
+    from g import interface
 
 
 def regenie(
-    regenie_config: config.RegenieConfig,
+    regenie_config: interface.RegenieConfig,
     *,
     run_telemetry_session: events.TelemetrySession | None,
     close_telemetry_session_on_exit: bool,
@@ -24,7 +26,14 @@ def regenie(
     active_telemetry_session = run_telemetry_session or events.build_telemetry_session(regenie_config)
     try:
         _core.validate_regenie_config_for_run(regenie_config)
-        runtime_policy = runtime.build_runtime_policy(regenie_config, active_telemetry_session.paths)
+        runtime_policy = runtime.build_runtime_policy(
+            runtime.RuntimePolicyRequest(
+                diagnostics_config=regenie_config.g_diagnostics,
+                compute_config=regenie_config.g_compute,
+                rayon_thread_count=regenie_config.trait.threads,
+                telemetry_paths=active_telemetry_session.paths,
+            )
+        )
         run_runtime = runtime.build_run_runtime(runtime_policy)
         if initialize_logging_on_entry:
             runtime.initialize_logging(regenie_config.g_diagnostics, active_telemetry_session.paths)
@@ -67,7 +76,9 @@ def regenie(
         return events.run_artifacts_from_native_artifacts(native_artifacts)
     finally:
         if close_telemetry_session_on_exit:
-            _core.close_telemetry_session_with_event(active_telemetry_session)
+            native_telemetry_session = events.native_telemetry_session_handle(active_telemetry_session)
+            if native_telemetry_session is not None:
+                native_telemetry_session.finish_with_current_close_event_metadata()
 
 
 def association_mode_from_trait_type(trait_type: types.RegenieTraitType) -> types.AssociationMode:
@@ -78,7 +89,7 @@ def association_mode_from_trait_type(trait_type: types.RegenieTraitType) -> type
 
 
 def run_validated_regenie_config(
-    regenie_config: config.RegenieConfig,
+    regenie_config: interface.RegenieConfig,
     telemetry_session: events.TelemetrySession | None,
     runtime_compatibility_token: _core.NativeRuntimeCompatibilityToken,
 ) -> events.RunArtifacts:
@@ -263,21 +274,19 @@ def dispatch_one_phenotype_engine_pipeline(
     if plan.association_mode == types.AssociationMode.REGENIE2_BINARY:
         _core.record_runner_binary_engine_dispatch_started_diagnostic_event(phenotype=phenotype_run_plan.phenotype_name)
         final_output_path = runtime.run_regenie2_binary_bgen_pipeline(
-            dispatch_requests.SingleTraitPipelineRequest(
+            dispatch_requests.SingleTraitBinaryPipelineRequest(
                 common=common_request,
                 phenotype_name=phenotype_run_plan.phenotype_name,
                 prepared_run=phenotype_run_plan,
-                association_mode=plan.association_mode,
                 correction_plan=plan.binary_correction_plan,
                 binary_kernel_config=plan.kernel_config.binary_kernel_config,
-                linear_numerical_config=None,
                 gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
                 null_logistic_nonconvergence_policy=(
                     plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
                 ),
             ),
         )
-        _core.record_writer_finished_telemetry_event(
+        events.record_phenotype_writer_finished_telemetry(
             telemetry_session,
             plan.association_mode.value,
             phenotype_run_plan.phenotype_name,
@@ -286,23 +295,15 @@ def dispatch_one_phenotype_engine_pipeline(
         return final_output_path
     _core.record_runner_linear_engine_dispatch_started_diagnostic_event(phenotype=phenotype_run_plan.phenotype_name)
     final_output_path = runtime.run_regenie2_linear_bgen_pipeline(
-        dispatch_requests.SingleTraitPipelineRequest(
+        dispatch_requests.SingleTraitLinearPipelineRequest(
             common=common_request,
             phenotype_name=phenotype_run_plan.phenotype_name,
             prepared_run=phenotype_run_plan,
-            association_mode=plan.association_mode,
-            correction_plan=types.BinaryCorrectionPlan(
-                method=types.BinaryFallbackMethod.SCORE_ONLY,
-                p_threshold=0.05,
-                firth_se=False,
-            ),
-            binary_kernel_config=None,
             linear_numerical_config=plan.kernel_config.linear_numerical_config,
             gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
-            null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
         )
     )
-    _core.record_writer_finished_telemetry_event(
+    events.record_phenotype_writer_finished_telemetry(
         telemetry_session,
         plan.association_mode.value,
         phenotype_run_plan.phenotype_name,
@@ -332,14 +333,12 @@ def dispatch_multi_phenotype_engine_pipeline(
             phenotype_count=len(phenotype_names)
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_binary_bgen_pipeline(
-            dispatch_requests.MultiTraitPipelineRequest(
+            dispatch_requests.MultiTraitBinaryPipelineRequest(
                 common=common_request,
                 phenotype_names=phenotype_names,
                 prepared_runs=phenotype_run_plans,
-                association_mode=plan.association_mode,
                 correction_plan=plan.binary_correction_plan,
                 binary_kernel_config=plan.kernel_config.binary_kernel_config,
-                linear_numerical_config=None,
                 gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
                 null_logistic_nonconvergence_policy=(
                     plan.kernel_config.alignment_config.null_logistic_nonconvergence_policy
@@ -353,25 +352,17 @@ def dispatch_multi_phenotype_engine_pipeline(
             phenotype_count=len(phenotype_names)
         )
         final_output_paths = runtime.run_regenie2_multi_phenotype_linear_bgen_pipeline(
-            dispatch_requests.MultiTraitPipelineRequest(
+            dispatch_requests.MultiTraitLinearPipelineRequest(
                 common=common_request,
                 phenotype_names=phenotype_names,
                 prepared_runs=phenotype_run_plans,
-                association_mode=plan.association_mode,
-                correction_plan=types.BinaryCorrectionPlan(
-                    method=types.BinaryFallbackMethod.SCORE_ONLY,
-                    p_threshold=0.05,
-                    firth_se=False,
-                ),
-                binary_kernel_config=None,
                 linear_numerical_config=plan.kernel_config.linear_numerical_config,
                 gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
-                null_logistic_nonconvergence_policy=types.NullLogisticNonconvergencePolicy.FAIL,
                 sample_mode=plan.kernel_config.multi_phenotype_sample_mode,
                 phenotype_compute_groups=plan.phenotype_compute_groups,
             )
         )
-    _core.record_multi_writer_finished_telemetry_event(
+    events.record_multi_phenotype_writer_finished_telemetry(
         telemetry_session,
         plan.association_mode.value,
         len(phenotype_run_plans),

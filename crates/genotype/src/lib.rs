@@ -1,6 +1,9 @@
 //! Genotype reader contracts and format-specific implementations.
 
-pub mod bgen;
-pub mod common;
-pub mod planner;
-pub mod preprocess;
+mod api;
+mod bgen;
+mod common;
+mod planner;
+mod preprocess;
+
+pub use api::*;

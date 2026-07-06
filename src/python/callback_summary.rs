@@ -2,25 +2,15 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
 
-use g_engine::callback_summary as native_callback_summary;
+use g_engine as native_callback_summary;
 
 #[pyclass]
 pub(crate) struct NativeBinaryCorrectionSummary {
     state: Mutex<native_callback_summary::BinaryCorrectionSummaryState>,
-}
-
-#[pyclass]
-pub(crate) struct NativeBinaryCorrectionDiagnosticsRecordPlan {
-    inner: native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan,
-}
-
-#[pyclass]
-pub(crate) struct NativeBinaryCorrectionSummaryEmitPlan {
-    inner: native_callback_summary::BinaryCorrectionSummaryEmitPlan,
 }
 
 #[pymethods]
@@ -230,55 +220,8 @@ impl NativeBinaryCorrectionSummary {
         self.chunk_count_with_pending_value(pending_diagnostics_count)
     }
 
-    fn plan_diagnostics_record(
-        &self,
-        has_telemetry_session: bool,
-        has_diagnostics: bool,
-    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
-        self.plan_diagnostics_record_value(has_telemetry_session, has_diagnostics)
-    }
-
-    fn plan_summary_emit(
-        &self,
-        has_telemetry_session: bool,
-        pending_diagnostics_count: i64,
-    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
-        self.plan_summary_emit_value(has_telemetry_session, pending_diagnostics_count)
-    }
-
     fn summary_payload<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         self.summary_payload_value(py)
-    }
-}
-
-#[pymethods]
-impl NativeBinaryCorrectionDiagnosticsRecordPlan {
-    #[getter]
-    fn should_record(&self) -> bool {
-        self.inner.should_record
-    }
-}
-
-impl NativeBinaryCorrectionSummaryEmitPlan {
-    pub(crate) const fn should_flush_pending_diagnostics_value(&self) -> bool {
-        self.inner.should_flush_pending_diagnostics
-    }
-
-    pub(crate) const fn should_emit_summary_value(&self) -> bool {
-        self.inner.should_emit_summary
-    }
-}
-
-#[pymethods]
-impl NativeBinaryCorrectionSummaryEmitPlan {
-    #[getter]
-    fn should_flush_pending_diagnostics(&self) -> bool {
-        self.should_flush_pending_diagnostics_value()
-    }
-
-    #[getter]
-    fn should_emit_summary(&self) -> bool {
-        self.should_emit_summary_value()
     }
 }
 
@@ -346,25 +289,20 @@ impl NativeBinaryCorrectionSummary {
         Ok(self.lock_state()?.chunk_count_with_pending(pending_diagnostics_count))
     }
 
-    pub(crate) fn plan_diagnostics_record_value(
-        &self,
-        has_telemetry_session: bool,
-        has_diagnostics: bool,
-    ) -> PyResult<NativeBinaryCorrectionDiagnosticsRecordPlan> {
-        drop(self.lock_state()?);
-        Ok(native_callback_summary::BinaryCorrectionSummaryState::plan_diagnostics_record(
+    pub(crate) fn should_record_diagnostics_value(has_telemetry_session: bool, has_diagnostics: bool) -> bool {
+        native_callback_summary::BinaryCorrectionSummaryState::plan_diagnostics_record(
             has_telemetry_session,
             has_diagnostics,
         )
-        .into())
+        .should_record
     }
 
     pub(crate) fn plan_summary_emit_value(
         &self,
         has_telemetry_session: bool,
         pending_diagnostics_count: i64,
-    ) -> PyResult<NativeBinaryCorrectionSummaryEmitPlan> {
-        Ok(self.lock_state()?.plan_summary_emit(has_telemetry_session, pending_diagnostics_count).into())
+    ) -> PyResult<native_callback_summary::BinaryCorrectionSummaryEmitPlan> {
+        Ok(self.lock_state()?.plan_summary_emit(has_telemetry_session, pending_diagnostics_count))
     }
 
     pub(crate) fn summary_payload_value<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -397,62 +335,8 @@ impl NativeBinaryCorrectionSummary {
     }
 }
 
-impl From<native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan>
-    for NativeBinaryCorrectionDiagnosticsRecordPlan
-{
-    fn from(record_plan: native_callback_summary::BinaryCorrectionDiagnosticsRecordPlan) -> Self {
-        Self { inner: record_plan }
-    }
-}
-
-impl From<native_callback_summary::BinaryCorrectionSummaryEmitPlan> for NativeBinaryCorrectionSummaryEmitPlan {
-    fn from(emit_plan: native_callback_summary::BinaryCorrectionSummaryEmitPlan) -> Self {
-        Self { inner: emit_plan }
-    }
-}
-
-#[pyfunction]
-pub(crate) fn emit_binary_correction_summary_telemetry(
-    telemetry_session: &Bound<'_, PyAny>,
-    summary_payload: &Bound<'_, PyAny>,
-    missing_session_message: &str,
-) -> PyResult<()> {
-    if summary_payload.is_none() {
-        return Ok(());
-    }
-    if telemetry_session.is_none() {
-        return Err(PyRuntimeError::new_err(missing_session_message.to_owned()));
-    }
-    let Some(native_telemetry_session) = optional_native_telemetry_session(telemetry_session.py(), telemetry_session)?
-    else {
-        return Ok(());
-    };
-    native_telemetry_session.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
-    Ok(())
-}
-
-fn optional_native_telemetry_session<'py>(
-    py: Python<'py>,
-    telemetry_session: &Bound<'py, PyAny>,
-) -> PyResult<Option<Bound<'py, PyAny>>> {
-    if telemetry_session.is_none() {
-        return Ok(None);
-    }
-    match telemetry_session.getattr("native_telemetry_session") {
-        Ok(native_telemetry_session) if native_telemetry_session.is_none() => Ok(None),
-        Ok(native_telemetry_session) => Ok(Some(native_telemetry_session)),
-        Err(error) if error.is_instance_of::<PyAttributeError>(py) => Err(PyTypeError::new_err(
-            "binary correction summary telemetry requires a TelemetrySession with a native telemetry session handle.",
-        )),
-        Err(error) => Err(error),
-    }
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeBinaryCorrectionDiagnosticsRecordPlan>()?;
     module.add_class::<NativeBinaryCorrectionSummary>()?;
-    module.add_class::<NativeBinaryCorrectionSummaryEmitPlan>()?;
-    module.add_function(wrap_pyfunction!(emit_binary_correction_summary_telemetry, module)?)?;
     Ok(())
 }
 

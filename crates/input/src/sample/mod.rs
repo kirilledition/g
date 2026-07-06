@@ -17,7 +17,7 @@ mod types;
 
 pub use types::{
     AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
-    MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleKeyMode,
+    MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleAlignmentError, SampleIdentifierData, SampleKeyMode,
 };
 
 #[cfg(test)]
@@ -66,12 +66,6 @@ enum SampleKey {
     FidIid { family_identifier: String, individual_identifier: String },
 }
 
-struct SampleIdentifierData {
-    sample_indices: Vec<i64>,
-    family_identifiers: Vec<String>,
-    individual_identifiers: Vec<String>,
-}
-
 struct SinglePhenotypeTable {
     phenotype_values: Vec<f32>,
     phenotype_mask: Vec<bool>,
@@ -91,9 +85,17 @@ struct CovariateTable {
     selected_covariate_count: usize,
 }
 
-pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, String> {
-    validate_alignment_input_lengths(&inputs)?;
-    validate_sample_identifier_keys(&inputs)?;
+pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, SampleAlignmentError> {
+    validate_sample_identifier_lengths(
+        &inputs.sample_indices,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
+    validate_sample_identifier_keys(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
 
     let sample_row_indices_by_key = build_sample_row_indices_by_key(
         inputs.sample_key_mode,
@@ -109,36 +111,36 @@ pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, S
         inputs.sample_indices.len(),
     )?;
 
-    let covariate_table = match inputs.covariate_path.as_ref() {
-        Some(covariate_path) => read_covariate_table(
-            Path::new(covariate_path),
-            inputs.covariate_names.as_deref(),
-            inputs.sample_key_mode,
-            &sample_row_indices_by_key,
-            &phenotype_table.phenotype_mask,
-            inputs.sample_indices.len(),
-        )?,
-        None => {
-            if inputs.covariate_names.is_some() {
-                return Err("Covariate names cannot be provided without a covariate table.".to_string());
-            }
-            empty_covariate_table(inputs.sample_indices.len())
-        }
-    };
+    let covariate_table = load_covariate_table(
+        inputs.covariate_path.as_deref(),
+        inputs.covariate_names.as_deref(),
+        inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        &phenotype_table.phenotype_mask,
+        inputs.sample_indices.len(),
+    )?;
 
-    build_single_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
+    Ok(build_single_aligned_sample_data(inputs, &phenotype_table, &covariate_table)?)
 }
 
 /// Align several phenotypes to one shared complete-case sample set.
 ///
 /// This intentionally intersects all per-trait valid sample sets and therefore
 /// is not equivalent to running each phenotype through `align_sample_data`.
-pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlignedSampleData, String> {
+pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlignedSampleData, SampleAlignmentError> {
     if inputs.phenotype_names.is_empty() {
-        return Err("At least one phenotype is required for multi-phenotype alignment.".to_string());
+        return Err(SampleAlignmentError::new("At least one phenotype is required for multi-phenotype alignment."));
     }
-    validate_multi_alignment_input_lengths(&inputs)?;
-    validate_multi_sample_identifier_keys(&inputs)?;
+    validate_sample_identifier_lengths(
+        &inputs.sample_indices,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
+    validate_sample_identifier_keys(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
 
     let sample_row_indices_by_key = build_sample_row_indices_by_key(
         inputs.sample_key_mode,
@@ -154,34 +156,36 @@ pub fn align_multi_sample_data(inputs: MultiAlignmentInputs) -> Result<MultiAlig
         inputs.sample_indices.len(),
     )?;
     let parse_candidate_mask = multi_phenotype_parse_candidate_mask(&phenotype_table);
-    let covariate_table = match inputs.covariate_path.as_ref() {
-        Some(covariate_path) => read_covariate_table(
-            Path::new(covariate_path),
-            inputs.covariate_names.as_deref(),
-            inputs.sample_key_mode,
-            &sample_row_indices_by_key,
-            &parse_candidate_mask,
-            inputs.sample_indices.len(),
-        )?,
-        None => {
-            if inputs.covariate_names.is_some() {
-                return Err("Covariate names cannot be provided without a covariate table.".to_string());
-            }
-            empty_covariate_table(inputs.sample_indices.len())
-        }
-    };
+    let covariate_table = load_covariate_table(
+        inputs.covariate_path.as_deref(),
+        inputs.covariate_names.as_deref(),
+        inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        &parse_candidate_mask,
+        inputs.sample_indices.len(),
+    )?;
 
-    build_multi_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
+    Ok(build_multi_aligned_sample_data(inputs, &phenotype_table, &covariate_table)?)
 }
 
 /// Align several phenotypes independently, then group traits that share one
 /// sample/covariate layout.
-pub fn align_grouped_sample_data(inputs: &MultiAlignmentInputs) -> Result<GroupedAlignedSampleData, String> {
+pub fn align_grouped_sample_data(
+    inputs: &MultiAlignmentInputs,
+) -> Result<GroupedAlignedSampleData, SampleAlignmentError> {
     if inputs.phenotype_names.is_empty() {
-        return Err("At least one phenotype is required for grouped phenotype alignment.".to_string());
+        return Err(SampleAlignmentError::new("At least one phenotype is required for grouped phenotype alignment."));
     }
-    validate_multi_alignment_input_lengths(inputs)?;
-    validate_multi_sample_identifier_keys(inputs)?;
+    validate_sample_identifier_lengths(
+        &inputs.sample_indices,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
+    validate_sample_identifier_keys(
+        inputs.sample_key_mode,
+        &inputs.family_identifiers,
+        &inputs.individual_identifiers,
+    )?;
 
     let sample_row_indices_by_key = build_sample_row_indices_by_key(
         inputs.sample_key_mode,
@@ -197,99 +201,59 @@ pub fn align_grouped_sample_data(inputs: &MultiAlignmentInputs) -> Result<Groupe
         inputs.sample_indices.len(),
     )?;
     let parse_candidate_mask = multi_phenotype_parse_candidate_mask(&phenotype_table);
-    let covariate_table = match inputs.covariate_path.as_ref() {
-        Some(covariate_path) => read_covariate_table(
-            Path::new(covariate_path),
-            inputs.covariate_names.as_deref(),
-            inputs.sample_key_mode,
-            &sample_row_indices_by_key,
-            &parse_candidate_mask,
-            inputs.sample_indices.len(),
-        )?,
-        None => {
-            if inputs.covariate_names.is_some() {
-                return Err("Covariate names cannot be provided without a covariate table.".to_string());
+    let covariate_table = load_covariate_table(
+        inputs.covariate_path.as_deref(),
+        inputs.covariate_names.as_deref(),
+        inputs.sample_key_mode,
+        &sample_row_indices_by_key,
+        &parse_candidate_mask,
+        inputs.sample_indices.len(),
+    )?;
+
+    Ok(build_grouped_aligned_sample_data(inputs, &phenotype_table, &covariate_table)?)
+}
+
+#[must_use]
+pub fn build_union_sample_indices(sample_indices_by_group: &[Vec<i64>]) -> Vec<i64> {
+    let mut seen_sample_indices: HashSet<i64> = HashSet::new();
+    let mut union_sample_indices: Vec<i64> = Vec::new();
+    for sample_indices in sample_indices_by_group {
+        for sample_index in sample_indices {
+            if seen_sample_indices.insert(*sample_index) {
+                union_sample_indices.push(*sample_index);
             }
-            empty_covariate_table(inputs.sample_indices.len())
         }
-    };
-
-    build_grouped_aligned_sample_data(inputs, &phenotype_table, &covariate_table)
+    }
+    union_sample_indices
 }
 
-pub fn align_sample_data_from_sample_file(
-    sample_path: &Path,
-    expected_sample_count: usize,
-    phenotype_path: String,
-    phenotype_name: String,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: SampleKeyMode,
-) -> Result<AlignedSampleData, String> {
-    let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
-    let inputs = AlignmentInputs {
-        sample_indices: sample_identifier_data.sample_indices,
-        family_identifiers: sample_identifier_data.family_identifiers,
-        individual_identifiers: sample_identifier_data.individual_identifiers,
-        phenotype_path,
-        phenotype_name,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode,
-    };
-    align_sample_data(inputs)
+pub fn build_group_sample_position_array(
+    union_sample_indices: &[i64],
+    group_sample_indices: &[i64],
+) -> Result<Vec<isize>, SampleAlignmentError> {
+    let mut union_position_by_sample_index: HashMap<i64, isize> = HashMap::with_capacity(union_sample_indices.len());
+    for (sample_position, sample_index) in union_sample_indices.iter().enumerate() {
+        let sample_position = isize::try_from(sample_position)
+            .map_err(|_| "Union sample position exceeds platform index capacity.".to_string())?;
+        union_position_by_sample_index.insert(*sample_index, sample_position);
+    }
+    group_sample_indices
+        .iter()
+        .map(|sample_index| {
+            union_position_by_sample_index
+                .get(sample_index)
+                .copied()
+                .ok_or_else(|| format!("Group sample index {sample_index} is absent from the union sample index set."))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
-pub fn align_multi_sample_data_from_sample_file(
+pub fn load_sample_identifier_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,
-    phenotype_path: String,
-    phenotype_names: Vec<String>,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: SampleKeyMode,
-) -> Result<MultiAlignedSampleData, String> {
-    let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
-    let inputs = MultiAlignmentInputs {
-        sample_indices: sample_identifier_data.sample_indices,
-        family_identifiers: sample_identifier_data.family_identifiers,
-        individual_identifiers: sample_identifier_data.individual_identifiers,
-        phenotype_path,
-        phenotype_names,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode,
-    };
-    align_multi_sample_data(inputs)
-}
-
-pub fn align_grouped_sample_data_from_sample_file(
-    sample_path: &Path,
-    expected_sample_count: usize,
-    phenotype_path: String,
-    phenotype_names: Vec<String>,
-    covariate_path: Option<String>,
-    covariate_names: Option<Vec<String>>,
-    is_binary_trait: bool,
-    sample_key_mode: SampleKeyMode,
-) -> Result<GroupedAlignedSampleData, String> {
-    let sample_identifier_data = load_sample_identifier_data_from_sample_file(sample_path, expected_sample_count)?;
-    let inputs = MultiAlignmentInputs {
-        sample_indices: sample_identifier_data.sample_indices,
-        family_identifiers: sample_identifier_data.family_identifiers,
-        individual_identifiers: sample_identifier_data.individual_identifiers,
-        phenotype_path,
-        phenotype_names,
-        covariate_path,
-        covariate_names,
-        is_binary_trait,
-        sample_key_mode,
-    };
-    align_grouped_sample_data(&inputs)
+) -> Result<SampleIdentifierData, SampleAlignmentError> {
+    load_sample_identifier_data_from_sample_file_inner(sample_path, expected_sample_count).map_err(Into::into)
 }
 
 #[must_use]
@@ -544,61 +508,33 @@ fn sample_key_mode_value(sample_key_mode: SampleKeyMode) -> &'static str {
     }
 }
 
-fn validate_alignment_input_lengths(inputs: &AlignmentInputs) -> Result<(), String> {
-    if inputs.sample_indices.len() != inputs.family_identifiers.len()
-        || inputs.sample_indices.len() != inputs.individual_identifiers.len()
-    {
+fn validate_sample_identifier_lengths(
+    sample_indices: &[i64],
+    family_identifiers: &[String],
+    individual_identifiers: &[String],
+) -> Result<(), String> {
+    if sample_indices.len() != family_identifiers.len() || sample_indices.len() != individual_identifiers.len() {
         return Err(format!(
             "Sample alignment arrays must have equal length: sample_indices={}, family_identifiers={}, individual_identifiers={}.",
-            inputs.sample_indices.len(),
-            inputs.family_identifiers.len(),
-            inputs.individual_identifiers.len(),
+            sample_indices.len(),
+            family_identifiers.len(),
+            individual_identifiers.len(),
         ));
     }
     Ok(())
 }
 
-fn validate_multi_alignment_input_lengths(inputs: &MultiAlignmentInputs) -> Result<(), String> {
-    if inputs.sample_indices.len() != inputs.family_identifiers.len()
-        || inputs.sample_indices.len() != inputs.individual_identifiers.len()
-    {
-        return Err(format!(
-            "Sample alignment arrays must have equal length: sample_indices={}, family_identifiers={}, individual_identifiers={}.",
-            inputs.sample_indices.len(),
-            inputs.family_identifiers.len(),
-            inputs.individual_identifiers.len(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_sample_identifier_keys(inputs: &AlignmentInputs) -> Result<(), String> {
-    match inputs.sample_key_mode {
+fn validate_sample_identifier_keys(
+    sample_key_mode: SampleKeyMode,
+    family_identifiers: &[String],
+    individual_identifiers: &[String],
+) -> Result<(), String> {
+    match sample_key_mode {
         SampleKeyMode::Iid => {
-            reject_duplicate_individual_identifiers(&inputs.individual_identifiers, "BGEN/sample identifiers")?;
+            reject_duplicate_individual_identifiers(individual_identifiers, "BGEN/sample identifiers")?;
         }
         SampleKeyMode::FidIid => {
-            reject_duplicate_sample_keys(
-                &inputs.family_identifiers,
-                &inputs.individual_identifiers,
-                "BGEN/sample identifiers",
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_multi_sample_identifier_keys(inputs: &MultiAlignmentInputs) -> Result<(), String> {
-    match inputs.sample_key_mode {
-        SampleKeyMode::Iid => {
-            reject_duplicate_individual_identifiers(&inputs.individual_identifiers, "BGEN/sample identifiers")?;
-        }
-        SampleKeyMode::FidIid => {
-            reject_duplicate_sample_keys(
-                &inputs.family_identifiers,
-                &inputs.individual_identifiers,
-                "BGEN/sample identifiers",
-            )?;
+            reject_duplicate_sample_keys(family_identifiers, individual_identifiers, "BGEN/sample identifiers")?;
         }
     }
     Ok(())
@@ -643,7 +579,7 @@ fn reject_duplicate_sample_keys(
     Ok(())
 }
 
-fn load_sample_identifier_data_from_sample_file(
+fn load_sample_identifier_data_from_sample_file_inner(
     sample_path: &Path,
     expected_sample_count: usize,
 ) -> Result<SampleIdentifierData, String> {
@@ -1092,6 +1028,30 @@ fn read_multi_phenotype_table(
         }
     }
     Ok(MultiPhenotypeTable { phenotype_values, phenotype_masks, phenotype_count, sample_count })
+}
+
+fn load_covariate_table(
+    covariate_path: Option<&str>,
+    covariate_names: Option<&[String]>,
+    sample_key_mode: SampleKeyMode,
+    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    parse_candidate_mask: &[bool],
+    sample_count: usize,
+) -> Result<CovariateTable, String> {
+    if let Some(covariate_path) = covariate_path {
+        return read_covariate_table(
+            Path::new(covariate_path),
+            covariate_names,
+            sample_key_mode,
+            sample_row_indices_by_key,
+            parse_candidate_mask,
+            sample_count,
+        );
+    }
+    if covariate_names.is_some() {
+        return Err("Covariate names cannot be provided without a covariate table.".to_string());
+    }
+    Ok(empty_covariate_table(sample_count))
 }
 
 fn select_covariate_names(

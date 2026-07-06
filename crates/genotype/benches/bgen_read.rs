@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use g_genotype::bgen::{BgenReaderCore, set_bgen_row_major_direct_write_enabled};
+use g_genotype::{BgenReaderCore, set_bgen_row_major_direct_write_enabled};
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 

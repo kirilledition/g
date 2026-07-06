@@ -420,7 +420,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         run_input: shared.NativeBgenMultiRunInputProtocol,
         prediction_source: shared.MultiRegeniePredictionSourceProtocol,
         writer_sessions: tuple[typing.Any, ...],
-        committed_chunk_identifier_sets: tuple[set[int], ...],
+        chunk_write_planner: _core.NativeMultiTraitChunkWritePlanner,
         correction_plan: types.BinaryCorrectionPlan,
         kernel_config: regenie2_binary_config.BinaryKernelConfig,
         null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
@@ -437,7 +437,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.run_input = run_input
         self.prediction_source = prediction_source
         self.writer_sessions = writer_sessions
-        self.committed_chunk_identifier_sets = committed_chunk_identifier_sets
+        self.chunk_write_planner = chunk_write_planner
         self.correction_plan = correction_plan
         self.kernel_config = kernel_config
         self.null_logistic_nonconvergence_policy = null_logistic_nonconvergence_policy
@@ -477,7 +477,7 @@ class MultiBinaryRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         try:
             materialized_chunk = writers.materialize_regenie2_multi_native_chunk_with_optional_timing(
                 writer_sessions=self.writer_sessions,
-                committed_chunk_identifier_sets=self.committed_chunk_identifier_sets,
+                chunk_write_planner=self.chunk_write_planner,
                 metadata=multi_work_item.metadata,
                 beta=multi_work_item.beta,
                 standard_error=multi_work_item.standard_error,

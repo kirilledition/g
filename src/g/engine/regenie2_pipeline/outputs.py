@@ -5,18 +5,18 @@ from __future__ import annotations
 import time
 import typing
 
-from g import _core, execution_plan
+from g import _core, execution_plan, io
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.io import output
+from g.runner import events
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-type RunManifestHeaderInput = output.RunManifestHeaderInput
-type ManifestFileFingerprintCache = output.ManifestFileFingerprintCache
-type MultiPhenotypeSampleMode = output.MultiPhenotypeSampleMode
+type RunManifestHeaderInput = io.RunManifestHeaderInput
+type ManifestFileFingerprintCache = io.ManifestFileFingerprintCache
+type MultiPhenotypeSampleMode = io.MultiPhenotypeSampleMode
 
 
 def open_pipeline_bgen_engine(
@@ -35,7 +35,7 @@ def open_pipeline_bgen_engine(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    _core.record_association_backend_selected_telemetry_event(
+    events.record_association_backend_selected_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -68,7 +68,7 @@ def open_pipeline_bgen_engine(
         sample_count=int(engine.sample_count),
         variant_count=int(engine.variant_count),
     )
-    _core.record_bgen_engine_opened_telemetry_event(
+    events.record_bgen_engine_opened_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -91,7 +91,7 @@ def build_pipeline_manifest_header(
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
 ) -> RunManifestHeaderInput:
     """Build the current manifest header for one output run."""
-    return output.build_current_run_manifest_header(
+    return io.build_current_run_manifest_header(
         association_mode=context.association_mode,
         association_backend_kind=context.backend_plan.backend_kind,
         bgen_path=context.genotype_source_config.source_path,
@@ -165,10 +165,7 @@ def initialize_pipeline_output_runs(
         current_headers_by_trait,
     )
     if context.lifecycle_session.output_resume:
-        for output_index, committed_chunk_identifier_set in enumerate(
-            native_initialization.committed_chunk_identifier_sets()
-        ):
-            committed_chunk_count = len(committed_chunk_identifier_set)
+        for output_index, committed_chunk_count in enumerate(native_initialization.committed_chunk_counts()):
             _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
                 committed_chunk_count=committed_chunk_count,
                 output_index=output_index,
@@ -228,14 +225,23 @@ def committed_chunk_identifiers(
     return {int(chunk_identifier) for chunk_identifier in initialization.committed_chunk_identifiers(output_index)}
 
 
-def committed_chunk_identifier_sets(
+def shared_committed_chunk_identifiers(
     initialization: _core.NativeRunLifecycleOutputInitialization,
-) -> tuple[set[int], ...]:
-    """Return committed chunk identifiers for each initialized output."""
-    return tuple(
-        {int(chunk_identifier) for chunk_identifier in chunk_identifier_set}
-        for chunk_identifier_set in initialization.committed_chunk_identifier_sets()
-    )
+) -> set[int]:
+    """Return chunks committed for every output in a native initialization."""
+    return {int(chunk_identifier) for chunk_identifier in initialization.shared_committed_chunk_identifiers()}
+
+
+def shared_committed_chunk_identifiers_across(
+    initializations: tuple[_core.NativeRunLifecycleOutputInitialization, ...],
+) -> set[int]:
+    """Return chunks committed for every output across native initializations."""
+    if not initializations:
+        return set()
+    return {
+        int(chunk_identifier)
+        for chunk_identifier in initializations[0].shared_committed_chunk_identifiers_with(initializations[1:])
+    }
 
 
 def existing_manifest_from_prepared_run(

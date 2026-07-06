@@ -172,29 +172,11 @@ class PythonCliShimViolation:
     message: str
 
 
-@dataclasses.dataclass(frozen=True)
-class ModuleStringAssignment:
-    """Top-level string assignment metadata.
-
-    Attributes:
-        value: Assigned string value.
-        line_number: One-based assignment line number.
-        column_offset: Zero-based assignment column offset.
-
-    """
-
-    value: str
-    line_number: int
-    column_offset: int
-
-
 CLI_SHIM_PATH = Path("cli.py")
 CLI_SHIM_POLICY_NAME = "native_cli_shim_process_owner"
-CLI_SHIM_SENTINEL_CONSTANT_NAME = "NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE"
-CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE = "G_NATIVE_CLI_PYTHON_BRIDGE_SENTINEL"
 CLI_SHIM_MESSAGE = (
-    "the public Python CLI entry point must remain compatibility glue into the native CLI runner; "
-    "only the sentinel-protected legacy backend may call dispatch_cli"
+    "the public Python CLI entry point must stay thin: dispatch through the native parser, "
+    "route validated configs to g.runner.cli, and avoid legacy bridge or sentinel paths"
 )
 
 PYTHON_IMPORT_POLICIES = (
@@ -297,8 +279,16 @@ PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
         name="cli_runner_event_adapter_isolation",
         source_directory=Path("cli.py"),
-        forbidden_imports=("g.engine.run_events", "g.engine.shutdown", "g.engine.telemetry"),
-        message="legacy CLI bridge must route event, shutdown, and telemetry access through runner helpers",
+        forbidden_imports=(
+            "g.engine.run_events",
+            "g.engine.shutdown",
+            "g.engine.telemetry",
+            "g.runner.events",
+            "g.runner.execution",
+            "g.runner.lifecycle",
+            "g.runner.runtime",
+        ),
+        message="CLI shim must route backend lifecycle through g.runner.cli",
     ),
     PythonImportPolicy(
         name="runner_jax_import_boundary",
@@ -1169,37 +1159,6 @@ def top_level_function_definitions(tree: ast.Module) -> dict[str, ast.FunctionDe
     return function_definitions
 
 
-def top_level_string_assignments(tree: ast.Module) -> dict[str, ModuleStringAssignment]:
-    """Return top-level string assignments by target name."""
-    assignments: dict[str, ModuleStringAssignment] = {}
-    for statement in tree.body:
-        if isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if (
-                    isinstance(target, ast.Name)
-                    and isinstance(statement.value, ast.Constant)
-                    and isinstance(statement.value.value, str)
-                ):
-                    assignments[target.id] = ModuleStringAssignment(
-                        value=statement.value.value,
-                        line_number=statement.lineno,
-                        column_offset=statement.col_offset,
-                    )
-            continue
-        if (
-            isinstance(statement, ast.AnnAssign)
-            and isinstance(statement.target, ast.Name)
-            and isinstance(statement.value, ast.Constant)
-            and isinstance(statement.value.value, str)
-        ):
-            assignments[statement.target.id] = ModuleStringAssignment(
-                value=statement.value.value,
-                line_number=statement.lineno,
-                column_offset=statement.col_offset,
-            )
-    return assignments
-
-
 def call_names_under_node(node: ast.AST) -> frozenset[str]:
     """Return dotted call names under an AST node."""
     call_names: set[str] = set()
@@ -1210,11 +1169,6 @@ def call_names_under_node(node: ast.AST) -> frozenset[str]:
         if call_name is not None:
             call_names.add(call_name)
     return frozenset(call_names)
-
-
-def node_references_name(node: ast.AST, name: str) -> bool:
-    """Return whether an AST node references a name."""
-    return any(isinstance(child_node, ast.Name) and child_node.id == name for child_node in ast.walk(node))
 
 
 def call_names_include(call_names: frozenset[str], expected_call_name: str) -> bool:
@@ -1229,21 +1183,6 @@ def function_contains_call(
 ) -> bool:
     """Return whether a function contains a call."""
     return call_names_include(call_names_under_node(function_definition), expected_call_name)
-
-
-def function_has_sentinel_legacy_branch(function_definition: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """Return whether a function has a sentinel-gated legacy backend branch."""
-    for statement in function_definition.body:
-        if not isinstance(statement, ast.If):
-            continue
-        if not node_references_name(statement.test, CLI_SHIM_SENTINEL_CONSTANT_NAME):
-            continue
-        if any(
-            call_names_include(call_names_under_node(body_statement), "run_args_legacy")
-            for body_statement in statement.body
-        ):
-            return True
-    return False
 
 
 def cli_shim_violation(
@@ -1272,26 +1211,22 @@ def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShi
 
     tree = ast.parse(cli_path.read_text(encoding="utf-8"), filename=str(cli_path))
     violations: list[PythonCliShimViolation] = []
-    string_assignments = top_level_string_assignments(tree)
-    sentinel_assignment = string_assignments.get(CLI_SHIM_SENTINEL_CONSTANT_NAME)
-    if sentinel_assignment is None:
-        violations.append(cli_shim_violation(relative_path, 1, 0, CLI_SHIM_SENTINEL_CONSTANT_NAME))
-    elif sentinel_assignment.value != CLI_SHIM_SENTINEL_ENVIRONMENT_VARIABLE:
-        violations.append(
-            cli_shim_violation(
-                relative_path,
-                sentinel_assignment.line_number,
-                sentinel_assignment.column_offset,
-                CLI_SHIM_SENTINEL_CONSTANT_NAME,
+    forbidden_names = frozenset({"NATIVE_CLI_PYTHON_BRIDGE_SENTINEL_ENVIRONMENT_VARIABLE"})
+    for child_node in ast.walk(tree):
+        if not isinstance(child_node, ast.Name):
+            continue
+        if child_node.id in forbidden_names:
+            violations.append(
+                cli_shim_violation(relative_path, child_node.lineno, child_node.col_offset, child_node.id)
             )
-        )
+            break
 
     function_definitions = top_level_function_definitions(tree)
     run_args_definition = function_definitions.get("run_args")
     if run_args_definition is None:
         violations.append(cli_shim_violation(relative_path, 1, 0, "run_args"))
     else:
-        if not function_contains_call(run_args_definition, "run_native_cli_python_bridge"):
+        if not function_contains_call(run_args_definition, "dispatch_cli"):
             violations.append(
                 cli_shim_violation(
                     relative_path,
@@ -1300,7 +1235,7 @@ def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShi
                     "run_args",
                 )
             )
-        if function_contains_call(run_args_definition, "dispatch_cli"):
+        if not function_contains_call(run_args_definition, "run_validated_cli_outcome"):
             violations.append(
                 cli_shim_violation(
                     relative_path,
@@ -1309,7 +1244,7 @@ def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShi
                     "run_args",
                 )
             )
-        if not function_has_sentinel_legacy_branch(run_args_definition):
+        if function_contains_call(run_args_definition, "run_native_cli_python_bridge"):
             violations.append(
                 cli_shim_violation(
                     relative_path,
@@ -1320,27 +1255,15 @@ def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShi
             )
 
     run_args_legacy_definition = function_definitions.get("run_args_legacy")
-    if run_args_legacy_definition is None:
-        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args_legacy"))
-    else:
-        if not function_contains_call(run_args_legacy_definition, "dispatch_cli"):
-            violations.append(
-                cli_shim_violation(
-                    relative_path,
-                    run_args_legacy_definition.lineno,
-                    run_args_legacy_definition.col_offset,
-                    "run_args_legacy",
-                )
+    if run_args_legacy_definition is not None:
+        violations.append(
+            cli_shim_violation(
+                relative_path,
+                run_args_legacy_definition.lineno,
+                run_args_legacy_definition.col_offset,
+                "run_args_legacy",
             )
-        if function_contains_call(run_args_legacy_definition, "run_native_cli_python_bridge"):
-            violations.append(
-                cli_shim_violation(
-                    relative_path,
-                    run_args_legacy_definition.lineno,
-                    run_args_legacy_definition.col_offset,
-                    "run_args_legacy",
-                )
-            )
+        )
 
     main_definition = function_definitions.get("main")
     if main_definition is None:

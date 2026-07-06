@@ -8,8 +8,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use g_genotype::common::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
-use g_genotype::preprocess;
+use g_genotype::{self as native_genotype, ChunkStats as NativeChunkStats, VariantMetadataColumns};
 
 pub(crate) type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 
@@ -36,7 +35,7 @@ fn summarize_variant_major_dosage_chunk_stats(
     let genotype_values = genotype_array
         .as_slice()
         .ok_or_else(|| PyValueError::new_err("Variant-major genotype matrix must be C-contiguous."))?;
-    let chunk_stats = preprocess::summarize_variant_major_dosage_matrix(
+    let chunk_stats = native_genotype::summarize_variant_major_dosage_matrix(
         genotype_values,
         selected_sample_count,
         selected_variant_count,

@@ -36,7 +36,7 @@ Roadmap work should be tracked in Linear rather than as unchecked tasks in this
 file. The current docs-task audit generated focused follow-ups for packed8
 custom-kernel profiling, trace-mode event caps, and binary benchmark
 diagnostics. See
-[Agent Learning](../scratchpad/agent-learning.md) for the audit summary and Linear links.
+[Agent Memory](../scratchpad/memory.md) for the audit summary and Linear links.
 
 ## Performance Direction
 

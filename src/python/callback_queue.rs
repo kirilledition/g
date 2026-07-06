@@ -413,9 +413,8 @@ impl NativeCallbackObjectQueueGetResult {
     }
 }
 
-pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) {
     let _ = module;
-    Ok(())
 }
 
 fn normalize_timeout_duration(timeout_seconds: f64) -> Duration {

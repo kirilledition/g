@@ -391,7 +391,7 @@ impl OutputWriterSession {
             run_directory: PathBuf::from(run_directory),
             chunks_directory: PathBuf::from(chunks_directory),
             association_mode,
-            output_format: OutputFileFormat::parse(output_format).map_err(OutputWriterError::InvalidInput)?,
+            output_format: OutputFileFormat::parse(output_format)?,
             output_statistic_dtype: OutputStatisticDtype::parse(output_statistic_dtype)
                 .map_err(OutputWriterError::InvalidInput)?,
             finalize_parquet,

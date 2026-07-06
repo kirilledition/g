@@ -7,7 +7,7 @@ import typing
 import g.engine.callbacks.binary as callback_binary
 import g.engine.callbacks.linear as callback_linear
 import g.engine.callbacks.shared as callback_shared
-from g import types
+from g import _core, types
 from g.engine.regenie2_pipeline import compute_config
 from g.engine.regenie2_pipeline import context as pipeline_context
 
@@ -36,7 +36,7 @@ def build_single_trait_callback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_session=writer_session,
-            correction_plan=context.correction_plan,
+            correction_plan=pipeline_context.require_binary_correction_plan(context.correction_plan),
             kernel_config=compute_config.require_binary_kernel_config(context.binary_kernel_config),
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
             staging_depth=staging_depth,
@@ -70,7 +70,7 @@ def build_multi_phenotype_group_callback(
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     writer_sessions: tuple[typing.Any, ...],
-    committed_chunk_identifier_sets: tuple[set[int], ...],
+    chunk_write_planner: _core.NativeMultiTraitChunkWritePlanner,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -83,8 +83,8 @@ def build_multi_phenotype_group_callback(
             run_input=run_input,
             prediction_source=prediction_source,
             writer_sessions=writer_sessions,
-            committed_chunk_identifier_sets=committed_chunk_identifier_sets,
-            correction_plan=context.correction_plan,
+            chunk_write_planner=chunk_write_planner,
+            correction_plan=pipeline_context.require_binary_correction_plan(context.correction_plan),
             kernel_config=compute_config.require_binary_kernel_config(context.binary_kernel_config),
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
             staging_depth=staging_depth,
@@ -100,7 +100,7 @@ def build_multi_phenotype_group_callback(
         run_input=run_input,
         prediction_source=prediction_source,
         writer_sessions=writer_sessions,
-        committed_chunk_identifier_sets=committed_chunk_identifier_sets,
+        chunk_write_planner=chunk_write_planner,
         staging_depth=staging_depth,
         native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,

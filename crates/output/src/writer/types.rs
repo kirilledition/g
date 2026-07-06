@@ -41,14 +41,14 @@ pub enum OutputFileFormat {
 
 impl OutputFileFormat {
     #[allow(clippy::missing_errors_doc)]
-    pub fn parse(output_format: &str) -> Result<Self, String> {
+    pub fn parse(output_format: &str) -> Result<Self, OutputWriterError> {
         match output_format {
             "arrow" => Ok(Self::Arrow),
             "parquet" => Ok(Self::Parquet),
             "regenie" => Ok(Self::Regenie),
-            unsupported_output_format => Err(format!(
+            unsupported_output_format => Err(OutputWriterError::InvalidInput(format!(
                 "Output format must be 'arrow', 'parquet', or 'regenie', observed '{unsupported_output_format}'."
-            )),
+            ))),
         }
     }
 

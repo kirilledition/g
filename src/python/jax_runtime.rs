@@ -7,7 +7,7 @@ use pyo3::exceptions::{PyAttributeError, PyOSError, PyRuntimeError, PyTypeError,
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyModule};
 
-use g_runtime::jax_runtime as native_jax_runtime;
+use g_runtime as native_jax_runtime;
 
 use super::logging;
 
@@ -215,10 +215,10 @@ impl NativeJaxRuntimeSetupSession {
         for update in &updates {
             match &update.value {
                 native_jax_runtime::JaxRuntimeConfigValue::Boolean(value) => {
-                    update_function.call1((update.setting_name.as_str(), *value))?;
+                    update_function.call1((update.setting_name.as_str(), value))?;
                 }
                 native_jax_runtime::JaxRuntimeConfigValue::Integer(value) => {
-                    update_function.call1((update.setting_name.as_str(), *value))?;
+                    update_function.call1((update.setting_name.as_str(), value))?;
                 }
                 native_jax_runtime::JaxRuntimeConfigValue::Text(value) => {
                     update_function.call1((update.setting_name.as_str(), value.as_str()))?;

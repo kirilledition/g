@@ -1,15 +1,20 @@
 //! PyO3 adapters for sample alignment and phenotype compute groups.
 
+#![allow(clippy::needless_pass_by_value)]
+
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_input::sample::{
-    self, AlignedPhenotypeGroup, AlignedSampleData, GroupedAlignedSampleData, MultiAlignedSampleData,
+use g_engine as native_schedule;
+use g_input::{
+    self as native_input, AlignedPhenotypeGroup, AlignedSampleData, GroupedAlignedSampleData, MultiAlignedSampleData,
     ResolvedPhenotypeComputeGroup, SampleKeyMode,
 };
+
+use super::schedule;
 
 #[pyclass]
 pub(crate) struct NativeAlignedSampleData {
@@ -235,7 +240,7 @@ fn resolve_single_phenotype_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_single_phenotype_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(native_input::resolve_single_phenotype_compute_group(
         &aligned_sample_data.data,
         phenotype_name,
         prediction_list_path.as_deref(),
@@ -253,7 +258,7 @@ fn resolve_per_phenotype_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_per_phenotype_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(native_input::resolve_per_phenotype_compute_group(
         &aligned_sample_data.data,
         phenotype_indices,
         phenotype_names,
@@ -272,13 +277,50 @@ fn resolve_complete_case_compute_group(
     sample_key_mode: String,
 ) -> PyResult<NativeResolvedPhenotypeComputeGroup> {
     let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
-    Ok(NativeResolvedPhenotypeComputeGroup::new(sample::resolve_complete_case_compute_group(
+    Ok(NativeResolvedPhenotypeComputeGroup::new(native_input::resolve_complete_case_compute_group(
         &aligned_sample_data.data,
         phenotype_indices,
         phenotype_names,
         prediction_list_path.as_deref(),
         parsed_sample_key_mode,
     )))
+}
+
+#[pyfunction]
+fn build_union_sample_indices<'py>(
+    py: Python<'py>,
+    sample_indices_by_group: Vec<PyReadonlyArray1<'py, i64>>,
+) -> PyResult<Bound<'py, PyArray1<i64>>> {
+    let mut native_sample_indices_by_group = Vec::with_capacity(sample_indices_by_group.len());
+    for sample_indices in &sample_indices_by_group {
+        native_sample_indices_by_group.push(sample_indices.as_slice()?.to_vec());
+    }
+    Ok(native_input::build_union_sample_indices(&native_sample_indices_by_group).into_pyarray(py))
+}
+
+#[pyfunction]
+fn build_grouped_union_sample_indices<'py>(
+    py: Python<'py>,
+    sample_indices_by_group: Vec<PyReadonlyArray1<'py, i64>>,
+    native_callback_batch_size: i64,
+) -> PyResult<Bound<'py, PyArray1<i64>>> {
+    native_schedule::resolve_grouped_union_callback_batch_size(native_callback_batch_size)
+        .map_err(|error| schedule::schedule_error_to_py(&error))?;
+    build_union_sample_indices(py, sample_indices_by_group)
+}
+
+#[pyfunction]
+fn build_group_sample_position_array<'py>(
+    py: Python<'py>,
+    union_sample_indices: PyReadonlyArray1<'py, i64>,
+    group_sample_indices: PyReadonlyArray1<'py, i64>,
+) -> PyResult<Bound<'py, PyArray1<isize>>> {
+    let union_sample_index_values = union_sample_indices.as_slice()?;
+    let group_sample_index_values = group_sample_indices.as_slice()?;
+    let sample_position_values =
+        native_input::build_group_sample_position_array(union_sample_index_values, group_sample_index_values)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(sample_position_values.into_pyarray(py))
 }
 
 pub(crate) fn parse_sample_key_mode(sample_key_mode: &str) -> PyResult<SampleKeyMode> {
@@ -297,6 +339,9 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeGroupedAlignedSampleData>()?;
     module.add_class::<NativeMultiAlignedSampleData>()?;
     module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
+    module.add_function(wrap_pyfunction!(build_group_sample_position_array, module)?)?;
+    module.add_function(wrap_pyfunction!(build_grouped_union_sample_indices, module)?)?;
+    module.add_function(wrap_pyfunction!(build_union_sample_indices, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_complete_case_compute_group, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_per_phenotype_compute_group, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_single_phenotype_compute_group, module)?)?;

@@ -5,9 +5,8 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-from g import _core, execution_plan, types
+from g import _core, execution_plan, io, types
 from g.engine import timing as engine_timing
-from g.io import output
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -44,21 +43,17 @@ def build_association_backend_plan(
     gpu_genotype_format: types.GpuGenotypeFormat,
 ) -> AssociationBackendPlan:
     """Resolve the concrete association backend for an already-resolved genotype format."""
-    if gpu_genotype_format == types.GpuGenotypeFormat.DOSAGE:
-        backend_kind = types.AssociationBackendKind.JAX_DOSAGE
-        uses_variant_major_packed8_delivery = False
-    elif gpu_genotype_format == types.GpuGenotypeFormat.PACKED8:
-        backend_kind = types.AssociationBackendKind.JAX_PACKED8
-        uses_variant_major_packed8_delivery = True
-    else:
-        message = "gpu_genotype_format must be resolved to dosage or packed8 before backend planning."
-        raise ValueError(message)
+    native_backend_plan = _core.NativeAssociationBackendPlan(
+        association_mode.value,
+        jax_device.value,
+        gpu_genotype_format.value,
+    )
     return AssociationBackendPlan(
-        backend_kind=backend_kind,
-        association_mode=association_mode,
-        jax_device=jax_device,
-        genotype_format=gpu_genotype_format,
-        uses_variant_major_packed8_delivery=uses_variant_major_packed8_delivery,
+        backend_kind=types.AssociationBackendKind(native_backend_plan.backend_kind),
+        association_mode=types.AssociationMode(native_backend_plan.association_mode),
+        jax_device=types.Device(native_backend_plan.jax_device),
+        genotype_format=types.GpuGenotypeFormat(native_backend_plan.genotype_format),
+        uses_variant_major_packed8_delivery=native_backend_plan.uses_variant_major_packed8_delivery,
     )
 
 
@@ -75,6 +70,7 @@ class Regenie2PipelineContext:
         chunk_size: Requested native BGEN chunk size.
         variant_limit: Optional variant processing limit.
         trusted_no_missing_diploid: User-requested trusted BGEN mode.
+        effective_trusted_no_missing_diploid: Trusted BGEN mode after native delivery policy.
         trusted_bgen_validation_mode: Trusted BGEN validation policy.
         bgen_decode_tile_variant_count: Native BGEN decode tile size.
         jax_device: Requested JAX device.
@@ -84,7 +80,7 @@ class Regenie2PipelineContext:
         requested_gpu_genotype_format: User-requested genotype delivery format.
         gpu_genotype_format: Native genotype delivery format.
         backend_plan: Concrete backend selected for association execution.
-        correction_plan: Binary correction settings.
+        correction_plan: Binary correction settings when binary.
         binary_kernel_config: Resolved binary kernel config when binary.
         linear_numerical_config: Resolved linear numerical config when quantitative.
         writer_settings: Output writer settings.
@@ -105,6 +101,7 @@ class Regenie2PipelineContext:
     chunk_size: int
     variant_limit: int | None
     trusted_no_missing_diploid: bool
+    effective_trusted_no_missing_diploid: bool
     trusted_bgen_validation_mode: types.TrustedBgenValidationMode
     bgen_decode_tile_variant_count: int
     jax_device: types.Device
@@ -114,7 +111,7 @@ class Regenie2PipelineContext:
     requested_gpu_genotype_format: types.GpuGenotypeFormat
     gpu_genotype_format: types.GpuGenotypeFormat
     backend_plan: AssociationBackendPlan
-    correction_plan: types.BinaryCorrectionPlan
+    correction_plan: types.BinaryCorrectionPlan | None
     binary_kernel_config: compute_config.BinaryKernelConfig | None
     linear_numerical_config: compute_config.LinearNumericalConfig | None
     writer_settings: execution_plan.OutputWriterPlan
@@ -129,16 +126,6 @@ class Regenie2PipelineContext:
     def uses_packed8_genotypes(self) -> bool:
         """Return whether native delivery should use packed8 probability pairs."""
         return self.backend_plan.uses_variant_major_packed8_delivery
-
-    @property
-    def effective_trusted_no_missing_diploid(self) -> bool:
-        """Return trusted BGEN mode after packed8 requirements are applied."""
-        return bool(
-            _core.resolve_effective_trusted_no_missing_diploid(
-                self.trusted_no_missing_diploid,
-                self.uses_packed8_genotypes,
-            )
-        )
 
     @property
     def is_binary_trait(self) -> bool:
@@ -156,7 +143,7 @@ class PreparedMultiPhenotypeGroupDelivery:
         run_input: Aligned multi-phenotype input for this compatible group.
         callback: Compute callback for this group.
         writer_sessions: Output writer sessions in this group's phenotype order.
-        committed_chunk_identifier_sets: Committed chunks in this group's phenotype order.
+        output_initialization: Native output initialization state for committed-chunk policy.
 
     """
 
@@ -165,7 +152,7 @@ class PreparedMultiPhenotypeGroupDelivery:
     run_input: native_dispatch_models.NativeBgenMultiRunInput
     callback: callbacks.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
-    committed_chunk_identifier_sets: tuple[set[int], ...]
+    output_initialization: _core.NativeRunLifecycleOutputInitialization
 
 
 def build_regenie2_pipeline_context(
@@ -186,7 +173,7 @@ def build_regenie2_pipeline_context(
     firth_dtype: types.FloatingPointDtype,
     requested_gpu_genotype_format: types.GpuGenotypeFormat,
     gpu_genotype_format: types.GpuGenotypeFormat,
-    correction_plan: types.BinaryCorrectionPlan,
+    correction_plan: types.BinaryCorrectionPlan | None,
     binary_kernel_config: compute_config.BinaryKernelConfig | None,
     linear_numerical_config: compute_config.LinearNumericalConfig | None,
     writer_settings: execution_plan.OutputWriterPlan,
@@ -210,6 +197,10 @@ def build_regenie2_pipeline_context(
         jax_device=jax_device,
         gpu_genotype_format=gpu_genotype_format,
     )
+    bgen_delivery_policy = _core.NativeBgenDeliveryPolicy(
+        trusted_no_missing_diploid,
+        backend_plan.uses_variant_major_packed8_delivery,
+    )
     return Regenie2PipelineContext(
         association_mode=association_mode,
         genotype_source_config=genotype_source_config,
@@ -219,6 +210,7 @@ def build_regenie2_pipeline_context(
         chunk_size=chunk_size,
         variant_limit=variant_limit,
         trusted_no_missing_diploid=trusted_no_missing_diploid,
+        effective_trusted_no_missing_diploid=bgen_delivery_policy.effective_trusted_no_missing_diploid,
         trusted_bgen_validation_mode=trusted_bgen_validation_mode,
         bgen_decode_tile_variant_count=bgen_decode_tile_variant_count,
         jax_device=jax_device,
@@ -234,11 +226,21 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
-        input_fingerprint_cache=output.ManifestFileFingerprintCache(),
+        input_fingerprint_cache=io.ManifestFileFingerprintCache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
         lifecycle_session=lifecycle_session,
     )
+
+
+def require_binary_correction_plan(
+    correction_plan: types.BinaryCorrectionPlan | None,
+) -> types.BinaryCorrectionPlan:
+    """Return a binary correction plan for binary-only execution paths."""
+    if correction_plan is None:
+        message = "Binary correction plan is required for binary association."
+        raise ValueError(message)
+    return correction_plan
 
 
 def resolve_multi_phenotype_compute_groups(
