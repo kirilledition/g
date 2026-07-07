@@ -7,6 +7,7 @@ use std::path::Path;
 use g_engine::Regenie2RunEngineCore;
 use g_genotype::ChunkSpec as NativeChunkSpec;
 use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
+use g_runtime as native_run_events;
 use g_runtime as native_trusted_validation;
 use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -18,12 +19,13 @@ use super::errors::{
     convert_trusted_bgen_validation_error,
 };
 use super::genotype::{
-    build_committed_identifier_set, convert_variant_metadata_columns_to_tuple, ChunkStats, VariantMetadata,
-    VariantMetadataTuple,
+    ChunkStats, VariantMetadata, VariantMetadataTuple, build_committed_identifier_set,
+    convert_variant_metadata_columns_to_tuple,
 };
 use super::profile::build_profile_snapshot_dict;
+use super::run_events;
 use super::sample_alignment::{
-    parse_sample_key_mode, NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData,
+    NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData, parse_sample_key_mode,
 };
 
 #[pyclass]
@@ -43,6 +45,12 @@ impl Regenie2RunEngine {
         variant_limit: Option<usize>,
         trusted_no_missing_diploid: bool,
     ) -> PyResult<Self> {
+        record_native_dispatch_bgen_engine_constructing(
+            chunk_size,
+            &bgen_path,
+            trusted_no_missing_diploid,
+            variant_limit,
+        )?;
         let engine = py
             .detach(|| {
                 Regenie2RunEngineCore::open_bgen(
@@ -240,6 +248,7 @@ impl Regenie2RunEngine {
         bgen_path: String,
         validation_mode: String,
     ) -> PyResult<()> {
+        record_native_dispatch_trusted_bgen_validation_started(&bgen_path, &validation_mode)?;
         let cache_directory = py
             .detach(native_trusted_validation::default_trusted_bgen_validation_cache_directory)
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -395,6 +404,39 @@ fn flush_variant_major_dosage_batch<'py>(
     let stats_values = std::mem::take(stats_batch);
     compute_dosage_chunk_batch_method.call1((metadata_values, output_array_values, stats_values))?;
     Ok(())
+}
+
+fn record_native_dispatch_bgen_engine_constructing(
+    chunk_size: usize,
+    source_path: &str,
+    trusted_no_missing_diploid: bool,
+    variant_limit: Option<usize>,
+) -> PyResult<()> {
+    let chunk_size_value = i64::try_from(chunk_size)
+        .map_err(|_| PyValueError::new_err("BGEN chunk size exceeds native int64 capacity."))?;
+    let variant_limit_value = variant_limit
+        .map(|value| {
+            i64::try_from(value).map_err(|_| PyValueError::new_err("BGEN variant limit exceeds native int64 capacity."))
+        })
+        .transpose()?;
+    let payload = native_run_events::build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
+        chunk_size_value,
+        source_path,
+        trusted_no_missing_diploid,
+        variant_limit_value,
+    );
+    run_events::emit_run_diagnostic_event_payload(&payload)
+}
+
+fn record_native_dispatch_trusted_bgen_validation_started(
+    source_path: &str,
+    trusted_bgen_validation_mode: &str,
+) -> PyResult<()> {
+    let payload = native_run_events::build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
+        source_path,
+        trusted_bgen_validation_mode,
+    );
+    run_events::emit_run_diagnostic_event_payload(&payload)
 }
 
 impl Regenie2RunEngine {

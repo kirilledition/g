@@ -76,42 +76,35 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn parse_association_mode(value: &str) -> PyResult<native_host_policy::AssociationMode> {
-    match value {
-        "regenie2_linear" => Ok(native_host_policy::AssociationMode::Regenie2Linear),
-        "regenie2_binary" => Ok(native_host_policy::AssociationMode::Regenie2Binary),
-        unsupported_value => Err(PyValueError::new_err(format!(
-            "association_mode must be regenie2_linear or regenie2_binary, observed '{unsupported_value}'."
-        ))),
-    }
+    native_host_policy::AssociationMode::from_str_value(value).ok_or_else(|| {
+        enum_parse_error("association_mode", native_host_policy::AssociationMode::accepted_values(), value)
+    })
 }
 
 fn parse_device(value: &str) -> PyResult<native_host_policy::Device> {
-    match value {
-        "cpu" => Ok(native_host_policy::Device::Cpu),
-        "gpu" => Ok(native_host_policy::Device::Gpu),
-        unsupported_value => {
-            Err(PyValueError::new_err(format!("jax_device must be cpu or gpu, observed '{unsupported_value}'.")))
-        }
-    }
+    native_host_policy::Device::from_str_value(value)
+        .ok_or_else(|| enum_parse_error("jax_device", native_host_policy::Device::accepted_values(), value))
 }
 
 fn parse_gpu_genotype_format(value: &str) -> PyResult<native_host_policy::GpuGenotypeFormat> {
-    match value {
-        "auto" => Ok(native_host_policy::GpuGenotypeFormat::Auto),
-        "dosage" => Ok(native_host_policy::GpuGenotypeFormat::Dosage),
-        "packed8" => Ok(native_host_policy::GpuGenotypeFormat::Packed8),
-        unsupported_value => Err(PyValueError::new_err(format!(
-            "gpu_genotype_format must be auto, dosage, or packed8, observed '{unsupported_value}'."
-        ))),
-    }
+    native_host_policy::GpuGenotypeFormat::from_str_value(value).ok_or_else(|| {
+        enum_parse_error("gpu_genotype_format", native_host_policy::GpuGenotypeFormat::accepted_values(), value)
+    })
 }
 
 fn parse_multi_phenotype_sample_mode(value: &str) -> PyResult<native_host_policy::MultiPhenotypeSampleMode> {
-    match value {
-        "per-phenotype" => Ok(native_host_policy::MultiPhenotypeSampleMode::PerPhenotype),
-        "complete-case" => Ok(native_host_policy::MultiPhenotypeSampleMode::CompleteCase),
-        unsupported_value => Err(PyValueError::new_err(format!(
-            "multi_phenotype_sample_mode must be per-phenotype or complete-case, observed '{unsupported_value}'."
-        ))),
-    }
+    native_host_policy::MultiPhenotypeSampleMode::from_str_value(value).ok_or_else(|| {
+        enum_parse_error(
+            "multi_phenotype_sample_mode",
+            native_host_policy::MultiPhenotypeSampleMode::accepted_values(),
+            value,
+        )
+    })
+}
+
+fn enum_parse_error(field_name: &str, accepted_values: &[&str], observed_value: &str) -> PyErr {
+    PyValueError::new_err(format!(
+        "{field_name} must be one of {}, observed '{observed_value}'.",
+        accepted_values.join(", "),
+    ))
 }

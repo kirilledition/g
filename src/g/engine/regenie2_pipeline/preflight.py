@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-import g
+import g._core
 
 NATIVE_PREFLIGHT_VALIDATOR = g._core.NativePreflightValidator()
 
@@ -51,16 +51,14 @@ def emit_preflight_warnings(
     trusted_no_missing_diploid: bool,
 ) -> None:
     """Emit all non-fatal preflight warnings through native tracing."""
-    for warning_index, warning_message in enumerate(preflight_report.warning_messages):
-        g._core.record_preflight_warning_diagnostic_event(
-            message=warning_message,
-            chromosome_count=preflight_report.chromosome_count,
-            covariate_count=preflight_report.covariate_count,
-            preflight_scope=preflight_scope,
-            sample_count=preflight_report.sample_count,
-            trusted_no_missing_diploid=trusted_no_missing_diploid,
-            warning_index=warning_index,
-        )
+    g._core.record_preflight_warning_diagnostic_events(
+        list(preflight_report.warning_messages),
+        chromosome_count=preflight_report.chromosome_count,
+        covariate_count=preflight_report.covariate_count,
+        preflight_scope=preflight_scope,
+        sample_count=preflight_report.sample_count,
+        trusted_no_missing_diploid=trusted_no_missing_diploid,
+    )
 
 
 @dataclass(frozen=True)
@@ -212,15 +210,15 @@ def resolve_single_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> SingleTraitPreflightShape:
     """Validate single-trait shape policy through the native engine crate."""
-    native_shape = NATIVE_PREFLIGHT_VALIDATOR.validate_single_trait_preflight_shape(
+    sample_count, covariate_count = NATIVE_PREFLIGHT_VALIDATOR.validate_single_trait_preflight_shape(
         shape_count(phenotype_vector.shape, 0),
         int(covariate_matrix.ndim),
         shape_count(covariate_matrix.shape, 0),
         shape_count(covariate_matrix.shape, 1),
     )
     return SingleTraitPreflightShape(
-        sample_count=native_shape.sample_count,
-        covariate_count=native_shape.covariate_count,
+        sample_count=sample_count,
+        covariate_count=covariate_count,
     )
 
 
@@ -229,7 +227,7 @@ def resolve_multi_trait_preflight_shape(
     covariate_matrix: np.ndarray,
 ) -> MultiTraitPreflightShape:
     """Validate multi-trait shape policy through the native engine crate."""
-    native_shape = NATIVE_PREFLIGHT_VALIDATOR.validate_multi_trait_preflight_shape(
+    trait_count, sample_count, covariate_count = NATIVE_PREFLIGHT_VALIDATOR.validate_multi_trait_preflight_shape(
         int(phenotype_matrix.ndim),
         shape_count(phenotype_matrix.shape, 0),
         shape_count(phenotype_matrix.shape, 1),
@@ -238,9 +236,9 @@ def resolve_multi_trait_preflight_shape(
         shape_count(covariate_matrix.shape, 1),
     )
     return MultiTraitPreflightShape(
-        trait_count=native_shape.trait_count,
-        sample_count=native_shape.sample_count,
-        covariate_count=native_shape.covariate_count,
+        trait_count=trait_count,
+        sample_count=sample_count,
+        covariate_count=covariate_count,
     )
 
 
@@ -271,15 +269,17 @@ def build_preflight_report(
     trusted_no_missing_diploid: bool,
 ) -> PreflightReport:
     """Build the native-owned preflight report."""
-    native_report = NATIVE_PREFLIGHT_VALIDATOR.build_preflight_report(
-        sample_count,
-        covariate_count,
-        chromosome_count,
-        trusted_no_missing_diploid,
+    native_sample_count, native_covariate_count, native_chromosome_count, warning_messages = (
+        NATIVE_PREFLIGHT_VALIDATOR.build_preflight_report(
+            sample_count,
+            covariate_count,
+            chromosome_count,
+            trusted_no_missing_diploid,
+        )
     )
     return PreflightReport(
-        sample_count=native_report.sample_count,
-        covariate_count=native_report.covariate_count,
-        chromosome_count=native_report.chromosome_count,
-        warning_messages=tuple(native_report.warning_messages),
+        sample_count=native_sample_count,
+        covariate_count=native_covariate_count,
+        chromosome_count=native_chromosome_count,
+        warning_messages=tuple(warning_messages),
     )

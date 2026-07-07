@@ -73,7 +73,7 @@ def regenie(
         return events.run_artifacts_from_native_artifacts(native_artifacts)
     finally:
         if close_telemetry_session_on_exit:
-            native_telemetry_session = events.native_telemetry_session_handle(active_telemetry_session)
+            native_telemetry_session = active_telemetry_session.native_telemetry_session
             if native_telemetry_session is not None:
                 native_telemetry_session.finish_with_current_close_event_metadata()
 
@@ -283,7 +283,7 @@ def dispatch_one_phenotype_engine_pipeline(
                 ),
             ),
         )
-        events.record_phenotype_writer_finished_telemetry(
+        _core.record_phenotype_writer_finished_telemetry(
             telemetry_session,
             plan.association_mode.value,
             phenotype_run_plan.phenotype_name,
@@ -300,7 +300,7 @@ def dispatch_one_phenotype_engine_pipeline(
             gpu_genotype_format=plan.kernel_config.gpu_genotype_format,
         )
     )
-    events.record_phenotype_writer_finished_telemetry(
+    _core.record_phenotype_writer_finished_telemetry(
         telemetry_session,
         plan.association_mode.value,
         phenotype_run_plan.phenotype_name,
@@ -359,7 +359,7 @@ def dispatch_multi_phenotype_engine_pipeline(
                 phenotype_compute_groups=plan.phenotype_compute_groups,
             )
         )
-    events.record_multi_phenotype_writer_finished_telemetry(
+    _core.record_multi_phenotype_writer_finished_telemetry(
         telemetry_session,
         plan.association_mode.value,
         len(phenotype_run_plans),

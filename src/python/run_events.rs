@@ -1,13 +1,16 @@
 //! PyO3 adapters for runtime-owned run lifecycle events.
 
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
 use g_engine as native_schedule;
 use g_runtime as native_run_events;
 
-use super::{errors, logging, schedule};
+use super::{
+    callback_progress::{NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate},
+    errors, logging, schedule,
+};
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
@@ -228,23 +231,6 @@ impl NativeRunFailedEvent {
     }
 }
 
-#[pyfunction]
-pub fn build_run_completed_event(artifacts: &Bound<'_, PyAny>) -> PyResult<NativeRunCompletedEvent> {
-    let artifacts_payload = run_artifacts_payload_from_py(artifacts)?;
-    let event_payload = native_run_events::build_run_completed_event_from_artifacts(&artifacts_payload);
-    Ok(NativeRunCompletedEvent::new(event_payload))
-}
-
-#[pyfunction]
-pub fn build_run_interrupted_event(shutdown_request: &Bound<'_, PyAny>) -> PyResult<NativeRunInterruptedEvent> {
-    Ok(NativeRunInterruptedEvent::new(run_interrupted_event_payload_from_shutdown_request(shutdown_request)?))
-}
-
-#[pyfunction]
-pub fn build_run_failed_event(error: &Bound<'_, PyAny>) -> PyResult<NativeRunFailedEvent> {
-    Ok(NativeRunFailedEvent::new(run_failed_event_payload_from_error(error)?))
-}
-
 fn record_runner_run_started_telemetry_event(
     telemetry_session: &Bound<'_, PyAny>,
     association_mode: &str,
@@ -375,6 +361,231 @@ pub fn record_execution_plan_prepared_events(
         variant_limit,
         device,
     )
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
+pub fn record_callback_progress_update_telemetry(
+    py: Python<'_>,
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    progress_update: PyRef<'_, NativeCallbackProgressUpdate>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    let telemetry_plan = progress_update.telemetry_plan_value();
+    for progress_event in telemetry_plan.event_values() {
+        emit_callback_progress_event(py, &native_session_handle, &progress_event)?;
+    }
+    let progress_record = telemetry_plan.progress_value();
+    let progress_fields = PyDict::new(py);
+    progress_fields.set_item("chromosome", progress_record.chromosome_value())?;
+    progress_fields.set_item("chunk_identifier", progress_record.chunk_identifier_value())?;
+    progress_fields.set_item("variant_start_index", progress_record.variant_start_index_value())?;
+    progress_fields.set_item("variant_stop_index", progress_record.variant_stop_index_value())?;
+    progress_fields.set_item("variant_count", progress_record.variant_count_value())?;
+    native_session_handle
+        .call_method1("emit_progress", (progress_record.processed_chunk_count_value(), progress_fields))?;
+    Ok(())
+}
+
+#[pyfunction]
+pub fn record_callback_progress_event_telemetry(
+    py: Python<'_>,
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    progress_event: Option<PyRef<'_, NativeCallbackProgressTelemetryEvent>>,
+) -> PyResult<()> {
+    let Some(progress_event) = progress_event else {
+        return Ok(());
+    };
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    emit_callback_progress_event(py, &native_session_handle, &progress_event)
+}
+
+#[pyfunction]
+pub fn record_binary_correction_summary_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    summary_payload: Option<&Bound<'_, PyDict>>,
+) -> PyResult<()> {
+    let Some(summary_payload) = summary_payload else {
+        return Ok(());
+    };
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1("emit_binary_correction_summary_event", (summary_payload,))?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_phenotype_writer_finished_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype: &str,
+    final_output_path: Option<String>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1("emit_phenotype_writer_finished_event", (association_mode, phenotype, final_output_path))?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_multi_phenotype_writer_finished_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype_count: i64,
+    final_output_paths: Vec<Option<String>>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_multi_phenotype_writer_finished_event",
+        (association_mode, phenotype_count, final_output_paths),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_sample_alignment_completed_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+    sample_count: Option<i64>,
+    covariate_count: Option<i64>,
+    phenotype_group_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_sample_alignment_completed_event",
+        (association_mode, phenotype, phenotype_count, sample_count, covariate_count, phenotype_group_count),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_prediction_source_loaded_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle
+        .call_method1("emit_prediction_source_loaded_event", (association_mode, phenotype, phenotype_count))?;
+    Ok(())
+}
+
+#[pyfunction]
+pub fn record_single_trait_preflight_completed_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype: &str,
+    sample_count: i64,
+    covariate_count: i64,
+    chromosome_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_single_trait_preflight_completed_event",
+        (association_mode, phenotype, sample_count, covariate_count, chromosome_count),
+    )?;
+    Ok(())
+}
+
+#[pyfunction]
+pub fn record_multi_phenotype_preflight_completed_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    phenotype_count: i64,
+    sample_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_multi_phenotype_preflight_completed_event",
+        (association_mode, phenotype_count, sample_count),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_multi_phenotype_sample_summary_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    multi_phenotype_sample_mode: &str,
+    sample_counts: Vec<i64>,
+    sample_set_fingerprints: Vec<Option<String>>,
+    phenotype_group_count: i64,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_multi_phenotype_sample_summary_event",
+        (association_mode, multi_phenotype_sample_mode, sample_counts, sample_set_fingerprints, phenotype_group_count),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_association_backend_selected_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    association_backend_kind: &str,
+    device: &str,
+    genotype_format: &str,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_association_backend_selected_event",
+        (association_mode, association_backend_kind, device, genotype_format, phenotype, phenotype_count),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+#[pyfunction]
+pub fn record_bgen_engine_opened_telemetry(
+    telemetry_session: Option<&Bound<'_, PyAny>>,
+    association_mode: &str,
+    association_backend_kind: &str,
+    sample_count: i64,
+    variant_count: i64,
+    phenotype: Option<String>,
+    phenotype_count: Option<i64>,
+) -> PyResult<()> {
+    let Some(native_session_handle) = optional_native_session_handle_from_optional(telemetry_session)? else {
+        return Ok(());
+    };
+    native_session_handle.call_method1(
+        "emit_bgen_engine_opened_event",
+        (association_mode, association_backend_kind, sample_count, variant_count, phenotype, phenotype_count),
+    )?;
+    Ok(())
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -609,25 +820,6 @@ pub fn record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_e
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
-pub fn record_native_cli_output_diagnostic_events(
-    stdout_text: &str,
-    stderr_text: &str,
-    max_payload_chars: i64,
-) -> PyResult<()> {
-    if !stdout_text.is_empty() {
-        let stdout_payload =
-            native_run_events::build_native_cli_stdout_diagnostic_payload(stdout_text, max_payload_chars);
-        emit_run_diagnostic_event_payload(&stdout_payload)?;
-    }
-    if !stderr_text.is_empty() {
-        let stderr_payload =
-            native_run_events::build_native_cli_stderr_diagnostic_payload(stderr_text, max_payload_chars);
-        emit_run_diagnostic_event_payload(&stderr_payload)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn record_native_runtime_knobs_configured_diagnostic_event(
     bgen_decode_tile_variant_count: i64,
     threads: Option<i64>,
@@ -653,25 +845,29 @@ pub fn record_runner_metadata_artifacts_finalized_diagnostic_event(
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
-pub fn record_preflight_warning_diagnostic_event(
-    message: &str,
+pub fn record_preflight_warning_diagnostic_events(
+    messages: Vec<String>,
     chromosome_count: i64,
     covariate_count: i64,
     preflight_scope: &str,
     sample_count: i64,
     trusted_no_missing_diploid: bool,
-    warning_index: i64,
 ) -> PyResult<()> {
-    let payload = native_run_events::build_preflight_warning_diagnostic_payload(
-        message,
-        chromosome_count,
-        covariate_count,
-        preflight_scope,
-        sample_count,
-        trusted_no_missing_diploid,
-        warning_index,
-    );
-    emit_run_diagnostic_event_payload(&payload)
+    for (warning_index, message) in messages.into_iter().enumerate() {
+        let warning_index_value = i64::try_from(warning_index)
+            .map_err(|_| PyValueError::new_err("Preflight warning index exceeds native int64 capacity."))?;
+        let payload = native_run_events::build_preflight_warning_diagnostic_payload(
+            &message,
+            chromosome_count,
+            covariate_count,
+            preflight_scope,
+            sample_count,
+            trusted_no_missing_diploid,
+            warning_index_value,
+        );
+        emit_run_diagnostic_event_payload(&payload)?;
+    }
+    Ok(())
 }
 
 #[pyfunction]
@@ -720,30 +916,6 @@ pub fn record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
         phenotype_count,
         phenotype_name,
         pipeline_label,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_pipeline_output_resume_committed_chunks_diagnostic_event(
-    committed_chunk_count: i64,
-    output_index: i64,
-) -> PyResult<()> {
-    let payload = native_run_events::build_pipeline_output_resume_committed_chunks_diagnostic_payload(
-        committed_chunk_count,
-        output_index,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_pipeline_output_writer_sessions_create_started_diagnostic_event(
-    association_mode: &str,
-    output_count: i64,
-) -> PyResult<()> {
-    let payload = native_run_events::build_pipeline_output_writer_sessions_create_started_diagnostic_payload(
-        association_mode,
-        output_count,
     );
     emit_run_diagnostic_event_payload(&payload)
 }
@@ -985,34 +1157,6 @@ pub fn record_pipeline_single_trait_preflight_completed_diagnostic_event(
 }
 
 #[pyfunction]
-pub fn record_native_dispatch_bgen_engine_constructing_diagnostic_event(
-    chunk_size: i64,
-    source_path: &str,
-    trusted_no_missing_diploid: bool,
-    variant_limit: Option<i64>,
-) -> PyResult<()> {
-    let payload = native_run_events::build_native_dispatch_bgen_engine_constructing_diagnostic_payload(
-        chunk_size,
-        source_path,
-        trusted_no_missing_diploid,
-        variant_limit,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_dispatch_trusted_bgen_validation_started_diagnostic_event(
-    source_path: &str,
-    trusted_bgen_validation_mode: &str,
-) -> PyResult<()> {
-    let payload = native_run_events::build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload(
-        source_path,
-        trusted_bgen_validation_mode,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
 pub fn record_native_dispatch_callback_drain_started_diagnostic_event() -> PyResult<()> {
     let payload = native_run_events::build_native_dispatch_callback_drain_started_diagnostic_payload();
     emit_run_diagnostic_event_payload(&payload)
@@ -1086,82 +1230,9 @@ pub fn record_native_dispatch_pipeline_finished_diagnostic_event(
     emit_run_diagnostic_event_payload(&payload)
 }
 
-#[pyfunction]
-pub fn record_native_dispatch_writer_sessions_finish_started_diagnostic_event(
-    requested_thread_count: i64,
-    writer_session_count: i64,
-) -> PyResult<()> {
-    let payload = native_run_events::build_native_dispatch_writer_sessions_finish_started_diagnostic_payload(
-        requested_thread_count,
-        writer_session_count,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event(
-    requested_thread_count: i64,
-    signal_exit_code: i64,
-    signal_name: &str,
-    signal_number: i64,
-    writer_session_count: i64,
-) -> PyResult<()> {
-    let payload = native_run_events::build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload(
-        requested_thread_count,
-        signal_exit_code,
-        signal_name,
-        signal_number,
-        writer_session_count,
-    );
-    emit_run_diagnostic_event_payload(&payload)
-}
-
-#[pyfunction]
-pub fn render_and_record_run_completed_lines<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let event_payload = run_completed_event_from_py(event)?;
-    let lines = native_run_events::render_run_completed_lines(&event_payload);
-    for line in &lines {
-        let payload = native_run_events::build_native_cli_completed_line_diagnostic_payload(line);
-        emit_run_diagnostic_event_payload(&payload)?;
-    }
-    PyTuple::new(py, lines)
-}
-
-#[pyfunction]
-pub fn render_and_record_run_interrupted_lines<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let event_payload = run_interrupted_event_from_py(event)?;
-    let lines = native_run_events::render_run_interrupted_lines(&event_payload);
-    for line in &lines {
-        let payload = native_run_events::build_native_cli_interrupted_line_diagnostic_payload(line);
-        emit_run_diagnostic_event_payload(&payload)?;
-    }
-    PyTuple::new(py, lines)
-}
-
-#[pyfunction]
-pub fn render_and_record_run_failed_lines<'py>(
-    py: Python<'py>,
-    event: &Bound<'py, PyAny>,
-) -> PyResult<Bound<'py, PyTuple>> {
-    let event_payload = run_failed_event_from_py(event)?;
-    let lines = native_run_events::render_run_failed_lines(&event_payload);
-    for line in &lines {
-        let payload = native_run_events::build_native_cli_failed_line_diagnostic_payload(line);
-        let _ = emit_run_diagnostic_event_payload(&payload);
-    }
-    PyTuple::new(py, lines)
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_run_lifecycle_exports(module)?;
     register_runner_diagnostic_exports(module)?;
-    register_cli_and_runtime_diagnostic_exports(module)?;
     register_output_and_preflight_diagnostic_exports(module)?;
     register_pipeline_diagnostic_exports(module)?;
     register_native_dispatch_diagnostic_exports(module)?;
@@ -1174,17 +1245,23 @@ fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> 
     module.add_class::<NativeRunCompletedEvent>()?;
     module.add_class::<NativeRunInterruptedEvent>()?;
     module.add_class::<NativeRunFailedEvent>()?;
-    module.add_function(wrap_pyfunction!(build_run_completed_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_interrupted_event, module)?)?;
-    module.add_function(wrap_pyfunction!(build_run_failed_event, module)?)?;
-    module.add_function(wrap_pyfunction!(render_and_record_run_completed_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_and_record_run_interrupted_lines, module)?)?;
-    module.add_function(wrap_pyfunction!(render_and_record_run_failed_lines, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_started_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_interrupted_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_failed_events, module)?)?;
     module.add_function(wrap_pyfunction!(attach_run_metadata_and_record_completed_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_execution_plan_prepared_events, module)?)?;
+    module.add_function(wrap_pyfunction!(record_callback_progress_update_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_callback_progress_event_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_binary_correction_summary_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_phenotype_writer_finished_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_phenotype_writer_finished_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_single_trait_preflight_completed_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_phenotype_preflight_completed_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry, module)?)?;
+    module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry, module)?)?;
     module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage_and_record_events, module)?)?;
     module.add_function(wrap_pyfunction!(
         plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events,
@@ -1219,13 +1296,8 @@ fn register_runner_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<
     Ok(())
 }
 
-fn register_cli_and_runtime_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_native_cli_output_diagnostic_events, module)?)?;
-    Ok(())
-}
-
 fn register_output_and_preflight_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_preflight_warning_diagnostic_event, module)?)?;
+    module.add_function(wrap_pyfunction!(record_preflight_warning_diagnostic_events, module)?)?;
     Ok(())
 }
 
@@ -1233,11 +1305,6 @@ fn register_pipeline_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResul
     module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_open_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_bgen_engine_opened_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_prevalidated_bgen_engine_used_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(record_pipeline_output_resume_committed_chunks_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        record_pipeline_output_writer_sessions_create_started_diagnostic_event,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_phenotype_sample_summary_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_pipeline_multi_trait_input_load_started_diagnostic_event, module)?)?;
@@ -1268,25 +1335,12 @@ fn register_pipeline_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResul
 }
 
 fn register_native_dispatch_diagnostic_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_function(wrap_pyfunction!(record_native_dispatch_bgen_engine_constructing_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        record_native_dispatch_trusted_bgen_validation_started_diagnostic_event,
-        module
-    )?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_callback_drain_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_started_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_finished_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_interrupted_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_delivery_failed_diagnostic_event, module)?)?;
     module.add_function(wrap_pyfunction!(record_native_dispatch_pipeline_finished_diagnostic_event, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        record_native_dispatch_writer_sessions_finish_started_diagnostic_event,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        record_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_event,
-        module
-    )?)?;
     Ok(())
 }
 
@@ -1394,6 +1448,25 @@ fn optional_native_session_handle<'py>(telemetry_session: &Bound<'py, PyAny>) ->
         return Ok(None);
     }
     telemetry_session.getattr("native_session_handle").map(Some)
+}
+
+fn optional_native_session_handle_from_optional<'py>(
+    telemetry_session: Option<&Bound<'py, PyAny>>,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    let Some(telemetry_session) = telemetry_session else {
+        return Ok(None);
+    };
+    optional_native_session_handle(telemetry_session)
+}
+
+fn emit_callback_progress_event(
+    py: Python<'_>,
+    native_session_handle: &Bound<'_, PyAny>,
+    progress_event: &NativeCallbackProgressTelemetryEvent,
+) -> PyResult<()> {
+    let progress_event_object = Py::new(py, progress_event.clone())?;
+    native_session_handle.call_method1("emit_callback_progress_event", (progress_event_object,))?;
+    Ok(())
 }
 
 pub(crate) fn run_completed_telemetry_fields_to_py_dict<'py>(

@@ -72,10 +72,10 @@ success and graceful-interruption messages are derived from these typed
 lifecycle events.
 
 Native frontend diagnostics are also included as structured tracing events for
-run paths after diagnostics are initialized. `g.runner.cli` prints user-facing
-native stdout/stderr text exactly once, and mirrors bounded stdout/stderr
-previews plus run-completion/interruption rendering lines through the native
-tracing bridge:
+run paths after diagnostics are initialized. The native CLI driver owns
+telemetry setup, frontend-output recording, terminal result construction, and
+telemetry close handling. `g.runner.cli` only prints the returned stdout/stderr
+chunks exactly once through Python `sys.stdout` and `sys.stderr`.
 
 - `native_cli_stdout`
 - `native_cli_stderr`

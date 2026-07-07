@@ -18,7 +18,6 @@ from g.engine.regenie2_pipeline import (
     outputs,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -132,7 +131,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=phenotype_count,
         sample_count=sample_count,
     )
-    events.record_sample_alignment_completed_telemetry(
+    _core.record_sample_alignment_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         None,
@@ -151,7 +150,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         sample_counts_differ=len(set(sample_counts)) > 1,
         sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,
     )
-    events.record_multi_phenotype_sample_summary_telemetry(
+    _core.record_multi_phenotype_sample_summary_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         types.MultiPhenotypeSampleMode.COMPLETE_CASE.value,

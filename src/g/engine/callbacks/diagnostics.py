@@ -39,7 +39,7 @@ def record_null_logistic_chromosome_diagnostics(
 
     host_values = typing.cast("dict[str, object]", jax.device_get(host_value_requests))
     convergence_flags = np.asarray(host_values["converged"], dtype=np.bool_)
-    native_policy_plan = _core.enforce_null_logistic_nonconvergence_from_array(
+    nonconverged_count = _core.enforce_null_logistic_nonconvergence_from_array(
         chromosome=chromosome,
         convergence_values=convergence_flags,
         policy=policy.value,
@@ -67,7 +67,7 @@ def record_null_logistic_chromosome_diagnostics(
                 phenotype_names=phenotype_names,
                 correction_method=correction_method.value,
             )
-    return native_policy_plan.nonconverged_count
+    return nonconverged_count
 
 
 def record_binary_chunk_diagnostics_from_count(

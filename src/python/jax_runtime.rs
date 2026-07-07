@@ -12,18 +12,8 @@ use g_runtime as native_jax_runtime;
 use super::logging;
 
 #[pyclass]
-pub(crate) struct NativeJaxRuntimeDiagnosticRecordPlan {
-    plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan,
-}
-
-#[pyclass]
 pub(crate) struct NativeJaxRuntimeSetupReport {
     setup: native_jax_runtime::JaxRuntimeSetupPayload,
-}
-
-#[pyclass]
-pub(crate) struct NativeNvidiaDriverProbePaths {
-    paths: native_jax_runtime::NvidiaDriverProbePathsPayload,
 }
 
 #[pyclass]
@@ -34,24 +24,6 @@ pub(crate) struct NativeJaxRuntimeDiagnosticEvent {
 #[pyclass]
 pub(crate) struct NativeJaxRuntimeDiagnosticField {
     field: native_jax_runtime::JaxRuntimeDiagnosticFieldPayload,
-}
-
-#[pymethods]
-impl NativeJaxRuntimeDiagnosticRecordPlan {
-    #[getter]
-    fn logging_level_name(&self) -> &str {
-        &self.plan.logging_level_name
-    }
-
-    #[getter]
-    fn should_emit_telemetry(&self) -> bool {
-        self.plan.should_emit_telemetry
-    }
-
-    #[getter]
-    fn telemetry_level(&self) -> &str {
-        &self.plan.telemetry_level
-    }
 }
 
 #[pymethods]
@@ -118,24 +90,6 @@ impl NativeJaxRuntimeSetupReport {
 }
 
 #[pymethods]
-impl NativeNvidiaDriverProbePaths {
-    #[getter]
-    fn control_device_path(&self) -> &str {
-        &self.paths.control_device_path
-    }
-
-    #[getter]
-    fn uvm_device_path(&self) -> &str {
-        &self.paths.uvm_device_path
-    }
-
-    #[getter]
-    fn driver_directory_path(&self) -> &str {
-        &self.paths.driver_directory_path
-    }
-}
-
-#[pymethods]
 impl NativeJaxRuntimeDiagnosticEvent {
     #[getter]
     fn event_name(&self) -> &str {
@@ -178,12 +132,6 @@ impl NativeJaxRuntimeDiagnosticField {
                 Ok(value.into_pyobject(py)?.into_any().unbind())
             }
         }
-    }
-}
-
-impl NativeJaxRuntimeDiagnosticRecordPlan {
-    fn from_plan(plan: native_jax_runtime::JaxRuntimeDiagnosticRecordPlan) -> Self {
-        Self { plan }
     }
 }
 
@@ -248,74 +196,17 @@ impl NativeJaxRuntimeSetupSession {
         self.lock_session()?.create_cache_directory_if_configured().map_err(PyOSError::new_err)
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn validate_gpu_if_configured<'py>(
-        &self,
-        py: Python<'py>,
-        control_device_path: String,
-        uvm_device_path: String,
-        driver_directory_path: String,
-    ) -> PyResult<NativeJaxRuntimeSetupReport> {
-        if !self.lock_session()?.side_effect_plan().should_validate_gpu {
-            let session = self.lock_session()?;
-            return Ok(NativeJaxRuntimeSetupReport { setup: session.setup().clone() });
-        }
-        let nvidia_driver_visible = native_jax_runtime::nvidia_driver_files_are_visible(
-            Path::new(&control_device_path),
-            Path::new(&uvm_device_path),
-            Path::new(&driver_directory_path),
-        );
-        if !nvidia_driver_visible {
-            return self.complete_gpu_validation_or_raise(py, false, false, &[]);
-        }
-        let devices = match observe_jax_devices(py) {
-            Ok(devices) => devices,
-            Err(_error) => return self.complete_gpu_validation_or_raise(py, true, true, &[]),
-        };
-        self.complete_gpu_validation_or_raise(py, true, false, &devices)
-    }
-
     fn validate_gpu_if_configured_with_default_probe_paths<'py>(
         &self,
         py: Python<'py>,
     ) -> PyResult<NativeJaxRuntimeSetupReport> {
         let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
-        self.validate_gpu_if_configured(
+        self.validate_gpu_if_configured_for_paths(
             py,
-            probe_paths.control_device_path,
-            probe_paths.uvm_device_path,
-            probe_paths.driver_directory_path,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn nvidia_driver_files_are_visible(
-        &self,
-        control_device_path: String,
-        uvm_device_path: String,
-        driver_directory_path: String,
-    ) -> PyResult<bool> {
-        let _session = self.lock_session()?;
-        Ok(native_jax_runtime::nvidia_driver_files_are_visible(
-            Path::new(&control_device_path),
-            Path::new(&uvm_device_path),
-            Path::new(&driver_directory_path),
-        ))
-    }
-
-    fn nvidia_driver_files_are_visible_with_default_probe_paths(&self) -> PyResult<bool> {
-        let _session = self.lock_session()?;
-        let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
-        Ok(native_jax_runtime::nvidia_driver_files_are_visible(
             Path::new(&probe_paths.control_device_path),
             Path::new(&probe_paths.uvm_device_path),
             Path::new(&probe_paths.driver_directory_path),
-        ))
-    }
-
-    fn default_nvidia_driver_probe_paths(&self) -> PyResult<NativeNvidiaDriverProbePaths> {
-        let _session = self.lock_session()?;
-        Ok(NativeNvidiaDriverProbePaths { paths: native_jax_runtime::default_nvidia_driver_probe_paths() })
+        )
     }
 }
 
@@ -330,6 +221,32 @@ impl NativeJaxRuntimeSetupSession {
 
     fn lock_session(&self) -> PyResult<MutexGuard<'_, native_jax_runtime::JaxRuntimeSetupSession>> {
         self.session.lock().map_err(|_| PyValueError::new_err("JAX runtime setup session mutex was poisoned."))
+    }
+
+    fn validate_gpu_if_configured_for_paths<'py>(
+        &self,
+        py: Python<'py>,
+        control_device_path: &Path,
+        uvm_device_path: &Path,
+        driver_directory_path: &Path,
+    ) -> PyResult<NativeJaxRuntimeSetupReport> {
+        if !self.lock_session()?.side_effect_plan().should_validate_gpu {
+            let session = self.lock_session()?;
+            return Ok(NativeJaxRuntimeSetupReport { setup: session.setup().clone() });
+        }
+        let nvidia_driver_visible = native_jax_runtime::nvidia_driver_files_are_visible(
+            control_device_path,
+            uvm_device_path,
+            driver_directory_path,
+        );
+        if !nvidia_driver_visible {
+            return self.complete_gpu_validation_or_raise(py, false, false, &[]);
+        }
+        let devices = match observe_jax_devices(py) {
+            Ok(devices) => devices,
+            Err(_error) => return self.complete_gpu_validation_or_raise(py, true, true, &[]),
+        };
+        self.complete_gpu_validation_or_raise(py, true, false, &devices)
     }
 
     fn complete_gpu_validation_or_raise<'py>(
@@ -356,7 +273,7 @@ pub(crate) fn record_jax_runtime_diagnostic_event(
     py: Python<'_>,
     event: &Bound<'_, PyAny>,
     telemetry_session: &Bound<'_, PyAny>,
-) -> PyResult<NativeJaxRuntimeDiagnosticRecordPlan> {
+) -> PyResult<()> {
     let native_telemetry_session = optional_native_telemetry_session(py, telemetry_session)?;
     let plan = record_jax_runtime_diagnostic_log_plan(event, native_telemetry_session.is_some())?;
     if plan.should_emit_telemetry {
@@ -371,7 +288,7 @@ pub(crate) fn record_jax_runtime_diagnostic_event(
             Some(&keyword_arguments),
         )?;
     }
-    Ok(NativeJaxRuntimeDiagnosticRecordPlan::from_plan(plan))
+    Ok(())
 }
 
 fn optional_native_telemetry_session<'py>(
@@ -463,10 +380,8 @@ fn jax_runtime_diagnostic_value_from_py(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeDiagnosticEvent>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticField>()?;
-    module.add_class::<NativeJaxRuntimeDiagnosticRecordPlan>()?;
     module.add_class::<NativeJaxRuntimeSetupReport>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
-    module.add_class::<NativeNvidiaDriverProbePaths>()?;
     module.add_function(wrap_pyfunction!(record_jax_runtime_diagnostic_event, module)?)?;
     Ok(())
 }

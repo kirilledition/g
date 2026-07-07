@@ -60,10 +60,11 @@ pub(crate) fn resolve_telemetry_paths(
     profile_summary_json: Option<String>,
     stage_timings_json: Option<String>,
 ) -> PyResult<NativeTelemetryPaths> {
+    let parsed_telemetry_mode = parse_telemetry_mode(&telemetry_mode)?;
     let payload = native_telemetry_policy::resolve_telemetry_paths(
         Path::new(&output_path),
         output_run_directory.as_deref().map(Path::new),
-        &telemetry_mode,
+        parsed_telemetry_mode,
         log_dir.as_deref().map(Path::new),
         log_file.as_deref().map(Path::new),
         trace_file.as_deref().map(Path::new),
@@ -72,6 +73,15 @@ pub(crate) fn resolve_telemetry_paths(
     )
     .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(NativeTelemetryPaths { payload })
+}
+
+pub(crate) fn parse_telemetry_mode(telemetry_mode: &str) -> PyResult<native_telemetry_policy::TelemetryMode> {
+    native_telemetry_policy::TelemetryMode::from_str_value(telemetry_mode).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "telemetry_mode must be one of {}, observed '{telemetry_mode}'.",
+            native_telemetry_policy::TelemetryMode::accepted_values().join(", "),
+        ))
+    })
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

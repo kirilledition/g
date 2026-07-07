@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use numpy::ndarray::IxDyn;
-use numpy::{dtype, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods};
+use numpy::{PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};

@@ -36,6 +36,30 @@ pub enum SampleKeyMode {
     FidIid,
 }
 
+impl SampleKeyMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Iid => "iid",
+            Self::FidIid => "fid_iid",
+        }
+    }
+
+    #[must_use]
+    pub fn from_str_value(value: &str) -> Option<Self> {
+        match value {
+            "iid" => Some(Self::Iid),
+            "fid_iid" => Some(Self::FidIid),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn accepted_values() -> &'static [&'static str] {
+        &["iid", "fid_iid"]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlignedSampleData {
     pub sample_indices: Vec<i64>,

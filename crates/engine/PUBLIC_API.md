@@ -6,7 +6,7 @@ Cross-domain orchestration: genotype/input/output/runtime coordination, scheduli
 
 ## Public types
 
-Engine coordinator/report DTOs, `EngineError`/`EngineResult`, backend trait/result/view types, callback progress/summary plans, preflight payloads, scheduling plans, output initialization state, and `Regenie2RunEngineCore`.
+Engine coordinator/report DTOs, `EngineError`/`EngineResult`, backend trait/result/view types, callback progress/summary plans, preflight payloads, scheduling plans with typed action enums, output initialization state, and `Regenie2RunEngineCore`.
 
 ## Public functions
 

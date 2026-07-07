@@ -3,11 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::schedule::ScheduleError;
-
-const OUTPUT_STATISTIC_DTYPE_FLOAT32: &str = "float32";
-const OUTPUT_STATISTIC_DTYPE_FLOAT64: &str = "float64";
-pub(crate) const REGENIE2_NATIVE_CHUNK_WRITE_METHOD: &str = "write_regenie2_native_chunk";
-pub(crate) const REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD: &str = "write_regenie2_native_chunk_f64";
+use g_plan::FloatingPointDtype;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiTraitChunkWritePlan {
@@ -47,7 +43,6 @@ impl WriterFinishExecutionPlan {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SingleTraitOutputWritePlan {
-    pub method_name: String,
     pub uses_float64_native_writer: bool,
 }
 
@@ -144,48 +139,26 @@ pub fn plan_writer_finish_execution(
     Ok(WriterFinishExecutionPlan { writer_session_count, thread_count })
 }
 
-fn output_statistic_dtype_is_float64(output_statistic_dtype: &str) -> Result<bool, ScheduleError> {
-    match output_statistic_dtype {
-        OUTPUT_STATISTIC_DTYPE_FLOAT32 => Ok(false),
-        OUTPUT_STATISTIC_DTYPE_FLOAT64 => Ok(true),
-        _ => Err(ScheduleError::UnsupportedOutputStatisticDtype {
-            output_statistic_dtype: output_statistic_dtype.to_string(),
-        }),
-    }
-}
-
 /// Plan the Python method used for one single-trait output write.
-///
-/// # Errors
-///
-/// Returns an error when the output statistic dtype is unsupported.
+#[must_use]
 pub fn plan_single_trait_output_write(
     is_native_writer_session: bool,
-    output_statistic_dtype: &str,
-) -> Result<SingleTraitOutputWritePlan, ScheduleError> {
-    let is_float64_output_dtype = output_statistic_dtype_is_float64(output_statistic_dtype)?;
+    output_statistic_dtype: FloatingPointDtype,
+) -> SingleTraitOutputWritePlan {
+    let is_float64_output_dtype = output_statistic_dtype == FloatingPointDtype::Float64;
     let uses_float64_native_writer = is_native_writer_session && is_float64_output_dtype;
-    let method_name = if uses_float64_native_writer {
-        REGENIE2_NATIVE_CHUNK_WRITE_F64_METHOD
-    } else {
-        REGENIE2_NATIVE_CHUNK_WRITE_METHOD
-    }
-    .to_string();
-    Ok(SingleTraitOutputWritePlan { method_name, uses_float64_native_writer })
+    SingleTraitOutputWritePlan { uses_float64_native_writer }
 }
 
 /// Plan the native bulk writer path for one multi-trait output write.
-///
-/// # Errors
-///
-/// Returns an error when the output statistic dtype is unsupported.
+#[must_use]
 pub fn plan_multi_trait_output_write(
     active_trait_count: usize,
     all_writer_sessions_native: bool,
-    output_statistic_dtype: &str,
-) -> Result<MultiTraitOutputWritePlan, ScheduleError> {
-    let is_float64_output_dtype = output_statistic_dtype_is_float64(output_statistic_dtype)?;
+    output_statistic_dtype: FloatingPointDtype,
+) -> MultiTraitOutputWritePlan {
+    let is_float64_output_dtype = output_statistic_dtype == FloatingPointDtype::Float64;
     let use_native_multi_writer = active_trait_count > 0 && all_writer_sessions_native;
     let uses_float64_native_writer = use_native_multi_writer && is_float64_output_dtype;
-    Ok(MultiTraitOutputWritePlan { active_trait_count, use_native_multi_writer, uses_float64_native_writer })
+    MultiTraitOutputWritePlan { active_trait_count, use_native_multi_writer, uses_float64_native_writer }
 }

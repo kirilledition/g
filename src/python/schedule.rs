@@ -74,14 +74,6 @@ pub(crate) struct NativeMultiTraitChunkWritePlanner {
 }
 
 #[pyclass]
-pub(crate) struct NativeBgenDeliveryCleanupPlan {
-    inner: native_schedule::BgenDeliveryCleanupPlan,
-}
-
-#[pyclass]
-pub(crate) struct NativeBgenDeliveryCleanupPlanner;
-
-#[pyclass]
 pub(crate) struct NativeBgenDeliveryPolicy {
     #[pyo3(get)]
     effective_trusted_no_missing_diploid: bool,
@@ -153,16 +145,6 @@ pub(crate) struct NativeDosageBufferPoolObservationPlan {
 }
 
 #[pyclass]
-pub(crate) struct NativeDosageBufferPoolState {
-    inner: native_schedule::DosageBufferPoolState,
-}
-
-#[pyclass]
-pub(crate) struct NativeResultInFlightSlotState {
-    inner: native_schedule::ResultInFlightSlotState,
-}
-
-#[pyclass]
 pub(crate) struct NativeResultInFlightAcquireAttemptPlan {
     inner: native_schedule::ResultInFlightAcquireAttemptPlan,
 }
@@ -217,48 +199,27 @@ pub(crate) struct NativeDosageWorkItemStageDurationPlan {
     inner: native_schedule::DosageWorkItemStageDurationPlan,
 }
 
-#[pyclass]
-pub(crate) struct NativeCallbackWorkerLifecycleState {
-    inner: native_schedule::CallbackWorkerLifecycleState,
-}
-
-#[pyclass]
-pub(crate) struct NativeCallbackWorkerStartPlan {
-    inner: native_schedule::CallbackWorkerStartPlan,
-}
-
-#[pyclass]
 pub(crate) struct NativeCallbackWorkerStartAttemptPlan {
     inner: native_schedule::CallbackWorkerStartAttemptPlan,
 }
 
-#[pyclass]
-pub(crate) struct NativeCallbackWorkerShutdownTimeouts {
-    inner: native_schedule::CallbackWorkerShutdownTimeouts,
-}
-
-#[pyclass]
 pub(crate) struct NativeCallbackWorkerJoinPlan {
     inner: native_schedule::CallbackWorkerJoinPlan,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackWorkerStopPlan {
     inner: native_schedule::CallbackWorkerStopPlan,
 }
 
-#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub(crate) struct NativeCallbackWorkerFinishPlan {
     inner: native_schedule::CallbackWorkerFinishPlan,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackWorkerAbortPlan {
     inner: native_schedule::CallbackWorkerAbortPlan,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackWorkerStopPollPlan {
     inner: native_schedule::CallbackWorkerStopPollPlan,
 }
@@ -266,929 +227,6 @@ pub(crate) struct NativeCallbackWorkerStopPollPlan {
 #[pyclass]
 pub(crate) struct NativeCallbackWorkerErrorRaisePlan {
     inner: native_schedule::CallbackWorkerErrorRaisePlan,
-}
-
-#[pyclass]
-pub(crate) struct NativeCallbackWorkerErrorUpdatePlan {
-    inner: native_schedule::CallbackWorkerErrorUpdatePlan,
-}
-
-#[pymethods]
-impl NativeDosageBufferPoolState {
-    #[new]
-    fn new(buffer_limit: usize) -> Self {
-        Self { inner: native_schedule::DosageBufferPoolState::new(buffer_limit) }
-    }
-
-    #[getter]
-    fn buffer_limit(&self) -> usize {
-        self.inner.buffer_limit()
-    }
-
-    #[getter]
-    fn allocated_count(&self) -> usize {
-        self.inner.allocated_count()
-    }
-
-    #[getter]
-    fn buffer_identifiers(&self) -> Vec<usize> {
-        self.inner.buffer_identifiers()
-    }
-
-    fn has_available_slot(&self) -> bool {
-        self.inner.has_available_slot()
-    }
-
-    fn owns_buffer(&self, buffer_identifier: usize) -> bool {
-        self.inner.owns_buffer(buffer_identifier)
-    }
-
-    fn register_buffer(&mut self, buffer_identifier: usize) -> bool {
-        self.inner.register_buffer(buffer_identifier)
-    }
-
-    fn discard_buffer(&mut self, buffer_identifier: usize) -> bool {
-        self.inner.discard_buffer(buffer_identifier)
-    }
-}
-
-#[pymethods]
-impl NativeResultInFlightSlotState {
-    #[new]
-    fn new(slot_limit: usize) -> Self {
-        Self { inner: native_schedule::ResultInFlightSlotState::new(slot_limit) }
-    }
-
-    #[getter]
-    fn slot_limit(&self) -> usize {
-        self.inner.slot_limit()
-    }
-
-    #[getter]
-    fn occupied_count(&self) -> usize {
-        self.inner.occupied_count()
-    }
-
-    fn has_available_slot(&self) -> bool {
-        self.inner.has_available_slot()
-    }
-
-    fn acquire_slot(&mut self) -> bool {
-        self.inner.acquire_slot()
-    }
-
-    fn release_slot(&mut self) -> bool {
-        self.inner.release_slot()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerLifecycleState {
-    #[new]
-    fn new() -> Self {
-        Self { inner: native_schedule::CallbackWorkerLifecycleState::new() }
-    }
-
-    #[getter]
-    fn has_started(&self) -> bool {
-        self.inner.has_started()
-    }
-
-    fn mark_started(&mut self) -> bool {
-        self.inner.mark_started()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerStartPlan {
-    #[getter]
-    fn start_actions(&self) -> Vec<String> {
-        self.inner.start_actions.clone()
-    }
-
-    #[getter]
-    fn should_start(&self) -> bool {
-        self.inner.should_start()
-    }
-
-    #[getter]
-    fn start_result_worker(&self) -> bool {
-        self.inner.start_result_worker()
-    }
-
-    #[getter]
-    fn start_dosage_worker(&self) -> bool {
-        self.inner.start_dosage_worker()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerStartAttemptPlan {
-    #[getter]
-    fn start_actions(&self) -> Vec<String> {
-        self.inner.start_actions.clone()
-    }
-
-    #[getter]
-    fn should_start(&self) -> bool {
-        self.inner.should_start()
-    }
-
-    #[getter]
-    fn start_result_worker(&self) -> bool {
-        self.inner.start_result_worker()
-    }
-
-    #[getter]
-    fn start_dosage_worker(&self) -> bool {
-        self.inner.start_dosage_worker()
-    }
-
-    #[getter]
-    fn has_marked_started(&self) -> bool {
-        self.inner.has_marked_started
-    }
-
-    #[getter]
-    fn has_start_error(&self) -> bool {
-        self.inner.has_start_error
-    }
-
-    #[getter]
-    fn error_message(&self) -> Option<String> {
-        self.inner.error_message.clone()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackSchedulerState {
-    #[new]
-    fn new(
-        staging_depth: i64,
-        native_callback_batch_size: i64,
-        result_in_flight_limit: Option<i64>,
-        dosage_buffer_limit: Option<i64>,
-    ) -> PyResult<Self> {
-        Self::from_limits(staging_depth, native_callback_batch_size, result_in_flight_limit, dosage_buffer_limit)
-    }
-
-    #[getter]
-    fn native_callback_batch_size(&self) -> usize {
-        self.inner.native_callback_batch_size()
-    }
-
-    #[getter]
-    fn dosage_queue_depth(&self) -> usize {
-        self.inner.dosage_queue_depth()
-    }
-
-    #[getter]
-    fn dosage_queue_capacity(&self) -> usize {
-        self.inner.dosage_queue_capacity()
-    }
-
-    #[getter]
-    fn dosage_queue_occupied_count(&self) -> usize {
-        self.inner.dosage_queue_occupied_count()
-    }
-
-    fn has_available_dosage_queue_slot(&self) -> bool {
-        self.inner.has_available_dosage_queue_slot()
-    }
-
-    fn acquire_dosage_queue_slot(&mut self) -> bool {
-        self.inner.acquire_dosage_queue_slot()
-    }
-
-    fn release_dosage_queue_slot(&mut self) -> bool {
-        self.inner.release_dosage_queue_slot()
-    }
-
-    fn plan_dosage_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> NativeCallbackQueuePutAttemptPlan {
-        self.inner.plan_dosage_queue_put_attempt(wait_timeout_seconds).into()
-    }
-
-    fn plan_dosage_queue_put_backpressure_attempt(&mut self) -> NativeCallbackQueuePutAttemptPlan {
-        self.inner.plan_dosage_queue_put_backpressure_attempt().into()
-    }
-
-    fn plan_dosage_queue_put_observation(&self, queued: bool) -> NativeCallbackQueuePutObservationPlan {
-        self.inner.plan_dosage_queue_put_observation(queued).into()
-    }
-
-    fn plan_dosage_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
-        self.inner.plan_dosage_queue_get_attempt(has_queued_item).into()
-    }
-
-    fn plan_dosage_queue_get_observation(&self) -> NativeCallbackQueueGetObservationPlan {
-        self.inner.plan_dosage_queue_get_observation().into()
-    }
-
-    #[getter]
-    fn result_queue_depth(&self) -> usize {
-        self.inner.result_queue_depth()
-    }
-
-    #[getter]
-    fn result_queue_capacity(&self) -> usize {
-        self.inner.result_queue_capacity()
-    }
-
-    #[getter]
-    fn result_queue_occupied_count(&self) -> usize {
-        self.inner.result_queue_occupied_count()
-    }
-
-    fn has_available_result_queue_slot(&self) -> bool {
-        self.inner.has_available_result_queue_slot()
-    }
-
-    fn acquire_result_queue_slot(&mut self) -> bool {
-        self.inner.acquire_result_queue_slot()
-    }
-
-    fn release_result_queue_slot(&mut self) -> bool {
-        self.inner.release_result_queue_slot()
-    }
-
-    fn plan_result_queue_put_attempt(&mut self, wait_timeout_seconds: f64) -> NativeCallbackQueuePutAttemptPlan {
-        self.inner.plan_result_queue_put_attempt(wait_timeout_seconds).into()
-    }
-
-    fn plan_result_queue_put_backpressure_attempt(&mut self) -> NativeCallbackQueuePutAttemptPlan {
-        self.inner.plan_result_queue_put_backpressure_attempt().into()
-    }
-
-    fn plan_result_queue_put_observation(&self, queued: bool) -> NativeCallbackQueuePutObservationPlan {
-        self.inner.plan_result_queue_put_observation(queued).into()
-    }
-
-    fn plan_result_queue_get_attempt(&mut self, has_queued_item: bool) -> NativeCallbackQueueGetAttemptPlan {
-        self.inner.plan_result_queue_get_attempt(has_queued_item).into()
-    }
-
-    fn plan_result_queue_get_observation(&self) -> NativeCallbackQueueGetObservationPlan {
-        self.inner.plan_result_queue_get_observation().into()
-    }
-
-    #[getter]
-    fn result_in_flight_limit(&self) -> usize {
-        self.inner.result_in_flight_limit()
-    }
-
-    #[getter]
-    fn dosage_buffer_limit(&self) -> usize {
-        self.inner.dosage_buffer_limit()
-    }
-
-    #[getter]
-    fn has_started(&self) -> bool {
-        self.inner.has_started()
-    }
-
-    fn mark_started(&mut self) -> bool {
-        self.inner.mark_started()
-    }
-
-    fn plan_worker_start(&self) -> NativeCallbackWorkerStartPlan {
-        self.inner.plan_worker_start().into()
-    }
-
-    fn plan_worker_start_attempt(&mut self) -> NativeCallbackWorkerStartAttemptPlan {
-        self.inner.plan_worker_start_attempt().into()
-    }
-
-    #[getter]
-    fn result_in_flight_slot_limit(&self) -> usize {
-        self.inner.result_in_flight_slot_limit()
-    }
-
-    #[getter]
-    fn result_in_flight_occupied_count(&self) -> usize {
-        self.inner.result_in_flight_occupied_count()
-    }
-
-    fn has_available_result_in_flight_slot(&self) -> bool {
-        self.inner.has_available_result_in_flight_slot()
-    }
-
-    fn acquire_result_in_flight_slot(&mut self) -> bool {
-        self.inner.acquire_result_in_flight_slot()
-    }
-
-    fn release_result_in_flight_slot(&mut self) -> bool {
-        self.inner.release_result_in_flight_slot()
-    }
-
-    fn plan_result_in_flight_slot_acquire_attempt(
-        &mut self,
-        wait_timeout_seconds: f64,
-    ) -> NativeResultInFlightAcquireAttemptPlan {
-        self.inner.plan_result_in_flight_slot_acquire_attempt(wait_timeout_seconds).into()
-    }
-
-    fn plan_result_in_flight_slot_acquire_backpressure_attempt(&mut self) -> NativeResultInFlightAcquireAttemptPlan {
-        self.inner.plan_result_in_flight_slot_acquire_backpressure_attempt().into()
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_result_in_flight_slot_acquire_observation(
-        &self,
-        acquire_attempt_plan: PyRef<'_, NativeResultInFlightAcquireAttemptPlan>,
-    ) -> NativeResultInFlightAcquireObservationPlan {
-        self.inner.plan_result_in_flight_slot_acquire_observation(&acquire_attempt_plan.inner).into()
-    }
-
-    fn plan_result_in_flight_slot_release_attempt(&mut self) -> NativeResultInFlightReleaseAttemptPlan {
-        self.inner.plan_result_in_flight_slot_release_attempt().into()
-    }
-
-    fn plan_result_in_flight_slot_release_observation(&self) -> NativeResultInFlightReleaseObservationPlan {
-        self.inner.plan_result_in_flight_slot_release_observation().into()
-    }
-
-    fn plan_result_write_item_pre_write_resource_release(
-        &self,
-        has_host_dosage_buffer: bool,
-    ) -> NativeResultWriteItemResourceReleasePlan {
-        self.inner.plan_result_write_item_pre_write_resource_release(has_host_dosage_buffer).into()
-    }
-
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn plan_result_write_item_final_resource_release(
-        &self,
-        has_host_dosage_buffer: bool,
-        has_released_host_dosage_buffer: bool,
-        release_in_flight_slot: bool,
-    ) -> NativeResultWriteItemResourceReleasePlan {
-        self.inner
-            .plan_result_write_item_final_resource_release(
-                has_host_dosage_buffer,
-                has_released_host_dosage_buffer,
-                release_in_flight_slot,
-            )
-            .into()
-    }
-
-    fn plan_result_write_handoff(&self, has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
-        self.inner.plan_result_write_handoff(has_result_work_item).into()
-    }
-
-    fn plan_result_write_drain_completion(
-        &self,
-        has_result_work_item: bool,
-        flush_binary_correction_diagnostics_on_stop: bool,
-    ) -> NativeResultWriteDrainCompletionPlan {
-        self.inner
-            .plan_result_write_drain_completion(has_result_work_item, flush_binary_correction_diagnostics_on_stop)
-            .into()
-    }
-
-    fn plan_result_write_item_dispatch(
-        &self,
-        result_work_item_kind: &str,
-        expected_result_work_item_kind: &str,
-    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
-        self.inner
-            .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    fn plan_dosage_work_drain_completion(&self, has_dosage_work_item: bool) -> NativeDosageWorkDrainCompletionPlan {
-        self.inner.plan_dosage_work_drain_completion(has_dosage_work_item).into()
-    }
-
-    fn plan_dosage_work_item_dispatch(
-        &self,
-        dosage_work_item_kind: &str,
-    ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-        self.inner
-            .plan_dosage_work_item_dispatch(dosage_work_item_kind)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    fn plan_dosage_work_item_stage_duration(
-        &self,
-        dosage_work_item_kind: &str,
-        chunk_count: usize,
-        elapsed_seconds: f64,
-    ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
-        self.inner
-            .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[getter]
-    fn dosage_buffer_pool_limit(&self) -> usize {
-        self.inner.dosage_buffer_pool_limit()
-    }
-
-    #[getter]
-    fn dosage_buffer_allocated_count(&self) -> usize {
-        self.inner.dosage_buffer_allocated_count()
-    }
-
-    #[getter]
-    fn dosage_buffer_identifiers(&self) -> Vec<usize> {
-        self.inner.dosage_buffer_identifiers()
-    }
-
-    fn has_available_dosage_buffer_slot(&self) -> bool {
-        self.inner.has_available_dosage_buffer_slot()
-    }
-
-    fn owns_dosage_buffer(&self, buffer_identifier: usize) -> bool {
-        self.inner.owns_dosage_buffer(buffer_identifier)
-    }
-
-    fn register_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
-        self.inner.register_dosage_buffer(buffer_identifier)
-    }
-
-    fn discard_dosage_buffer(&mut self, buffer_identifier: usize) -> bool {
-        self.inner.discard_dosage_buffer(buffer_identifier)
-    }
-
-    fn plan_dosage_buffer_acquire_attempt(
-        &self,
-        free_buffer_count: usize,
-        wait_timeout_seconds: f64,
-    ) -> NativeDosageBufferAcquireAttemptPlan {
-        self.inner.plan_dosage_buffer_acquire_attempt(free_buffer_count, wait_timeout_seconds).into()
-    }
-
-    fn plan_dosage_buffer_acquire_backpressure_attempt(
-        &self,
-        free_buffer_count: usize,
-    ) -> NativeDosageBufferAcquireAttemptPlan {
-        self.inner.plan_dosage_buffer_acquire_backpressure_attempt(free_buffer_count).into()
-    }
-
-    fn plan_dosage_buffer_register_attempt(
-        &mut self,
-        buffer_identifier: usize,
-    ) -> NativeDosageBufferRegisterAttemptPlan {
-        self.inner.plan_dosage_buffer_register_attempt(buffer_identifier).into()
-    }
-
-    fn plan_dosage_buffer_return_attempt(&self, buffer_identifier: usize) -> NativeDosageBufferReturnAttemptPlan {
-        self.inner.plan_dosage_buffer_return_attempt(buffer_identifier).into()
-    }
-
-    fn plan_dosage_buffer_discard_attempt(&mut self, buffer_identifier: usize) -> NativeDosageBufferDiscardAttemptPlan {
-        self.inner.plan_dosage_buffer_discard_attempt(buffer_identifier).into()
-    }
-
-    fn plan_dosage_buffer_pool_reuse_observation(&self) -> NativeDosageBufferPoolObservationPlan {
-        self.inner.plan_dosage_buffer_pool_reuse_observation().into()
-    }
-
-    fn plan_dosage_buffer_pool_return_observation(&self) -> NativeDosageBufferPoolObservationPlan {
-        self.inner.plan_dosage_buffer_pool_return_observation().into()
-    }
-
-    fn plan_dosage_buffer_pool_allocate_observation(&self) -> NativeDosageBufferPoolObservationPlan {
-        self.inner.plan_dosage_buffer_pool_allocate_observation().into()
-    }
-
-    fn plan_dosage_buffer_pool_discard_observation(&self) -> NativeDosageBufferPoolObservationPlan {
-        self.inner.plan_dosage_buffer_pool_discard_observation().into()
-    }
-
-    fn plan_dosage_buffer_pool_consumer_wait_observation(&self) -> NativeDosageBufferPoolObservationPlan {
-        self.inner.plan_dosage_buffer_pool_consumer_wait_observation().into()
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_dosage_buffer_reuse(
-        &self,
-        buffered_shape: Vec<usize>,
-        expected_shape: Vec<usize>,
-    ) -> Option<NativeDosageBufferReusePlan> {
-        self.inner.plan_dosage_buffer_reuse(&buffered_shape, &expected_shape).map(Into::into)
-    }
-
-    fn plan_variant_major_dosage_batch_handoff(
-        &self,
-        metadata_count: usize,
-        genotype_matrix_by_variant_count: usize,
-        chunk_stats_count: usize,
-    ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
-        self.inner
-            .plan_variant_major_dosage_batch_handoff(
-                metadata_count,
-                genotype_matrix_by_variant_count,
-                chunk_stats_count,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    fn plan_dosage_work_handoff(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
-        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[getter]
-    fn dosage_worker_error_message(&self) -> Option<String> {
-        self.inner.dosage_worker_error_message().map(str::to_string)
-    }
-
-    #[getter]
-    fn result_worker_error_message(&self) -> Option<String> {
-        self.inner.result_worker_error_message().map(str::to_string)
-    }
-
-    #[getter]
-    fn has_dosage_worker_error(&self) -> bool {
-        self.inner.has_dosage_worker_error()
-    }
-
-    #[getter]
-    fn has_result_worker_error(&self) -> bool {
-        self.inner.has_result_worker_error()
-    }
-
-    fn record_dosage_worker_error(&mut self, error_message: &str) {
-        self.inner.record_dosage_worker_error(error_message);
-    }
-
-    fn record_result_worker_error(&mut self, error_message: &str) {
-        self.inner.record_result_worker_error(error_message);
-    }
-
-    fn update_dosage_worker_error(&mut self, error_message: Option<&str>) -> NativeCallbackWorkerErrorUpdatePlan {
-        self.inner.update_dosage_worker_error(error_message).into()
-    }
-
-    fn update_result_worker_error(&mut self, error_message: Option<&str>) -> NativeCallbackWorkerErrorUpdatePlan {
-        self.inner.update_result_worker_error(error_message).into()
-    }
-
-    fn clear_dosage_worker_error(&mut self) -> bool {
-        self.inner.clear_dosage_worker_error()
-    }
-
-    fn clear_result_worker_error(&mut self) -> bool {
-        self.inner.clear_result_worker_error()
-    }
-
-    #[getter]
-    fn backpressure_poll_timeout_seconds(&self) -> f64 {
-        self.inner.backpressure_poll_timeout_seconds()
-    }
-
-    fn plan_worker_finish(&self) -> NativeCallbackWorkerFinishPlan {
-        self.inner.plan_worker_finish().into()
-    }
-
-    fn plan_worker_abort(&self) -> NativeCallbackWorkerAbortPlan {
-        self.inner.plan_worker_abort().into()
-    }
-
-    fn plan_worker_error_raise(&self) -> NativeCallbackWorkerErrorRaisePlan {
-        self.inner.plan_worker_error_raise().into()
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_queue_operation_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueOperationObservationPlan> {
-        self.inner
-            .plan_queue_operation_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_queue_backpressure_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        queue_depth: usize,
-        queue_capacity: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        self.inner
-            .plan_queue_backpressure_observation(
-                &queue_name,
-                &operation_name,
-                queue_depth,
-                queue_capacity,
-                elapsed_seconds,
-                blocked,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_current_queue_backpressure_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        self.inner
-            .plan_current_queue_backpressure_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_dosage_buffer_pool_backpressure_observation(
-        &self,
-        operation_name: String,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueBackpressureObservation> {
-        self.inner
-            .plan_dosage_buffer_pool_backpressure_observation(
-                &operation_name,
-                free_buffer_count,
-                elapsed_seconds,
-                blocked,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_queue_stage_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageObservationPlan> {
-        self.inner
-            .plan_queue_stage_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_queue_stage_backpressure_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        queue_depth: usize,
-        queue_capacity: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        self.inner
-            .plan_queue_stage_backpressure_observation(
-                &queue_name,
-                &operation_name,
-                queue_depth,
-                queue_capacity,
-                elapsed_seconds,
-                blocked,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_current_queue_stage_backpressure_observation(
-        &self,
-        queue_name: String,
-        operation_name: String,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        self.inner
-            .plan_current_queue_stage_backpressure_observation(&queue_name, &operation_name, elapsed_seconds, blocked)
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn plan_dosage_buffer_pool_stage_backpressure_observation(
-        &self,
-        operation_name: String,
-        free_buffer_count: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> PyResult<NativeCallbackQueueStageBackpressureObservation> {
-        self.inner
-            .plan_dosage_buffer_pool_stage_backpressure_observation(
-                &operation_name,
-                free_buffer_count,
-                elapsed_seconds,
-                blocked,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
-    }
-
-    fn plan_dosage_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
-        self.inner.plan_dosage_worker_join(timeout_seconds).into()
-    }
-
-    fn plan_result_worker_join(&self, timeout_seconds: Option<f64>) -> NativeCallbackWorkerJoinPlan {
-        self.inner.plan_result_worker_join(timeout_seconds).into()
-    }
-
-    fn plan_dosage_worker_stop(
-        &self,
-        timeout_seconds: Option<f64>,
-        is_worker_alive: bool,
-    ) -> NativeCallbackWorkerStopPlan {
-        self.inner.plan_dosage_worker_stop(timeout_seconds, is_worker_alive).into()
-    }
-
-    fn plan_result_worker_stop(
-        &self,
-        timeout_seconds: Option<f64>,
-        is_worker_alive: bool,
-    ) -> NativeCallbackWorkerStopPlan {
-        self.inner.plan_result_worker_stop(timeout_seconds, is_worker_alive).into()
-    }
-
-    fn plan_dosage_worker_stop_poll(
-        &self,
-        remaining_timeout_seconds: f64,
-        is_worker_alive: bool,
-    ) -> NativeCallbackWorkerStopPollPlan {
-        self.inner.plan_dosage_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
-    }
-
-    fn plan_result_worker_stop_poll(
-        &self,
-        remaining_timeout_seconds: f64,
-        is_worker_alive: bool,
-    ) -> NativeCallbackWorkerStopPollPlan {
-        self.inner.plan_result_worker_stop_poll(remaining_timeout_seconds, is_worker_alive).into()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerShutdownTimeouts {
-    #[getter]
-    fn dosage_worker_join_timeout_seconds(&self) -> f64 {
-        self.inner.dosage_worker_join_timeout_seconds
-    }
-
-    #[getter]
-    fn result_worker_join_timeout_seconds(&self) -> f64 {
-        self.inner.result_worker_join_timeout_seconds
-    }
-
-    #[getter]
-    fn graceful_dosage_worker_join_timeout_seconds(&self) -> f64 {
-        self.inner.graceful_dosage_worker_join_timeout_seconds
-    }
-
-    #[getter]
-    fn graceful_result_worker_join_timeout_seconds(&self) -> f64 {
-        self.inner.graceful_result_worker_join_timeout_seconds
-    }
-
-    #[getter]
-    fn worker_abort_stop_timeout_seconds(&self) -> f64 {
-        self.inner.worker_abort_stop_timeout_seconds
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerJoinPlan {
-    #[getter]
-    fn should_join(&self) -> bool {
-        self.inner.should_join
-    }
-
-    #[getter]
-    fn timeout_seconds(&self) -> f64 {
-        self.inner.timeout_seconds
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerStopPlan {
-    #[getter]
-    fn should_stop(&self) -> bool {
-        self.inner.should_stop
-    }
-
-    #[getter]
-    fn timeout_seconds(&self) -> f64 {
-        self.inner.timeout_seconds
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerFinishPlan {
-    #[getter]
-    fn finish_actions(&self) -> Vec<String> {
-        self.inner.finish_actions.clone()
-    }
-
-    #[getter]
-    fn stop_dosage_worker(&self) -> bool {
-        self.inner.stop_dosage_worker()
-    }
-
-    #[getter]
-    fn join_dosage_worker(&self) -> bool {
-        self.inner.join_dosage_worker()
-    }
-
-    #[getter]
-    fn stop_result_worker(&self) -> bool {
-        self.inner.stop_result_worker()
-    }
-
-    #[getter]
-    fn join_result_worker(&self) -> bool {
-        self.inner.join_result_worker()
-    }
-
-    #[getter]
-    fn raise_worker_error(&self) -> bool {
-        self.inner.raise_worker_error()
-    }
-
-    #[getter]
-    fn complete_progress(&self) -> bool {
-        self.inner.complete_progress()
-    }
-
-    #[getter]
-    fn emit_binary_correction_summary(&self) -> bool {
-        self.inner.emit_binary_correction_summary()
-    }
-
-    #[getter]
-    fn dosage_stop_timeout_seconds(&self) -> f64 {
-        self.inner.dosage_stop_timeout_seconds
-    }
-
-    #[getter]
-    fn dosage_join_timeout_seconds(&self) -> f64 {
-        self.inner.dosage_join_timeout_seconds
-    }
-
-    #[getter]
-    fn result_stop_timeout_seconds(&self) -> f64 {
-        self.inner.result_stop_timeout_seconds
-    }
-
-    #[getter]
-    fn result_join_timeout_seconds(&self) -> f64 {
-        self.inner.result_join_timeout_seconds
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerAbortPlan {
-    #[getter]
-    fn abort_actions(&self) -> Vec<String> {
-        self.inner.abort_actions.clone()
-    }
-
-    #[getter]
-    fn stop_dosage_worker(&self) -> bool {
-        self.inner.stop_dosage_worker()
-    }
-
-    #[getter]
-    fn stop_result_worker(&self) -> bool {
-        self.inner.stop_result_worker()
-    }
-
-    #[getter]
-    fn dosage_stop_timeout_seconds(&self) -> f64 {
-        self.inner.dosage_stop_timeout_seconds
-    }
-
-    #[getter]
-    fn result_stop_timeout_seconds(&self) -> f64 {
-        self.inner.result_stop_timeout_seconds
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerStopPollPlan {
-    #[getter]
-    fn should_stop(&self) -> bool {
-        self.inner.should_stop
-    }
-
-    #[getter]
-    fn poll_timeout_seconds(&self) -> f64 {
-        self.inner.poll_timeout_seconds
-    }
 }
 
 impl NativeCallbackWorkerErrorRaisePlan {
@@ -1212,24 +250,6 @@ impl NativeCallbackWorkerErrorRaisePlan {
     #[getter]
     fn raise_result_worker_error(&self) -> bool {
         self.inner.raise_result_worker_error
-    }
-
-    #[getter]
-    fn error_message(&self) -> Option<String> {
-        self.inner.error_message.clone()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackWorkerErrorUpdatePlan {
-    #[getter]
-    fn had_error(&self) -> bool {
-        self.inner.had_error
-    }
-
-    #[getter]
-    fn has_error(&self) -> bool {
-        self.inner.has_error
     }
 
     #[getter]
@@ -1287,67 +307,30 @@ impl NativeMultiTraitChunkWritePlanner {
     }
 }
 
-#[pymethods]
-impl NativeBgenDeliveryCleanupPlan {
-    #[getter]
-    fn cleanup_actions(&self) -> Vec<String> {
-        self.inner.cleanup_actions.clone()
-    }
-
-    #[getter]
-    fn drain_callback(&self) -> bool {
-        self.inner.drain_callback()
-    }
-
-    #[getter]
-    fn finish_writer_sessions(&self) -> bool {
-        self.inner.finish_writer_sessions()
-    }
-
-    #[getter]
-    fn finish_interrupted_writer_sessions(&self) -> bool {
-        self.inner.finish_interrupted_writer_sessions()
-    }
-
-    #[getter]
-    fn abort_callback(&self) -> bool {
-        self.inner.abort_callback()
-    }
-
-    #[getter]
-    fn abort_writer_sessions(&self) -> bool {
-        self.inner.abort_writer_sessions()
-    }
-
-    #[getter]
-    fn write_stage_timing_snapshot(&self) -> bool {
-        self.inner.write_stage_timing_snapshot()
-    }
+#[pyfunction]
+fn plan_bgen_delivery_cleanup_actions(cleanup_outcome: &str, callback_finished: bool) -> PyResult<Vec<String>> {
+    let native_cleanup_outcome = match cleanup_outcome {
+        "success" => native_schedule::BgenDeliveryCleanupOutcome::Success,
+        "interrupted" => native_schedule::BgenDeliveryCleanupOutcome::Interrupted,
+        "failure" => native_schedule::BgenDeliveryCleanupOutcome::Failure,
+        "interrupted_cleanup_failure" => native_schedule::BgenDeliveryCleanupOutcome::InterruptedCleanupFailure,
+        _ => {
+            return Err(PyValueError::new_err(format!("Unsupported BGEN delivery cleanup outcome: {cleanup_outcome}")));
+        }
+    };
+    Ok(native_schedule::plan_bgen_delivery_cleanup(native_cleanup_outcome, callback_finished)
+        .cleanup_actions()
+        .iter()
+        .map(|cleanup_action| cleanup_action.as_value().to_string())
+        .collect())
 }
 
-#[pymethods]
-#[allow(clippy::unused_self)]
-impl NativeBgenDeliveryCleanupPlanner {
-    #[new]
-    fn new() -> Self {
-        Self
-    }
-
-    fn success(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-        plan_bgen_delivery_cleanup_outcome("success", callback_finished)
-    }
-
-    fn interrupted(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-        plan_bgen_delivery_cleanup_outcome("interrupted", callback_finished)
-    }
-
-    fn failure(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-        plan_bgen_delivery_cleanup_outcome("failure", callback_finished)
-    }
-
-    fn interrupted_cleanup_failure(&self, callback_finished: bool) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-        plan_bgen_delivery_cleanup_outcome("interrupted_cleanup_failure", callback_finished)
-    }
+fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeBgenDeliveryPolicy>()?;
+    module.add_class::<NativeMultiTraitChunkWritePlan>()?;
+    module.add_class::<NativeMultiTraitChunkWritePlanner>()?;
+    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup_actions, module)?)?;
+    Ok(())
 }
 
 #[pymethods]
@@ -1841,12 +824,12 @@ impl NativeResultWriteDrainCompletionPlan {
 impl NativeResultWriteItemDispatchPlan {
     #[getter]
     fn result_work_item_kind(&self) -> String {
-        self.inner.result_work_item_kind.clone()
+        self.inner.result_work_item_kind().as_value().to_string()
     }
 
     #[getter]
     fn expected_result_work_item_kind(&self) -> String {
-        self.inner.expected_result_work_item_kind.clone()
+        self.inner.expected_result_work_item_kind().as_value().to_string()
     }
 
     #[getter]
@@ -1882,7 +865,7 @@ impl NativeDosageWorkDrainCompletionPlan {
 impl NativeDosageWorkItemDispatchPlan {
     #[getter]
     fn dosage_work_item_kind(&self) -> String {
-        self.inner.dosage_work_item_kind.clone()
+        self.inner.dosage_work_item_kind().as_value().to_string()
     }
 
     #[getter]
@@ -2131,18 +1114,12 @@ impl NativeCallbackSchedulerState {
         self.inner.plan_worker_error_raise().into()
     }
 
-    pub(crate) fn update_dosage_worker_error_value(
-        &mut self,
-        error_message: Option<&str>,
-    ) -> NativeCallbackWorkerErrorUpdatePlan {
-        self.inner.update_dosage_worker_error(error_message).into()
+    pub(crate) fn update_dosage_worker_error_value(&mut self, error_message: Option<&str>) {
+        let _ = self.inner.update_dosage_worker_error(error_message);
     }
 
-    pub(crate) fn update_result_worker_error_value(
-        &mut self,
-        error_message: Option<&str>,
-    ) -> NativeCallbackWorkerErrorUpdatePlan {
-        self.inner.update_result_worker_error(error_message).into()
+    pub(crate) fn update_result_worker_error_value(&mut self, error_message: Option<&str>) {
+        let _ = self.inner.update_result_worker_error(error_message);
     }
 
     pub(crate) fn plan_result_write_item_pre_write_resource_release_value(
@@ -2243,15 +1220,21 @@ impl NativeCallbackSchedulerState {
             .into()
     }
 
-    pub(crate) fn plan_result_write_item_dispatch_value(
-        &self,
+    pub(crate) fn parse_result_write_item_kind_value(
         result_work_item_kind: &str,
-        expected_result_work_item_kind: &str,
-    ) -> PyResult<NativeResultWriteItemDispatchPlan> {
-        self.inner
-            .plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
-            .map(Into::into)
+    ) -> PyResult<native_schedule::ResultWriteItemKind> {
+        native_schedule::ResultWriteItemKind::from_value(result_work_item_kind)
             .map_err(|error| convert_schedule_error(&error))
+    }
+
+    pub(crate) fn plan_result_write_item_dispatch_kind_value(
+        &self,
+        result_work_item_kind: native_schedule::ResultWriteItemKind,
+        expected_result_work_item_kind: native_schedule::ResultWriteItemKind,
+    ) -> NativeResultWriteItemDispatchPlan {
+        self.inner
+            .plan_result_write_item_dispatch_for_kinds(result_work_item_kind, expected_result_work_item_kind)
+            .into()
     }
 
     pub(crate) fn plan_result_queue_put_attempt_value(
@@ -2425,6 +1408,10 @@ impl NativeCallbackWorkerStartAttemptPlan {
 
     pub(crate) fn should_start_dosage_worker(&self) -> bool {
         self.inner.start_dosage_worker()
+    }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
     }
 }
 
@@ -2742,18 +1729,6 @@ impl NativeDosageWorkDrainCompletionPlan {
     }
 }
 
-impl From<native_schedule::CallbackWorkerShutdownTimeouts> for NativeCallbackWorkerShutdownTimeouts {
-    fn from(worker_shutdown_timeouts: native_schedule::CallbackWorkerShutdownTimeouts) -> Self {
-        Self { inner: worker_shutdown_timeouts }
-    }
-}
-
-impl From<native_schedule::CallbackWorkerStartPlan> for NativeCallbackWorkerStartPlan {
-    fn from(start_plan: native_schedule::CallbackWorkerStartPlan) -> Self {
-        Self { inner: start_plan }
-    }
-}
-
 impl From<native_schedule::CallbackWorkerStartAttemptPlan> for NativeCallbackWorkerStartAttemptPlan {
     fn from(start_attempt_plan: native_schedule::CallbackWorkerStartAttemptPlan) -> Self {
         Self { inner: start_attempt_plan }
@@ -2796,12 +1771,6 @@ impl From<native_schedule::CallbackWorkerErrorRaisePlan> for NativeCallbackWorke
     }
 }
 
-impl From<native_schedule::CallbackWorkerErrorUpdatePlan> for NativeCallbackWorkerErrorUpdatePlan {
-    fn from(error_update_plan: native_schedule::CallbackWorkerErrorUpdatePlan) -> Self {
-        Self { inner: error_update_plan }
-    }
-}
-
 impl From<native_schedule::NativeCallbackQueueLimits> for NativeCallbackQueueLimits {
     fn from(queue_limits: native_schedule::NativeCallbackQueueLimits) -> Self {
         Self {
@@ -2840,12 +1809,6 @@ impl From<native_schedule::GpuGenotypeFormatResolutionPlan> for NativeGpuGenotyp
 impl From<native_schedule::MultiTraitChunkWritePlan> for NativeMultiTraitChunkWritePlan {
     fn from(write_plan: native_schedule::MultiTraitChunkWritePlan) -> Self {
         Self { inner: write_plan }
-    }
-}
-
-impl From<native_schedule::BgenDeliveryCleanupPlan> for NativeBgenDeliveryCleanupPlan {
-    fn from(cleanup_plan: native_schedule::BgenDeliveryCleanupPlan) -> Self {
-        Self { inner: cleanup_plan }
     }
 }
 
@@ -3015,15 +1978,6 @@ fn native_committed_chunk_identifier_sets_from_i64_sequences(
         .collect()
 }
 
-fn plan_bgen_delivery_cleanup_outcome(
-    cleanup_outcome: &str,
-    callback_finished: bool,
-) -> PyResult<NativeBgenDeliveryCleanupPlan> {
-    native_schedule::plan_bgen_delivery_cleanup(cleanup_outcome, callback_finished)
-        .map(Into::into)
-        .map_err(|error| convert_schedule_error(&error))
-}
-
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_callback_queue_exports(module)?;
     register_callback_worker_exports(module)?;
@@ -3042,17 +1996,7 @@ fn register_callback_queue_exports(module: &Bound<'_, PyModule>) -> PyResult<()>
 }
 
 fn register_callback_worker_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCallbackWorkerAbortPlan>()?;
     module.add_class::<NativeCallbackWorkerErrorRaisePlan>()?;
-    module.add_class::<NativeCallbackWorkerErrorUpdatePlan>()?;
-    module.add_class::<NativeCallbackWorkerFinishPlan>()?;
-    module.add_class::<NativeCallbackWorkerJoinPlan>()?;
-    module.add_class::<NativeCallbackWorkerStartPlan>()?;
-    module.add_class::<NativeCallbackWorkerStartAttemptPlan>()?;
-    module.add_class::<NativeCallbackWorkerLifecycleState>()?;
-    module.add_class::<NativeCallbackWorkerShutdownTimeouts>()?;
-    module.add_class::<NativeCallbackWorkerStopPlan>()?;
-    module.add_class::<NativeCallbackWorkerStopPollPlan>()?;
     Ok(())
 }
 
@@ -3069,15 +2013,6 @@ fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn register_result_write_exports(module: &Bound<'_, PyModule>) {
     let _ = module;
-}
-
-fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeBgenDeliveryCleanupPlan>()?;
-    module.add_class::<NativeBgenDeliveryCleanupPlanner>()?;
-    module.add_class::<NativeBgenDeliveryPolicy>()?;
-    module.add_class::<NativeMultiTraitChunkWritePlan>()?;
-    module.add_class::<NativeMultiTraitChunkWritePlanner>()?;
-    Ok(())
 }
 
 fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {

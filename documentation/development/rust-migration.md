@@ -376,9 +376,10 @@ built in `0:41.53` wall time (`29.23s` Cargo target time), installed into a
 temporary Python 3.14 environment, imported `g` and `g._core`, and rendered
 installed `g --help` output through the Python compatibility shim.
 The Python architecture checker now guards that CLI boundary: the console script
-points at `g.runner.cli.main`, and `g.runner.cli.run` dispatches through the
-native parser, routes validated configs through the Python runner, and avoids
-legacy bridge or sentinel paths.
+points at `g.runner.cli.main`, while the PyO3 CLI driver owns parser dispatch,
+run-scoped telemetry/logging setup, shutdown handling, terminal rendering,
+telemetry close, and exit-code selection. `g.runner.cli.run` only prints the
+returned chunks and supplies the temporary Python backend callback.
 The root PyO3 timing recorder binding no longer exports direct
 stage-timing/profile payload builders, the final timing write-started payload
 builder, or per-file writer methods; Python callers use typed snapshots,

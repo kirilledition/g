@@ -12,7 +12,7 @@ use super::{
     QUEUE_REUSE_OPERATION, RESULT_IN_FLIGHT_SLOTS_NAME, RESULT_QUEUE_NAME, ResultInFlightAcquireAttemptPlan,
     ResultInFlightAcquireObservationPlan, ResultInFlightReleaseAttemptPlan, ResultInFlightReleaseObservationPlan,
     ResultInFlightSlotState, ResultWriteDrainCompletionPlan, ResultWriteHandoffPlan, ResultWriteItemDispatchPlan,
-    ResultWriteItemResourceReleasePlan, ScheduleError, VariantMajorDosageBatchHandoffPlan,
+    ResultWriteItemKind, ResultWriteItemResourceReleasePlan, ScheduleError, VariantMajorDosageBatchHandoffPlan,
     callback_worker_backpressure_poll_timeout_seconds, format_dosage_callback_worker_error_message,
     format_result_callback_worker_error_message, plan_callback_queue_backpressure_observation,
     plan_callback_queue_get_attempt, plan_callback_queue_get_observation, plan_callback_queue_operation_observation,
@@ -27,7 +27,7 @@ use super::{
     plan_result_callback_worker_stop, plan_result_in_flight_slot_acquire_attempt,
     plan_result_in_flight_slot_acquire_observation, plan_result_in_flight_slot_release_attempt,
     plan_result_in_flight_slot_release_observation, plan_result_write_handoff, plan_result_write_item_dispatch,
-    plan_variant_major_dosage_batch_handoff, update_callback_worker_error,
+    plan_result_write_item_dispatch_for_kinds, plan_variant_major_dosage_batch_handoff, update_callback_worker_error,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -350,6 +350,15 @@ impl CallbackSchedulerState {
         expected_result_work_item_kind: &str,
     ) -> Result<ResultWriteItemDispatchPlan, ScheduleError> {
         plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
+    }
+
+    #[must_use]
+    pub fn plan_result_write_item_dispatch_for_kinds(
+        &self,
+        result_work_item_kind: ResultWriteItemKind,
+        expected_result_work_item_kind: ResultWriteItemKind,
+    ) -> ResultWriteItemDispatchPlan {
+        plan_result_write_item_dispatch_for_kinds(result_work_item_kind, expected_result_work_item_kind)
     }
 
     #[must_use]

@@ -72,6 +72,25 @@ impl RegenieStep2RecordBatchBuildTiming {
     }
 }
 
+pub(super) struct RegenieStep2ArrowFileWriteTiming {
+    pub(super) file_create: f64,
+    pub(super) writer_init: f64,
+    pub(super) batch_write: f64,
+    pub(super) writer_finish: f64,
+}
+
+impl RegenieStep2ArrowFileWriteTiming {
+    pub(super) fn total_seconds(&self) -> f64 {
+        self.file_create + self.writer_init + self.batch_write + self.writer_finish
+    }
+}
+
+pub(super) struct RegenieStep2ChunkStreamWriteResult {
+    pub(super) record_batch_build_timing: RegenieStep2RecordBatchBuildTiming,
+    pub(super) record_batch_build_seconds: f64,
+    pub(super) arrow_file_write_timing: RegenieStep2ArrowFileWriteTiming,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct RegenieStep2ChunkWriteTiming {
     pub(crate) chunk_file_count: u64,

@@ -16,7 +16,6 @@ import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
 from g import _core, types
 from g.engine import timing as engine_timing
-from g.runner import events
 
 if typing.TYPE_CHECKING:
     import collections.abc
@@ -24,6 +23,7 @@ if typing.TYPE_CHECKING:
     import jax
 
     from g.compute.regenie2_binary import api as regenie2_binary
+    from g.runner import events
 
 type PreprocessedDosageWorkItem = (
     shared.PreprocessedDosageChunkWorkItem
@@ -109,12 +109,7 @@ class NativeBgenCallbackRunner(abc.ABC):
 
     def start(self) -> None:
         """Start asynchronous callback workers after owner setup is complete."""
-        start_attempt_plan = self.callback_runtime_resources.start_workers()
-        if start_attempt_plan.has_start_error:
-            error_message = start_attempt_plan.error_message
-            if error_message is None:
-                error_message = "Native callback worker lifecycle failed to mark workers started."
-            raise RuntimeError(error_message)
+        self.callback_runtime_resources.start_workers()
 
     @property
     def dosage_worker_name(self) -> str:
@@ -599,7 +594,7 @@ class NativeBgenCallbackRunner(abc.ABC):
         progress_update = self.callback_runtime_resources.record_progress_for_metadata(metadata)
         if progress_update is None:
             return
-        events.record_callback_progress_update_telemetry(self.telemetry_session, progress_update)
+        _core.record_callback_progress_update_telemetry(self.telemetry_session, progress_update)
 
     def record_binary_null_model_failure_count(self, failure_count: int) -> None:
         """Accumulate binary null-model failures for run-level telemetry."""
@@ -854,13 +849,13 @@ class NativeBgenCallbackRunner(abc.ABC):
         if finish_result.raise_worker_error:
             self.raise_worker_error_if_present()
         progress_completion_event = finish_result.progress_completion_event
-        events.record_callback_progress_event_telemetry(self.telemetry_session, progress_completion_event)
+        _core.record_callback_progress_event_telemetry(self.telemetry_session, progress_completion_event)
         if finish_result.emit_binary_correction_summary:
             summary_payload = finish_result.binary_correction_summary_payload
             if summary_payload is None and finish_result.flush_binary_correction_pending_diagnostics:
                 self.materialize_binary_correction_pending_diagnostics()
                 summary_payload = self.callback_runtime_resources.binary_correction_summary_payload()
-            events.record_binary_correction_summary_telemetry(self.telemetry_session, summary_payload)
+            _core.record_binary_correction_summary_telemetry(self.telemetry_session, summary_payload)
 
     def abort(self) -> None:
         """Stop the worker after an upstream failure."""

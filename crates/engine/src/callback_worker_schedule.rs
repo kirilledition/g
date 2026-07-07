@@ -4,22 +4,60 @@
 
 pub(crate) const CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS: f64 = 0.1;
 pub(crate) const CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS: f64 = 0.1;
-pub(crate) const CALLBACK_WORKER_START_RESULT_WORKER_ACTION: &str = "start_result_worker";
-pub(crate) const CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION: &str = "start_dosage_worker";
-pub(crate) const CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION: &str = "stop_dosage_worker";
-pub(crate) const CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION: &str = "join_dosage_worker";
-pub(crate) const CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION: &str = "stop_result_worker";
-pub(crate) const CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION: &str = "join_result_worker";
-pub(crate) const CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION: &str = "raise_worker_error";
-pub(crate) const CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION: &str = "complete_progress";
-pub(crate) const CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION: &str = "emit_binary_correction_summary";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CallbackWorkerStartAction {
+    StartDosageWorker,
+    StartResultWorker,
+}
+
+impl CallbackWorkerStartAction {
+    #[must_use]
+    pub const fn as_value(self) -> &'static str {
+        match self {
+            Self::StartDosageWorker => "start_dosage_worker",
+            Self::StartResultWorker => "start_result_worker",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CallbackWorkerFinishAction {
+    CompleteProgress,
+    EmitBinaryCorrectionSummary,
+    JoinDosageWorker,
+    JoinResultWorker,
+    RaiseWorkerError,
+    StopDosageWorker,
+    StopResultWorker,
+}
+
+impl CallbackWorkerFinishAction {
+    #[must_use]
+    pub const fn as_value(self) -> &'static str {
+        match self {
+            Self::CompleteProgress => "complete_progress",
+            Self::EmitBinaryCorrectionSummary => "emit_binary_correction_summary",
+            Self::JoinDosageWorker => "join_dosage_worker",
+            Self::JoinResultWorker => "join_result_worker",
+            Self::RaiseWorkerError => "raise_worker_error",
+            Self::StopDosageWorker => "stop_dosage_worker",
+            Self::StopResultWorker => "stop_result_worker",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartPlan {
-    pub start_actions: Vec<String>,
+    start_actions: Vec<CallbackWorkerStartAction>,
 }
 
 impl CallbackWorkerStartPlan {
+    #[must_use]
+    pub fn start_actions(&self) -> &[CallbackWorkerStartAction] {
+        &self.start_actions
+    }
+
     #[must_use]
     pub fn should_start(&self) -> bool {
         !self.start_actions.is_empty()
@@ -27,22 +65,22 @@ impl CallbackWorkerStartPlan {
 
     #[must_use]
     pub fn start_result_worker(&self) -> bool {
-        self.contains_start_action(CALLBACK_WORKER_START_RESULT_WORKER_ACTION)
+        self.contains_start_action(CallbackWorkerStartAction::StartResultWorker)
     }
 
     #[must_use]
     pub fn start_dosage_worker(&self) -> bool {
-        self.contains_start_action(CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION)
+        self.contains_start_action(CallbackWorkerStartAction::StartDosageWorker)
     }
 
-    fn contains_start_action(&self, start_action: &str) -> bool {
-        self.start_actions.iter().any(|candidate_action| candidate_action == start_action)
+    fn contains_start_action(&self, start_action: CallbackWorkerStartAction) -> bool {
+        self.start_actions.contains(&start_action)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallbackWorkerStartAttemptPlan {
-    pub start_actions: Vec<String>,
+    start_actions: Vec<CallbackWorkerStartAction>,
     pub has_marked_started: bool,
     pub has_start_error: bool,
     pub error_message: Option<String>,
@@ -50,22 +88,27 @@ pub struct CallbackWorkerStartAttemptPlan {
 
 impl CallbackWorkerStartAttemptPlan {
     #[must_use]
+    pub fn start_actions(&self) -> &[CallbackWorkerStartAction] {
+        &self.start_actions
+    }
+
+    #[must_use]
     pub fn should_start(&self) -> bool {
         !self.start_actions.is_empty()
     }
 
     #[must_use]
     pub fn start_result_worker(&self) -> bool {
-        self.contains_start_action(CALLBACK_WORKER_START_RESULT_WORKER_ACTION)
+        self.contains_start_action(CallbackWorkerStartAction::StartResultWorker)
     }
 
     #[must_use]
     pub fn start_dosage_worker(&self) -> bool {
-        self.contains_start_action(CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION)
+        self.contains_start_action(CallbackWorkerStartAction::StartDosageWorker)
     }
 
-    fn contains_start_action(&self, start_action: &str) -> bool {
-        self.start_actions.iter().any(|candidate_action| candidate_action == start_action)
+    fn contains_start_action(&self, start_action: CallbackWorkerStartAction) -> bool {
+        self.start_actions.contains(&start_action)
     }
 }
 
@@ -117,7 +160,7 @@ pub struct CallbackWorkerStopPlan {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallbackWorkerFinishPlan {
-    pub finish_actions: Vec<String>,
+    finish_actions: Vec<CallbackWorkerFinishAction>,
     pub dosage_stop_timeout_seconds: f64,
     pub dosage_join_timeout_seconds: f64,
     pub result_stop_timeout_seconds: f64,
@@ -126,65 +169,75 @@ pub struct CallbackWorkerFinishPlan {
 
 impl CallbackWorkerFinishPlan {
     #[must_use]
+    pub fn finish_actions(&self) -> &[CallbackWorkerFinishAction] {
+        &self.finish_actions
+    }
+
+    #[must_use]
     pub fn stop_dosage_worker(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::StopDosageWorker)
     }
 
     #[must_use]
     pub fn join_dosage_worker(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::JoinDosageWorker)
     }
 
     #[must_use]
     pub fn stop_result_worker(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::StopResultWorker)
     }
 
     #[must_use]
     pub fn join_result_worker(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::JoinResultWorker)
     }
 
     #[must_use]
     pub fn raise_worker_error(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::RaiseWorkerError)
     }
 
     #[must_use]
     pub fn complete_progress(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::CompleteProgress)
     }
 
     #[must_use]
     pub fn emit_binary_correction_summary(&self) -> bool {
-        self.contains_finish_action(CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION)
+        self.contains_finish_action(CallbackWorkerFinishAction::EmitBinaryCorrectionSummary)
     }
 
-    fn contains_finish_action(&self, finish_action: &str) -> bool {
-        self.finish_actions.iter().any(|candidate_action| candidate_action == finish_action)
+    fn contains_finish_action(&self, finish_action: CallbackWorkerFinishAction) -> bool {
+        self.finish_actions.contains(&finish_action)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallbackWorkerAbortPlan {
-    pub abort_actions: Vec<String>,
+    abort_actions: Vec<CallbackWorkerFinishAction>,
     pub dosage_stop_timeout_seconds: f64,
     pub result_stop_timeout_seconds: f64,
 }
 
 impl CallbackWorkerAbortPlan {
     #[must_use]
+    pub fn abort_actions(&self) -> &[CallbackWorkerFinishAction] {
+        &self.abort_actions
+    }
+
+    #[must_use]
     pub fn stop_dosage_worker(&self) -> bool {
-        self.contains_abort_action(CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION)
+        self.contains_abort_action(CallbackWorkerFinishAction::StopDosageWorker)
     }
 
     #[must_use]
     pub fn stop_result_worker(&self) -> bool {
-        self.contains_abort_action(CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION)
+        self.contains_abort_action(CallbackWorkerFinishAction::StopResultWorker)
     }
 
-    fn contains_abort_action(&self, abort_action: &str) -> bool {
-        self.abort_actions.iter().any(|candidate_action| candidate_action == abort_action)
+    fn contains_abort_action(&self, abort_action: CallbackWorkerFinishAction) -> bool {
+        self.abort_actions.contains(&abort_action)
     }
 }
 
@@ -324,13 +377,13 @@ pub fn plan_callback_worker_finish() -> CallbackWorkerFinishPlan {
     let shutdown_timeouts = callback_worker_shutdown_timeouts();
     CallbackWorkerFinishPlan {
         finish_actions: vec![
-            CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_JOIN_DOSAGE_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_JOIN_RESULT_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_RAISE_WORKER_ERROR_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_COMPLETE_PROGRESS_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_EMIT_BINARY_CORRECTION_SUMMARY_ACTION.to_string(),
+            CallbackWorkerFinishAction::StopDosageWorker,
+            CallbackWorkerFinishAction::JoinDosageWorker,
+            CallbackWorkerFinishAction::StopResultWorker,
+            CallbackWorkerFinishAction::JoinResultWorker,
+            CallbackWorkerFinishAction::RaiseWorkerError,
+            CallbackWorkerFinishAction::CompleteProgress,
+            CallbackWorkerFinishAction::EmitBinaryCorrectionSummary,
         ],
         dosage_stop_timeout_seconds: shutdown_timeouts.dosage_worker_join_timeout_seconds,
         dosage_join_timeout_seconds: shutdown_timeouts.graceful_dosage_worker_join_timeout_seconds,
@@ -343,10 +396,7 @@ pub fn plan_callback_worker_finish() -> CallbackWorkerFinishPlan {
 pub fn plan_callback_worker_abort() -> CallbackWorkerAbortPlan {
     let shutdown_timeouts = callback_worker_shutdown_timeouts();
     CallbackWorkerAbortPlan {
-        abort_actions: vec![
-            CALLBACK_WORKER_FINISH_STOP_DOSAGE_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_FINISH_STOP_RESULT_WORKER_ACTION.to_string(),
-        ],
+        abort_actions: vec![CallbackWorkerFinishAction::StopDosageWorker, CallbackWorkerFinishAction::StopResultWorker],
         dosage_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
         result_stop_timeout_seconds: shutdown_timeouts.worker_abort_stop_timeout_seconds,
     }
@@ -423,10 +473,7 @@ pub fn plan_callback_worker_start(has_started: bool) -> CallbackWorkerStartPlan 
         return CallbackWorkerStartPlan { start_actions: Vec::new() };
     }
     CallbackWorkerStartPlan {
-        start_actions: vec![
-            CALLBACK_WORKER_START_RESULT_WORKER_ACTION.to_string(),
-            CALLBACK_WORKER_START_DOSAGE_WORKER_ACTION.to_string(),
-        ],
+        start_actions: vec![CallbackWorkerStartAction::StartResultWorker, CallbackWorkerStartAction::StartDosageWorker],
     }
 }
 

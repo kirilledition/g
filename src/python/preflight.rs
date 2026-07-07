@@ -2,7 +2,7 @@
 
 use nalgebra::DMatrix;
 use numpy::ndarray::IxDyn;
-use numpy::{dtype, Element, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods};
+use numpy::{Element, PyArray, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -130,11 +130,7 @@ impl NativePreflightNumeric for bool {
     }
 
     fn to_rank_f64(self) -> f64 {
-        if self {
-            1.0
-        } else {
-            0.0
-        }
+        if self { 1.0 } else { 0.0 }
     }
 }
 
@@ -190,75 +186,6 @@ macro_rules! dispatch_preflight_numeric_array {
 #[pyclass]
 pub(crate) struct NativePreflightValidator;
 
-#[pyclass]
-pub(crate) struct NativePreflightReport {
-    report: native_preflight::PreflightReportPayload,
-}
-
-#[pyclass]
-pub(crate) struct NativeSingleTraitPreflightShape {
-    shape: native_preflight::SingleTraitPreflightShapePayload,
-}
-
-#[pyclass]
-pub(crate) struct NativeMultiTraitPreflightShape {
-    shape: native_preflight::MultiTraitPreflightShapePayload,
-}
-
-#[pymethods]
-impl NativePreflightReport {
-    #[getter]
-    fn sample_count(&self) -> i64 {
-        self.report.sample_count
-    }
-
-    #[getter]
-    fn covariate_count(&self) -> i64 {
-        self.report.covariate_count
-    }
-
-    #[getter]
-    fn chromosome_count(&self) -> i64 {
-        self.report.chromosome_count
-    }
-
-    #[getter]
-    fn warning_messages(&self) -> Vec<String> {
-        self.report.warning_messages.clone()
-    }
-}
-
-#[pymethods]
-impl NativeSingleTraitPreflightShape {
-    #[getter]
-    fn sample_count(&self) -> i64 {
-        self.shape.sample_count
-    }
-
-    #[getter]
-    fn covariate_count(&self) -> i64 {
-        self.shape.covariate_count
-    }
-}
-
-#[pymethods]
-impl NativeMultiTraitPreflightShape {
-    #[getter]
-    fn trait_count(&self) -> i64 {
-        self.shape.trait_count
-    }
-
-    #[getter]
-    fn sample_count(&self) -> i64 {
-        self.shape.sample_count
-    }
-
-    #[getter]
-    fn covariate_count(&self) -> i64 {
-        self.shape.covariate_count
-    }
-}
-
 #[pymethods]
 impl NativePreflightValidator {
     #[new]
@@ -279,7 +206,7 @@ impl NativePreflightValidator {
         covariate_count: i64,
         chromosome_count: i64,
         trusted_no_missing_diploid: bool,
-    ) -> PyResult<NativePreflightReport> {
+    ) -> PyResult<(i64, i64, i64, Vec<String>)> {
         let report = native_preflight::build_preflight_report_payload(
             sample_count,
             covariate_count,
@@ -287,7 +214,7 @@ impl NativePreflightValidator {
             trusted_no_missing_diploid,
         )
         .map_err(|error| convert_preflight_error(&error))?;
-        Ok(NativePreflightReport { report })
+        Ok((report.sample_count, report.covariate_count, report.chromosome_count, report.warning_messages))
     }
 
     #[allow(clippy::unused_self)]
@@ -297,7 +224,7 @@ impl NativePreflightValidator {
         covariate_dimension_count: i64,
         covariate_sample_count: i64,
         covariate_count: i64,
-    ) -> PyResult<NativeSingleTraitPreflightShape> {
+    ) -> PyResult<(i64, i64)> {
         let shape = native_preflight::validate_single_trait_preflight_shape_payload(
             phenotype_sample_count,
             covariate_dimension_count,
@@ -305,7 +232,7 @@ impl NativePreflightValidator {
             covariate_count,
         )
         .map_err(|error| convert_preflight_error(&error))?;
-        Ok(NativeSingleTraitPreflightShape { shape })
+        Ok((shape.sample_count, shape.covariate_count))
     }
 
     #[allow(clippy::unused_self)]
@@ -317,7 +244,7 @@ impl NativePreflightValidator {
         covariate_dimension_count: i64,
         covariate_sample_count: i64,
         covariate_count: i64,
-    ) -> PyResult<NativeMultiTraitPreflightShape> {
+    ) -> PyResult<(i64, i64, i64)> {
         let shape = native_preflight::validate_multi_trait_preflight_shape_payload(
             phenotype_dimension_count,
             phenotype_trait_count,
@@ -327,7 +254,7 @@ impl NativePreflightValidator {
             covariate_count,
         )
         .map_err(|error| convert_preflight_error(&error))?;
-        Ok(NativeMultiTraitPreflightShape { shape })
+        Ok((shape.trait_count, shape.sample_count, shape.covariate_count))
     }
 
     #[allow(clippy::unused_self)]
@@ -399,10 +326,7 @@ impl NativePreflightValidator {
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeMultiTraitPreflightShape>()?;
-    module.add_class::<NativePreflightReport>()?;
     module.add_class::<NativePreflightValidator>()?;
-    module.add_class::<NativeSingleTraitPreflightShape>()?;
     Ok(())
 }
 

@@ -8,13 +8,6 @@ pub(super) enum SampleKey {
     FidIid { family_identifier: String, individual_identifier: String },
 }
 
-pub(super) fn sample_key_mode_value(sample_key_mode: SampleKeyMode) -> &'static str {
-    match sample_key_mode {
-        SampleKeyMode::Iid => "iid",
-        SampleKeyMode::FidIid => "fid_iid",
-    }
-}
-
 pub(super) fn validate_sample_identifier_lengths(
     sample_indices: &[i64],
     family_identifiers: &[String],

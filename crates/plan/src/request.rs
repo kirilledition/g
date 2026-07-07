@@ -23,6 +23,19 @@ macro_rules! string_enum {
                     $(Self::$variant => $value,)+
                 }
             }
+
+            #[must_use]
+            pub fn from_str_value(value: &str) -> Option<Self> {
+                match value {
+                    $($value => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+
+            #[must_use]
+            pub fn accepted_values() -> &'static [&'static str] {
+                &[$($value),+]
+            }
         }
     };
 }

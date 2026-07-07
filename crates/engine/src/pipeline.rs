@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use g_genotype::{BgenError, BgenReaderCore, ChunkSpec, GenotypeError};
+use g_genotype::{BgenError, BgenGenotypeSource, ChunkSpec, GenotypeError};
 
 use crate::preflight::PreflightError;
 use crate::trusted_validation::TrustedBgenValidationError;
 
 pub struct Regenie2RunEngineCore {
-    reader: BgenReaderCore,
+    reader: BgenGenotypeSource,
     chunk_size: usize,
     variant_limit: Option<usize>,
 }
@@ -27,12 +27,12 @@ impl Regenie2RunEngineCore {
         variant_limit: Option<usize>,
         trusted_no_missing_diploid: bool,
     ) -> Result<Self, BgenError> {
-        let reader = BgenReaderCore::open(bgen_path, trusted_no_missing_diploid)?;
+        let reader = BgenGenotypeSource::open(bgen_path, trusted_no_missing_diploid)?;
         Ok(Self { reader, chunk_size, variant_limit })
     }
 
     #[must_use]
-    pub const fn reader(&self) -> &BgenReaderCore {
+    pub const fn reader(&self) -> &BgenGenotypeSource {
         &self.reader
     }
 

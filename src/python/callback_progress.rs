@@ -5,7 +5,6 @@ use pyo3::types::PyModule;
 
 use g_engine as native_callback_progress;
 
-#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub(crate) struct NativeCallbackChunkIdentity {
     inner: native_callback_progress::CallbackChunkIdentity,
@@ -22,17 +21,14 @@ pub(crate) struct NativeCallbackProgressTelemetryEvent {
     inner: native_callback_progress::CallbackProgressTelemetryEvent,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackProgressTelemetryRecord {
     inner: native_callback_progress::CallbackProgressTelemetryRecord,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackProgressTelemetryPlan {
     inner: native_callback_progress::CallbackProgressTelemetryPlan,
 }
 
-#[pyclass]
 pub(crate) struct NativeCallbackProgressCompletion {
     inner: native_callback_progress::CallbackProgressCompletion,
 }
@@ -42,63 +38,8 @@ pub(crate) struct NativeCallbackProgressState {
     inner: native_callback_progress::CallbackProgressState,
 }
 
-#[pymethods]
-impl NativeCallbackChunkIdentity {
-    #[getter]
-    fn chunk_identifier(&self) -> i64 {
-        self.inner.chunk_identifier
-    }
-
-    #[getter]
-    fn chromosome(&self) -> String {
-        self.inner.chromosome.clone()
-    }
-
-    #[getter]
-    fn variant_start_index(&self) -> i64 {
-        self.inner.variant_start_index
-    }
-
-    #[getter]
-    fn variant_stop_index(&self) -> i64 {
-        self.inner.variant_stop_index
-    }
-
-    #[getter]
-    fn variant_count(&self) -> i64 {
-        self.inner.variant_count
-    }
-}
-
-#[pymethods]
 impl NativeCallbackProgressUpdate {
-    #[getter]
-    fn processed_chunk_count(&self) -> i64 {
-        self.inner.processed_chunk_count
-    }
-
-    #[getter]
-    fn completed_chromosome(&self) -> Option<String> {
-        self.inner.completed_chromosome.clone()
-    }
-
-    #[getter]
-    fn completed_processed_chunk_count(&self) -> Option<i64> {
-        self.inner.completed_processed_chunk_count
-    }
-
-    #[getter]
-    fn started_chromosome(&self) -> Option<String> {
-        self.inner.started_chromosome.clone()
-    }
-
-    #[getter]
-    fn chunk_identity(&self) -> NativeCallbackChunkIdentity {
-        self.inner.chunk_identity.clone().into()
-    }
-
-    #[getter]
-    fn telemetry_plan(&self) -> NativeCallbackProgressTelemetryPlan {
+    pub(crate) fn telemetry_plan_value(&self) -> NativeCallbackProgressTelemetryPlan {
         self.inner.telemetry_plan().into()
     }
 }
@@ -144,48 +85,38 @@ impl NativeCallbackProgressTelemetryEvent {
     }
 }
 
-#[pymethods]
 impl NativeCallbackProgressTelemetryRecord {
-    #[getter]
-    fn processed_chunk_count(&self) -> i64 {
+    pub(crate) const fn processed_chunk_count_value(&self) -> i64 {
         self.inner.processed_chunk_count
     }
 
-    #[getter]
-    fn chromosome(&self) -> String {
-        self.inner.chromosome.clone()
+    pub(crate) fn chromosome_value(&self) -> &str {
+        self.inner.chromosome.as_str()
     }
 
-    #[getter]
-    fn chunk_identifier(&self) -> i64 {
+    pub(crate) const fn chunk_identifier_value(&self) -> i64 {
         self.inner.chunk_identifier
     }
 
-    #[getter]
-    fn variant_start_index(&self) -> i64 {
+    pub(crate) const fn variant_start_index_value(&self) -> i64 {
         self.inner.variant_start_index
     }
 
-    #[getter]
-    fn variant_stop_index(&self) -> i64 {
+    pub(crate) const fn variant_stop_index_value(&self) -> i64 {
         self.inner.variant_stop_index
     }
 
-    #[getter]
-    fn variant_count(&self) -> i64 {
+    pub(crate) const fn variant_count_value(&self) -> i64 {
         self.inner.variant_count
     }
 }
 
-#[pymethods]
 impl NativeCallbackProgressTelemetryPlan {
-    #[getter]
-    fn events(&self) -> Vec<NativeCallbackProgressTelemetryEvent> {
+    pub(crate) fn event_values(&self) -> Vec<NativeCallbackProgressTelemetryEvent> {
         self.inner.events.iter().cloned().map(Into::into).collect()
     }
 
-    #[getter]
-    fn progress(&self) -> NativeCallbackProgressTelemetryRecord {
+    pub(crate) fn progress_value(&self) -> NativeCallbackProgressTelemetryRecord {
         self.inner.progress.clone().into()
     }
 }
@@ -193,54 +124,6 @@ impl NativeCallbackProgressTelemetryPlan {
 impl NativeCallbackProgressCompletion {
     pub(crate) fn telemetry_event_value(&self) -> NativeCallbackProgressTelemetryEvent {
         self.inner.telemetry_event().into()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackProgressCompletion {
-    #[getter]
-    fn chromosome(&self) -> String {
-        self.inner.chromosome.clone()
-    }
-
-    #[getter]
-    fn processed_chunk_count(&self) -> i64 {
-        self.inner.processed_chunk_count
-    }
-
-    #[getter]
-    fn telemetry_event(&self) -> NativeCallbackProgressTelemetryEvent {
-        self.telemetry_event_value()
-    }
-}
-
-#[pymethods]
-impl NativeCallbackProgressState {
-    #[new]
-    fn new() -> Self {
-        Self::new_state()
-    }
-
-    #[getter]
-    fn processed_chunk_count(&self) -> i64 {
-        self.inner.processed_chunk_count()
-    }
-
-    #[getter]
-    fn current_progress_chromosome(&self) -> Option<String> {
-        self.inner.current_progress_chromosome().map(str::to_owned)
-    }
-
-    fn record_processed_chunk(&mut self, chunk_identity: &NativeCallbackChunkIdentity) -> NativeCallbackProgressUpdate {
-        self.inner.record_processed_chunk(chunk_identity.inner.clone()).into()
-    }
-
-    fn record_processed_chunk_without_progress(&mut self) {
-        self.inner.record_processed_chunk_without_progress();
-    }
-
-    fn finish_progress(&mut self) -> Option<NativeCallbackProgressCompletion> {
-        self.inner.finish_progress().map(Into::into)
     }
 }
 
@@ -319,12 +202,7 @@ pub(crate) fn build_callback_chunk_identity(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCallbackChunkIdentity>()?;
-    module.add_class::<NativeCallbackProgressCompletion>()?;
-    module.add_class::<NativeCallbackProgressState>()?;
     module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
-    module.add_class::<NativeCallbackProgressTelemetryPlan>()?;
-    module.add_class::<NativeCallbackProgressTelemetryRecord>()?;
     module.add_class::<NativeCallbackProgressUpdate>()?;
     Ok(())
 }

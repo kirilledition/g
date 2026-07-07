@@ -11,6 +11,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PySlice, PyTuple};
 
+use g_engine::ResultWriteItemKind;
+
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
     NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate, build_callback_chunk_identity,
@@ -22,8 +24,7 @@ use super::callback_summary::NativeBinaryCorrectionSummary;
 use super::schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
-    NativeCallbackSchedulerState, NativeCallbackWorkerAbortPlan, NativeCallbackWorkerErrorRaisePlan,
-    NativeCallbackWorkerErrorUpdatePlan, NativeCallbackWorkerFinishPlan, NativeCallbackWorkerStartAttemptPlan,
+    NativeCallbackSchedulerState, NativeCallbackWorkerErrorRaisePlan, NativeCallbackWorkerFinishPlan,
     NativeDosageBufferPoolObservationPlan, NativeDosageWorkDrainCompletionPlan, NativeDosageWorkHandoffPlan,
     NativeDosageWorkItemDispatchPlan, NativeDosageWorkItemStageDurationPlan,
     NativeResultInFlightAcquireObservationPlan, NativeResultInFlightReleaseObservationPlan,
@@ -39,9 +40,6 @@ const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE: &str = "variant_major_dosage";
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_dosage_batch";
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
 const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
-const RESULT_WORK_ITEM_RESOURCE_PHASE_PRE_WRITE: &str = "pre_write";
-const RESULT_WORK_ITEM_RESOURCE_PHASE_FINAL: &str = "final";
-const RESULT_WORK_ITEM_RESOURCE_PHASE_IN_FLIGHT_SLOT: &str = "in_flight_slot";
 
 fn pending_diagnostics_count_from_object(pending_diagnostics: &Bound<'_, PyAny>) -> PyResult<i64> {
     let pending_diagnostics_count = pending_diagnostics.len()?;
@@ -80,7 +78,7 @@ pub(crate) struct NativeCallbackRuntimeResources {
     binary_correction_summary: Py<NativeBinaryCorrectionSummary>,
     worker_thread: Py<NativeCallbackWorkerThread>,
     result_worker_thread: Py<NativeCallbackWorkerThread>,
-    expected_result_work_item_kind: String,
+    expected_result_work_item_kind: ResultWriteItemKind,
     has_telemetry_session: bool,
     has_stage_timing_recorder: bool,
     flush_binary_correction_diagnostics_on_result_stop: bool,
@@ -178,7 +176,7 @@ pub(crate) struct NativeCallbackQueueOperationOutcome {
     should_retry: bool,
     should_stop: bool,
     should_flush_binary_correction_diagnostics: bool,
-    dispatch_action: String,
+    dispatch_action: NativeCallbackQueueDispatchAction,
     dispatch_error_message: Option<String>,
     worker_error_raise_plan: Option<Py<NativeCallbackWorkerErrorRaisePlan>>,
     stage_backpressure_observation: Option<Py<NativeCallbackQueueStageBackpressureObservation>>,
@@ -227,16 +225,6 @@ impl NativeDosageDispatchAction {
         }
         Self::None
     }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::SampleMajorDosage => DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE,
-            Self::VariantMajorDosage => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE,
-            Self::VariantMajorDosageBatch => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH,
-            Self::VariantMajorPacked8ProbabilityPair => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -259,10 +247,45 @@ impl NativeResultWriteDispatchAction {
         }
         Self::None
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeCallbackQueueDispatchAction {
+    None,
+    SampleMajorDosage,
+    VariantMajorDosage,
+    VariantMajorDosageBatch,
+    VariantMajorPacked8ProbabilityPair,
+    SingleResult,
+    MultiResult,
+}
+
+impl NativeCallbackQueueDispatchAction {
+    fn from_dosage_action(dispatch_action: NativeDosageDispatchAction) -> Self {
+        match dispatch_action {
+            NativeDosageDispatchAction::None => Self::None,
+            NativeDosageDispatchAction::SampleMajorDosage => Self::SampleMajorDosage,
+            NativeDosageDispatchAction::VariantMajorDosage => Self::VariantMajorDosage,
+            NativeDosageDispatchAction::VariantMajorDosageBatch => Self::VariantMajorDosageBatch,
+            NativeDosageDispatchAction::VariantMajorPacked8ProbabilityPair => Self::VariantMajorPacked8ProbabilityPair,
+        }
+    }
+
+    fn from_result_write_action(dispatch_action: NativeResultWriteDispatchAction) -> Self {
+        match dispatch_action {
+            NativeResultWriteDispatchAction::None => Self::None,
+            NativeResultWriteDispatchAction::SingleResult => Self::SingleResult,
+            NativeResultWriteDispatchAction::MultiResult => Self::MultiResult,
+        }
+    }
 
     fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::SampleMajorDosage => DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE,
+            Self::VariantMajorDosage => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE,
+            Self::VariantMajorDosageBatch => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH,
+            Self::VariantMajorPacked8ProbabilityPair => DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR,
             Self::SingleResult => RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
             Self::MultiResult => RESULT_WRITE_ITEM_KIND_MULTI_RESULT,
         }
@@ -313,8 +336,10 @@ impl NativeCallbackRuntimeResources {
             result_in_flight_limit,
             dosage_buffer_limit,
         )?;
+        let expected_result_work_item_kind =
+            NativeCallbackSchedulerState::parse_result_write_item_kind_value(&expected_result_work_item_kind)?;
         let expected_result_dispatch_plan = callback_scheduler_state
-            .plan_result_write_item_dispatch_value(&expected_result_work_item_kind, &expected_result_work_item_kind)?;
+            .plan_result_write_item_dispatch_kind_value(expected_result_work_item_kind, expected_result_work_item_kind);
         if expected_result_dispatch_plan.has_dispatch_error_value() {
             let error_message = expected_result_dispatch_plan
                 .error_message_value()
@@ -441,21 +466,13 @@ impl NativeCallbackRuntimeResources {
         self.progress_state.bind(py).borrow().current_progress_chromosome_value()
     }
 
-    fn record_processed_chunk(
-        &self,
-        py: Python<'_>,
-        chunk_identity: &NativeCallbackChunkIdentity,
-    ) -> NativeCallbackProgressUpdate {
-        self.progress_state.bind(py).borrow_mut().record_processed_chunk_value(chunk_identity)
-    }
-
     fn record_processed_chunk_for_metadata(
         &self,
         py: Python<'_>,
         metadata: &Bound<'_, PyAny>,
     ) -> PyResult<NativeCallbackProgressUpdate> {
         let chunk_identity = callback_chunk_identity_from_metadata(metadata)?;
-        Ok(self.record_processed_chunk(py, &chunk_identity))
+        Ok(self.progress_state.bind(py).borrow_mut().record_processed_chunk_value(&chunk_identity))
     }
 
     fn record_progress_for_metadata(
@@ -472,10 +489,6 @@ impl NativeCallbackRuntimeResources {
 
     fn record_processed_chunk_without_progress(&self, py: Python<'_>) {
         self.progress_state.bind(py).borrow_mut().record_processed_chunk_without_progress_value();
-    }
-
-    fn finish_progress(&self, py: Python<'_>) -> Option<NativeCallbackProgressCompletion> {
-        self.progress_state.bind(py).borrow_mut().finish_progress_value()
     }
 
     fn binary_correction_chunk_count_with_pending(
@@ -570,7 +583,7 @@ impl NativeCallbackRuntimeResources {
         self.binary_correction_summary.bind(py).borrow().summary_payload_value(py)
     }
 
-    fn start_workers(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerStartAttemptPlan> {
+    fn start_workers(&self, py: Python<'_>) -> PyResult<()> {
         let _start_guard = self.worker_start_lock.lock().map_err(|_| {
             PyRuntimeError::new_err("native callback worker start lock was poisoned during worker startup")
         })?;
@@ -579,7 +592,10 @@ impl NativeCallbackRuntimeResources {
             scheduler_state.plan_worker_start_attempt_value()
         };
         if start_attempt_plan.has_start_error_value() {
-            return Ok(start_attempt_plan);
+            let error_message = start_attempt_plan
+                .error_message_value()
+                .unwrap_or("Native callback worker lifecycle failed to mark workers started.");
+            return Err(PyRuntimeError::new_err(error_message.to_owned()));
         }
         if start_attempt_plan.should_start_result_worker() {
             self.result_worker_thread.bind(py).borrow().start_thread(py)?;
@@ -587,7 +603,7 @@ impl NativeCallbackRuntimeResources {
         if start_attempt_plan.should_start_dosage_worker() {
             self.worker_thread.bind(py).borrow().start_thread(py)?;
         }
-        Ok(start_attempt_plan)
+        Ok(())
     }
 
     fn stop_dosage_worker(&self, py: Python<'_>, timeout_seconds: Option<f64>) -> PyResult<Option<f64>> {
@@ -755,7 +771,7 @@ impl NativeCallbackRuntimeResources {
         self.finish_worker_lifecycle(py, pending_diagnostics_count)
     }
 
-    fn abort_worker_lifecycle(&self, py: Python<'_>) -> PyResult<NativeCallbackWorkerAbortPlan> {
+    fn abort_worker_lifecycle(&self, py: Python<'_>) -> PyResult<()> {
         let abort_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state.plan_worker_abort_value()
@@ -766,7 +782,7 @@ impl NativeCallbackRuntimeResources {
         if abort_plan.stop_result_worker_value() {
             let _ = self.stop_result_worker(py, Some(abort_plan.result_stop_timeout_seconds_value()))?;
         }
-        Ok(abort_plan)
+        Ok(())
     }
 
     fn plan_worker_error_raise(&self, py: Python<'_>) -> NativeCallbackWorkerErrorRaisePlan {
@@ -774,22 +790,14 @@ impl NativeCallbackRuntimeResources {
         scheduler_state.plan_worker_error_raise_value()
     }
 
-    fn update_dosage_worker_error(
-        &self,
-        py: Python<'_>,
-        error_message: Option<&str>,
-    ) -> NativeCallbackWorkerErrorUpdatePlan {
+    fn update_dosage_worker_error(&self, py: Python<'_>, error_message: Option<&str>) {
         let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
-        scheduler_state.update_dosage_worker_error_value(error_message)
+        scheduler_state.update_dosage_worker_error_value(error_message);
     }
 
-    fn update_result_worker_error(
-        &self,
-        py: Python<'_>,
-        error_message: Option<&str>,
-    ) -> NativeCallbackWorkerErrorUpdatePlan {
+    fn update_result_worker_error(&self, py: Python<'_>, error_message: Option<&str>) {
         let mut scheduler_state = self.callback_scheduler_state.bind(py).borrow_mut();
-        scheduler_state.update_result_worker_error_value(error_message)
+        scheduler_state.update_result_worker_error_value(error_message);
     }
 
     fn put_dosage_work_item_until_accepted_outcome(
@@ -1027,32 +1035,6 @@ impl NativeCallbackRuntimeResources {
         )
     }
 
-    fn release_result_work_item_resources_outcome(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-        phase: &str,
-        host_dosage_buffer_released: bool,
-    ) -> PyResult<NativeCallbackResourceOperationOutcome> {
-        let release_result = match phase {
-            RESULT_WORK_ITEM_RESOURCE_PHASE_PRE_WRITE => {
-                self.release_result_work_item_pre_write_resources_for_object(py, work_item)?
-            }
-            RESULT_WORK_ITEM_RESOURCE_PHASE_FINAL => {
-                self.release_result_work_item_final_resources_for_object(py, work_item, host_dosage_buffer_released)?
-            }
-            RESULT_WORK_ITEM_RESOURCE_PHASE_IN_FLIGHT_SLOT => {
-                self.release_result_work_item_in_flight_slot_for_object(py, work_item)?
-            }
-            _ => {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Unsupported result work-item resource release phase: {phase}"
-                )));
-            }
-        };
-        NativeCallbackResourceOperationOutcome::from_result_work_item_release_result(py, release_result)
-    }
-
     fn release_result_work_item_pre_write_resources_outcome(
         &self,
         py: Python<'_>,
@@ -1285,19 +1267,6 @@ impl NativeCallbackRuntimeResources {
             has_released_host_dosage_buffer,
             release_in_flight_slot,
         )
-    }
-
-    fn release_result_work_item_in_flight_slot_for_object(
-        &self,
-        py: Python<'_>,
-        work_item: &Bound<'_, PyAny>,
-    ) -> PyResult<NativeResultWorkItemResourceReleaseResult> {
-        let mut release_result = NativeResultWorkItemResourceReleaseResult::empty();
-        if !result_work_item_release_in_flight_slot(work_item)? {
-            return Ok(release_result);
-        }
-        self.record_result_work_item_in_flight_slot_release(py, &mut release_result)?;
-        Ok(release_result)
     }
 
     fn acquire_dosage_buffer_with_backpressure_timeout(
@@ -2240,7 +2209,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_retry: put_result.should_retry_put,
             should_stop: false,
             should_flush_binary_correction_diagnostics: false,
-            dispatch_action: "none".to_owned(),
+            dispatch_action: NativeCallbackQueueDispatchAction::None,
             dispatch_error_message: None,
             worker_error_raise_plan: None,
             stage_backpressure_observation: put_result.stage_backpressure_observation,
@@ -2256,7 +2225,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_retry: false,
             should_stop: false,
             should_flush_binary_correction_diagnostics: false,
-            dispatch_action: "none".to_owned(),
+            dispatch_action: NativeCallbackQueueDispatchAction::None,
             dispatch_error_message: None,
             worker_error_raise_plan: Some(Py::new(py, worker_error_raise_plan)?),
             stage_backpressure_observation: None,
@@ -2269,7 +2238,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_retry: false,
             should_stop: get_result.should_stop,
             should_flush_binary_correction_diagnostics: false,
-            dispatch_action: get_result.dispatch_action.as_str().to_owned(),
+            dispatch_action: NativeCallbackQueueDispatchAction::from_dosage_action(get_result.dispatch_action),
             dispatch_error_message: get_result.dispatch_error_message,
             worker_error_raise_plan: None,
             stage_backpressure_observation: get_result.stage_backpressure_observation,
@@ -2282,7 +2251,7 @@ impl NativeCallbackQueueOperationOutcome {
             should_retry: false,
             should_stop: get_result.should_stop,
             should_flush_binary_correction_diagnostics: get_result.should_flush_binary_correction_diagnostics,
-            dispatch_action: get_result.dispatch_action.as_str().to_owned(),
+            dispatch_action: NativeCallbackQueueDispatchAction::from_result_write_action(get_result.dispatch_action),
             dispatch_error_message: get_result.dispatch_error_message,
             worker_error_raise_plan: None,
             stage_backpressure_observation: get_result.stage_backpressure_observation,
@@ -2313,38 +2282,38 @@ impl NativeCallbackQueueOperationOutcome {
     }
 
     #[getter]
-    fn dispatch_action(&self) -> &str {
-        &self.dispatch_action
+    fn dispatch_action(&self) -> &'static str {
+        self.dispatch_action.as_str()
     }
 
     #[getter]
     fn should_process_sample_major_dosage(&self) -> bool {
-        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE
+        self.dispatch_action == NativeCallbackQueueDispatchAction::SampleMajorDosage
     }
 
     #[getter]
     fn should_process_variant_major_dosage(&self) -> bool {
-        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE
+        self.dispatch_action == NativeCallbackQueueDispatchAction::VariantMajorDosage
     }
 
     #[getter]
     fn should_process_variant_major_dosage_batch(&self) -> bool {
-        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH
+        self.dispatch_action == NativeCallbackQueueDispatchAction::VariantMajorDosageBatch
     }
 
     #[getter]
     fn should_process_variant_major_packed8_probability_pair(&self) -> bool {
-        self.dispatch_action == DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR
+        self.dispatch_action == NativeCallbackQueueDispatchAction::VariantMajorPacked8ProbabilityPair
     }
 
     #[getter]
     fn should_process_result_write_item(&self) -> bool {
-        self.dispatch_action == RESULT_WRITE_ITEM_KIND_SINGLE_RESULT
+        self.dispatch_action == NativeCallbackQueueDispatchAction::SingleResult
     }
 
     #[getter]
     fn should_process_multi_result_write_item(&self) -> bool {
-        self.dispatch_action == RESULT_WRITE_ITEM_KIND_MULTI_RESULT
+        self.dispatch_action == NativeCallbackQueueDispatchAction::MultiResult
     }
 
     #[getter]
@@ -2936,10 +2905,12 @@ impl NativeCallbackRuntimeResources {
         py: Python<'_>,
         result_work_item_kind: &str,
     ) -> PyResult<NativeResultWriteItemDispatchPlan> {
+        let result_work_item_kind =
+            NativeCallbackSchedulerState::parse_result_write_item_kind_value(result_work_item_kind)?;
         let dispatch_plan = {
             let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
             scheduler_state
-                .plan_result_write_item_dispatch_value(result_work_item_kind, &self.expected_result_work_item_kind)?
+                .plan_result_write_item_dispatch_kind_value(result_work_item_kind, self.expected_result_work_item_kind)
         };
         if !dispatch_plan.has_dispatch_error_value() {
             return Ok(dispatch_plan);

@@ -19,7 +19,6 @@ from g.engine.regenie2_pipeline import (
     preflight,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +61,7 @@ def load_single_trait_run_input(
         pipeline_label=pipeline_label,
         sample_count=sample_count,
     )
-    events.record_sample_alignment_completed_telemetry(
+    _core.record_sample_alignment_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -94,7 +93,7 @@ def build_single_trait_prediction_source(
         sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
     )
     engine_timing.record_stage_duration(context.stage_timing_recorder, "prediction_source_load", prediction_start_time)
-    events.record_prediction_source_loaded_telemetry(
+    _core.record_prediction_source_loaded_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -136,7 +135,7 @@ def run_single_trait_preflight(
         pipeline_label=pipeline_label,
         sample_count=preflight_report.sample_count,
     )
-    events.record_single_trait_preflight_completed_telemetry(
+    _core.record_single_trait_preflight_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         phenotype_name,
@@ -180,7 +179,7 @@ def run_single_trait_bgen_pipeline(
             phenotype_name=phenotype_name,
             pipeline_label=pipeline_label,
         )
-        events.record_association_backend_selected_telemetry(
+        _core.record_association_backend_selected_telemetry(
             context.telemetry_session,
             context.association_mode.value,
             context.backend_plan.backend_kind.value,
@@ -196,7 +195,7 @@ def run_single_trait_bgen_pipeline(
             sample_count=int(engine.sample_count),
             variant_count=int(engine.variant_count),
         )
-        events.record_bgen_engine_opened_telemetry(
+        _core.record_bgen_engine_opened_telemetry(
             context.telemetry_session,
             context.association_mode.value,
             context.backend_plan.backend_kind.value,

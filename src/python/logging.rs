@@ -4,22 +4,23 @@
 
 use std::ffi::CString;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use super::callback_progress::NativeCallbackProgressTelemetryEvent;
 use super::errors;
 use super::jax_runtime;
+use super::json_bridge;
 use super::run_events;
+use super::telemetry_policy;
 use g_runtime as native_logging_sink;
 use g_runtime as native_run_events;
 use g_runtime as native_telemetry_session;
 use g_runtime as native_telemetry_writer;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyModule, PyString, PyTuple};
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+use pyo3::types::{PyAny, PyDict, PyModule};
 
 const PYTHON_LOGGING_TARGET: &str = "g.python";
 
@@ -55,8 +56,9 @@ impl NativeTelemetryRunSession {
         trace_event_cap: i64,
         run_id: Option<String>,
     ) -> PyResult<Self> {
+        let parsed_telemetry_mode = telemetry_policy::parse_telemetry_mode(telemetry_mode)?;
         let state = native_telemetry_session::TelemetryRunSessionState::new(
-            telemetry_mode,
+            parsed_telemetry_mode,
             trace_event_cap,
             progress_interval_seconds,
             progress_interval_chunks,
@@ -124,36 +126,21 @@ impl NativeTelemetryRunSession {
         let event_payload = run_events::run_completed_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_completed_telemetry_fields(&event_payload);
         let fields = run_events::run_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::RUN_COMPLETED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::RunCompleted, &fields)
     }
 
     pub fn emit_run_interrupted_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
         let event_payload = run_events::run_interrupted_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_interrupted_telemetry_fields(&event_payload);
         let fields = run_events::run_interrupted_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::RUN_FAILED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_WARN_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::RunInterrupted, &fields)
     }
 
     pub fn emit_run_failed_event<'py>(&self, py: Python<'py>, event: &Bound<'py, PyAny>) -> PyResult<()> {
         let event_payload = run_events::run_failed_event_from_py(event)?;
         let telemetry_fields = native_run_events::build_run_failed_telemetry_fields(&event_payload);
         let fields = run_events::run_failed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::RUN_FAILED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_ERROR_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::RunFailed, &fields)
     }
 
     pub fn emit_run_started_event<'py>(
@@ -171,12 +158,7 @@ impl NativeTelemetryRunSession {
             output_run_root,
         );
         let fields = run_events::run_started_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::RUN_STARTED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::RunStarted, &fields)
     }
 
     pub fn emit_execution_plan_prepared_event<'py>(
@@ -198,12 +180,7 @@ impl NativeTelemetryRunSession {
             device,
         );
         let fields = run_events::execution_plan_prepared_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::EXECUTION_PLAN_PREPARED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::ExecutionPlanPrepared, &fields)
     }
 
     pub fn emit_effective_config_written_event<'py>(
@@ -221,12 +198,7 @@ impl NativeTelemetryRunSession {
             output_run_directory,
         );
         let fields = run_events::effective_config_written_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::EffectiveConfigWritten, &fields)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -243,12 +215,7 @@ impl NativeTelemetryRunSession {
             final_output_path.as_deref(),
         );
         let fields = run_events::phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::WRITER_FINISHED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::WriterFinished, &fields)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -265,12 +232,7 @@ impl NativeTelemetryRunSession {
             &final_output_paths,
         );
         let fields = run_events::multi_phenotype_writer_finished_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::WRITER_FINISHED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::WriterFinished, &fields)
     }
 
     pub fn emit_single_trait_preflight_completed_event<'py>(
@@ -290,12 +252,7 @@ impl NativeTelemetryRunSession {
             chromosome_count,
         );
         let fields = run_events::single_trait_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::PreflightCompleted, &fields)
     }
 
     pub fn emit_multi_phenotype_preflight_completed_event<'py>(
@@ -312,12 +269,7 @@ impl NativeTelemetryRunSession {
         );
         let fields =
             run_events::multi_phenotype_preflight_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::PREFLIGHT_COMPLETED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::PreflightCompleted, &fields)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -340,10 +292,9 @@ impl NativeTelemetryRunSession {
             phenotype_group_count,
         );
         let fields = run_events::sample_alignment_completed_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
+        self.emit_telemetry_event_fields(
             py,
-            native_run_events::SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            native_run_events::RunTelemetryEventKind::SampleAlignmentCompleted,
             &fields,
         )
     }
@@ -362,12 +313,7 @@ impl NativeTelemetryRunSession {
             phenotype_count,
         );
         let fields = run_events::prediction_source_loaded_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::PREDICTION_SOURCE_LOADED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::PredictionSourceLoaded, &fields)
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -388,10 +334,9 @@ impl NativeTelemetryRunSession {
             phenotype_group_count,
         );
         let fields = run_events::multi_phenotype_sample_summary_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
+        self.emit_telemetry_event_fields(
             py,
-            native_run_events::MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            native_run_events::RunTelemetryEventKind::MultiPhenotypeSampleSummary,
             &fields,
         )
     }
@@ -412,10 +357,9 @@ impl NativeTelemetryRunSession {
             fallback_error.as_deref(),
         );
         let fields = run_events::gpu_genotype_format_resolved_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
+        self.emit_telemetry_event_fields(
             py,
-            native_run_events::GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            native_run_events::RunTelemetryEventKind::GpuGenotypeFormatResolved,
             &fields,
         )
     }
@@ -440,10 +384,9 @@ impl NativeTelemetryRunSession {
             phenotype_count,
         );
         let fields = run_events::association_backend_selected_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
+        self.emit_telemetry_event_fields(
             py,
-            native_run_events::ASSOCIATION_BACKEND_SELECTED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
+            native_run_events::RunTelemetryEventKind::AssociationBackendSelected,
             &fields,
         )
     }
@@ -468,12 +411,7 @@ impl NativeTelemetryRunSession {
             phenotype_count,
         );
         let fields = run_events::bgen_engine_opened_telemetry_fields_to_py_dict(py, &telemetry_fields)?;
-        self.emit_current_event_fields(
-            py,
-            native_run_events::BGEN_ENGINE_OPENED_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            &fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::BgenEngineOpened, &fields)
     }
 
     fn emit_callback_progress_event<'py>(
@@ -492,12 +430,7 @@ impl NativeTelemetryRunSession {
         py: Python<'py>,
         fields: &Bound<'py, PyDict>,
     ) -> PyResult<()> {
-        self.emit_current_event_fields(
-            py,
-            native_run_events::BINARY_CORRECTION_SUMMARY_EVENT_NAME,
-            native_run_events::RUN_LIFECYCLE_INFO_LEVEL,
-            fields,
-        )
+        self.emit_telemetry_event_fields(py, native_run_events::RunTelemetryEventKind::BinaryCorrectionSummary, fields)
     }
 
     pub fn emit_jax_runtime_diagnostic_event<'py>(
@@ -703,6 +636,15 @@ impl NativeTelemetryRunSession {
         };
         native_telemetry_session.emit_current_event(py, &self.run_id_value()?, event, level, fields)
     }
+
+    fn emit_telemetry_event_fields<'py>(
+        &self,
+        py: Python<'py>,
+        event_kind: native_run_events::RunTelemetryEventKind,
+        fields: &Bound<'py, PyDict>,
+    ) -> PyResult<()> {
+        self.emit_current_event_fields(py, event_kind.event_name(), event_kind.level(), fields)
+    }
 }
 
 fn build_current_telemetry_event_payload<'py>(
@@ -782,96 +724,9 @@ fn telemetry_close_event_fields_to_py_dict<'py>(
 }
 
 fn serialize_telemetry_payload_json_line(payload: &Bound<'_, PyDict>) -> PyResult<String> {
-    let json_value = telemetry_json_value_from_py_any(payload.as_any())?;
+    let json_value = json_bridge::json_value_from_py_any(payload.as_any())?;
     native_telemetry_session::serialize_telemetry_payload_json_line(&json_value)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-}
-
-fn telemetry_json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
-    if value.is_none() {
-        return Ok(JsonValue::Null);
-    }
-    if value.is_instance_of::<PyBool>() {
-        return Ok(JsonValue::Bool(value.extract::<bool>()?));
-    }
-    if let Ok(mapping) = value.cast::<PyMapping>() {
-        return telemetry_json_object_from_py_mapping(mapping).map(JsonValue::Object);
-    }
-    if let Ok(list) = value.cast::<PyList>() {
-        return telemetry_json_array_from_py_iter(list.as_any()).map(JsonValue::Array);
-    }
-    if let Ok(tuple) = value.cast::<PyTuple>() {
-        return telemetry_json_array_from_py_iter(tuple.as_any()).map(JsonValue::Array);
-    }
-    if value.is_instance_of::<PyInt>() {
-        if let Ok(signed_integer) = value.extract::<i64>() {
-            return Ok(JsonValue::Number(JsonNumber::from(signed_integer)));
-        }
-        if let Ok(unsigned_integer) = value.extract::<u64>() {
-            return Ok(JsonValue::Number(JsonNumber::from(unsigned_integer)));
-        }
-        return Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()));
-    }
-    if value.is_instance_of::<PyFloat>() {
-        let float_value = value.extract::<f64>()?;
-        let Some(number) = JsonNumber::from_f64(float_value) else {
-            return Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()));
-        };
-        return Ok(JsonValue::Number(number));
-    }
-    if value.is_instance_of::<PyString>() {
-        return Ok(JsonValue::String(value.extract::<String>()?));
-    }
-    if let Some(path_text) = telemetry_path_string(value)? {
-        return Ok(JsonValue::String(path_text));
-    }
-    Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()))
-}
-
-fn telemetry_json_object_from_py_mapping(mapping: &Bound<'_, PyMapping>) -> PyResult<JsonMap<String, JsonValue>> {
-    let items = mapping.call_method0("items")?;
-    let mut json_object = JsonMap::new();
-    for item in items.try_iter()? {
-        let item = item?;
-        let tuple = item.cast::<PyTuple>()?;
-        let key = tuple.get_item(0)?;
-        let value = tuple.get_item(1)?;
-        json_object.insert(telemetry_json_key_from_py_any(&key)?, telemetry_json_value_from_py_any(&value)?);
-    }
-    Ok(json_object)
-}
-
-fn telemetry_json_array_from_py_iter(value: &Bound<'_, PyAny>) -> PyResult<Vec<JsonValue>> {
-    let mut values = Vec::new();
-    for item in value.try_iter()? {
-        values.push(telemetry_json_value_from_py_any(&item?)?);
-    }
-    Ok(values)
-}
-
-fn telemetry_json_key_from_py_any(key: &Bound<'_, PyAny>) -> PyResult<String> {
-    if key.is_none() {
-        return Ok("null".to_string());
-    }
-    if key.is_instance_of::<PyBool>() {
-        return Ok(if key.extract::<bool>()? { "true" } else { "false" }.to_string());
-    }
-    if key.is_instance_of::<PyString>() {
-        return key.extract::<String>();
-    }
-    Ok(key.str()?.to_string_lossy().into_owned())
-}
-
-fn telemetry_path_string(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
-    let Ok(file_system_path_method) = value.getattr("__fspath__") else {
-        return Ok(None);
-    };
-    let path_value = file_system_path_method.call0()?;
-    if let Ok(path_text) = path_value.extract::<String>() {
-        return Ok(Some(path_text));
-    }
-    let type_name = path_value.get_type().name()?.to_string_lossy().into_owned();
-    Err(PyValueError::new_err(format!("__fspath__ returned unsupported type '{type_name}'; expected str.")))
 }
 
 pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_json: Option<String>) -> PyResult<()> {

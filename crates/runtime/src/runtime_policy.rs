@@ -1,5 +1,7 @@
 //! Deterministic process runtime policy helpers.
 
+use crate::telemetry_policy::TelemetryMode;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct LoggingRuntimePolicyPayload {
@@ -29,15 +31,18 @@ pub fn build_logging_runtime_policy(
     trace_file: Option<String>,
     trace_filter: String,
     trace_event_cap: Option<i64>,
-    telemetry_mode: &str,
+    telemetry_mode: TelemetryMode,
     telemetry_stream_file: Option<String>,
 ) -> LoggingRuntimePolicyPayload {
     let telemetry_stream_file_is_some = telemetry_stream_file.is_some();
     let resolved_log_file = if telemetry_stream_file_is_some { None } else { log_file };
     let resolved_trace_file = telemetry_stream_file.or(trace_file);
-    let resolved_trace_filter =
-        if telemetry_stream_file_is_some && telemetry_mode != "trace" { log_filter.clone() } else { trace_filter };
-    let resolved_trace_event_cap = if telemetry_mode == "trace" { trace_event_cap } else { None };
+    let resolved_trace_filter = if telemetry_stream_file_is_some && !telemetry_mode.trace_enabled() {
+        log_filter.clone()
+    } else {
+        trace_filter
+    };
+    let resolved_trace_event_cap = if telemetry_mode.trace_enabled() { trace_event_cap } else { None };
     LoggingRuntimePolicyPayload {
         log_filter,
         log_file: resolved_log_file,

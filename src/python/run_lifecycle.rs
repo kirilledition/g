@@ -16,7 +16,7 @@ use pyo3::types::{PyAny, PyModule, PyTuple};
 use super::config::{NativeRunRequest, RegenieConfig};
 use super::errors;
 use super::json_bridge;
-use super::run_events::NativeRunArtifacts;
+use super::run_events::{self, NativeRunArtifacts};
 use super::runtime_state::NativeRuntimeCompatibilityToken;
 use super::schedule::NativeMultiTraitChunkWritePlanner;
 
@@ -181,6 +181,9 @@ impl NativeRunLifecycleSession {
             .detach(|| preparation_batch.initialize())
             .map_err(|error| errors::convert_pipeline_resume_compatibility_error(&error))?;
         self.write_initialized_metadata(&phenotype_names)?;
+        if self.run_request.output.resume {
+            record_output_resume_committed_chunk_diagnostics(&initialization)?;
+        }
         Ok(NativeRunLifecycleOutputInitialization { initialization })
     }
 
@@ -429,6 +432,23 @@ fn extend_run_manifest_metadata(
 
 fn lock_phase(phase: &Mutex<NativeRunLifecyclePhase>) -> PyResult<MutexGuard<'_, NativeRunLifecyclePhase>> {
     phase.lock().map_err(|_| PyRuntimeError::new_err("Run lifecycle phase mutex was poisoned."))
+}
+
+fn record_output_resume_committed_chunk_diagnostics(
+    initialization: &g_engine::PipelineOutputInitialization,
+) -> PyResult<()> {
+    for (output_index, committed_chunk_count) in initialization.committed_chunk_counts().into_iter().enumerate() {
+        let committed_chunk_count_value = i64::try_from(committed_chunk_count)
+            .map_err(|_| PyValueError::new_err("Committed chunk count exceeds native int64 capacity."))?;
+        let output_index_value = i64::try_from(output_index)
+            .map_err(|_| PyValueError::new_err("Output index exceeds native int64 capacity."))?;
+        let payload = native_run_metadata::build_pipeline_output_resume_committed_chunks_diagnostic_payload(
+            committed_chunk_count_value,
+            output_index_value,
+        );
+        run_events::emit_run_diagnostic_event_payload(&payload)?;
+    }
+    Ok(())
 }
 
 fn lock_initialized_metadata(

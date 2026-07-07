@@ -262,7 +262,7 @@ impl TelemetryProgressThrottleState {
 impl TelemetryRunSessionState {
     #[must_use]
     pub fn new(
-        telemetry_mode: &str,
+        telemetry_mode: telemetry_policy::TelemetryMode,
         trace_event_cap: i64,
         progress_interval_seconds: f64,
         progress_interval_chunks: i64,

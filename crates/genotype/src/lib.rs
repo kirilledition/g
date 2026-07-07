@@ -6,5 +6,6 @@ mod common;
 mod error;
 mod planner;
 mod preprocess;
+mod source;
 
 pub use api::*;

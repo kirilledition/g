@@ -2,7 +2,6 @@ use std::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 
-use super::keys::sample_key_mode_value;
 use super::types::{AlignedSampleData, MultiAlignedSampleData, ResolvedPhenotypeComputeGroup, SampleKeyMode};
 
 const GROUP_MODE_COMPLETE_CASE: &str = "complete-case";
@@ -203,7 +202,7 @@ fn fingerprint_prediction_alignment(
     let mut fingerprint_hash = Sha256::new();
     update_fingerprint(&mut fingerprint_hash, "prediction-alignment-v1");
     update_fingerprint(&mut fingerprint_hash, prediction_list_path);
-    update_fingerprint(&mut fingerprint_hash, sample_key_mode_value(sample_key_mode));
+    update_fingerprint(&mut fingerprint_hash, sample_key_mode.as_str());
     update_fingerprint(&mut fingerprint_hash, sample_set_fingerprint);
     update_string_sequence_fingerprint(&mut fingerprint_hash, phenotype_names);
     finalize_sha256_hex(fingerprint_hash)

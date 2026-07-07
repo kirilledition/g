@@ -7,9 +7,7 @@ import typing
 
 from g import _core, execution_plan, io, types
 from g.engine import timing as engine_timing
-from g.engine.native_dispatch import engine as native_dispatch_engine
 from g.engine.native_dispatch import groups as native_dispatch_groups
-from g.runner import events
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
@@ -34,7 +32,7 @@ def open_pipeline_bgen_engine(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    events.record_association_backend_selected_telemetry(
+    _core.record_association_backend_selected_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -43,17 +41,16 @@ def open_pipeline_bgen_engine(
         phenotype_name,
         phenotype_count,
     )
-    engine = native_dispatch_engine.open_bgen_run_engine(
-        genotype_source_config=context.genotype_source_config,
+    engine = _core.Regenie2RunEngine(
+        str(context.genotype_source_config.source_path),
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     if context.effective_trusted_no_missing_diploid:
-        native_dispatch_engine.validate_trusted_bgen_run_engine(
-            engine=engine,
-            genotype_source_config=context.genotype_source_config,
-            trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
+        engine.validate_trusted_no_missing_diploid_with_default_cache(
+            str(context.genotype_source_config.source_path),
+            context.trusted_bgen_validation_mode.value,
         )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder,
@@ -67,7 +64,7 @@ def open_pipeline_bgen_engine(
         sample_count=int(engine.sample_count),
         variant_count=int(engine.variant_count),
     )
-    events.record_bgen_engine_opened_telemetry(
+    _core.record_bgen_engine_opened_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         context.backend_plan.backend_kind.value,
@@ -159,17 +156,10 @@ def initialize_pipeline_output_runs(
     current_headers_by_trait: tuple[RunManifestHeaderInput, ...],
 ) -> _core.NativeRunLifecycleOutputInitialization:
     """Validate/write output manifests and return committed chunk sets."""
-    native_initialization = context.lifecycle_session.initialize_output_runs(
+    return context.lifecycle_session.initialize_output_runs(
         phenotype_names,
         current_headers_by_trait,
     )
-    if context.lifecycle_session.output_resume:
-        for output_index, committed_chunk_count in enumerate(native_initialization.committed_chunk_counts()):
-            _core.record_pipeline_output_resume_committed_chunks_diagnostic_event(
-                committed_chunk_count=committed_chunk_count,
-                output_index=output_index,
-            )
-    return native_initialization
 
 
 def validate_pipeline_resume_compatibility(
@@ -191,26 +181,19 @@ def create_pipeline_writer_sessions(
 ) -> tuple[typing.Any, ...]:
     """Create output writer sessions and record preparation timing."""
     writer_start_time = time.perf_counter()
-    _core.record_pipeline_output_writer_sessions_create_started_diagnostic_event(
-        association_mode=context.association_mode.value,
-        output_count=len(prepared_runs_by_trait),
-    )
-    writer_sessions = tuple(
-        _core.OutputWriterSession(
-            prepared_run.run_directory,
-            prepared_run.chunks_directory,
-            context.association_mode.value,
-            writer_thread_count=context.writer_settings.writer_thread_count,
-            writer_queue_depth=context.writer_settings.writer_queue_depth,
-            output_format=context.writer_settings.output_format.value,
-            output_statistic_dtype=context.writer_settings.output_statistic_dtype.value,
-            finalize_parquet=context.writer_settings.finalize_parquet,
-            chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
-            arrow_compression=context.writer_settings.arrow_compression.value,
-            parquet_compression=context.writer_settings.parquet_compression.value,
-            collect_stage_timings=engine_timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
-        )
-        for prepared_run in prepared_runs_by_trait
+    writer_sessions = _core.create_output_writer_sessions(
+        [prepared_run.run_directory for prepared_run in prepared_runs_by_trait],
+        [prepared_run.chunks_directory for prepared_run in prepared_runs_by_trait],
+        context.association_mode.value,
+        writer_thread_count=context.writer_settings.writer_thread_count,
+        writer_queue_depth=context.writer_settings.writer_queue_depth,
+        output_format=context.writer_settings.output_format.value,
+        output_statistic_dtype=context.writer_settings.output_statistic_dtype.value,
+        finalize_parquet=context.writer_settings.finalize_parquet,
+        chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
+        arrow_compression=context.writer_settings.arrow_compression.value,
+        parquet_compression=context.writer_settings.parquet_compression.value,
+        collect_stage_timings=engine_timing.should_collect_exact_stage_timings(context.stage_timing_recorder),
     )
     engine_timing.record_stage_duration(context.stage_timing_recorder, "output_writer_preparation", writer_start_time)
     return writer_sessions

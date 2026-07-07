@@ -335,9 +335,8 @@ impl NativeBinaryCorrectionSummary {
     }
 }
 
-pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeBinaryCorrectionSummary>()?;
-    Ok(())
+pub(crate) fn register_module(module: &Bound<'_, PyModule>) {
+    let _ = module;
 }
 
 fn parse_binary_chunk_diagnostics(

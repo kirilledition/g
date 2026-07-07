@@ -14,18 +14,6 @@ const GPU_FORMAT_RESOLUTION_NON_GPU_DEVICE: &str = "non_gpu_device";
 const GPU_FORMAT_RESOLUTION_TRUSTED_VALIDATION_PASSED: &str = "trusted_validation_passed";
 const GPU_FORMAT_RESOLUTION_TRUSTED_VALIDATION_FAILED: &str = "trusted_validation_failed";
 
-pub(crate) const BGEN_DELIVERY_CLEANUP_SUCCESS: &str = "success";
-pub(crate) const BGEN_DELIVERY_CLEANUP_INTERRUPTED: &str = "interrupted";
-pub(crate) const BGEN_DELIVERY_CLEANUP_FAILURE: &str = "failure";
-pub(crate) const BGEN_DELIVERY_CLEANUP_INTERRUPTED_CLEANUP_FAILURE: &str = "interrupted_cleanup_failure";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_DRAIN_CALLBACK: &str = "drain_callback";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_FINISH_WRITER_SESSIONS: &str = "finish_writer_sessions";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_FINISH_INTERRUPTED_WRITER_SESSIONS: &str =
-    "finish_interrupted_writer_sessions";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_ABORT_CALLBACK: &str = "abort_callback";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_ABORT_WRITER_SESSIONS: &str = "abort_writer_sessions";
-pub(crate) const BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT: &str = "write_stage_timing_snapshot";
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GpuGenotypeFormatResolutionPlan {
     pub requested_gpu_genotype_format: String,
@@ -49,44 +37,81 @@ impl GpuGenotypeFormatResolutionPlan {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BgenDeliveryCleanupOutcome {
+    Failure,
+    Interrupted,
+    InterruptedCleanupFailure,
+    Success,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BgenDeliveryCleanupAction {
+    AbortCallback,
+    AbortWriterSessions,
+    DrainCallback,
+    FinishInterruptedWriterSessions,
+    FinishWriterSessions,
+    WriteStageTimingSnapshot,
+}
+
+impl BgenDeliveryCleanupAction {
+    #[must_use]
+    pub const fn as_value(self) -> &'static str {
+        match self {
+            Self::AbortCallback => "abort_callback",
+            Self::AbortWriterSessions => "abort_writer_sessions",
+            Self::DrainCallback => "drain_callback",
+            Self::FinishInterruptedWriterSessions => "finish_interrupted_writer_sessions",
+            Self::FinishWriterSessions => "finish_writer_sessions",
+            Self::WriteStageTimingSnapshot => "write_stage_timing_snapshot",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BgenDeliveryCleanupPlan {
-    pub cleanup_actions: Vec<String>,
+    cleanup_actions: Vec<BgenDeliveryCleanupAction>,
 }
 
 impl BgenDeliveryCleanupPlan {
     #[must_use]
+    pub fn cleanup_actions(&self) -> &[BgenDeliveryCleanupAction] {
+        &self.cleanup_actions
+    }
+
+    #[must_use]
     pub fn drain_callback(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_DRAIN_CALLBACK)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::DrainCallback)
     }
 
     #[must_use]
     pub fn finish_writer_sessions(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_FINISH_WRITER_SESSIONS)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::FinishWriterSessions)
     }
 
     #[must_use]
     pub fn finish_interrupted_writer_sessions(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_FINISH_INTERRUPTED_WRITER_SESSIONS)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::FinishInterruptedWriterSessions)
     }
 
     #[must_use]
     pub fn abort_callback(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_ABORT_CALLBACK)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::AbortCallback)
     }
 
     #[must_use]
     pub fn abort_writer_sessions(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_ABORT_WRITER_SESSIONS)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::AbortWriterSessions)
     }
 
     #[must_use]
     pub fn write_stage_timing_snapshot(&self) -> bool {
-        self.contains_cleanup_action(BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT)
+        self.contains_cleanup_action(BgenDeliveryCleanupAction::WriteStageTimingSnapshot)
     }
 
-    fn contains_cleanup_action(&self, cleanup_action: &str) -> bool {
-        self.cleanup_actions.iter().any(|candidate_action| candidate_action == cleanup_action)
+    fn contains_cleanup_action(&self, cleanup_action: BgenDeliveryCleanupAction) -> bool {
+        self.cleanup_actions.contains(&cleanup_action)
     }
 }
 
@@ -368,43 +393,38 @@ pub const fn resolve_bgen_delivery_method(
 }
 
 /// Plan cleanup side effects after native BGEN delivery exits.
-///
-/// # Errors
-///
-/// Returns an error when the cleanup outcome is not part of the delivery state
-/// machine contract.
+#[must_use]
 pub fn plan_bgen_delivery_cleanup(
-    cleanup_outcome: &str,
+    cleanup_outcome: BgenDeliveryCleanupOutcome,
     callback_finished: bool,
-) -> Result<BgenDeliveryCleanupPlan, ScheduleError> {
+) -> BgenDeliveryCleanupPlan {
     match cleanup_outcome {
-        BGEN_DELIVERY_CLEANUP_SUCCESS => Ok(build_bgen_delivery_cleanup_plan(&[
-            BGEN_DELIVERY_CLEANUP_ACTION_DRAIN_CALLBACK,
-            BGEN_DELIVERY_CLEANUP_ACTION_FINISH_WRITER_SESSIONS,
-            BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT,
-        ])),
-        BGEN_DELIVERY_CLEANUP_INTERRUPTED => {
+        BgenDeliveryCleanupOutcome::Success => build_bgen_delivery_cleanup_plan(&[
+            BgenDeliveryCleanupAction::DrainCallback,
+            BgenDeliveryCleanupAction::FinishWriterSessions,
+            BgenDeliveryCleanupAction::WriteStageTimingSnapshot,
+        ]),
+        BgenDeliveryCleanupOutcome::Interrupted => {
             let mut cleanup_actions =
-                if callback_finished { Vec::new() } else { vec![BGEN_DELIVERY_CLEANUP_ACTION_DRAIN_CALLBACK] };
+                if callback_finished { Vec::new() } else { vec![BgenDeliveryCleanupAction::DrainCallback] };
             cleanup_actions.extend([
-                BGEN_DELIVERY_CLEANUP_ACTION_FINISH_INTERRUPTED_WRITER_SESSIONS,
-                BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT,
+                BgenDeliveryCleanupAction::FinishInterruptedWriterSessions,
+                BgenDeliveryCleanupAction::WriteStageTimingSnapshot,
             ]);
-            Ok(build_bgen_delivery_cleanup_plan(&cleanup_actions))
+            build_bgen_delivery_cleanup_plan(&cleanup_actions)
         }
-        BGEN_DELIVERY_CLEANUP_FAILURE | BGEN_DELIVERY_CLEANUP_INTERRUPTED_CLEANUP_FAILURE => {
-            Ok(build_bgen_delivery_cleanup_plan(&[
-                BGEN_DELIVERY_CLEANUP_ACTION_ABORT_CALLBACK,
-                BGEN_DELIVERY_CLEANUP_ACTION_ABORT_WRITER_SESSIONS,
-                BGEN_DELIVERY_CLEANUP_ACTION_WRITE_STAGE_TIMING_SNAPSHOT,
-            ]))
+        BgenDeliveryCleanupOutcome::Failure | BgenDeliveryCleanupOutcome::InterruptedCleanupFailure => {
+            build_bgen_delivery_cleanup_plan(&[
+                BgenDeliveryCleanupAction::AbortCallback,
+                BgenDeliveryCleanupAction::AbortWriterSessions,
+                BgenDeliveryCleanupAction::WriteStageTimingSnapshot,
+            ])
         }
-        _ => Err(ScheduleError::UnsupportedBgenDeliveryCleanupOutcome { outcome: cleanup_outcome.to_string() }),
     }
 }
 
-pub(crate) fn build_bgen_delivery_cleanup_plan(cleanup_actions: &[&str]) -> BgenDeliveryCleanupPlan {
-    BgenDeliveryCleanupPlan {
-        cleanup_actions: cleanup_actions.iter().map(|cleanup_action| (*cleanup_action).to_string()).collect(),
-    }
+pub(crate) fn build_bgen_delivery_cleanup_plan(
+    cleanup_actions: &[BgenDeliveryCleanupAction],
+) -> BgenDeliveryCleanupPlan {
+    BgenDeliveryCleanupPlan { cleanup_actions: cleanup_actions.to_vec() }
 }

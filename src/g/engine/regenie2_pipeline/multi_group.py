@@ -15,7 +15,6 @@ from g.engine.regenie2_pipeline import (
     preflight,
 )
 from g.engine.regenie2_pipeline import context as pipeline_context
-from g.runner import events
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -39,7 +38,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
     output_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
     """Prepare one compatible phenotype group for native BGEN delivery."""
-    events.record_prediction_source_loaded_telemetry(
+    _core.record_prediction_source_loaded_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         None,
@@ -67,7 +66,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
         variant_limit=context.variant_limit,
     )
-    events.record_multi_phenotype_preflight_completed_telemetry(
+    _core.record_multi_phenotype_preflight_completed_telemetry(
         context.telemetry_session,
         context.association_mode.value,
         len(run_input.phenotype_names),

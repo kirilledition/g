@@ -1,17 +1,18 @@
 //! Runtime-owned run lifecycle event payloads and rendering policy.
 
+mod callback_diagnostics;
 mod diagnostics;
 mod lifecycle;
 mod native_cli_diagnostics;
 mod native_dispatch_diagnostics;
+mod output_diagnostics;
 mod pipeline_diagnostics;
+mod preflight_diagnostics;
 mod runner_diagnostics;
+mod runtime_diagnostics;
 mod telemetry;
 
-use diagnostics::{
-    boolean_diagnostic_field, integer_diagnostic_field, optional_integer_diagnostic_field, text_diagnostic_field,
-};
-
+pub use callback_diagnostics::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload;
 pub use diagnostics::{
     RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue, serialize_run_diagnostic_fields_json,
 };
@@ -43,6 +44,7 @@ pub use native_dispatch_diagnostics::{
     build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
 };
+pub use output_diagnostics::build_io_output_resume_committed_chunks_diagnostic_payload;
 pub use pipeline_diagnostics::{
     build_pipeline_bgen_engine_open_started_diagnostic_payload, build_pipeline_bgen_engine_opened_diagnostic_payload,
     build_pipeline_gpu_genotype_format_resolved_diagnostic_payload,
@@ -66,6 +68,7 @@ pub use pipeline_diagnostics::{
     build_pipeline_single_trait_preflight_started_diagnostic_payload,
     build_pipeline_single_trait_started_diagnostic_payload,
 };
+pub use preflight_diagnostics::build_preflight_warning_diagnostic_payload;
 pub use runner_diagnostics::{
     build_runner_binary_engine_dispatch_started_diagnostic_payload,
     build_runner_execution_plan_build_started_diagnostic_payload,
@@ -82,239 +85,144 @@ pub use runner_diagnostics::{
     build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
 };
+pub use runtime_diagnostics::build_native_runtime_knobs_configured_diagnostic_payload;
 pub use telemetry::{
     AssociationBackendSelectedTelemetryFields, BgenEngineOpenedTelemetryFields, EffectiveConfigWrittenTelemetryFields,
     ExecutionPlanPreparedTelemetryFields, GpuGenotypeFormatResolvedTelemetryFields,
     MultiPhenotypePreflightCompletedTelemetryFields, MultiPhenotypeSampleSummaryTelemetryFields,
     MultiPhenotypeWriterFinishedTelemetryFields, PhenotypeWriterFinishedTelemetryFields,
-    PredictionSourceLoadedTelemetryFields, RunStartedTelemetryFields, SampleAlignmentCompletedTelemetryFields,
-    SingleTraitPreflightCompletedTelemetryFields, build_association_backend_selected_telemetry_fields,
-    build_bgen_engine_opened_telemetry_fields, build_effective_config_written_telemetry_fields,
-    build_execution_plan_prepared_telemetry_fields, build_gpu_genotype_format_resolved_telemetry_fields,
-    build_multi_phenotype_preflight_completed_telemetry_fields, build_multi_phenotype_sample_summary_telemetry_fields,
-    build_multi_phenotype_writer_finished_telemetry_fields, build_phenotype_writer_finished_telemetry_fields,
-    build_prediction_source_loaded_telemetry_fields, build_run_started_telemetry_fields,
-    build_sample_alignment_completed_telemetry_fields, build_single_trait_preflight_completed_telemetry_fields,
+    PredictionSourceLoadedTelemetryFields, RunStartedTelemetryFields, RunTelemetryEventKind,
+    SampleAlignmentCompletedTelemetryFields, SingleTraitPreflightCompletedTelemetryFields,
+    build_association_backend_selected_telemetry_fields, build_bgen_engine_opened_telemetry_fields,
+    build_effective_config_written_telemetry_fields, build_execution_plan_prepared_telemetry_fields,
+    build_gpu_genotype_format_resolved_telemetry_fields, build_multi_phenotype_preflight_completed_telemetry_fields,
+    build_multi_phenotype_sample_summary_telemetry_fields, build_multi_phenotype_writer_finished_telemetry_fields,
+    build_phenotype_writer_finished_telemetry_fields, build_prediction_source_loaded_telemetry_fields,
+    build_run_started_telemetry_fields, build_sample_alignment_completed_telemetry_fields,
+    build_single_trait_preflight_completed_telemetry_fields,
 };
 
-pub const RUN_STARTED_EVENT_NAME: &str = "run_started";
-pub const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
-pub const RUN_FAILED_EVENT_NAME: &str = "run_failed";
-pub const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
-pub const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
-pub const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
-pub const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
-pub const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
-pub const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
-pub const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
-pub const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_resolved";
-pub const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
-pub const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
-pub const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summary";
-pub const CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME: &str =
+const RUN_STARTED_EVENT_NAME: &str = "run_started";
+const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
+const RUN_FAILED_EVENT_NAME: &str = "run_failed";
+const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
+const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
+const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
+const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
+const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
+const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
+const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
+const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_resolved";
+const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
+const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
+const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summary";
+const CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME: &str =
     "callback_null_logistic_nonconvergence_warning";
-pub const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
-pub const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
-pub const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
-pub const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_started";
-pub const RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_interrupted";
-pub const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_failed";
-pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_completed";
-pub const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
-pub const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
-pub const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
-pub const NATIVE_CLI_STDOUT_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stdout";
-pub const NATIVE_CLI_STDERR_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stderr";
-pub const NATIVE_CLI_INTERRUPTED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_interrupted_line";
-pub const NATIVE_CLI_FAILED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_failed_line";
-pub const NATIVE_CLI_COMPLETED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_completed_line";
-pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_jax_runtime_configuration_started";
-pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_build_started";
-pub const RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_prepared";
-pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_dispatch_started";
-pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
+const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
+const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
+const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_started";
+const RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_interrupted";
+const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_failed";
+const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_completed";
+const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
+const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
+const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
+const NATIVE_CLI_STDOUT_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stdout";
+const NATIVE_CLI_STDERR_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stderr";
+const NATIVE_CLI_INTERRUPTED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_interrupted_line";
+const NATIVE_CLI_FAILED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_failed_line";
+const NATIVE_CLI_COMPLETED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_completed_line";
+const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_jax_runtime_configuration_started";
+const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_build_started";
+const RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_prepared";
+const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_dispatch_started";
+const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_execution_plan_finalization_started";
-pub const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Configuring JAX runtime before backend initialization.";
-pub const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
-pub const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
-pub const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
-pub const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
-pub const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
-pub const PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_open_started";
-pub const PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_opened";
-pub const PIPELINE_PREVALIDATED_BGEN_ENGINE_USED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_prevalidated_bgen_engine_used";
-pub const PIPELINE_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_output_resume_committed_chunks";
-pub const PIPELINE_OUTPUT_WRITER_SESSIONS_CREATE_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
+const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
+const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
+const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
+const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
+const PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_open_started";
+const PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_opened";
+const PIPELINE_PREVALIDATED_BGEN_ENGINE_USED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_prevalidated_bgen_engine_used";
+const PIPELINE_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_output_resume_committed_chunks";
+const PIPELINE_OUTPUT_WRITER_SESSIONS_CREATE_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_output_writer_sessions_create_started";
-pub const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_multi_phenotype_sample_summary";
-pub const PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_started";
-pub const PIPELINE_MULTI_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_multi_trait_input_load_started";
-pub const PIPELINE_MULTI_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_aligned";
-pub const PIPELINE_MULTI_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_phenotype_sample_summary";
+const PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_started";
+const PIPELINE_MULTI_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_load_started";
+const PIPELINE_MULTI_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_aligned";
+const PIPELINE_MULTI_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_multi_trait_prediction_source_load_started";
-pub const PIPELINE_GROUPED_PER_PHENOTYPE_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_per_phenotype_started";
-pub const PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME: &str =
+const PIPELINE_GROUPED_PER_PHENOTYPE_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_per_phenotype_started";
+const PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_grouped_per_phenotype_groups_prepared";
-pub const PIPELINE_GROUPED_UNION_DELIVERY_SELECTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_grouped_union_delivery_selected";
-pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_started";
-pub const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const PIPELINE_GROUPED_UNION_DELIVERY_SELECTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_union_delivery_selected";
+const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_started";
+const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Running preflight validation for multi-phenotype pipeline.";
-pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_multi_group_preflight_completed";
-pub const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE: &str =
+const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_completed";
+const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE: &str =
     "Preflight validation passed for multi-phenotype pipeline.";
-pub const PIPELINE_SINGLE_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_started";
-pub const PIPELINE_SINGLE_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_single_trait_input_load_started";
-pub const PIPELINE_SINGLE_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_aligned";
-pub const PIPELINE_SINGLE_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const PIPELINE_SINGLE_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_started";
+const PIPELINE_SINGLE_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_load_started";
+const PIPELINE_SINGLE_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_aligned";
+const PIPELINE_SINGLE_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_single_trait_prediction_source_load_started";
-pub const PIPELINE_SINGLE_TRAIT_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_single_trait_preflight_started";
-pub const PIPELINE_SINGLE_TRAIT_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
+const PIPELINE_SINGLE_TRAIT_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_preflight_started";
+const PIPELINE_SINGLE_TRAIT_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_single_trait_preflight_completed";
-pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_bgen_engine_constructing";
-pub const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
-pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_bgen_engine_constructing";
+const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
+const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_trusted_bgen_validation_started";
-pub const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Validating trusted no-missing diploid BGEN mode.";
-pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_callback_drain_started";
-pub const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Draining native callback worker queues.";
-pub const NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_started";
-pub const NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_finished";
-pub const NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_interrupted";
-pub const NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_failed";
-pub const NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_pipeline_finished";
-pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_callback_drain_started";
+const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Draining native callback worker queues.";
+const NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_started";
+const NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_finished";
+const NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_interrupted";
+const NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_failed";
+const NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_pipeline_finished";
+const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_session_finish_started";
-pub const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Finishing output writer and optional Parquet finalization.";
-pub const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_sessions_finish_started";
-pub const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Finishing output writer(s) and optional Parquet finalization.";
-pub const NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_session_interrupted_flush_started";
-pub const NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_sessions_interrupted_flush_started";
-pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
-pub const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
-pub const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
-pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_multi_phenotype_dispatch_started";
-pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_single_phenotype_dispatch_started";
-pub const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_binary_engine_dispatch_started";
-pub const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_linear_engine_dispatch_started";
-pub const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
+const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
+const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
+const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_multi_phenotype_dispatch_started";
+const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_single_phenotype_dispatch_started";
+const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_binary_engine_dispatch_started";
+const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_linear_engine_dispatch_started";
+const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_multi_phenotype_binary_engine_dispatch_started";
-pub const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
+const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_multi_phenotype_linear_engine_dispatch_started";
-pub const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching multi-phenotype native engine pipeline.";
-pub const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching single-phenotype native engine pipeline.";
-pub const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching binary native engine pipeline.";
-pub const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching linear native engine pipeline.";
-pub const RUNNER_METADATA_ARTIFACTS_FINALIZED_DIAGNOSTIC_EVENT_NAME: &str = "runner_metadata_artifacts_finalized";
-pub const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching binary native engine pipeline.";
+const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching linear native engine pipeline.";
+const RUNNER_METADATA_ARTIFACTS_FINALIZED_DIAGNOSTIC_EVENT_NAME: &str = "runner_metadata_artifacts_finalized";
+const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching multi-phenotype binary native engine pipeline.";
-pub const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
+const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching multi-phenotype linear native engine pipeline.";
-
-#[must_use]
-pub fn build_native_runtime_knobs_configured_diagnostic_payload(
-    bgen_decode_tile_variant_count: i64,
-    threads: Option<i64>,
-) -> RunDiagnosticEventPayload {
-    RunDiagnosticEventPayload {
-        level: "debug",
-        event_name: NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME,
-        message: NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE.to_string(),
-        fields: vec![
-            integer_diagnostic_field("bgen_decode_tile_variant_count", bgen_decode_tile_variant_count),
-            optional_integer_diagnostic_field("threads", threads),
-        ],
-    }
-}
-
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn build_preflight_warning_diagnostic_payload(
-    message: &str,
-    chromosome_count: i64,
-    covariate_count: i64,
-    preflight_scope: &str,
-    sample_count: i64,
-    trusted_no_missing_diploid: bool,
-    warning_index: i64,
-) -> RunDiagnosticEventPayload {
-    RunDiagnosticEventPayload {
-        level: "warning",
-        event_name: PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME,
-        message: message.to_string(),
-        fields: vec![
-            integer_diagnostic_field("chromosome_count", chromosome_count),
-            integer_diagnostic_field("covariate_count", covariate_count),
-            text_diagnostic_field("preflight_scope", preflight_scope),
-            integer_diagnostic_field("sample_count", sample_count),
-            boolean_diagnostic_field("trusted_no_missing_diploid", trusted_no_missing_diploid),
-            integer_diagnostic_field("warning_index", warning_index),
-        ],
-    }
-}
-
-#[must_use]
-pub fn build_io_output_resume_committed_chunks_diagnostic_payload(
-    chunks_directory: &str,
-    committed_chunk_count: i64,
-    run_directory: &str,
-) -> RunDiagnosticEventPayload {
-    RunDiagnosticEventPayload {
-        level: "info",
-        event_name: IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME,
-        message: format!("Resuming run with {committed_chunk_count} previously committed chunks."),
-        fields: vec![
-            text_diagnostic_field("chunks_directory", chunks_directory),
-            integer_diagnostic_field("committed_chunk_count", committed_chunk_count),
-            text_diagnostic_field("run_directory", run_directory),
-        ],
-    }
-}
-
-#[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn build_callback_null_logistic_nonconvergence_warning_diagnostic_payload(
-    message: &str,
-    chromosome: &str,
-    nonconverged_count: i64,
-    phenotype_count: i64,
-    policy: &str,
-    scalar_convergence: bool,
-    total_fit_count: i64,
-) -> RunDiagnosticEventPayload {
-    RunDiagnosticEventPayload {
-        level: "warning",
-        event_name: CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME,
-        message: message.to_string(),
-        fields: vec![
-            text_diagnostic_field("chromosome", chromosome),
-            integer_diagnostic_field("nonconverged_count", nonconverged_count),
-            integer_diagnostic_field("phenotype_count", phenotype_count),
-            text_diagnostic_field("policy", policy),
-            boolean_diagnostic_field("scalar_convergence", scalar_convergence),
-            integer_diagnostic_field("total_fit_count", total_fit_count),
-        ],
-    }
-}
 
 #[cfg(test)]
 mod tests {

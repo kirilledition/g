@@ -60,6 +60,57 @@ pub struct TelemetrySessionPolicyPayload {
     pub event_cap: Option<i64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryMode {
+    Off,
+    Profile,
+    Progress,
+    Trace,
+}
+
+impl TelemetryMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Profile => "profile",
+            Self::Progress => "progress",
+            Self::Trace => "trace",
+        }
+    }
+
+    #[must_use]
+    pub fn from_str_value(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "profile" => Some(Self::Profile),
+            "progress" => Some(Self::Progress),
+            "trace" => Some(Self::Trace),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn accepted_values() -> &'static [&'static str] {
+        &["off", "profile", "progress", "trace"]
+    }
+
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    #[must_use]
+    pub const fn profile_enabled(self) -> bool {
+        matches!(self, Self::Profile | Self::Trace)
+    }
+
+    #[must_use]
+    pub const fn trace_enabled(self) -> bool {
+        matches!(self, Self::Trace)
+    }
+}
+
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_sign_loss)]
@@ -92,7 +143,7 @@ pub fn resolve_output_run_root(output_path: &Path, output_run_directory: Option<
 pub fn resolve_telemetry_paths(
     output_path: &Path,
     output_run_directory: Option<&Path>,
-    telemetry_mode: &str,
+    telemetry_mode: TelemetryMode,
     log_dir: Option<&Path>,
     log_file: Option<&Path>,
     trace_file: Option<&Path>,
@@ -101,13 +152,15 @@ pub fn resolve_telemetry_paths(
 ) -> Result<TelemetryPathsPayload, TelemetryPathError> {
     let resolved_log_dir = match (log_dir, telemetry_mode) {
         (Some(path), _) => Some(path.to_path_buf()),
-        (None, "off") => None,
+        (None, TelemetryMode::Off) => None,
         (None, _) => Some(resolve_output_run_root(output_path, output_run_directory).join("logs")),
     };
     let stream_file = resolve_telemetry_stream_file(telemetry_mode, resolved_log_dir.as_deref(), log_file, trace_file)?;
     let resolved_profile_summary_json = match (profile_summary_json, resolved_log_dir.as_deref(), telemetry_mode) {
         (Some(path), _, _) => Some(path.to_path_buf()),
-        (None, Some(directory), "profile" | "trace") => Some(directory.join(PROFILE_SUMMARY_JSON_FILE_NAME)),
+        (None, Some(directory), TelemetryMode::Profile | TelemetryMode::Trace) => {
+            Some(directory.join(PROFILE_SUMMARY_JSON_FILE_NAME))
+        }
         _ => None,
     };
     Ok(TelemetryPathsPayload {
@@ -124,12 +177,12 @@ pub fn resolve_telemetry_paths(
 ///
 /// Returns an error when `log_file` and `trace_file` point to different files.
 pub fn resolve_telemetry_stream_file(
-    telemetry_mode: &str,
+    telemetry_mode: TelemetryMode,
     log_dir: Option<&Path>,
     log_file: Option<&Path>,
     trace_file: Option<&Path>,
 ) -> Result<Option<PathBuf>, TelemetryPathError> {
-    if telemetry_mode == "off" {
+    if telemetry_mode == TelemetryMode::Off {
         return Ok(None);
     }
     if let (Some(log_file_path), Some(trace_file_path)) = (log_file, trace_file)
@@ -169,11 +222,14 @@ pub fn build_empty_writer_counters() -> TelemetryWriterCountersPayload {
 }
 
 #[must_use]
-pub fn resolve_telemetry_session_policy(telemetry_mode: &str, trace_event_cap: i64) -> TelemetrySessionPolicyPayload {
+pub fn resolve_telemetry_session_policy(
+    telemetry_mode: TelemetryMode,
+    trace_event_cap: i64,
+) -> TelemetrySessionPolicyPayload {
     TelemetrySessionPolicyPayload {
-        enabled: telemetry_mode != "off",
-        profile_enabled: matches!(telemetry_mode, "profile" | "trace"),
-        event_cap: if telemetry_mode == "trace" && trace_event_cap > 0 { Some(trace_event_cap) } else { None },
+        enabled: telemetry_mode.enabled(),
+        profile_enabled: telemetry_mode.profile_enabled(),
+        event_cap: if telemetry_mode.trace_enabled() && trace_event_cap > 0 { Some(trace_event_cap) } else { None },
     }
 }
 

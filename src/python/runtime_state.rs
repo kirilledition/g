@@ -17,6 +17,7 @@ use super::errors;
 use super::jax_runtime::NativeJaxRuntimeSetupSession;
 use super::logging;
 use super::run_events;
+use super::telemetry_policy;
 
 #[pyclass]
 pub(crate) struct NativeRuntimeCompatibilityToken {
@@ -275,6 +276,7 @@ impl NativeRuntimeState {
         telemetry_stream_file: Option<String>,
     ) -> PyResult<NativeLoggingRuntimePolicy> {
         let _state = self.lock_state()?;
+        let parsed_telemetry_mode = telemetry_policy::parse_telemetry_mode(&telemetry_mode)?;
         let policy = native_runtime_policy::build_logging_runtime_policy(
             log_filter,
             log_file,
@@ -286,7 +288,7 @@ impl NativeRuntimeState {
             trace_file,
             trace_filter,
             trace_event_cap,
-            &telemetry_mode,
+            parsed_telemetry_mode,
             telemetry_stream_file,
         );
         Ok(NativeLoggingRuntimePolicy { policy })
@@ -508,6 +510,34 @@ impl NativeRuntimeState {
     fn lock_state(&self) -> PyResult<MutexGuard<'_, native_runtime_state::ProcessRuntimeState>> {
         self.state.lock().map_err(|_| PyRuntimeError::new_err("Runtime state mutex was poisoned."))
     }
+}
+
+pub(crate) fn initialize_process_logging_runtime_policy(
+    py: Python<'_>,
+    logging_policy: native_runtime_policy::LoggingRuntimePolicyPayload,
+) -> PyResult<bool> {
+    let log_queue_size = non_negative_i64_to_usize(logging_policy.log_queue_size, "log_queue_size")?;
+    let trace_event_cap = optional_non_negative_i64_to_usize(logging_policy.trace_event_cap, "trace_event_cap")?;
+    let runtime_state = global_process_runtime_state();
+    let mut state = runtime_state.lock_state()?;
+    state
+        .require_compatible_logging_policy(&logging_policy)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+    let initialized_logging = logging::initialize_logging(
+        py,
+        Some(logging_policy.log_filter.clone()),
+        logging_policy.log_file.clone(),
+        logging_policy.log_stderr,
+        log_queue_size,
+        logging_policy.log_lossy,
+        logging_policy.include_source_location,
+        logging_policy.include_span_events,
+        logging_policy.trace_file.clone(),
+        Some(logging_policy.trace_filter.clone()),
+        trace_event_cap,
+    )?;
+    state.record_logging_policy(logging_policy);
+    Ok(initialized_logging)
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -137,7 +137,7 @@ impl GDiagnosticsConfig {
 }
 
 impl RegenieConfig {
-    fn new(data: RegenieConfigData) -> Self {
+    pub(crate) fn new(data: RegenieConfigData) -> Self {
         Self { data }
     }
 
@@ -1139,13 +1139,6 @@ impl CliOutcome {
 }
 
 #[pyfunction]
-fn load_packaged_config() -> PyResult<RegenieConfig> {
-    interface::load_packaged_config_data()
-        .map(RegenieConfig::new)
-        .map_err(|error| errors::convert_config_error("load_packaged_config", &error))
-}
-
-#[pyfunction]
 fn validate_regenie_config_for_run(config: &RegenieConfig) -> PyResult<()> {
     interface::validate_config_for_run(config.data())
         .map_err(|error| errors::convert_config_error("validate_config_for_run", &error))
@@ -1170,7 +1163,6 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePhenotypeRunPlan>()?;
     module.add_class::<NativePhenotypeComputeGroup>()?;
     module.add_class::<NativeBinaryCorrectionPlan>()?;
-    module.add_function(wrap_pyfunction!(load_packaged_config, module)?)?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())

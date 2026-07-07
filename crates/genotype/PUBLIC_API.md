@@ -2,11 +2,11 @@
 
 ## This crate owns
 
-Genotype source contracts, BGEN reader core, chunk planning, and genotype preprocessing summaries.
+Genotype source contracts, BGEN source implementation, chunk planning, and genotype preprocessing summaries.
 
 ## Public types
 
-BGEN reader/error/profile types, `GenotypeError`/`GenotypeResult`, chunk specs/stats, variant metadata columns, and genotype reader trait.
+BGEN source/error/profile types, `GenotypeError`/`GenotypeResult`, chunk specs/stats, variant metadata columns, and genotype reader trait.
 
 ## Public functions
 

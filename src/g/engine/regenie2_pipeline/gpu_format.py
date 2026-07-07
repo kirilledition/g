@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 from g import _core, types
 from g.engine import timing as engine_timing
-from g.engine.native_dispatch import engine as native_dispatch_engine
 
 if typing.TYPE_CHECKING:
     from g import execution_plan
@@ -151,16 +150,15 @@ def resolve_single_trait_binary_gpu_genotype_format(
 
     try:
         engine_start_time = time.perf_counter()
-        prepared_engine = native_dispatch_engine.open_bgen_run_engine(
-            genotype_source_config=genotype_source_config,
+        prepared_engine = _core.Regenie2RunEngine(
+            str(genotype_source_config.source_path),
             chunk_size=chunk_size,
             variant_limit=variant_limit,
             trusted_no_missing_diploid=True,
         )
-        native_dispatch_engine.validate_trusted_bgen_run_engine(
-            engine=prepared_engine,
-            genotype_source_config=genotype_source_config,
-            trusted_bgen_validation_mode=trusted_bgen_validation_mode,
+        prepared_engine.validate_trusted_no_missing_diploid_with_default_cache(
+            str(genotype_source_config.source_path),
+            trusted_bgen_validation_mode.value,
         )
         engine_timing.record_stage_duration(
             stage_timing_recorder,

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use g_genotype::{BgenError, BgenReaderCore};
+use g_genotype::{BgenError, BgenGenotypeSource};
 use g_runtime as native_trusted_validation;
 
 #[derive(Debug, thiserror::Error)]
@@ -27,7 +27,7 @@ pub enum TrustedBgenValidationError {
 /// cannot be represented in cache metadata, BGEN validation fails, or cache
 /// fingerprint/payload I/O fails.
 pub(crate) fn validate_trusted_no_missing_diploid_with_cache_directory(
-    reader: &BgenReaderCore,
+    reader: &BgenGenotypeSource,
     bgen_path: &Path,
     validation_mode: &str,
     cache_directory: &Path,

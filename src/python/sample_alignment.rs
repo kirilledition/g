@@ -324,13 +324,12 @@ fn build_group_sample_position_array<'py>(
 }
 
 pub(crate) fn parse_sample_key_mode(sample_key_mode: &str) -> PyResult<SampleKeyMode> {
-    match sample_key_mode {
-        "iid" => Ok(SampleKeyMode::Iid),
-        "fid_iid" => Ok(SampleKeyMode::FidIid),
-        _ => Err(PyValueError::new_err(format!(
-            "sample_key_mode must be 'iid' or 'fid_iid', found '{sample_key_mode}'."
-        ))),
-    }
+    SampleKeyMode::from_str_value(sample_key_mode).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "sample_key_mode must be one of {}, found '{sample_key_mode}'.",
+            SampleKeyMode::accepted_values().join(", "),
+        ))
+    })
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

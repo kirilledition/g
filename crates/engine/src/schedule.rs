@@ -24,10 +24,10 @@ pub(crate) use crate::callback_worker_schedule::{
     CALLBACK_WORKER_START_RESULT_WORKER_ACTION,
 };
 pub use crate::callback_worker_schedule::{
-    CallbackWorkerAbortPlan, CallbackWorkerErrorRaisePlan, CallbackWorkerErrorUpdatePlan, CallbackWorkerFinishPlan,
-    CallbackWorkerJoinPlan, CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts,
-    CallbackWorkerStartAttemptPlan, CallbackWorkerStartPlan, CallbackWorkerStopPlan, CallbackWorkerStopPollPlan,
-    callback_worker_backpressure_poll_timeout_seconds, callback_worker_shutdown_timeouts,
+    CallbackWorkerAbortPlan, CallbackWorkerErrorRaisePlan, CallbackWorkerErrorUpdatePlan, CallbackWorkerFinishAction,
+    CallbackWorkerFinishPlan, CallbackWorkerJoinPlan, CallbackWorkerLifecycleState, CallbackWorkerShutdownTimeouts,
+    CallbackWorkerStartAction, CallbackWorkerStartAttemptPlan, CallbackWorkerStartPlan, CallbackWorkerStopPlan,
+    CallbackWorkerStopPollPlan, callback_worker_backpressure_poll_timeout_seconds, callback_worker_shutdown_timeouts,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
     plan_callback_worker_abort, plan_callback_worker_finish, plan_callback_worker_start,
     plan_callback_worker_stop_poll, plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop,
@@ -46,10 +46,11 @@ pub(crate) use crate::delivery_schedule::{
     BGEN_DELIVERY_CLEANUP_INTERRUPTED_CLEANUP_FAILURE, BGEN_DELIVERY_CLEANUP_SUCCESS, build_bgen_delivery_cleanup_plan,
 };
 pub use crate::delivery_schedule::{
-    BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan, BgenDeliveryMethod, GpuGenotypeFormatResolutionPlan,
-    plan_auto_gpu_genotype_format_after_trusted_validation, plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation,
-    plan_gpu_genotype_format_auto_to_dosage, plan_single_trait_binary_gpu_genotype_format_resolution,
-    resolve_bgen_delivery_method, resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
+    BgenDeliveryCleanupAction, BgenDeliveryCleanupOutcome, BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan,
+    BgenDeliveryMethod, GpuGenotypeFormatResolutionPlan, plan_auto_gpu_genotype_format_after_trusted_validation,
+    plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_gpu_genotype_format_auto_to_dosage,
+    plan_single_trait_binary_gpu_genotype_format_resolution, resolve_bgen_delivery_method,
+    resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
     resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
 };
 pub use crate::output_schedule::{
@@ -79,7 +80,7 @@ use dosage_buffer_pool::{
     plan_dosage_buffer_return_attempt,
 };
 pub use dosage_work::{
-    DosageWorkDrainCompletionPlan, DosageWorkItemDispatchPlan, DosageWorkItemStageDurationPlan,
+    DosageWorkDrainCompletionPlan, DosageWorkItemDispatchPlan, DosageWorkItemKind, DosageWorkItemStageDurationPlan,
     plan_dosage_work_item_dispatch, plan_dosage_work_item_stage_duration,
 };
 #[cfg(test)]
@@ -91,8 +92,9 @@ pub use result_slots::{
 };
 use result_slots::{plan_result_in_flight_slot_acquire_attempt, plan_result_in_flight_slot_release_attempt};
 pub use result_write::{
-    ResultWriteDrainCompletionPlan, ResultWriteHandoffPlan, ResultWriteItemDispatchPlan,
+    ResultWriteDrainCompletionPlan, ResultWriteHandoffPlan, ResultWriteItemDispatchPlan, ResultWriteItemKind,
     ResultWriteItemResourceReleasePlan, plan_result_write_handoff, plan_result_write_item_dispatch,
+    plan_result_write_item_dispatch_for_kinds,
 };
 
 mod callback_queue;
@@ -103,13 +105,21 @@ mod dosage_work;
 mod result_slots;
 mod result_write;
 
+#[cfg(test)]
 const RESULT_WRITE_ITEM_KIND_SINGLE_RESULT: &str = "single_result";
+#[cfg(test)]
 const RESULT_WRITE_ITEM_KIND_MULTI_RESULT: &str = "multi_result";
+#[cfg(test)]
 const RESULT_WRITE_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
+#[cfg(test)]
 const DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE: &str = "sample_major_dosage";
+#[cfg(test)]
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE: &str = "variant_major_dosage";
+#[cfg(test)]
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_DOSAGE_BATCH: &str = "variant_major_dosage_batch";
+#[cfg(test)]
 const DOSAGE_WORK_ITEM_KIND_VARIANT_MAJOR_PACKED8_PROBABILITY_PAIR: &str = "variant_major_packed8_probability_pair";
+#[cfg(test)]
 const DOSAGE_WORK_ITEM_KIND_STOP_SIGNAL: &str = "stop_signal";
 
 pub use callback_scheduler::{CallbackSchedulerState, NativeCallbackQueueLimits, resolve_native_callback_queue_limits};
@@ -160,8 +170,6 @@ pub enum ScheduleError {
         "Committed chunk identifier set count ({committed_set_count}) must match writer session count ({writer_session_count})."
     )]
     MultiTraitCommittedChunkSetCountMismatch { writer_session_count: usize, committed_set_count: usize },
-    #[error("Unsupported public statistic output dtype: {output_statistic_dtype}")]
-    UnsupportedOutputStatisticDtype { output_statistic_dtype: String },
     #[error("Unsupported GPU genotype format: {gpu_genotype_format}")]
     UnsupportedGpuGenotypeFormat { gpu_genotype_format: String },
     #[error("Unsupported JAX device: {jax_device}")]
@@ -170,8 +178,6 @@ pub enum ScheduleError {
     UnsupportedCallbackQueueStageOperation { queue_name: String, operation_name: String },
     #[error("Unsupported callback queue operation: {queue_name}.{operation_name}")]
     UnsupportedCallbackQueueOperation { queue_name: String, operation_name: String },
-    #[error("Unsupported BGEN delivery cleanup outcome: {outcome}")]
-    UnsupportedBgenDeliveryCleanupOutcome { outcome: String },
     #[error("Unsupported result write item kind: {result_work_item_kind}")]
     UnsupportedResultWriteItemKind { result_work_item_kind: String },
     #[error("Unsupported dosage work item kind: {dosage_work_item_kind}")]
