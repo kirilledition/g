@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine as native_callback_progress;
+use g_engine::debug as native_callback_progress;
 
 #[derive(Clone)]
 pub(crate) struct NativeCallbackChunkIdentity {

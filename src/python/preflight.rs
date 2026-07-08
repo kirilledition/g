@@ -7,7 +7,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine as native_preflight;
+use g_engine::debug as native_preflight;
 
 use super::errors::convert_preflight_error;
 

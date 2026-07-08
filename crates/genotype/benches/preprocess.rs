@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use g_genotype as native_genotype;
+use g_genotype::internal as native_genotype;
 use std::hint;
 
 fn dense_variant_major_dosages(selected_variant_count: usize, selected_sample_count: usize) -> Vec<f32> {

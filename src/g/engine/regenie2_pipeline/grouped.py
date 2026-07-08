@@ -205,30 +205,24 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
 def prepare_grouped_per_phenotype_output_bundles(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
 ) -> tuple[_core.NativePreparedOutputBundle, ...]:
     """Prepare all grouped per-phenotype output bundles in one native batch."""
-    output_groups: list[tuple[tuple[str, ...], tuple[outputs.RunManifestHeaderInput, ...]]] = []
+    output_groups: list[outputs.OutputPreparationGroupInput] = []
     for grouped_run_input in grouped_run_inputs:
         compute_group = grouped_run_input.compute_group
         run_input = grouped_run_input.run_input
         output_groups.append(
-            (
-                compute_group.phenotype_names,
-                multi_group.build_multi_phenotype_output_headers(
-                    context=context,
-                    engine=engine,
-                    run_input=run_input,
-                    compute_group=compute_group,
-                    output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-                ),
+            outputs.build_output_preparation_group(
+                phenotype_names=compute_group.phenotype_names,
+                covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+                sample_count=int(run_input.sample_indices.shape[0]),
+                output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                phenotype_compute_group=compute_group,
             )
         )
-    return context.lifecycle_session.prepare_output_bundles(
-        tuple(output_groups),
-        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
-    )
+    return outputs.prepare_output_bundles(context=context, engine=engine, output_groups=tuple(output_groups))
 
 
 def build_union_sample_indices(
@@ -282,7 +276,7 @@ def should_use_union_grouped_bgen_delivery(
 def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
     output_bundles_by_group: tuple[_core.NativePreparedOutputBundle, ...],
     phenotype_names: tuple[str, ...],

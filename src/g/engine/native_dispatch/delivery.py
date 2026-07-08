@@ -14,7 +14,7 @@ if typing.TYPE_CHECKING:
 
 def run_bgen_engine_with_writer_sessions(
     *,
-    engine: _core.Regenie2RunEngine,
+    engine: models.NativeBgenEngineProtocol,
     run_input: models.BgenDeliveryRunInputProtocol,
     committed_chunk_identifiers: set[int] | None,
     writer_sessions: tuple[typing.Any, ...],
@@ -25,8 +25,7 @@ def run_bgen_engine_with_writer_sessions(
     pipeline_label: str,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery and close all output writers."""
-    final_parquet_path_values = _core.run_bgen_delivery_with_writer_sessions(
-        engine,
+    delivery_arguments = (
         run_input.sample_indices,
         run_input.native_aligned_sample_data,
         run_input.native_multi_aligned_sample_data,
@@ -38,6 +37,13 @@ def run_bgen_engine_with_writer_sessions(
         variant_major_packed8_probability_pairs,
         pipeline_label,
     )
+    if isinstance(engine, _core.NativeRunEngineSession):
+        final_parquet_path_values = _core.run_bgen_session_delivery_with_writer_sessions(engine, *delivery_arguments)
+    else:
+        final_parquet_path_values = _core.run_bgen_delivery_with_writer_sessions(
+            typing.cast("_core.Regenie2RunEngine", engine),
+            *delivery_arguments,
+        )
     return tuple(
         None if final_parquet_path is None else Path(final_parquet_path)
         for final_parquet_path in final_parquet_path_values
@@ -46,7 +52,7 @@ def run_bgen_engine_with_writer_sessions(
 
 def run_bgen_engine_with_callback(
     *,
-    engine: _core.Regenie2RunEngine,
+    engine: models.NativeBgenEngineProtocol,
     run_input: models.NativeBgenRunInput,
     committed_chunk_identifiers: set[int] | None,
     writer_session: typing.Any,

@@ -1,7 +1,7 @@
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use g_engine::{
+use g_engine::debug::{
     CallbackDiagnosticsError, PipelineResumeCompatibilityError, PreflightError, ScheduleError,
     TrustedBgenValidationError,
 };
@@ -10,7 +10,7 @@ use g_input::{InputError, PredictionError};
 use g_interface::ConfigError;
 use g_output::OutputError;
 use g_plan::{HostPolicyError, PreparedPlanError};
-use g_runtime::{
+use g_runtime::debug::{
     LoggingSinkError, LoggingSinkInitializationError, RayonRuntimeError, RayonThreadPoolConfigurationError,
     TimingFileError, TransferMetadataError,
 };

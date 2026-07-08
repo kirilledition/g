@@ -6,7 +6,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
 
-use g_engine as native_callback_summary;
+use g_engine::debug as native_callback_summary;
 
 #[pyclass]
 pub(crate) struct NativeBinaryCorrectionSummary {

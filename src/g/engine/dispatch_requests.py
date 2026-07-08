@@ -42,7 +42,7 @@ class PipelineCommonRequest:
         stage_timing_recorder: Optional stage timing recorder.
         telemetry_session: Optional telemetry session.
         alignment_config: Sample alignment settings.
-        lifecycle_session: Native run lifecycle session.
+        engine_session: Native run engine session.
 
     """
 
@@ -68,7 +68,7 @@ class PipelineCommonRequest:
     stage_timing_recorder: timing.StageTimingRecorder | None
     telemetry_session: runner_events.TelemetrySession | None
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
-    lifecycle_session: _core.NativeRunLifecycleSession
+    engine_session: _core.NativeRunEngineSession
 
 
 @dataclass(frozen=True)

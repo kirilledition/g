@@ -5,7 +5,6 @@ mod error;
 mod manifest;
 mod types;
 
-pub use crate::run_events::RunArtifactsPayload;
 pub use artifacts::{
     build_execution_run_artifacts, build_execution_run_artifacts_from_sequences, build_multi_run_artifacts,
     build_phenotype_run_artifacts,

@@ -4,8 +4,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PyTuple};
 
-use g_engine as native_schedule;
-use g_runtime as native_run_events;
+use g_engine::debug as native_schedule;
+use g_runtime::events as native_run_events;
 
 use super::{
     callback_progress::{NativeCallbackProgressTelemetryEvent, NativeCallbackProgressUpdate},

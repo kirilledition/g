@@ -1,5 +1,6 @@
 //! Native output persistence APIs.
 
+pub mod admin;
 mod api;
 mod chunk;
 mod error;

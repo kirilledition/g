@@ -26,14 +26,14 @@ class GpuGenotypeFormatResolution:
         requested_gpu_genotype_format: User-requested GPU genotype format.
         resolved_gpu_genotype_format: Concrete GPU genotype format for native delivery.
         resolution_reason: Stable reason for the concrete selection.
-        prepared_engine: Trusted prevalidated BGEN engine when auto selected packed8.
+        prepared_engine: Trusted prevalidated native engine session when auto selected packed8.
 
     """
 
     requested_gpu_genotype_format: types.GpuGenotypeFormat
     resolved_gpu_genotype_format: types.GpuGenotypeFormat
     resolution_reason: str
-    prepared_engine: _core.Regenie2RunEngine | None
+    prepared_engine: _core.NativeRunEngineSession | None
 
 
 @dataclass(frozen=True)
@@ -97,7 +97,7 @@ def concrete_gpu_genotype_format_from_native_plan(
 def build_resolution_from_native_plan(
     *,
     native_resolution_plan: _core.NativeGpuGenotypeFormatResolutionPlan,
-    prepared_engine: _core.Regenie2RunEngine | None,
+    prepared_engine: _core.NativeRunEngineSession | None,
 ) -> GpuGenotypeFormatResolution:
     """Build the public Python resolution dataclass from native policy."""
     resolution_reason = native_resolution_plan.resolution_reason
@@ -117,6 +117,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
     existing_manifest: dict[str, typing.Any] | None,
     resume: bool,
     jax_device: types.Device,
+    engine_session: _core.NativeRunEngineSession,
     genotype_source_config: execution_plan.GenotypeSourceConfig,
     chunk_size: int,
     variant_limit: int | None,
@@ -141,7 +142,7 @@ def resolve_single_trait_binary_gpu_genotype_format(
         resume,
         jax_device.value,
     )
-    prepared_engine: _core.Regenie2RunEngine | None = None
+    prepared_engine: _core.NativeRunEngineSession | None = None
     if not native_resolution_plan.requires_trusted_validation:
         return build_resolution_from_native_plan(
             native_resolution_plan=native_resolution_plan,
@@ -150,16 +151,14 @@ def resolve_single_trait_binary_gpu_genotype_format(
 
     try:
         engine_start_time = time.perf_counter()
-        prepared_engine = _core.Regenie2RunEngine(
+        engine_session.open_bgen_engine(
             str(genotype_source_config.source_path),
             chunk_size=chunk_size,
             variant_limit=variant_limit,
             trusted_no_missing_diploid=True,
+            trusted_bgen_validation_mode=trusted_bgen_validation_mode.value,
         )
-        prepared_engine.validate_trusted_no_missing_diploid_with_default_cache(
-            str(genotype_source_config.source_path),
-            trusted_bgen_validation_mode.value,
-        )
+        prepared_engine = engine_session
         engine_timing.record_stage_duration(
             stage_timing_recorder,
             "bgen_engine_open_index_setup",

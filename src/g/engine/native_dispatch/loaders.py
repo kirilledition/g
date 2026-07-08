@@ -9,13 +9,13 @@ from g.engine.native_dispatch import groups, models
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
-    from g import _core, execution_plan
+    from g import execution_plan
 
 
 def load_native_bgen_run_input(
     *,
     genotype_source_config: execution_plan.GenotypeSourceConfig,
-    engine: _core.Regenie2RunEngine,
+    engine: models.NativeBgenEngineProtocol,
     phenotype_path: Path,
     phenotype_name: str,
     covariate_path: Path | None,
@@ -39,7 +39,7 @@ def load_native_bgen_run_input(
 def load_native_bgen_multi_run_input(
     *,
     genotype_source_config: execution_plan.GenotypeSourceConfig,
-    engine: _core.Regenie2RunEngine,
+    engine: models.NativeBgenEngineProtocol,
     phenotype_path: Path,
     phenotype_names: tuple[str, ...],
     covariate_path: Path | None,

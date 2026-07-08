@@ -46,11 +46,6 @@ pub(crate) fn json_value_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<JsonV
     Ok(JsonValue::String(value.str()?.to_string_lossy().into_owned()))
 }
 
-pub(crate) fn json_text_from_py_any(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    let json_value = json_value_from_py_any(value)?;
-    serde_json::to_string(&json_value).map_err(|error| PyValueError::new_err(error.to_string()))
-}
-
 pub(crate) fn json_text_to_py_object(py: Python<'_>, json_text: &str, payload_name: &str) -> PyResult<Py<PyAny>> {
     let json_value = serde_json::from_str::<JsonValue>(json_text).map_err(|error| {
         PyValueError::new_err(format!("Native {payload_name} payload must contain valid JSON: {error}"))

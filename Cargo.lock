@@ -748,6 +748,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "pyo3-pylogger",
+ "serde",
  "serde_json",
  "toml",
  "tracing",

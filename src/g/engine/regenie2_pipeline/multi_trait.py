@@ -68,7 +68,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         telemetry_session=common_request.telemetry_session,
         alignment_config=common_request.alignment_config,
         phenotype_compute_groups=resolved_compute_groups,
-        lifecycle_session=common_request.lifecycle_session,
+        engine_session=common_request.engine_session,
     )
     if request.sample_mode == types.MultiPhenotypeSampleMode.PER_PHENOTYPE:
         return grouped.run_regenie2_grouped_per_phenotype_bgen_pipeline(

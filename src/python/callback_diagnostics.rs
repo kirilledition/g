@@ -6,8 +6,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine as native_callback_diagnostics;
-use g_runtime as native_run_events;
+use g_engine::debug as native_callback_diagnostics;
+use g_runtime::events as native_run_events;
 
 use super::errors::convert_callback_diagnostics_error;
 use super::logging;

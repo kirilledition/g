@@ -6,7 +6,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_runtime as native_telemetry_policy;
+use g_runtime::debug as native_telemetry_policy;
 
 #[pyclass(skip_from_py_object)]
 pub(crate) struct NativeTelemetryPaths {

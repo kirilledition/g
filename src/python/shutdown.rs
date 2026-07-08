@@ -7,7 +7,7 @@ use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValu
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
 
-use g_runtime as native_shutdown;
+use g_runtime::debug as native_shutdown;
 
 #[pyclass]
 pub(crate) struct NativeShutdownController {

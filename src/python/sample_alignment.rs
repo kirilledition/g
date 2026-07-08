@@ -8,7 +8,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use g_engine as native_schedule;
+use g_engine::debug as native_schedule;
 use g_input::{
     self as native_input, AlignedPhenotypeGroup, AlignedSampleData, GroupedAlignedSampleData, MultiAlignedSampleData,
     ResolvedPhenotypeComputeGroup, SampleKeyMode,

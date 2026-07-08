@@ -7,7 +7,7 @@ use pyo3::exceptions::{PyAttributeError, PyOSError, PyRuntimeError, PyTypeError,
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyModule};
 
-use g_runtime as native_jax_runtime;
+use g_runtime::debug as native_jax_runtime;
 
 use super::logging;
 

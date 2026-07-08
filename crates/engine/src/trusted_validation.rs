@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use g_genotype::{BgenError, BgenGenotypeSource};
-use g_runtime as native_trusted_validation;
+use g_runtime::debug as native_trusted_validation;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TrustedBgenValidationError {

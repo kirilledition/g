@@ -9,11 +9,7 @@ from g import _core
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import delivery as native_dispatch_delivery
 from g.engine.native_dispatch import models as native_dispatch_models
-from g.engine.regenie2_pipeline import (
-    callbacks,
-    outputs,
-    preflight,
-)
+from g.engine.regenie2_pipeline import callbacks, outputs, preflight
 from g.engine.regenie2_pipeline import context as pipeline_context
 
 if typing.TYPE_CHECKING:
@@ -22,55 +18,29 @@ if typing.TYPE_CHECKING:
     from g import execution_plan, types
 
 
-def build_multi_phenotype_output_headers(
-    *,
-    context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
-    run_input: native_dispatch_models.NativeBgenMultiRunInput,
-    compute_group: execution_plan.PhenotypeComputeGroup,
-    output_sample_mode: types.MultiPhenotypeSampleMode,
-) -> tuple[outputs.RunManifestHeaderInput, ...]:
-    """Build current output manifest headers for a compatible phenotype group."""
-    return tuple(
-        outputs.build_pipeline_manifest_header(
-            context=context,
-            phenotype_name=phenotype_name,
-            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
-            sample_count=int(run_input.sample_indices.shape[0]),
-            variant_count=int(engine.variant_count),
-            multi_phenotype_sample_mode=output_sample_mode,
-            phenotype_compute_group=compute_group,
-        )
-        for phenotype_name in compute_group.phenotype_names
-    )
-
-
 def prepare_multi_phenotype_output_bundle(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     compute_group: execution_plan.PhenotypeComputeGroup,
     output_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> _core.NativePreparedOutputBundle:
     """Prepare output runs and writer sessions for a compatible phenotype group."""
-    current_headers = build_multi_phenotype_output_headers(
-        context=context,
-        engine=engine,
-        run_input=run_input,
-        compute_group=compute_group,
+    output_group = outputs.build_output_preparation_group(
+        phenotype_names=compute_group.phenotype_names,
+        covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+        sample_count=int(run_input.sample_indices.shape[0]),
         output_sample_mode=output_sample_mode,
+        phenotype_compute_group=compute_group,
     )
-    return context.lifecycle_session.prepare_output_bundles(
-        ((compute_group.phenotype_names, current_headers),),
-        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
-    )[0]
+    return outputs.prepare_output_bundles(context=context, engine=engine, output_groups=(output_group,))[0]
 
 
 def run_multi_phenotype_group_preflight(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
 ) -> None:
@@ -152,7 +122,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
 def run_prepared_multi_phenotype_bgen_group(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,

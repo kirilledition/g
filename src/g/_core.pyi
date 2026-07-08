@@ -431,9 +431,135 @@ class NativeRunLifecycleSession:
     def prepared_phenotype_runs(self) -> tuple[NativeRunLifecyclePhenotypeRun, ...]: ...
     def prepared_phenotype_run(self, phenotype_name: str) -> NativeRunLifecyclePhenotypeRun: ...
     def mark_dispatch_started(self) -> None: ...
-    def prepare_output_bundles(
+    def prepare_output_bundles_from_runtime_plan(
         self,
-        output_groups: typing.Sequence[tuple[typing.Sequence[str], typing.Sequence[object]]],
+        output_groups: typing.Sequence[
+            tuple[
+                typing.Sequence[str],
+                typing.Sequence[str],
+                int,
+                str,
+                str | None,
+                typing.Sequence[int] | None,
+                typing.Sequence[str] | None,
+                str | None,
+                str | None,
+                str | None,
+                str | None,
+            ]
+        ],
+        variant_count: int,
+        effective_trusted_no_missing_diploid: bool,
+        sample_key_mode: str,
+        binary_kernel_config_json: str | None,
+        requested_gpu_genotype_format: str,
+        gpu_genotype_format: str,
+        score_dtype: str,
+        firth_dtype: str,
+        stage_timing_recorder: NativeStageTimingRecorder | None,
+    ) -> tuple[NativePreparedOutputBundle, ...]: ...
+    def finalize_success(self, final_output_paths: typing.Sequence[str | None]) -> NativeRunArtifacts: ...
+
+class NativeRunEngineSession:
+    sample_count: int
+    variant_count: int
+    contains_embedded_samples: bool
+
+    def __init__(
+        self,
+        config: RegenieConfig,
+        runtime_compatibility_token: NativeRuntimeCompatibilityToken,
+    ) -> None: ...
+    @property
+    def phase(self) -> str: ...
+    @property
+    def output_resume(self) -> bool: ...
+    @property
+    def run_request(self) -> NativeRunRequest: ...
+    def prepared_phenotype_runs(self) -> tuple[NativeRunLifecyclePhenotypeRun, ...]: ...
+    def prepared_phenotype_run(self, phenotype_name: str) -> NativeRunLifecyclePhenotypeRun: ...
+    def mark_dispatch_started(self) -> None: ...
+    def has_open_bgen_engine(self) -> bool: ...
+    def open_bgen_engine(
+        self,
+        bgen_path: str,
+        chunk_size: int,
+        variant_limit: int | None = None,
+        trusted_no_missing_diploid: bool = False,
+        trusted_bgen_validation_mode: str | None = None,
+    ) -> bool: ...
+    def sample_identifiers(self) -> list[str]: ...
+    def align_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_name: str,
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
+    ) -> NativeAlignedSampleData: ...
+    def align_multi_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_names: list[str],
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
+    ) -> NativeMultiAlignedSampleData: ...
+    def align_grouped_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_names: list[str],
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,
+        sample_key_mode: g.types.SampleKeyMode | str = "iid",
+    ) -> NativeGroupedAlignedSampleData: ...
+    def chromosome_boundary_indices(self) -> list[int]: ...
+    def required_chromosomes(self, variant_limit: int | None = None) -> list[str]: ...
+    def reset_profile(self) -> None: ...
+    def profile_snapshot(self) -> dict[str, int]: ...
+    def validate_trusted_no_missing_diploid(self) -> None: ...
+    def mark_trusted_no_missing_diploid_validated(self) -> None: ...
+    def validate_trusted_no_missing_diploid_with_default_cache(
+        self,
+        bgen_path: str,
+        validation_mode: str,
+    ) -> None: ...
+    def variant_metadata_slice(
+        self,
+        variant_start: int,
+        variant_stop: int,
+    ) -> tuple[list[str], list[str], list[int], list[str], list[str]]: ...
+    def prepare_output_bundles_from_runtime_plan(
+        self,
+        output_groups: typing.Sequence[
+            tuple[
+                typing.Sequence[str],
+                typing.Sequence[str],
+                int,
+                str,
+                str | None,
+                typing.Sequence[int] | None,
+                typing.Sequence[str] | None,
+                str | None,
+                str | None,
+                str | None,
+                str | None,
+            ]
+        ],
+        variant_count: int,
+        effective_trusted_no_missing_diploid: bool,
+        sample_key_mode: str,
+        binary_kernel_config_json: str | None,
+        requested_gpu_genotype_format: str,
+        gpu_genotype_format: str,
+        score_dtype: str,
+        firth_dtype: str,
         stage_timing_recorder: NativeStageTimingRecorder | None,
     ) -> tuple[NativePreparedOutputBundle, ...]: ...
     def finalize_success(self, final_output_paths: typing.Sequence[str | None]) -> NativeRunArtifacts: ...
@@ -603,6 +729,19 @@ class Regenie2RunEngine:
 
 def run_bgen_delivery_with_writer_sessions(
     engine: Regenie2RunEngine,
+    sample_indices: npt.NDArray[np.int64],
+    native_aligned_sample_data: NativeAlignedSampleData | None,
+    native_multi_aligned_sample_data: NativeMultiAlignedSampleData | None,
+    writer_sessions: typing.Sequence[OutputWriterSession],
+    callback: object,
+    stage_timing_recorder: NativeStageTimingRecorder | None,
+    writer_finish_thread_count: int,
+    committed_chunk_identifiers: typing.Sequence[int] | None,
+    variant_major_packed8_probability_pairs: bool,
+    pipeline_label: str,
+) -> list[str | None]: ...
+def run_bgen_session_delivery_with_writer_sessions(
+    engine_session: NativeRunEngineSession,
     sample_indices: npt.NDArray[np.int64],
     native_aligned_sample_data: NativeAlignedSampleData | None,
     native_multi_aligned_sample_data: NativeMultiAlignedSampleData | None,
@@ -1552,13 +1691,6 @@ class OutputWriterSession:
     def finish(self) -> str | None: ...
     def finish_interrupted(self, signal_name: str) -> None: ...
     def abort(self) -> None: ...
-
-class NativeManifestFileFingerprintCache:
-    def __init__(self) -> None: ...
-    def build_current_run_manifest_header_payload_from_input(
-        self,
-        current_header_input: object,
-    ) -> dict[str, object]: ...
 
 def summarize_variant_major_dosage_chunk_stats(
     genotype_matrix_by_variant: npt.NDArray[np.float32],

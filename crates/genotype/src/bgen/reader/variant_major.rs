@@ -122,6 +122,12 @@ impl VariantMajorDecodeAccumulator {
 }
 
 impl BgenReaderCore {
+    /// Read prepared variant-major dosages into a caller-provided f32 buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sample selection has not been prepared, variant
+    /// bounds or output buffer size are invalid, or BGEN decoding fails.
     pub fn read_preprocessed_variant_major_dosage_f32_into_address_prepared(
         &self,
         variant_start: usize,
@@ -154,6 +160,13 @@ impl BgenReaderCore {
         stats_buffers.into_chunk_stats(has_missing_values, read_shape.selected_sample_count)
     }
 
+    /// Read prepared variant-major packed8 probability pairs into a caller-provided u8 buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when sample selection has not been prepared, packed8
+    /// preconditions fail, variant bounds or output buffer size are invalid, or
+    /// BGEN decoding fails.
     pub fn read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
         &self,
         variant_start: usize,

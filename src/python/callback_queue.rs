@@ -7,9 +7,11 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule};
 
+use g_engine::debug::BoundedCallbackQueue;
+
 #[pyclass]
 pub(crate) struct NativeCallbackObjectQueue {
-    queue: Mutex<g_engine::BoundedCallbackQueue<Py<PyAny>>>,
+    queue: Mutex<BoundedCallbackQueue<Py<PyAny>>>,
     condition: Condvar,
 }
 
@@ -69,7 +71,7 @@ impl NativeCallbackObjectQueue {
         py.detach(|| {
             self.wait_until_without_gil(
                 timeout_seconds,
-                g_engine::BoundedCallbackQueue::has_available_slot,
+                BoundedCallbackQueue::has_available_slot,
                 "native callback object queue lock was poisoned during available-slot wait",
             )
         })
@@ -79,7 +81,7 @@ impl NativeCallbackObjectQueue {
         py.detach(|| {
             self.wait_until_without_gil(
                 timeout_seconds,
-                g_engine::BoundedCallbackQueue::has_queued_item,
+                BoundedCallbackQueue::has_queued_item,
                 "native callback object queue lock was poisoned during queued-item wait",
             )
         })
@@ -88,7 +90,7 @@ impl NativeCallbackObjectQueue {
 
 impl NativeCallbackObjectQueue {
     pub(crate) fn with_capacity(capacity: usize) -> PyResult<Self> {
-        let Some(queue) = g_engine::BoundedCallbackQueue::new(capacity) else {
+        let Some(queue) = BoundedCallbackQueue::new(capacity) else {
             return Err(PyValueError::new_err("native callback object queue capacity must be positive"));
         };
         Ok(Self { queue: Mutex::new(queue), condition: Condvar::new() })
@@ -110,7 +112,7 @@ impl NativeCallbackObjectQueue {
         py.detach(|| {
             self.wait_until_without_gil(
                 timeout_seconds,
-                g_engine::BoundedCallbackQueue::has_available_slot,
+                BoundedCallbackQueue::has_available_slot,
                 "native callback object queue lock was poisoned during available-slot wait",
             )
         })
@@ -120,7 +122,7 @@ impl NativeCallbackObjectQueue {
         py.detach(|| {
             self.wait_until_without_gil(
                 timeout_seconds,
-                g_engine::BoundedCallbackQueue::has_queued_item,
+                BoundedCallbackQueue::has_queued_item,
                 "native callback object queue lock was poisoned during queued-item wait",
             )
         })
@@ -134,7 +136,7 @@ impl NativeCallbackObjectQueue {
         Ok(self.lock_queue()?.occupied_count())
     }
 
-    fn lock_queue(&self) -> PyResult<MutexGuard<'_, g_engine::BoundedCallbackQueue<Py<PyAny>>>> {
+    fn lock_queue(&self) -> PyResult<MutexGuard<'_, BoundedCallbackQueue<Py<PyAny>>>> {
         self.queue.lock().map_err(|_| PyRuntimeError::new_err("native callback object queue lock was poisoned"))
     }
 
@@ -211,7 +213,7 @@ impl NativeCallbackObjectQueue {
     fn wait_until_without_gil(
         &self,
         timeout_seconds: f64,
-        queue_condition: fn(&g_engine::BoundedCallbackQueue<Py<PyAny>>) -> bool,
+        queue_condition: fn(&BoundedCallbackQueue<Py<PyAny>>) -> bool,
         wait_error_message: &'static str,
     ) -> PyResult<bool> {
         let timeout_duration = normalize_timeout_duration(timeout_seconds);

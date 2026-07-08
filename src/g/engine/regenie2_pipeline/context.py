@@ -5,14 +5,14 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass
 
-from g import _core, execution_plan, io, types
+from g import _core, execution_plan, types
 from g.engine import timing as engine_timing
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
     from g.engine.native_dispatch import models as native_dispatch_models
-    from g.engine.regenie2_pipeline import callbacks, compute_config, outputs
+    from g.engine.regenie2_pipeline import callbacks, compute_config
     from g.runner import events as runner_events
 
 
@@ -86,10 +86,9 @@ class Regenie2PipelineContext:
         writer_settings: Output writer settings.
         stage_timing_recorder: Optional stage timing recorder for this run.
         telemetry_session: Optional telemetry sink.
-        input_fingerprint_cache: Run-scoped input fingerprint cache.
         alignment_config: Optional sample alignment settings.
         phenotype_compute_groups: Planned phenotype compute groups.
-        lifecycle_session: Native run lifecycle session.
+        engine_session: Native run engine session.
 
     """
 
@@ -117,10 +116,9 @@ class Regenie2PipelineContext:
     writer_settings: execution_plan.OutputWriterPlan
     stage_timing_recorder: engine_timing.StageTimingRecorder | None
     telemetry_session: runner_events.TelemetrySession | None
-    input_fingerprint_cache: outputs.ManifestFileFingerprintCache
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...]
-    lifecycle_session: _core.NativeRunLifecycleSession
+    engine_session: _core.NativeRunEngineSession
 
     @property
     def uses_packed8_genotypes(self) -> bool:
@@ -181,7 +179,7 @@ def build_regenie2_pipeline_context(
     telemetry_session: runner_events.TelemetrySession | None,
     alignment_config: native_dispatch_models.SampleAlignmentConfigProtocol | None,
     phenotype_compute_groups: tuple[execution_plan.PhenotypeComputeGroup, ...],
-    lifecycle_session: _core.NativeRunLifecycleSession,
+    engine_session: _core.NativeRunEngineSession,
 ) -> Regenie2PipelineContext:
     """Build a resolved lifecycle context for a REGENIE step 2 run."""
     resolved_stage_timing_recorder: engine_timing.StageTimingRecorder | None
@@ -226,10 +224,9 @@ def build_regenie2_pipeline_context(
         writer_settings=writer_settings,
         stage_timing_recorder=resolved_stage_timing_recorder,
         telemetry_session=telemetry_session,
-        input_fingerprint_cache=io.ManifestFileFingerprintCache(),
         alignment_config=alignment_config,
         phenotype_compute_groups=phenotype_compute_groups,
-        lifecycle_session=lifecycle_session,
+        engine_session=engine_session,
     )
 
 

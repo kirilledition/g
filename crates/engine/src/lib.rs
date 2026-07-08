@@ -9,6 +9,7 @@ mod callback_queue;
 mod callback_summary;
 mod callback_worker_schedule;
 mod coordinator;
+pub mod debug;
 mod delivery_schedule;
 mod effects;
 mod error;

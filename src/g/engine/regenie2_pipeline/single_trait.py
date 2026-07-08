@@ -29,7 +29,7 @@ if typing.TYPE_CHECKING:
 def load_single_trait_run_input(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     phenotype_name: str,
     covariate_names: tuple[str, ...] | None,
     pipeline_label: str,
@@ -107,7 +107,7 @@ def run_single_trait_preflight(
     context: pipeline_context.Regenie2PipelineContext,
     run_input: native_dispatch_models.NativeBgenRunInput,
     prediction_source: typing.Any,
-    engine: _core.Regenie2RunEngine,
+    engine: native_dispatch_models.NativeBgenEngineProtocol,
     phenotype_name: str,
     pipeline_label: str,
 ) -> None:
@@ -155,7 +155,7 @@ def run_single_trait_bgen_pipeline(
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    prepared_engine: _core.Regenie2RunEngine | None,
+    prepared_engine: _core.NativeRunEngineSession | None,
 ) -> Path | None:
     """Run a single-trait REGENIE step 2 BGEN pipeline lifecycle."""
     pipeline_label = "binary" if context.is_binary_trait else "linear"
@@ -232,18 +232,17 @@ def run_single_trait_bgen_pipeline(
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
     )
-    current_header = outputs.build_pipeline_manifest_header(
-        context=context,
-        phenotype_name=phenotype_name,
+    output_group = outputs.build_output_preparation_group(
+        phenotype_names=(phenotype_name,),
         covariate_names=tuple(run_input.native_aligned_sample_data.covariate_names),
         sample_count=int(run_input.sample_indices.shape[0]),
-        variant_count=int(engine.variant_count),
-        multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
+        output_sample_mode=types.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
         phenotype_compute_group=resolved_compute_group,
     )
-    prepared_output_bundle = context.lifecycle_session.prepare_output_bundles(
-        (((phenotype_name,), (current_header,)),),
-        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
+    prepared_output_bundle = outputs.prepare_output_bundles(
+        context=context,
+        engine=engine,
+        output_groups=(output_group,),
     )[0]
     writer_session = prepared_output_bundle.writer_sessions[0]
     callback = callbacks.build_single_trait_callback(
@@ -306,7 +305,7 @@ def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitLine
             phenotype_names=(request.phenotype_name,),
             multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         ),
-        lifecycle_session=common_request.lifecycle_session,
+        engine_session=common_request.engine_session,
     )
     return run_single_trait_bgen_pipeline(
         context=context,
@@ -328,8 +327,9 @@ def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitBina
     gpu_genotype_format_resolution = gpu_format.resolve_single_trait_binary_gpu_genotype_format(
         requested_gpu_genotype_format=request.gpu_genotype_format,
         existing_manifest=outputs.existing_manifest_from_prepared_run(request.prepared_run),
-        resume=common_request.lifecycle_session.output_resume,
+        resume=common_request.engine_session.output_resume,
         jax_device=common_request.jax_device,
+        engine_session=common_request.engine_session,
         genotype_source_config=common_request.genotype_source_config,
         chunk_size=common_request.chunk_size,
         variant_limit=common_request.variant_limit,
@@ -365,7 +365,7 @@ def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitBina
             phenotype_names=(request.phenotype_name,),
             multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         ),
-        lifecycle_session=common_request.lifecycle_session,
+        engine_session=common_request.engine_session,
     )
     return run_single_trait_bgen_pipeline(
         context=context,

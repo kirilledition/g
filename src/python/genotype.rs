@@ -8,7 +8,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use g_genotype::{self as native_genotype, ChunkStats as NativeChunkStats, VariantMetadataColumns};
+use g_genotype::internal as native_genotype;
+use g_genotype::{ChunkStats as NativeChunkStats, VariantMetadataColumns};
 
 pub(crate) type VariantMetadataTuple = (Vec<String>, Vec<String>, Vec<i64>, Vec<String>, Vec<String>);
 

@@ -1,19 +1,17 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
-use g_engine as native_schedule;
-use g_engine::build_current_run_manifest_header_json_from_value_with_cache;
+use g_engine::debug as native_schedule;
 use g_output::{
-    ManifestFileFingerprintCache as NativeManifestFileFingerprintCacheState, NativeChunkHandle,
-    NativeChunkStats as NativeOutputChunkStats, OutputError, OutputWriterSession as NativeOutputWriterSession,
-    VariantMetadataColumns as NativeOutputVariantMetadataColumns,
+    NativeChunkHandle, NativeChunkStats as NativeOutputChunkStats, OutputError,
+    OutputWriterSession as NativeOutputWriterSession, VariantMetadataColumns as NativeOutputVariantMetadataColumns,
 };
 use g_plan::FloatingPointDtype;
-use g_runtime as native_run_events;
+use g_runtime::events as native_run_events;
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -22,17 +20,12 @@ use pyo3::types::{PyAny, PyModule};
 use super::{
     errors,
     genotype::{ChunkStats as PyChunkStats, VariantMetadata as PyVariantMetadata},
-    json_bridge, run_events,
+    run_events,
 };
 
 #[pyclass]
 pub(crate) struct OutputWriterSession {
     inner: NativeOutputWriterSession,
-}
-
-#[pyclass]
-pub(crate) struct NativeManifestFileFingerprintCache {
-    inner: Mutex<NativeManifestFileFingerprintCacheState>,
 }
 
 struct Regenie2StatisticArrays {
@@ -41,34 +34,6 @@ struct Regenie2StatisticArrays {
     chi_squared: ArrayRef,
     log10_p_value: ArrayRef,
     extra_code: Option<ArrayRef>,
-}
-
-#[pymethods]
-impl NativeManifestFileFingerprintCache {
-    #[new]
-    fn new() -> Self {
-        Self { inner: Mutex::new(NativeManifestFileFingerprintCacheState::new()) }
-    }
-
-    fn build_current_run_manifest_header_payload_from_input(
-        &self,
-        py: Python<'_>,
-        current_header_input: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        let current_header_input_value = json_bridge::json_value_from_py_any(current_header_input)?;
-        let current_header_json = py
-            .detach(|| {
-                let mut fingerprint_cache = self.inner.lock().map_err(|_| {
-                    OutputError::Runtime("Manifest file fingerprint cache mutex was poisoned.".to_string())
-                })?;
-                build_current_run_manifest_header_json_from_value_with_cache(
-                    current_header_input_value,
-                    &mut fingerprint_cache,
-                )
-            })
-            .map_err(|error| errors::convert_output_error("build_cached_current_run_manifest_header_payload", error))?;
-        json_bridge::json_text_to_py_object(py, &current_header_json, "current-run manifest header")
-    }
 }
 
 #[pymethods]
@@ -618,7 +583,6 @@ fn record_pipeline_output_writer_sessions_create_started(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeManifestFileFingerprintCache>()?;
     module.add_class::<OutputWriterSession>()?;
     module.add_function(wrap_pyfunction!(write_regenie2_native_chunk_with_output_dtype, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_with_output_dtype, module)?)?;

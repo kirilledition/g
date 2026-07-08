@@ -3,8 +3,9 @@
 use std::path::Path;
 
 use g_input::resolve_prediction_loco_paths;
-use g_output::{
-    CurrentRunManifestHeaderInput, ManifestFileFingerprint, ManifestFileFingerprintCache, OutputError,
+use g_output::OutputError;
+use g_output::admin::{
+    CurrentRunManifestHeaderInput, ManifestFileFingerprint, ManifestFileFingerprintCache,
     build_current_run_manifest_header_json_with_cache,
 };
 use serde_json::{Map, Value, json};

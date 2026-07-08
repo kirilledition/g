@@ -10,7 +10,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
-use g_runtime as native_timing;
+use g_runtime::debug as native_timing;
 
 use super::errors::{convert_timing_file_error, convert_transfer_metadata_error};
 use super::logging;

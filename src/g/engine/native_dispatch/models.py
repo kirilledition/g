@@ -42,6 +42,61 @@ class BgenDeliveryRunInputProtocol(typing.Protocol):
         ...
 
 
+class NativeBgenEngineProtocol(typing.Protocol):
+    """Native BGEN engine/session methods used by Python orchestration."""
+
+    sample_count: int
+    variant_count: int
+    contains_embedded_samples: bool
+
+    def sample_identifiers(self) -> list[str]:
+        """Return BGEN sample identifiers."""
+        ...
+
+    def align_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_name: str,
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,  # noqa: FBT001, FBT002
+        sample_key_mode: types.SampleKeyMode | str = "iid",
+    ) -> _core.NativeAlignedSampleData:
+        """Align one phenotype against BGEN samples."""
+        ...
+
+    def align_multi_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_names: list[str],
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,  # noqa: FBT001, FBT002
+        sample_key_mode: types.SampleKeyMode | str = "iid",
+    ) -> _core.NativeMultiAlignedSampleData:
+        """Align complete-case multi-phenotype samples."""
+        ...
+
+    def align_grouped_sample_data(
+        self,
+        sample_path: str | None,
+        phenotype_path: str,
+        phenotype_names: list[str],
+        covariate_path: str | None = None,
+        covariate_names: list[str] | None = None,
+        is_binary_trait: bool = False,  # noqa: FBT001, FBT002
+        sample_key_mode: types.SampleKeyMode | str = "iid",
+    ) -> _core.NativeGroupedAlignedSampleData:
+        """Align per-phenotype sample groups."""
+        ...
+
+    def required_chromosomes(self, variant_limit: int | None = None) -> list[str]:
+        """Return chromosome labels represented in the requested scan."""
+        ...
+
+
 class BgenDeliveryBatchSizeProtocol(typing.Protocol):
     """Callback batch-size contract accepted by native BGEN chunk delivery planning."""
 

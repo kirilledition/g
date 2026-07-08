@@ -122,12 +122,12 @@ def run_validated_regenie_config(
         )
         output_start_time = time.perf_counter()
         _core.record_runner_execution_plan_build_started_diagnostic_event()
-        lifecycle_session = _core.NativeRunLifecycleSession(regenie_config, runtime_compatibility_token)
+        engine_session = _core.NativeRunEngineSession(regenie_config, runtime_compatibility_token)
         plan = execution_plan.build_regenie_execution_plan_from_run_request(
             regenie_config,
-            lifecycle_session.run_request,
+            engine_session.run_request,
         )
-        phenotype_run_plans = lifecycle_session.prepared_phenotype_runs()
+        phenotype_run_plans = engine_session.prepared_phenotype_runs()
         _core.record_execution_plan_prepared_events(
             telemetry_session,
             plan.association_mode.value,
@@ -145,7 +145,7 @@ def run_validated_regenie_config(
         final_output_paths = dispatch_execution_plan(
             plan=plan,
             phenotype_run_plans=phenotype_run_plans,
-            lifecycle_session=lifecycle_session,
+            engine_session=engine_session,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )
@@ -153,7 +153,7 @@ def run_validated_regenie_config(
             phenotype_count=len(phenotype_run_plans),
             association_mode=plan.association_mode.value,
         )
-        native_artifacts = lifecycle_session.finalize_success(
+        native_artifacts = engine_session.finalize_success(
             tuple(
                 None if final_output_path is None else str(final_output_path)
                 for final_output_path in final_output_paths
@@ -185,12 +185,12 @@ def dispatch_execution_plan(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plans: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
-    lifecycle_session: _core.NativeRunLifecycleSession,
+    engine_session: _core.NativeRunEngineSession,
     stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     telemetry_session: events.TelemetrySession | None,
 ) -> tuple[Path | None, ...]:
     """Dispatch an execution plan to the native engine layer."""
-    lifecycle_session.mark_dispatch_started()
+    engine_session.mark_dispatch_started()
     if len(phenotype_run_plans) > 1:
         _core.record_runner_multi_phenotype_dispatch_started_diagnostic_event(
             phenotype_count=len(phenotype_run_plans),
@@ -199,7 +199,7 @@ def dispatch_execution_plan(
         return dispatch_multi_phenotype_engine_pipeline(
             plan=plan,
             phenotype_run_plans=phenotype_run_plans,
-            lifecycle_session=lifecycle_session,
+            engine_session=engine_session,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         )
@@ -211,7 +211,7 @@ def dispatch_execution_plan(
         dispatch_one_phenotype_engine_pipeline(
             plan=plan,
             phenotype_run_plan=phenotype_run_plans[0],
-            lifecycle_session=lifecycle_session,
+            engine_session=engine_session,
             stage_timing_recorder=stage_timing_recorder,
             telemetry_session=telemetry_session,
         ),
@@ -221,7 +221,7 @@ def dispatch_execution_plan(
 def build_common_engine_dispatch_request(
     *,
     plan: execution_plan.RegenieExecutionPlan,
-    lifecycle_session: _core.NativeRunLifecycleSession,
+    engine_session: _core.NativeRunEngineSession,
     stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     telemetry_session: events.TelemetrySession | None,
 ) -> dispatch_requests.PipelineCommonRequest:
@@ -249,7 +249,7 @@ def build_common_engine_dispatch_request(
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
         alignment_config=plan.kernel_config.alignment_config,
-        lifecycle_session=lifecycle_session,
+        engine_session=engine_session,
     )
 
 
@@ -257,14 +257,14 @@ def dispatch_one_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plan: _core.NativeRunLifecyclePhenotypeRun,
-    lifecycle_session: _core.NativeRunLifecycleSession,
+    engine_session: _core.NativeRunEngineSession,
     stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     telemetry_session: events.TelemetrySession | None,
 ) -> Path | None:
     """Dispatch one phenotype to the native linear or binary pipeline."""
     common_request = build_common_engine_dispatch_request(
         plan=plan,
-        lifecycle_session=lifecycle_session,
+        engine_session=engine_session,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
     )
@@ -313,14 +313,14 @@ def dispatch_multi_phenotype_engine_pipeline(
     *,
     plan: execution_plan.RegenieExecutionPlan,
     phenotype_run_plans: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
-    lifecycle_session: _core.NativeRunLifecycleSession,
+    engine_session: _core.NativeRunEngineSession,
     stage_timing_recorder: engine_timing.StageTimingRecorder | None,
     telemetry_session: events.TelemetrySession | None,
 ) -> tuple[Path | None, ...]:
     """Dispatch multiple phenotypes to the shared native pipeline."""
     common_request = build_common_engine_dispatch_request(
         plan=plan,
-        lifecycle_session=lifecycle_session,
+        engine_session=engine_session,
         stage_timing_recorder=stage_timing_recorder,
         telemetry_session=telemetry_session,
     )

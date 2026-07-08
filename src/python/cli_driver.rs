@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use g_interface as interface;
-use g_runtime as native_runtime;
+use g_runtime::debug as native_runtime;
 use pyo3::exceptions::{PyAttributeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyTuple};

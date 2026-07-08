@@ -2,18 +2,38 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import time
 import typing
 
-from g import _core, execution_plan, io, types
+from g import _core, execution_plan, types
 from g.engine import timing as engine_timing
 from g.engine.native_dispatch import groups as native_dispatch_groups
 
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
-type RunManifestHeaderInput = io.RunManifestHeaderInput
-type ManifestFileFingerprintCache = io.ManifestFileFingerprintCache
+
+class OutputPreparationBgenEngineProtocol(typing.Protocol):
+    """Minimal engine shape needed for output preparation."""
+
+    variant_count: int
+
+
+type OutputPreparationGroupInput = tuple[
+    tuple[str, ...],
+    tuple[str, ...],
+    int,
+    str,
+    str | None,
+    tuple[int, ...] | None,
+    tuple[str, ...] | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+]
 
 
 def open_pipeline_bgen_engine(
@@ -22,7 +42,7 @@ def open_pipeline_bgen_engine(
     pipeline_label: str,
     phenotype_name: str | None,
     phenotype_count: int | None,
-) -> _core.Regenie2RunEngine:
+) -> _core.NativeRunEngineSession:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
     _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
@@ -41,17 +61,16 @@ def open_pipeline_bgen_engine(
         phenotype_name,
         phenotype_count,
     )
-    engine = _core.Regenie2RunEngine(
+    engine = context.engine_session
+    engine.open_bgen_engine(
         str(context.genotype_source_config.source_path),
         chunk_size=context.chunk_size,
         variant_limit=context.variant_limit,
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
+        trusted_bgen_validation_mode=(
+            context.trusted_bgen_validation_mode.value if context.effective_trusted_no_missing_diploid else None
+        ),
     )
-    if context.effective_trusted_no_missing_diploid:
-        engine.validate_trusted_no_missing_diploid_with_default_cache(
-            str(context.genotype_source_config.source_path),
-            context.trusted_bgen_validation_mode.value,
-        )
     engine_timing.record_stage_duration(
         context.stage_timing_recorder,
         "bgen_engine_open_index_setup",
@@ -76,76 +95,62 @@ def open_pipeline_bgen_engine(
     return engine
 
 
-def build_pipeline_manifest_header(
+def build_binary_kernel_config_json(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    phenotype_name: str,
+) -> str | None:
+    """Serialize Python-owned binary kernel config for native manifest preparation."""
+    if not context.is_binary_trait or context.binary_kernel_config is None:
+        return None
+    return json.dumps(
+        dataclasses.asdict(context.binary_kernel_config),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def build_output_preparation_group(
+    *,
+    phenotype_names: tuple[str, ...],
     covariate_names: tuple[str, ...],
     sample_count: int,
-    variant_count: int,
-    multi_phenotype_sample_mode: types.MultiPhenotypeSampleMode,
+    output_sample_mode: types.MultiPhenotypeSampleMode,
     phenotype_compute_group: execution_plan.PhenotypeComputeGroup | None,
-) -> RunManifestHeaderInput:
-    """Build the current manifest header for one output run."""
-    return io.build_current_run_manifest_header(
-        association_mode=context.association_mode,
-        association_backend_kind=context.backend_plan.backend_kind,
-        bgen_path=context.genotype_source_config.source_path,
-        sample_path=context.genotype_source_config.sample_path,
-        phenotype_path=context.phenotype_path,
-        phenotype_name=phenotype_name,
-        covariate_path=context.covariate_path,
-        covariate_names=covariate_names,
-        prediction_list_path=context.prediction_list_path,
-        prediction_input_phenotype_names=(
-            (phenotype_name,) if phenotype_compute_group is None else phenotype_compute_group.phenotype_names
-        ),
-        fingerprint_cache=context.input_fingerprint_cache,
-        sample_count=sample_count,
-        variant_count=variant_count,
-        chunk_size=context.chunk_size,
-        variant_limit=context.variant_limit,
-        binary_correction_plan=context.correction_plan,
-        trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
-        sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config),
-        binary_kernel_config=context.binary_kernel_config if context.is_binary_trait else None,
-        bgen_decode_tile_variant_count=context.bgen_decode_tile_variant_count,
-        trusted_bgen_validation_mode=context.trusted_bgen_validation_mode,
-        jax_device=context.jax_device,
-        jax_enable_x64=True,
-        jax_matmul_precision=context.jax_matmul_precision,
-        requested_gpu_genotype_format=context.requested_gpu_genotype_format,
-        gpu_genotype_format=context.gpu_genotype_format,
-        score_dtype=context.score_dtype,
-        firth_dtype=context.firth_dtype,
-        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        phenotype_compute_group_mode=None if phenotype_compute_group is None else phenotype_compute_group.group_mode,
-        phenotype_compute_group_indices=None
-        if phenotype_compute_group is None
-        else phenotype_compute_group.phenotype_indices,
-        phenotype_compute_group_names=None
-        if phenotype_compute_group is None
-        else phenotype_compute_group.phenotype_names,
-        phenotype_compute_group_sample_mode=None
-        if phenotype_compute_group is None
-        else phenotype_compute_group.sample_mode,
-        sample_set_fingerprint=None
-        if phenotype_compute_group is None
-        else phenotype_compute_group.sample_set_fingerprint,
-        covariate_design_fingerprint=(
-            None if phenotype_compute_group is None else phenotype_compute_group.covariate_design_fingerprint
-        ),
-        prediction_alignment_fingerprint=(
-            None if phenotype_compute_group is None else phenotype_compute_group.prediction_alignment_fingerprint
-        ),
-        output_format=context.writer_settings.output_format,
-        finalize_parquet=context.writer_settings.finalize_parquet,
-        writer_thread_count=context.writer_settings.writer_thread_count,
-        writer_queue_depth=context.writer_settings.writer_queue_depth,
-        chunks_per_arrow_file=context.writer_settings.chunks_per_arrow_file,
-        arrow_compression=context.writer_settings.arrow_compression,
-        parquet_compression=context.writer_settings.parquet_compression,
-        output_statistic_dtype=context.writer_settings.output_statistic_dtype,
+) -> OutputPreparationGroupInput:
+    """Build compact runtime data for native output preparation."""
+    return (
+        phenotype_names,
+        covariate_names,
+        sample_count,
+        output_sample_mode.value,
+        None if phenotype_compute_group is None else phenotype_compute_group.group_mode.value,
+        None if phenotype_compute_group is None else phenotype_compute_group.phenotype_indices,
+        None if phenotype_compute_group is None else phenotype_compute_group.phenotype_names,
+        None if phenotype_compute_group is None else phenotype_compute_group.sample_mode.value,
+        None if phenotype_compute_group is None else phenotype_compute_group.sample_set_fingerprint,
+        None if phenotype_compute_group is None else phenotype_compute_group.covariate_design_fingerprint,
+        None if phenotype_compute_group is None else phenotype_compute_group.prediction_alignment_fingerprint,
+    )
+
+
+def prepare_output_bundles(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: OutputPreparationBgenEngineProtocol,
+    output_groups: tuple[OutputPreparationGroupInput, ...],
+) -> tuple[_core.NativePreparedOutputBundle, ...]:
+    """Prepare output runs and writer sessions through the native lifecycle."""
+    return context.engine_session.prepare_output_bundles_from_runtime_plan(
+        output_groups,
+        int(engine.variant_count),
+        context.effective_trusted_no_missing_diploid,
+        native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
+        build_binary_kernel_config_json(context=context),
+        context.requested_gpu_genotype_format.value,
+        context.gpu_genotype_format.value,
+        context.score_dtype.value,
+        context.firth_dtype.value,
+        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
     )
 
 

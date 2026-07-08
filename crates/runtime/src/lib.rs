@@ -2,7 +2,9 @@
 
 mod api;
 mod cli_runtime;
+pub mod debug;
 mod error;
+pub mod events;
 mod jax_runtime;
 mod logging_sink;
 mod rayon_runtime;

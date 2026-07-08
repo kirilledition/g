@@ -73,7 +73,7 @@ pub(super) fn validate_pipeline_resume_compatibility_after_count_check(
         g_output::validate_run_manifest_compatibility(&existing_manifest_json, &current_header_json)?;
         if resume_mode == OutputResumeMode::Strict {
             let _repaired_commits =
-                g_output::repair_strict_manifest_chunk_commits(&chunks_directory, &existing_manifest_json)?;
+                g_output::admin::repair_strict_manifest_chunk_commits(&chunks_directory, &existing_manifest_json)?;
         }
     }
     Ok(())

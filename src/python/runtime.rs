@@ -2,10 +2,10 @@ use pyo3::exceptions::{PyAttributeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use g_runtime as native_runtime;
-use g_runtime::{
+use g_runtime::debug::{
     CliRunLifecycleState, plan_cli_run_failed_telemetry_emission as native_plan_cli_run_failed_telemetry_emission,
 };
+use g_runtime::events as native_runtime;
 
 use super::run_events;
 

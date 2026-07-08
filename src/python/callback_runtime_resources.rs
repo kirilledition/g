@@ -11,7 +11,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyModule, PySlice, PyTuple};
 
-use g_engine::ResultWriteItemKind;
+use g_engine::debug::ResultWriteItemKind;
 
 use super::callback_progress::{
     NativeCallbackChunkIdentity, NativeCallbackProgressCompletion, NativeCallbackProgressState,
