@@ -2,6 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use pyo3::basic::CompareOp;
 use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError, PySystemExit, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyModule};
@@ -14,7 +15,7 @@ pub(crate) struct NativeShutdownController {
 }
 
 #[pyclass(skip_from_py_object)]
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) struct NativeShutdownSignal {
     number: i32,
     name: String,
@@ -133,6 +134,11 @@ impl NativeShutdownSignal {
 
 #[pymethods]
 impl NativeShutdownSignal {
+    #[new]
+    fn new(number: i32, name: String, exit_code: i32) -> Self {
+        Self { number, name, exit_code }
+    }
+
     #[getter]
     fn number(&self) -> i32 {
         self.number
@@ -146,6 +152,15 @@ impl NativeShutdownSignal {
     #[getter]
     fn exit_code(&self) -> i32 {
         self.exit_code
+    }
+
+    #[expect(clippy::needless_pass_by_value, reason = "PyO3 __richcmp__ requires owned PyRef extraction.")]
+    fn __richcmp__(&self, other: PyRef<'_, Self>, operation: CompareOp) -> bool {
+        match operation {
+            CompareOp::Eq => self == &*other,
+            CompareOp::Ne => self != &*other,
+            CompareOp::Lt | CompareOp::Le | CompareOp::Gt | CompareOp::Ge => false,
+        }
     }
 }
 

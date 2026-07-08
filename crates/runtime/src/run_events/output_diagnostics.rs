@@ -1,5 +1,5 @@
-use super::IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME;
 use super::diagnostics::{RunDiagnosticEventPayload, integer_diagnostic_field, text_diagnostic_field};
+use super::names::IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME;
 
 #[must_use]
 pub fn build_io_output_resume_committed_chunks_diagnostic_payload(

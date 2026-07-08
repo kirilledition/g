@@ -1,278 +1,33 @@
 //! Deterministic trusted BGEN validation cache metadata and writes.
 
-use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt::Write as _;
-use std::fs;
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
-
-use serde_json::Value;
-use sha2::{Digest, Sha256};
+mod cache_payload;
+mod error;
+mod fingerprint;
+mod lookup;
+mod paths;
+mod types;
 
 const TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION: i64 = 1;
-const ASSUME_VALIDATED_UNSAFE_MESSAGE: &str = concat!(
-    "Trusted no-missing diploid validation mode 'assume_validated' is unsafe for calculation runs. ",
-    "Use 'cache_on_miss' or 'force_validate' so BGEN compatibility is checked before decoding."
-);
-const TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY: &str = "g";
-const TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME: &str = "bgen_validation";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TrustedBgenValidationFingerprintInput {
-    pub bgen_path: PathBuf,
-    pub sample_count: i64,
-    pub variant_count: i64,
-    pub trusted_no_missing_diploid: bool,
-}
+pub use cache_payload::{
+    build_trusted_bgen_validation_cache_payload, serialize_trusted_bgen_validation_cache_payload,
+    write_trusted_bgen_validation_cache_payload, write_trusted_bgen_validation_cache_payload_to_path,
+};
+pub use error::{TrustedBgenValidationCacheDirectoryError, TrustedBgenValidationCacheLookupError};
+pub use fingerprint::build_trusted_bgen_validation_fingerprint;
+pub use lookup::{plan_trusted_bgen_validation_cache_lookup, require_cache_backed_trusted_bgen_validation_mode};
+pub use paths::{
+    build_default_trusted_bgen_validation_cache_directory, build_trusted_bgen_validation_cache_path,
+    default_trusted_bgen_validation_cache_directory,
+};
+pub use types::{
+    TrustedBgenValidationCacheLookupPlan, TrustedBgenValidationCachePayload, TrustedBgenValidationFingerprintInput,
+};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TrustedBgenValidationCachePayload {
-    pub schema_version: i64,
-    pub fingerprint: String,
-    pub bgen_path: String,
-    pub sample_count: i64,
-    pub variant_count: i64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TrustedBgenValidationCacheLookupPlan {
-    pub should_mark_validated: bool,
-    pub should_validate: bool,
-    pub should_write_cache: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TrustedBgenValidationCacheLookupError {
-    UnsafeAssumeValidatedMode,
-    UnsupportedValidationMode(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TrustedBgenValidationCacheDirectoryError {
-    MissingHomeDirectory,
-}
-
-impl std::fmt::Display for TrustedBgenValidationCacheLookupError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsafeAssumeValidatedMode => formatter.write_str(ASSUME_VALIDATED_UNSAFE_MESSAGE),
-            Self::UnsupportedValidationMode(validation_mode) => {
-                write!(formatter, "Unsupported trusted BGEN validation mode: {validation_mode}")
-            }
-        }
-    }
-}
-
-impl Error for TrustedBgenValidationCacheLookupError {}
-
-impl std::fmt::Display for TrustedBgenValidationCacheDirectoryError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingHomeDirectory => formatter.write_str(
-                "Unable to resolve trusted BGEN validation cache directory: neither XDG_CACHE_HOME nor HOME is set.",
-            ),
-        }
-    }
-}
-
-impl Error for TrustedBgenValidationCacheDirectoryError {}
-
-/// Build the cache fingerprint for trusted BGEN validation inputs.
-///
-/// # Errors
-///
-/// Returns an error when the BGEN path metadata or canonical path cannot be
-/// read, or when the fingerprint payload cannot be serialized.
-pub fn build_trusted_bgen_validation_fingerprint(
-    input: &TrustedBgenValidationFingerprintInput,
-) -> Result<String, std::io::Error> {
-    let bgen_metadata = input.bgen_path.metadata()?;
-    let resolved_bgen_path = input.bgen_path.canonicalize()?;
-    let modified_time_nanoseconds =
-        bgen_metadata.mtime().saturating_mul(1_000_000_000).saturating_add(bgen_metadata.mtime_nsec());
-    let mut fingerprint_payload = BTreeMap::new();
-    fingerprint_payload.insert("bgen_path", Value::String(resolved_bgen_path.display().to_string()));
-    fingerprint_payload.insert("mtime_ns", Value::from(modified_time_nanoseconds));
-    fingerprint_payload.insert("sample_count", Value::from(input.sample_count));
-    fingerprint_payload.insert("schema_version", Value::from(TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION));
-    fingerprint_payload.insert("size", Value::from(bgen_metadata.size()));
-    fingerprint_payload.insert("trusted_no_missing_diploid", Value::Bool(input.trusted_no_missing_diploid));
-    fingerprint_payload.insert("variant_count", Value::from(input.variant_count));
-    let fingerprint_bytes = serde_json::to_vec(&fingerprint_payload).map_err(std::io::Error::other)?;
-    Ok(finalize_sha256_hex(Sha256::digest(fingerprint_bytes)))
-}
-
-/// Build the trusted BGEN validation cache path for a fingerprint.
-#[must_use]
-pub fn build_trusted_bgen_validation_cache_path(cache_directory: &Path, fingerprint: &str) -> PathBuf {
-    cache_directory.join(format!("{fingerprint}.json"))
-}
-
-/// Resolve the default trusted BGEN validation cache directory from the process environment.
-///
-/// # Errors
-///
-/// Returns an error when neither `XDG_CACHE_HOME` nor `HOME` is available.
-pub fn default_trusted_bgen_validation_cache_directory() -> Result<PathBuf, TrustedBgenValidationCacheDirectoryError> {
-    let xdg_cache_home = non_empty_environment_path("XDG_CACHE_HOME");
-    let home_directory = non_empty_environment_path("HOME");
-    build_default_trusted_bgen_validation_cache_directory(xdg_cache_home.as_deref(), home_directory.as_deref())
-}
-
-/// Build the default trusted BGEN validation cache directory from optional root paths.
-///
-/// # Errors
-///
-/// Returns an error when no XDG cache root or home directory is available.
-pub fn build_default_trusted_bgen_validation_cache_directory(
-    xdg_cache_home: Option<&Path>,
-    home_directory: Option<&Path>,
-) -> Result<PathBuf, TrustedBgenValidationCacheDirectoryError> {
-    if let Some(cache_directory_root) = xdg_cache_home {
-        return Ok(cache_directory_root
-            .join(TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY)
-            .join(TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME));
-    }
-    let home_directory = home_directory.ok_or(TrustedBgenValidationCacheDirectoryError::MissingHomeDirectory)?;
-    Ok(home_directory
-        .join(".cache")
-        .join(TRUSTED_BGEN_VALIDATION_CACHE_APPLICATION_DIRECTORY)
-        .join(TRUSTED_BGEN_VALIDATION_CACHE_DIRECTORY_NAME))
-}
-
-/// Require a cache-backed trusted BGEN validation mode for calculation runs.
-///
-/// # Errors
-///
-/// Returns an error when the validation mode would skip validation or is not
-/// known.
-pub fn require_cache_backed_trusted_bgen_validation_mode(
-    validation_mode: &str,
-) -> Result<(), TrustedBgenValidationCacheLookupError> {
-    match validation_mode {
-        "cache_on_miss" | "force_validate" => Ok(()),
-        "assume_validated" => Err(TrustedBgenValidationCacheLookupError::UnsafeAssumeValidatedMode),
-        unsupported_validation_mode => Err(TrustedBgenValidationCacheLookupError::UnsupportedValidationMode(
-            unsupported_validation_mode.to_string(),
-        )),
-    }
-}
-
-/// Plan cache lookup behavior for trusted BGEN validation.
-///
-/// # Errors
-///
-/// Returns an error when the validation mode is not supported for calculation
-/// runs.
-pub fn plan_trusted_bgen_validation_cache_lookup(
-    validation_mode: &str,
-    cache_path: &Path,
-) -> Result<TrustedBgenValidationCacheLookupPlan, TrustedBgenValidationCacheLookupError> {
-    require_cache_backed_trusted_bgen_validation_mode(validation_mode)?;
-    match validation_mode {
-        "cache_on_miss" if cache_path.exists() => Ok(TrustedBgenValidationCacheLookupPlan {
-            should_mark_validated: true,
-            should_validate: false,
-            should_write_cache: false,
-        }),
-        "cache_on_miss" | "force_validate" => Ok(TrustedBgenValidationCacheLookupPlan {
-            should_mark_validated: false,
-            should_validate: true,
-            should_write_cache: true,
-        }),
-        _ => unreachable!("validation mode compatibility was checked before planning"),
-    }
-}
-
-/// Build the trusted BGEN validation cache payload.
-///
-/// # Errors
-///
-/// Returns an error when the BGEN path cannot be canonicalized.
-pub fn build_trusted_bgen_validation_cache_payload(
-    fingerprint: String,
-    bgen_path: &Path,
-    sample_count: i64,
-    variant_count: i64,
-) -> Result<TrustedBgenValidationCachePayload, std::io::Error> {
-    Ok(TrustedBgenValidationCachePayload {
-        schema_version: TRUSTED_BGEN_VALIDATION_SCHEMA_VERSION,
-        fingerprint,
-        bgen_path: bgen_path.canonicalize()?.display().to_string(),
-        sample_count,
-        variant_count,
-    })
-}
-
-/// Write a trusted BGEN validation cache payload atomically.
-///
-/// # Errors
-///
-/// Returns an error when the payload cannot be built, the cache directory
-/// cannot be created, the temporary payload cannot be written, or the temporary
-/// path cannot be renamed into place.
-pub fn write_trusted_bgen_validation_cache_payload(
-    cache_path: &Path,
-    fingerprint: String,
-    bgen_path: &Path,
-    sample_count: i64,
-    variant_count: i64,
-) -> Result<(), std::io::Error> {
-    let cache_payload =
-        build_trusted_bgen_validation_cache_payload(fingerprint, bgen_path, sample_count, variant_count)?;
-    write_trusted_bgen_validation_cache_payload_to_path(cache_path, &cache_payload)
-}
-
-/// Write an already-built trusted BGEN validation cache payload atomically.
-///
-/// # Errors
-///
-/// Returns an error when the cache directory cannot be created, the payload
-/// cannot be serialized, the temporary file cannot be written, or the
-/// temporary path cannot be renamed into place.
-pub fn write_trusted_bgen_validation_cache_payload_to_path(
-    cache_path: &Path,
-    cache_payload: &TrustedBgenValidationCachePayload,
-) -> Result<(), std::io::Error> {
-    if let Some(parent_path) = cache_path.parent() {
-        fs::create_dir_all(parent_path)?;
-    }
-    let temporary_cache_path = cache_path.with_extension("json.tmp");
-    fs::write(&temporary_cache_path, serialize_trusted_bgen_validation_cache_payload(cache_payload)?)?;
-    fs::rename(temporary_cache_path, cache_path)
-}
-
-/// Serialize a trusted BGEN validation cache payload to deterministic JSON.
-///
-/// # Errors
-///
-/// Returns an error when the payload cannot be serialized as JSON.
-pub fn serialize_trusted_bgen_validation_cache_payload(
-    cache_payload: &TrustedBgenValidationCachePayload,
-) -> Result<String, std::io::Error> {
-    let mut serialized_payload = BTreeMap::new();
-    serialized_payload.insert("bgen_path", Value::String(cache_payload.bgen_path.clone()));
-    serialized_payload.insert("fingerprint", Value::String(cache_payload.fingerprint.clone()));
-    serialized_payload.insert("sample_count", Value::from(cache_payload.sample_count));
-    serialized_payload.insert("schema_version", Value::from(cache_payload.schema_version));
-    serialized_payload.insert("variant_count", Value::from(cache_payload.variant_count));
-    let mut payload_text = serde_json::to_string_pretty(&serialized_payload).map_err(std::io::Error::other)?;
-    payload_text.push('\n');
-    Ok(payload_text)
-}
-
-fn finalize_sha256_hex(digest_bytes: impl AsRef<[u8]>) -> String {
-    let mut digest_hex = String::with_capacity(digest_bytes.as_ref().len() * 2);
-    for byte in digest_bytes.as_ref() {
-        write!(&mut digest_hex, "{byte:02x}").expect("writing to String must succeed");
-    }
-    digest_hex
-}
-
-fn non_empty_environment_path(variable_name: &str) -> Option<PathBuf> {
-    std::env::var_os(variable_name).filter(|environment_value| !environment_value.is_empty()).map(PathBuf::from)
-}
+#[cfg(test)]
+use std::fs;
+#[cfg(test)]
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 mod tests {

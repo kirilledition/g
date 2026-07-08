@@ -1,5 +1,10 @@
 //! Public facade for deterministic run-planning contracts.
 
+pub use crate::enums::{
+    ArrowCompression, AssociationMode, BinaryFallbackMethod, Device, FloatingPointDtype, GpuGenotypeFormat,
+    JaxMatmulPrecision, MultiPhenotypeSampleMode, OutputFormat, ParquetCompression, PhenotypeComputeGroupMode,
+    RegenieTraitType, ResumeMode, SampleKeyMode, TrustedBgenValidationMode,
+};
 pub use crate::error::{PlanError, PlanResult};
 pub use crate::host_policy::{
     HostPolicyError, build_phenotype_compute_group_id, build_phenotype_compute_groups,
@@ -12,8 +17,6 @@ pub use crate::prepared::{
     build_prepared_run_plan, plan_association_backend,
 };
 pub use crate::request::{
-    ArrowCompression, AssociationMode, BinaryFallbackMethod, ComputeRequest, CorrectionPlan, Device,
-    FloatingPointDtype, GpuGenotypeFormat, InputRequest, JaxMatmulPrecision, MultiPhenotypeSampleMode, OutputFormat,
-    OutputWriterPlan, ParquetCompression, PhenotypeComputeGroup, PhenotypeComputeGroupMode, PhenotypeRunPlan,
-    RegenieTraitType, ResumeMode, RunRequest, RuntimePlan, SampleKeyMode, TraitRequest, TrustedBgenValidationMode,
+    ComputeRequest, CorrectionPlan, InputRequest, OutputWriterPlan, PhenotypeComputeGroup, PhenotypeRunPlan,
+    RunRequest, RuntimePlan, TraitRequest,
 };

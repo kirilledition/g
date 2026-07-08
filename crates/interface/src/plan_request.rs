@@ -1,12 +1,21 @@
-use std::path::Path;
-
 use g_plan as plan;
 
-use super::domain::{
-    ArrowCompressionValue, DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, JaxMatmulPrecisionValue,
-    MultiPhenotypeSampleModeValue, OutputFormatValue, ParquetCompressionValue, RegenieTraitTypeValue, ResumeModeValue,
-    SampleKeyModeValue, TrustedBgenValidationModeValue,
-};
+mod compute;
+mod conversion;
+mod correction;
+mod input;
+mod output;
+mod phenotype;
+mod runtime;
+
+use compute::build_compute_request;
+use conversion::plan_trait_type;
+use correction::build_correction_plan;
+use input::build_input_request;
+use output::build_output_writer_plan;
+use phenotype::{build_phenotype_compute_groups, build_phenotype_run_plans};
+use runtime::build_runtime_plan;
+
 use super::resolved::RegenieConfigData;
 use super::{ConfigError, ConfigResult};
 
@@ -44,214 +53,8 @@ pub fn compile_run_request(config: &RegenieConfigData) -> ConfigResult<plan::Run
     })
 }
 
-fn build_input_request(config: &RegenieConfigData) -> ConfigResult<plan::InputRequest> {
-    Ok(plan::InputRequest {
-        bgen_path: require_config_path("--bgen", config.input.bgen.as_ref())?,
-        sample_path: config.input.sample.clone(),
-        phenotype_path: require_config_path("--phenoFile", config.input.pheno_file.as_ref())?,
-        prediction_list_path: require_config_path("--pred", config.input.pred.as_ref())?,
-        covariate_path: config.input.covar_file.clone(),
-        covariate_names: config.input.covar_columns.clone(),
-        sample_key_mode: plan_sample_key_mode(config.g_compute.sample_key_mode),
-    })
-}
-
-fn build_compute_request(config: &RegenieConfigData) -> plan::ComputeRequest {
-    plan::ComputeRequest {
-        device: plan_device(config.g_compute.device),
-        staging_depth: config.g_compute.staging_depth.get(),
-        native_callback_batch_size: config.g_compute.native_callback_batch_size.get(),
-        result_in_flight_limit: config.g_compute.result_in_flight_limit.map(std::num::NonZeroU32::get),
-        dosage_buffer_limit: config.g_compute.dosage_buffer_limit.map(std::num::NonZeroU32::get),
-        variant_limit: config.g_compute.variant_limit.map(std::num::NonZeroU32::get),
-        bgen_decode_tile_variant_count: config.g_compute.bgen_decode_tile_variant_count.get(),
-        requested_gpu_genotype_format: plan_gpu_genotype_format(config.g_compute.gpu_genotype_format),
-        trusted_no_missing_diploid: config.g_compute.trusted_no_missing_diploid,
-        trusted_bgen_validation_mode: plan_trusted_bgen_validation_mode(config.g_compute.trusted_bgen_validation_mode),
-        multi_phenotype_sample_mode: plan_multi_phenotype_sample_mode(config.g_compute.multi_phenotype_sample_mode),
-        score_dtype: plan_floating_point_dtype(config.g_compute.score_dtype),
-        firth_dtype: plan_floating_point_dtype(config.g_compute.firth_dtype),
-    }
-}
-
-fn build_correction_plan(config: &RegenieConfigData) -> ConfigResult<plan::CorrectionPlan> {
-    if config.trait_config.trait_type == RegenieTraitTypeValue::Quantitative {
-        return Ok(plan::CorrectionPlan {
-            method: plan::BinaryFallbackMethod::ScoreOnly,
-            p_threshold: 0.05,
-            firth_se: false,
-        });
-    }
-    plan::normalize_binary_correction(
-        config.binary.firth,
-        config.binary.approx,
-        config.binary.spa,
-        f64::from(config.binary.p_threshold),
-        config.binary.firth_se,
-    )
-    .map_err(plan_error_to_config_error)
-}
-
-fn build_output_writer_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputWriterPlan> {
-    let output_prefix = require_config_path("--out", config.g_output.out.as_ref())?;
-    let output_run_root =
-        config.g_output.output_run_directory.clone().unwrap_or_else(|| default_output_run_root(&output_prefix));
-    Ok(plan::OutputWriterPlan {
-        output_prefix,
-        output_run_root,
-        resume: config.g_output.resume,
-        resume_mode: plan_resume_mode(config.g_output.resume_mode),
-        finalize_parquet: config.g_output.finalize_parquet,
-        writer_thread_count: config.g_output.writer_threads.get(),
-        writer_queue_depth: config.g_output.writer_queue_depth.get(),
-        chunks_per_arrow_file: config.g_output.chunks_per_arrow_file.get(),
-        arrow_compression: plan_arrow_compression(config.g_output.arrow_compression),
-        parquet_compression: plan_parquet_compression(config.g_output.parquet_compression),
-        output_format: plan_output_format(config.g_output.format),
-        output_statistic_dtype: plan_floating_point_dtype(config.g_output.output_statistic_dtype),
-    })
-}
-
-fn build_runtime_plan(config: &RegenieConfigData) -> plan::RuntimePlan {
-    plan::RuntimePlan {
-        jax_cache_directory: config.g_compute.jax_cache_dir.clone(),
-        jax_matmul_precision: config.g_compute.jax_matmul_precision.map(plan_jax_matmul_precision),
-        persistent_cache_enabled: config.g_compute.jax_persistent_cache,
-        persistent_cache_min_entry_size_bytes: config.g_compute.jax_persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds: config.g_compute.jax_persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache_enabled: config.g_compute.jax_xla_autotune_cache,
-        transfer_guard_enabled: config.g_compute.jax_transfer_guard,
-    }
-}
-
-fn build_phenotype_run_plans(phenotype_names: &[String]) -> Vec<plan::PhenotypeRunPlan> {
-    phenotype_names
-        .iter()
-        .enumerate()
-        .map(|(phenotype_index, phenotype_name)| {
-            let output_index = u32::try_from(phenotype_index + 1).expect("phenotype count must fit in u32");
-            plan::PhenotypeRunPlan {
-                phenotype_index: output_index,
-                phenotype_name: phenotype_name.clone(),
-                output_directory_name: plan::build_phenotype_output_directory_name(output_index, phenotype_name),
-            }
-        })
-        .collect()
-}
-
-fn build_phenotype_compute_groups(
-    phenotype_names: &[String],
-    multi_phenotype_sample_mode: MultiPhenotypeSampleModeValue,
-) -> ConfigResult<Vec<plan::PhenotypeComputeGroup>> {
-    plan::build_phenotype_compute_groups(phenotype_names, plan_multi_phenotype_sample_mode(multi_phenotype_sample_mode))
-        .map_err(plan_error_to_config_error)
-}
-
-fn default_output_run_root(output_prefix: &str) -> String {
-    let output_prefix_path = Path::new(output_prefix);
-    let output_name = output_prefix_path.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(output_prefix);
-    output_prefix_path.with_file_name(format!("{output_name}.g")).display().to_string()
-}
-
 fn require_config_path(option_name: &str, path: Option<&String>) -> ConfigResult<String> {
     path.cloned().ok_or_else(|| ConfigError::new(format!("{option_name} is required to build a run request.")))
-}
-
-fn plan_error_to_config_error(error: plan::HostPolicyError) -> ConfigError {
-    match error {
-        plan::HostPolicyError::NotImplemented(message) | plan::HostPolicyError::Value(message) => {
-            ConfigError::new(message)
-        }
-    }
-}
-
-fn plan_trait_type(value: RegenieTraitTypeValue) -> plan::RegenieTraitType {
-    match value {
-        RegenieTraitTypeValue::Quantitative => plan::RegenieTraitType::Quantitative,
-        RegenieTraitTypeValue::Binary => plan::RegenieTraitType::Binary,
-    }
-}
-
-fn plan_device(value: DeviceValue) -> plan::Device {
-    match value {
-        DeviceValue::Cpu => plan::Device::Cpu,
-        DeviceValue::Gpu => plan::Device::Gpu,
-    }
-}
-
-fn plan_trusted_bgen_validation_mode(value: TrustedBgenValidationModeValue) -> plan::TrustedBgenValidationMode {
-    match value {
-        TrustedBgenValidationModeValue::CacheOnMiss => plan::TrustedBgenValidationMode::CacheOnMiss,
-        TrustedBgenValidationModeValue::ForceValidate => plan::TrustedBgenValidationMode::ForceValidate,
-        TrustedBgenValidationModeValue::AssumeValidated => plan::TrustedBgenValidationMode::AssumeValidated,
-    }
-}
-
-fn plan_sample_key_mode(value: SampleKeyModeValue) -> plan::SampleKeyMode {
-    match value {
-        SampleKeyModeValue::Iid => plan::SampleKeyMode::Iid,
-        SampleKeyModeValue::FidIid => plan::SampleKeyMode::FidIid,
-    }
-}
-
-fn plan_multi_phenotype_sample_mode(value: MultiPhenotypeSampleModeValue) -> plan::MultiPhenotypeSampleMode {
-    match value {
-        MultiPhenotypeSampleModeValue::PerPhenotype => plan::MultiPhenotypeSampleMode::PerPhenotype,
-        MultiPhenotypeSampleModeValue::CompleteCase => plan::MultiPhenotypeSampleMode::CompleteCase,
-    }
-}
-
-fn plan_gpu_genotype_format(value: GpuGenotypeFormatValue) -> plan::GpuGenotypeFormat {
-    match value {
-        GpuGenotypeFormatValue::Auto => plan::GpuGenotypeFormat::Auto,
-        GpuGenotypeFormatValue::Dosage => plan::GpuGenotypeFormat::Dosage,
-        GpuGenotypeFormatValue::Packed8 => plan::GpuGenotypeFormat::Packed8,
-    }
-}
-
-fn plan_floating_point_dtype(value: FloatingPointDtypeValue) -> plan::FloatingPointDtype {
-    match value {
-        FloatingPointDtypeValue::Float32 => plan::FloatingPointDtype::Float32,
-        FloatingPointDtypeValue::Float64 => plan::FloatingPointDtype::Float64,
-    }
-}
-
-fn plan_jax_matmul_precision(value: JaxMatmulPrecisionValue) -> plan::JaxMatmulPrecision {
-    match value {
-        JaxMatmulPrecisionValue::Float32 => plan::JaxMatmulPrecision::Float32,
-        JaxMatmulPrecisionValue::TensorFloat32 => plan::JaxMatmulPrecision::TensorFloat32,
-        JaxMatmulPrecisionValue::BrainFloat16 => plan::JaxMatmulPrecision::BrainFloat16,
-        JaxMatmulPrecisionValue::Highest => plan::JaxMatmulPrecision::Highest,
-    }
-}
-
-fn plan_resume_mode(value: ResumeModeValue) -> plan::ResumeMode {
-    match value {
-        ResumeModeValue::Fast => plan::ResumeMode::Fast,
-        ResumeModeValue::Strict => plan::ResumeMode::Strict,
-    }
-}
-
-fn plan_arrow_compression(value: ArrowCompressionValue) -> plan::ArrowCompression {
-    match value {
-        ArrowCompressionValue::Zstd => plan::ArrowCompression::Zstd,
-        ArrowCompressionValue::None => plan::ArrowCompression::None,
-    }
-}
-
-fn plan_parquet_compression(value: ParquetCompressionValue) -> plan::ParquetCompression {
-    match value {
-        ParquetCompressionValue::Zstd => plan::ParquetCompression::Zstd,
-        ParquetCompressionValue::None => plan::ParquetCompression::None,
-    }
-}
-
-fn plan_output_format(value: OutputFormatValue) -> plan::OutputFormat {
-    match value {
-        OutputFormatValue::Parquet => plan::OutputFormat::Parquet,
-        OutputFormatValue::Arrow => plan::OutputFormat::Arrow,
-        OutputFormatValue::Regenie => plan::OutputFormat::Regenie,
-    }
 }
 
 #[cfg(test)]
@@ -259,6 +62,11 @@ mod tests {
     use std::num::NonZeroU32;
 
     use super::*;
+    use crate::domain::{
+        ArrowCompressionValue, DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, JaxMatmulPrecisionValue,
+        MultiPhenotypeSampleModeValue, OutputFormatValue, ParquetCompressionValue, RegenieTraitTypeValue,
+        ResumeModeValue, SampleKeyModeValue, TrustedBgenValidationModeValue,
+    };
     use crate::resolved::{
         BinaryConfigData, GComputeConfigData, GDiagnosticsConfigData, GOutputConfigData, InputConfigData,
         TraitConfigData,

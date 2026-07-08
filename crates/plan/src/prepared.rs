@@ -6,10 +6,11 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::request::{
-    ArrowCompression, AssociationMode, CorrectionPlan, Device, FloatingPointDtype, GpuGenotypeFormat,
-    JaxMatmulPrecision, OutputFormat, ParquetCompression, SampleKeyMode, TrustedBgenValidationMode,
+use crate::enums::{
+    ArrowCompression, AssociationMode, Device, FloatingPointDtype, GpuGenotypeFormat, JaxMatmulPrecision, OutputFormat,
+    ParquetCompression, SampleKeyMode, TrustedBgenValidationMode,
 };
+use crate::request::CorrectionPlan;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AssociationBackendKind {

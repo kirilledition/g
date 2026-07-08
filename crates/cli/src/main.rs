@@ -2,6 +2,8 @@
 
 use std::io::{self, Write};
 
+const OUTPUT_WRITE_FAILURE_EXIT_CODE: i32 = 1;
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let exit_code = run(&arguments);
@@ -12,7 +14,7 @@ fn run(arguments: &[String]) -> i32 {
     let outcome = g_cli::dispatch_native_cli(arguments);
     if let Err(error) = write_outcome(&outcome) {
         eprintln!("Error: failed to write native CLI output: {error}");
-        return g_cli::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE;
+        return OUTPUT_WRITE_FAILURE_EXIT_CODE;
     }
     outcome.exit_code
 }

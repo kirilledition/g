@@ -2,7 +2,7 @@ use super::diagnostics::{
     RunDiagnosticEventPayload, RunDiagnosticFieldPayload, boolean_diagnostic_field, integer_diagnostic_field,
     text_diagnostic_field,
 };
-use super::{
+use super::names::{
     NATIVE_CLI_COMPLETED_LINE_DIAGNOSTIC_EVENT_NAME, NATIVE_CLI_FAILED_LINE_DIAGNOSTIC_EVENT_NAME,
     NATIVE_CLI_INTERRUPTED_LINE_DIAGNOSTIC_EVENT_NAME, NATIVE_CLI_STDERR_DIAGNOSTIC_EVENT_NAME,
     NATIVE_CLI_STDOUT_DIAGNOSTIC_EVENT_NAME, RUN_LIFECYCLE_ERROR_LEVEL, RUN_LIFECYCLE_INFO_LEVEL,

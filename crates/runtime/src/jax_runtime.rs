@@ -1,9 +1,21 @@
 //! Deterministic JAX runtime setup policy and diagnostics.
 
 use std::fs;
-use std::path::Path;
 
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+mod config_updates;
+mod diagnostics;
+mod gpu_validation;
+mod setup;
+
+pub use config_updates::plan_jax_runtime_config_updates;
+pub use diagnostics::{
+    build_jax_runtime_setup_diagnostic_events, plan_jax_runtime_diagnostic_record,
+    serialize_jax_runtime_diagnostic_fields_json,
+};
+pub use gpu_validation::{default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation};
+pub use setup::{
+    complete_jax_runtime_setup_validation, plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup,
+};
 
 const DEVICE_GPU: &str = "gpu";
 const JAX_CONFIG_COMPILATION_CACHE_DIR: &str = "jax_compilation_cache_dir";
@@ -113,33 +125,6 @@ pub struct JaxRuntimeDiagnosticEventPayload {
     pub fields: Vec<JaxRuntimeDiagnosticFieldPayload>,
 }
 
-/// Serialize JAX runtime diagnostic fields for native diagnostic emission.
-///
-/// This keeps JAX diagnostic field JSON shape in `g-runtime`; PyO3 callers only
-/// pass the serialized fields through to the logging boundary.
-///
-/// # Errors
-///
-/// Returns a serialization error if the diagnostic field payload cannot be
-/// encoded as JSON.
-pub fn serialize_jax_runtime_diagnostic_fields_json(
-    fields: &[JaxRuntimeDiagnosticFieldPayload],
-) -> Result<String, serde_json::Error> {
-    let mut payload = JsonMap::new();
-    for field in fields {
-        payload.insert(field.name.clone(), jax_runtime_diagnostic_value_to_json_value(&field.value));
-    }
-    serde_json::to_string(&JsonValue::Object(payload))
-}
-
-fn jax_runtime_diagnostic_value_to_json_value(value: &JaxRuntimeDiagnosticValue) -> JsonValue {
-    match value {
-        JaxRuntimeDiagnosticValue::Boolean(value) => JsonValue::Bool(*value),
-        JaxRuntimeDiagnosticValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
-        JaxRuntimeDiagnosticValue::Text(value) => JsonValue::String(value.clone()),
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimeDiagnosticRecordPlan {
     pub logging_level_name: String,
@@ -201,282 +186,6 @@ impl JaxRuntimeSetupSession {
         self.setup = complete_jax_runtime_setup_validation(&self.setup, gpu_validation_status, gpu_validation_message);
         self.setup.clone()
     }
-}
-
-#[allow(clippy::fn_params_excessive_bools)]
-#[must_use]
-pub fn resolve_jax_runtime_setup(
-    requested_device: &str,
-    cache_directory: &str,
-    matmul_precision: Option<&str>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> JaxRuntimeSetupPayload {
-    let (gpu_validation_status, gpu_validation_message) = if requested_device == DEVICE_GPU {
-        ("pending".to_string(), None)
-    } else {
-        ("skipped".to_string(), Some("CPU runtime requested; GPU validation skipped.".to_string()))
-    };
-    let platform_name = if requested_device == DEVICE_GPU { JAX_CUDA_PLATFORM_NAME } else { JAX_CPU_PLATFORM_NAME };
-    let matmul_precision = matmul_precision.unwrap_or(JAX_MATMUL_PRECISION_FLOAT32).to_string();
-    let (xla_auxiliary_cache_mode, xla_auxiliary_cache_reason) = if persistent_cache && xla_autotune_cache {
-        (XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE, "XLA auxiliary cache was requested")
-    } else if persistent_cache {
-        (XLA_AUXILIARY_CACHE_DISABLED, "XLA auxiliary cache was not requested")
-    } else {
-        (XLA_AUXILIARY_CACHE_DISABLED, "persistent compilation cache is disabled")
-    };
-    JaxRuntimeSetupPayload {
-        requested_device: requested_device.to_string(),
-        platform_name: platform_name.to_string(),
-        cache_directory: cache_directory.to_string(),
-        matmul_precision,
-        persistent_cache_enabled: persistent_cache,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_auxiliary_cache_mode: xla_auxiliary_cache_mode.to_string(),
-        xla_auxiliary_cache_reason: xla_auxiliary_cache_reason.to_string(),
-        transfer_guard_enabled: transfer_guard,
-        gpu_validation_status,
-        gpu_validation_message,
-    }
-}
-
-#[must_use]
-pub fn plan_jax_runtime_diagnostic_record(
-    diagnostic_level: &str,
-    has_telemetry_session: bool,
-) -> JaxRuntimeDiagnosticRecordPlan {
-    let logging_level_name = if diagnostic_level == JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR {
-        PYTHON_LOGGING_LEVEL_ERROR
-    } else {
-        PYTHON_LOGGING_LEVEL_INFO
-    };
-    JaxRuntimeDiagnosticRecordPlan {
-        logging_level_name: logging_level_name.to_string(),
-        should_emit_telemetry: has_telemetry_session,
-        telemetry_level: diagnostic_level.to_string(),
-    }
-}
-
-#[must_use]
-pub fn plan_jax_runtime_setup_side_effects(
-    requested_device: &str,
-    persistent_cache_enabled: bool,
-) -> JaxRuntimeSetupSideEffectPlan {
-    JaxRuntimeSetupSideEffectPlan {
-        should_create_cache_directory: persistent_cache_enabled,
-        should_validate_gpu: requested_device == DEVICE_GPU,
-    }
-}
-
-#[must_use]
-pub fn nvidia_driver_files_are_visible(
-    control_device_path: &Path,
-    uvm_device_path: &Path,
-    driver_directory_path: &Path,
-) -> bool {
-    control_device_path.exists() || uvm_device_path.exists() || driver_directory_path.exists()
-}
-
-#[must_use]
-pub fn default_nvidia_driver_probe_paths() -> NvidiaDriverProbePathsPayload {
-    NvidiaDriverProbePathsPayload {
-        control_device_path: NVIDIA_CONTROL_DEVICE_PATH.to_string(),
-        uvm_device_path: NVIDIA_UVM_DEVICE_PATH.to_string(),
-        driver_directory_path: NVIDIA_DRIVER_DIRECTORY_PATH.to_string(),
-    }
-}
-
-#[must_use]
-pub fn complete_jax_runtime_setup_validation(
-    setup: &JaxRuntimeSetupPayload,
-    gpu_validation_status: &str,
-    gpu_validation_message: Option<&str>,
-) -> JaxRuntimeSetupPayload {
-    let mut completed_setup = setup.clone();
-    completed_setup.gpu_validation_status = gpu_validation_status.to_string();
-    completed_setup.gpu_validation_message = gpu_validation_message.map(str::to_string);
-    completed_setup
-}
-
-#[must_use]
-pub fn build_jax_runtime_setup_diagnostic_events(
-    setup: &JaxRuntimeSetupPayload,
-) -> Vec<JaxRuntimeDiagnosticEventPayload> {
-    let gpu_validation_level = if setup.gpu_validation_status == "failed" {
-        JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR
-    } else {
-        JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO
-    };
-    let xla_auxiliary_cache_enabled = setup.xla_auxiliary_cache_mode != XLA_AUXILIARY_CACHE_DISABLED;
-    vec![
-        JaxRuntimeDiagnosticEventPayload {
-            event_name: "jax_platform_selected".to_string(),
-            level: JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO.to_string(),
-            message: format!("Selected JAX platform {}.", setup.platform_name),
-            fields: vec![
-                text_field("requested_device", setup.requested_device.clone()),
-                text_field("platform", setup.platform_name.clone()),
-            ],
-        },
-        JaxRuntimeDiagnosticEventPayload {
-            event_name: "jax_persistent_cache_configured".to_string(),
-            level: JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO.to_string(),
-            message: if setup.persistent_cache_enabled {
-                "JAX persistent compilation cache enabled.".to_string()
-            } else {
-                "JAX persistent compilation cache disabled.".to_string()
-            },
-            fields: vec![
-                boolean_field("enabled", setup.persistent_cache_enabled),
-                text_field("cache_directory", setup.cache_directory.clone()),
-                integer_field("min_entry_size_bytes", setup.persistent_cache_min_entry_size_bytes),
-                integer_field("min_compile_time_seconds", setup.persistent_cache_min_compile_time_seconds),
-            ],
-        },
-        JaxRuntimeDiagnosticEventPayload {
-            event_name: "jax_xla_auxiliary_cache_configured".to_string(),
-            level: JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO.to_string(),
-            message: if xla_auxiliary_cache_enabled {
-                "XLA auxiliary persistent cache enabled.".to_string()
-            } else {
-                "XLA auxiliary persistent cache disabled.".to_string()
-            },
-            fields: vec![
-                boolean_field("enabled", xla_auxiliary_cache_enabled),
-                text_field("mode", setup.xla_auxiliary_cache_mode.clone()),
-                text_field("reason", setup.xla_auxiliary_cache_reason.clone()),
-            ],
-        },
-        JaxRuntimeDiagnosticEventPayload {
-            event_name: "jax_transfer_guard_configured".to_string(),
-            level: JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO.to_string(),
-            message: if setup.transfer_guard_enabled {
-                "JAX transfer guard diagnostics enabled.".to_string()
-            } else {
-                "JAX transfer guard diagnostics disabled.".to_string()
-            },
-            fields: vec![boolean_field("enabled", setup.transfer_guard_enabled)],
-        },
-        JaxRuntimeDiagnosticEventPayload {
-            event_name: "jax_gpu_validation".to_string(),
-            level: gpu_validation_level.to_string(),
-            message: format!("JAX GPU validation {}.", setup.gpu_validation_status),
-            fields: gpu_validation_fields(setup),
-        },
-    ]
-}
-
-#[must_use]
-pub fn plan_jax_runtime_config_updates(setup: &JaxRuntimeSetupPayload) -> Vec<JaxRuntimeConfigUpdatePayload> {
-    let mut updates = vec![
-        text_config_update(JAX_CONFIG_PLATFORMS, setup.platform_name.clone()),
-        boolean_config_update(JAX_CONFIG_ENABLE_X64, true),
-        text_config_update(JAX_CONFIG_DEFAULT_MATMUL_PRECISION, setup.matmul_precision.clone()),
-    ];
-    if setup.persistent_cache_enabled {
-        updates.extend([
-            text_config_update(JAX_CONFIG_COMPILATION_CACHE_DIR, setup.cache_directory.clone()),
-            integer_config_update(
-                JAX_CONFIG_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES,
-                setup.persistent_cache_min_entry_size_bytes,
-            ),
-            integer_config_update(
-                JAX_CONFIG_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS,
-                setup.persistent_cache_min_compile_time_seconds,
-            ),
-            text_config_update(JAX_CONFIG_PERSISTENT_CACHE_ENABLE_XLA_CACHES, setup.xla_auxiliary_cache_mode.clone()),
-        ]);
-    }
-    if setup.transfer_guard_enabled {
-        updates.push(text_config_update(JAX_CONFIG_TRANSFER_GUARD, JAX_TRANSFER_GUARD_DISALLOW.to_string()));
-    }
-    updates
-}
-
-#[must_use]
-pub fn plan_jax_gpu_validation(
-    nvidia_driver_visible: bool,
-    backend_initialization_failed: bool,
-    devices: &[JaxDeviceObservation],
-) -> JaxGpuValidationPlan {
-    if !nvidia_driver_visible {
-        return JaxGpuValidationPlan {
-            status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
-            message: "JAX GPU execution was requested, but this process cannot see the NVIDIA driver or device files. \
-                      Observed no /dev/nvidiactl, no /dev/nvidia-uvm, and no /proc/driver/nvidia. \
-                      Run on a GPU allocation/node or expose the NVIDIA devices to this container/session."
-                .to_string(),
-            should_raise: true,
-        };
-    }
-    if backend_initialization_failed {
-        return JaxGpuValidationPlan {
-            status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
-            message: "JAX GPU execution was requested, but no CUDA-enabled JAX backend could be initialized. \
-                      The JAX CUDA plugin failed while initializing the backend. Confirm that the process is running \
-                      on a GPU node, the NVIDIA driver is loaded, CUDA device files are visible, and the installed \
-                      JAX CUDA plugin matches the node driver/runtime. Install the GPU dependency group when needed, \
-                      for example: `uv sync --python 3.14 --group dev --group gpu`."
-                .to_string(),
-            should_raise: true,
-        };
-    }
-    if devices.iter().any(|device| device.platform == JAX_GPU_DEVICE_PLATFORM_NAME) {
-        return JaxGpuValidationPlan {
-            status: JAX_RUNTIME_GPU_VALIDATION_SUCCEEDED.to_string(),
-            message: "JAX reported at least one GPU device.".to_string(),
-            should_raise: false,
-        };
-    }
-    let observed_devices = if devices.is_empty() {
-        "none".to_string()
-    } else {
-        devices.iter().map(|device| device.description.as_str()).collect::<Vec<_>>().join(", ")
-    };
-    JaxGpuValidationPlan {
-        status: JAX_RUNTIME_GPU_VALIDATION_FAILED.to_string(),
-        message: format!(
-            "JAX GPU execution was requested, but JAX did not report any GPU devices. Observed devices: {observed_devices}."
-        ),
-        should_raise: true,
-    }
-}
-
-fn gpu_validation_fields(setup: &JaxRuntimeSetupPayload) -> Vec<JaxRuntimeDiagnosticFieldPayload> {
-    let mut fields = vec![text_field("status", setup.gpu_validation_status.clone())];
-    if let Some(message) = setup.gpu_validation_message.clone() {
-        fields.push(text_field("message", message));
-    }
-    fields
-}
-
-fn boolean_config_update(name: &str, value: bool) -> JaxRuntimeConfigUpdatePayload {
-    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Boolean(value) }
-}
-
-fn integer_config_update(name: &str, value: i64) -> JaxRuntimeConfigUpdatePayload {
-    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Integer(value) }
-}
-
-fn text_config_update(name: &str, value: String) -> JaxRuntimeConfigUpdatePayload {
-    JaxRuntimeConfigUpdatePayload { setting_name: name.to_string(), value: JaxRuntimeConfigValue::Text(value) }
-}
-
-fn boolean_field(name: &str, value: bool) -> JaxRuntimeDiagnosticFieldPayload {
-    JaxRuntimeDiagnosticFieldPayload { name: name.to_string(), value: JaxRuntimeDiagnosticValue::Boolean(value) }
-}
-
-fn integer_field(name: &str, value: i64) -> JaxRuntimeDiagnosticFieldPayload {
-    JaxRuntimeDiagnosticFieldPayload { name: name.to_string(), value: JaxRuntimeDiagnosticValue::Integer(value) }
-}
-
-fn text_field(name: &str, value: String) -> JaxRuntimeDiagnosticFieldPayload {
-    JaxRuntimeDiagnosticFieldPayload { name: name.to_string(), value: JaxRuntimeDiagnosticValue::Text(value) }
 }
 
 #[cfg(test)]

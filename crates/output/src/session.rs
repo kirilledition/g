@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array, Float64Array, Int32Array};
+use arrow::array::ArrayRef;
 use crossbeam_channel::{Sender, bounded};
 
 use crate::OutputStatisticDtype;
-use crate::chunk::{NativeChunkHandle, NativeChunkStats, VariantMetadataColumns};
+use crate::chunk::NativeChunkHandle;
 use crate::error::OutputError;
 use crate::finalization;
 use crate::manifest;
@@ -15,9 +15,11 @@ use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_s
 use crate::writer::{OutputFileFormat, RegenieStep2ChunkJob};
 
 mod coordinator;
+mod validation;
 mod worker_pool;
 
 use coordinator::{OutputCoordinatorJob, run_output_writer_coordinator};
+use validation::{validate_column_lengths, validate_statistic_array_type};
 use worker_pool::{OutputWriteCompletionTracker, get_output_writer_pool};
 
 #[derive(Clone)]
@@ -196,105 +198,6 @@ impl OutputWriterSession {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn write_regenie2_native_chunk(
-        &self,
-        variant_start_index: i64,
-        variant_stop_index: i64,
-        metadata: &VariantMetadataColumns,
-        chunk_stats: &NativeChunkStats,
-        beta: &[f32],
-        standard_error: &[f32],
-        chi_squared: &[f32],
-        log10_p_value: &[f32],
-        extra_code: Option<&[i32]>,
-    ) -> Result<(), OutputError> {
-        let expected_variant_stop_index = variant_start_index
-            .checked_add(i64::try_from(metadata.position.len()).map_err(|_| {
-                OutputError::InvalidInput("Rust output writer row count does not fit into int64.".to_string())
-            })?)
-            .ok_or_else(|| {
-                OutputError::InvalidInput("Rust output writer variant stop index does not fit into int64.".to_string())
-            })?;
-        if variant_stop_index != expected_variant_stop_index {
-            return Err(OutputError::InvalidInput(
-                "Rust output writer metadata bounds do not match metadata row count.".to_string(),
-            ));
-        }
-        let metadata_clone_start_time = start_optional_timing(self.config.collect_stage_timings);
-        let chunk_handle =
-            NativeChunkHandle::new(Arc::new(metadata.clone()), Arc::new(chunk_stats.clone()), variant_start_index);
-        if let Some(start_time) = metadata_clone_start_time {
-            self.record_stage_timing(|stage_timings| {
-                stage_timings.metadata_clone_seconds += start_time.elapsed().as_secs_f64();
-                stage_timings.metadata_clone_count += 1;
-            })?;
-        }
-        self.write_regenie2_native_chunk_handle(
-            chunk_handle,
-            beta,
-            standard_error,
-            chi_squared,
-            log10_p_value,
-            extra_code,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn write_regenie2_native_chunk_handle(
-        &self,
-        chunk_handle: NativeChunkHandle,
-        beta: &[f32],
-        standard_error: &[f32],
-        chi_squared: &[f32],
-        log10_p_value: &[f32],
-        extra_code: Option<&[i32]>,
-    ) -> Result<(), OutputError> {
-        if self.config.association_mode != "regenie2_linear" && self.config.association_mode != "regenie2_binary" {
-            return Err(OutputError::InvalidInput(
-                "Rust output backend only supports REGENIE step 2 quantitative and binary output.".to_string(),
-            ));
-        }
-        let row_count = chunk_handle.row_count();
-        let observed_lengths = [
-            chunk_handle.metadata.chromosome.len(),
-            chunk_handle.metadata.variant_identifier.len(),
-            chunk_handle.metadata.allele_two.len(),
-            chunk_handle.metadata.allele_one.len(),
-            chunk_handle.stats.allele_one_frequency.len(),
-            chunk_handle.stats.info_score.len(),
-            chunk_handle.stats.observation_count.len(),
-            beta.len(),
-            standard_error.len(),
-            chi_squared.len(),
-            log10_p_value.len(),
-        ];
-        validate_column_lengths(row_count, observed_lengths.as_slice())?;
-        if let Some(extra_code_values) = extra_code {
-            validate_column_lengths(row_count, &[extra_code_values.len()])?;
-        }
-        let result_buffer_copy_start_time = start_optional_timing(self.config.collect_stage_timings);
-        let beta_array = build_float32_result_array(beta);
-        let standard_error_array = build_float32_result_array(standard_error);
-        let chi_squared_array = build_float32_result_array(chi_squared);
-        let log10_p_value_array = build_float32_result_array(log10_p_value);
-        let extra_code_array = extra_code.map(build_int32_result_array);
-        if let Some(start_time) = result_buffer_copy_start_time {
-            self.record_stage_timing(|stage_timings| {
-                stage_timings.result_buffer_copy_seconds += start_time.elapsed().as_secs_f64();
-                stage_timings.result_buffer_copy_count += 1;
-            })?;
-        }
-        self.write_regenie2_native_chunk_handle_arrays(
-            chunk_handle,
-            beta_array,
-            standard_error_array,
-            chi_squared_array,
-            log10_p_value_array,
-            extra_code_array,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub fn write_regenie2_native_chunk_handle_arrays(
         &self,
         chunk_handle: NativeChunkHandle,
@@ -431,41 +334,6 @@ impl OutputWriterSession {
     fn wait_for_writer_tasks(&self) -> Result<(), OutputError> {
         self.completion_tracker.wait()
     }
-}
-
-fn build_float32_result_array(values: &[f32]) -> ArrayRef {
-    Arc::new(Float32Array::from(values.to_vec()))
-}
-
-fn build_int32_result_array(values: &[i32]) -> ArrayRef {
-    Arc::new(Int32Array::from(values.to_vec()))
-}
-
-fn validate_column_lengths(expected_row_count: usize, observed_lengths: &[usize]) -> Result<(), OutputError> {
-    if observed_lengths.iter().all(|observed_length| *observed_length == expected_row_count) {
-        return Ok(());
-    }
-    Err(OutputError::InvalidInput(
-        "Rust output writer batch column lengths do not all match the expected row count.".to_string(),
-    ))
-}
-
-fn validate_statistic_array_type(
-    column_name: &str,
-    array: &ArrayRef,
-    output_statistic_dtype: OutputStatisticDtype,
-) -> Result<(), OutputError> {
-    let type_matches = match output_statistic_dtype {
-        OutputStatisticDtype::Float32 => array.as_any().is::<Float32Array>(),
-        OutputStatisticDtype::Float64 => array.as_any().is::<Float64Array>(),
-    };
-    if type_matches {
-        return Ok(());
-    }
-    Err(OutputError::InvalidInput(format!(
-        "Rust output writer column {column_name} must be {} for the configured output statistic dtype.",
-        output_statistic_dtype.as_str(),
-    )))
 }
 
 #[cfg(test)]

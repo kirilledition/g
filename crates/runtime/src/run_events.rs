@@ -3,6 +3,7 @@
 mod callback_diagnostics;
 mod diagnostics;
 mod lifecycle;
+mod names;
 mod native_cli_diagnostics;
 mod native_dispatch_diagnostics;
 mod output_diagnostics;
@@ -101,128 +102,6 @@ pub use telemetry::{
     build_run_started_telemetry_fields, build_sample_alignment_completed_telemetry_fields,
     build_single_trait_preflight_completed_telemetry_fields,
 };
-
-const RUN_STARTED_EVENT_NAME: &str = "run_started";
-const RUN_COMPLETED_EVENT_NAME: &str = "run_completed";
-const RUN_FAILED_EVENT_NAME: &str = "run_failed";
-const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
-const EFFECTIVE_CONFIG_WRITTEN_EVENT_NAME: &str = "effective_config_written";
-const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
-const PREFLIGHT_COMPLETED_EVENT_NAME: &str = "preflight_completed";
-const SAMPLE_ALIGNMENT_COMPLETED_EVENT_NAME: &str = "sample_alignment_completed";
-const PREDICTION_SOURCE_LOADED_EVENT_NAME: &str = "prediction_source_loaded";
-const MULTI_PHENOTYPE_SAMPLE_SUMMARY_EVENT_NAME: &str = "multi_phenotype_sample_summary";
-const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_format_resolved";
-const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
-const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
-const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summary";
-const CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME: &str =
-    "callback_null_logistic_nonconvergence_warning";
-const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
-const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
-const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
-const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_started";
-const RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_interrupted";
-const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_failed";
-const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_completed";
-const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
-const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
-const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
-const NATIVE_CLI_STDOUT_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stdout";
-const NATIVE_CLI_STDERR_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stderr";
-const NATIVE_CLI_INTERRUPTED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_interrupted_line";
-const NATIVE_CLI_FAILED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_failed_line";
-const NATIVE_CLI_COMPLETED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_completed_line";
-const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_jax_runtime_configuration_started";
-const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_build_started";
-const RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_prepared";
-const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_dispatch_started";
-const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_execution_plan_finalization_started";
-const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Configuring JAX runtime before backend initialization.";
-const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
-const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching REGENIE execution plan.";
-const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str = "Finalizing REGENIE execution plan.";
-const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
-const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_gpu_genotype_format_resolved";
-const PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_open_started";
-const PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_opened";
-const PIPELINE_PREVALIDATED_BGEN_ENGINE_USED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_prevalidated_bgen_engine_used";
-const PIPELINE_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_output_resume_committed_chunks";
-const PIPELINE_OUTPUT_WRITER_SESSIONS_CREATE_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_output_writer_sessions_create_started";
-const PIPELINE_MULTI_PHENOTYPE_SAMPLE_SUMMARY_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_phenotype_sample_summary";
-const PIPELINE_MULTI_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_started";
-const PIPELINE_MULTI_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_load_started";
-const PIPELINE_MULTI_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_trait_input_aligned";
-const PIPELINE_MULTI_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_multi_trait_prediction_source_load_started";
-const PIPELINE_GROUPED_PER_PHENOTYPE_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_per_phenotype_started";
-const PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_grouped_per_phenotype_groups_prepared";
-const PIPELINE_GROUPED_UNION_DELIVERY_SELECTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_grouped_union_delivery_selected";
-const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_started";
-const PIPELINE_MULTI_GROUP_PREFLIGHT_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Running preflight validation for multi-phenotype pipeline.";
-const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_multi_group_preflight_completed";
-const PIPELINE_MULTI_GROUP_PREFLIGHT_COMPLETED_DIAGNOSTIC_MESSAGE: &str =
-    "Preflight validation passed for multi-phenotype pipeline.";
-const PIPELINE_SINGLE_TRAIT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_started";
-const PIPELINE_SINGLE_TRAIT_INPUT_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_load_started";
-const PIPELINE_SINGLE_TRAIT_INPUT_ALIGNED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_input_aligned";
-const PIPELINE_SINGLE_TRAIT_PREDICTION_SOURCE_LOAD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_single_trait_prediction_source_load_started";
-const PIPELINE_SINGLE_TRAIT_PREFLIGHT_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_single_trait_preflight_started";
-const PIPELINE_SINGLE_TRAIT_PREFLIGHT_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str =
-    "pipeline_single_trait_preflight_completed";
-const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_bgen_engine_constructing";
-const NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE: &str = "Constructing native BGEN run engine.";
-const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_trusted_bgen_validation_started";
-const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Validating trusted no-missing diploid BGEN mode.";
-const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_callback_drain_started";
-const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Draining native callback worker queues.";
-const NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_started";
-const NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_finished";
-const NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_interrupted";
-const NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_failed";
-const NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_pipeline_finished";
-const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_session_finish_started";
-const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Finishing output writer and optional Parquet finalization.";
-const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_sessions_finish_started";
-const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Finishing output writer(s) and optional Parquet finalization.";
-const NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_session_interrupted_flush_started";
-const NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_sessions_interrupted_flush_started";
-const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";
-const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE: &str = "Configuring native runtime knobs.";
-const PREFLIGHT_WARNING_DIAGNOSTIC_EVENT_NAME: &str = "preflight_warning";
-const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_multi_phenotype_dispatch_started";
-const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_single_phenotype_dispatch_started";
-const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_binary_engine_dispatch_started";
-const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_linear_engine_dispatch_started";
-const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_multi_phenotype_binary_engine_dispatch_started";
-const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_multi_phenotype_linear_engine_dispatch_started";
-const RUNNER_MULTI_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Dispatching multi-phenotype native engine pipeline.";
-const RUNNER_SINGLE_PHENOTYPE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Dispatching single-phenotype native engine pipeline.";
-const RUNNER_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching binary native engine pipeline.";
-const RUNNER_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str = "Dispatching linear native engine pipeline.";
-const RUNNER_METADATA_ARTIFACTS_FINALIZED_DIAGNOSTIC_EVENT_NAME: &str = "runner_metadata_artifacts_finalized";
-const RUNNER_MULTI_PHENOTYPE_BINARY_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Dispatching multi-phenotype binary native engine pipeline.";
-const RUNNER_MULTI_PHENOTYPE_LINEAR_ENGINE_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Dispatching multi-phenotype linear native engine pipeline.";
 
 #[cfg(test)]
 mod tests {

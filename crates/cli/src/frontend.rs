@@ -1,7 +1,7 @@
 //! Native CLI frontend implementation.
 
-pub const NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE: i32 = 1;
-pub const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
+const NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE: i32 = 1;
+const NATIVE_EXECUTION_UNAVAILABLE_MESSAGE: &str = concat!(
     "Error: native CLI execution is not available yet; ",
     "use the Python console entry point for full REGENIE runs.\n",
 );

@@ -1,5 +1,5 @@
 use super::diagnostics::{RunDiagnosticEventPayload, integer_diagnostic_field, optional_integer_diagnostic_field};
-use super::{
+use super::names::{
     NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME, NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_MESSAGE,
 };
 

@@ -2,6 +2,7 @@
 
 mod api;
 mod bgen;
+mod buffer;
 mod common;
 mod error;
 mod planner;

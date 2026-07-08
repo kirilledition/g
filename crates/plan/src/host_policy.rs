@@ -10,9 +10,8 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::request::{
-    BinaryFallbackMethod, CorrectionPlan, MultiPhenotypeSampleMode, PhenotypeComputeGroup, PhenotypeComputeGroupMode,
-};
+use crate::enums::{BinaryFallbackMethod, MultiPhenotypeSampleMode, PhenotypeComputeGroupMode};
+use crate::request::{CorrectionPlan, PhenotypeComputeGroup};
 
 const PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH: usize = 80;
 

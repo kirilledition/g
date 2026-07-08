@@ -1,7 +1,7 @@
-use super::CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME;
 use super::diagnostics::{
     RunDiagnosticEventPayload, boolean_diagnostic_field, integer_diagnostic_field, text_diagnostic_field,
 };
+use super::names::CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME;
 
 #[must_use]
 #[allow(clippy::too_many_arguments)]

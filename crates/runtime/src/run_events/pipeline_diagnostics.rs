@@ -2,7 +2,7 @@ use super::diagnostics::{
     RunDiagnosticEventPayload, boolean_diagnostic_field, integer_diagnostic_field, optional_integer_diagnostic_field,
     optional_text_diagnostic_field, text_diagnostic_field,
 };
-use super::{
+use super::names::{
     PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME, PIPELINE_BGEN_ENGINE_OPENED_DIAGNOSTIC_EVENT_NAME,
     PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME,
     PIPELINE_GROUPED_PER_PHENOTYPE_GROUPS_PREPARED_DIAGNOSTIC_EVENT_NAME,

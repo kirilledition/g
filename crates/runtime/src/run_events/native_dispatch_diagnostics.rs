@@ -2,7 +2,7 @@ use super::diagnostics::{
     RunDiagnosticEventPayload, boolean_diagnostic_field, integer_diagnostic_field, optional_integer_diagnostic_field,
     text_diagnostic_field,
 };
-use super::{
+use super::names::{
     NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_EVENT_NAME,
     NATIVE_DISPATCH_BGEN_ENGINE_CONSTRUCTING_DIAGNOSTIC_MESSAGE,
     NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME,
