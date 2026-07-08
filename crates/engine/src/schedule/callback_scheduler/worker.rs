@@ -1,12 +1,10 @@
 use crate::schedule::{
-    CallbackWorkerAbortPlan, CallbackWorkerErrorRaisePlan, CallbackWorkerErrorUpdatePlan, CallbackWorkerFinishPlan,
-    CallbackWorkerJoinPlan, CallbackWorkerStartAttemptPlan, CallbackWorkerStartPlan, CallbackWorkerStopPlan,
-    CallbackWorkerStopPollPlan, callback_worker_backpressure_poll_timeout_seconds,
+    CallbackWorkerErrorRaisePlan, CallbackWorkerErrorUpdatePlan, CallbackWorkerJoinPlan,
+    CallbackWorkerStartAttemptPlan, CallbackWorkerStartPlan, CallbackWorkerStopPlan, CallbackWorkerStopPollPlan,
     format_dosage_callback_worker_error_message, format_result_callback_worker_error_message,
-    plan_callback_worker_abort, plan_callback_worker_error_raise, plan_callback_worker_finish,
-    plan_callback_worker_start, plan_callback_worker_start_attempt, plan_callback_worker_stop_poll,
-    plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop, plan_result_callback_worker_join,
-    plan_result_callback_worker_stop, update_callback_worker_error,
+    plan_callback_worker_error_raise, plan_callback_worker_start, plan_callback_worker_start_attempt,
+    plan_callback_worker_stop_poll, plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop,
+    plan_result_callback_worker_join, plan_result_callback_worker_stop, update_callback_worker_error,
 };
 
 use super::CallbackSchedulerState;
@@ -90,21 +88,6 @@ impl CallbackSchedulerState {
         let had_error = self.has_result_worker_error();
         self.result_worker_error_message = None;
         had_error
-    }
-
-    #[must_use]
-    pub const fn backpressure_poll_timeout_seconds(&self) -> f64 {
-        callback_worker_backpressure_poll_timeout_seconds()
-    }
-
-    #[must_use]
-    pub fn plan_worker_finish(&self) -> CallbackWorkerFinishPlan {
-        plan_callback_worker_finish()
-    }
-
-    #[must_use]
-    pub fn plan_worker_abort(&self) -> CallbackWorkerAbortPlan {
-        plan_callback_worker_abort()
     }
 
     #[must_use]

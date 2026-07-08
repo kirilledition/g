@@ -79,7 +79,12 @@ pub fn build_phenotype_compute_groups(
             prediction_alignment_fingerprint: None,
         }]);
     }
-    let phenotype_indices = (0..phenotype_names.len()).map(phenotype_index_to_u32).collect::<Vec<_>>();
+    let phenotype_indices = (0..phenotype_names.len())
+        .map(|phenotype_index| {
+            u32::try_from(phenotype_index)
+                .map_err(|_| HostPolicyError::Value("Phenotype count exceeds native u32 capacity.".to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if multi_phenotype_sample_mode == MultiPhenotypeSampleMode::CompleteCase {
         return Ok(vec![PhenotypeComputeGroup {
             group_mode: PhenotypeComputeGroupMode::CompleteCase,
@@ -91,23 +96,25 @@ pub fn build_phenotype_compute_groups(
             prediction_alignment_fingerprint: None,
         }]);
     }
-    Ok(phenotype_names
+    phenotype_names
         .iter()
         .enumerate()
-        .map(|(phenotype_index, phenotype_name)| PhenotypeComputeGroup {
-            group_mode: PhenotypeComputeGroupMode::PerPhenotypeCompatible,
-            phenotype_indices: vec![phenotype_index_to_u32(phenotype_index)],
-            phenotype_names: vec![phenotype_name.clone()],
-            sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
-            sample_set_fingerprint: None,
-            covariate_design_fingerprint: None,
-            prediction_alignment_fingerprint: None,
+        .map(|(phenotype_index, phenotype_name)| {
+            Ok(PhenotypeComputeGroup {
+                group_mode: PhenotypeComputeGroupMode::PerPhenotypeCompatible,
+                phenotype_indices: vec![
+                    u32::try_from(phenotype_index).map_err(|_| {
+                        HostPolicyError::Value("Phenotype count exceeds native u32 capacity.".to_string())
+                    })?,
+                ],
+                phenotype_names: vec![phenotype_name.clone()],
+                sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
+                sample_set_fingerprint: None,
+                covariate_design_fingerprint: None,
+                prediction_alignment_fingerprint: None,
+            })
         })
-        .collect())
-}
-
-fn phenotype_index_to_u32(phenotype_index: usize) -> u32 {
-    u32::try_from(phenotype_index).expect("phenotype count must fit in u32")
+        .collect()
 }
 
 /// Build a deterministic identifier for one phenotype compute group.

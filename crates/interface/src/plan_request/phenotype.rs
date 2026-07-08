@@ -2,11 +2,6 @@
 
 use g_plan as plan;
 
-use crate::ConfigResult;
-use crate::domain::MultiPhenotypeSampleModeValue;
-
-use super::conversion;
-
 #[must_use]
 pub(super) fn build_phenotype_run_plans(phenotype_names: &[String]) -> Vec<plan::PhenotypeRunPlan> {
     phenotype_names
@@ -21,15 +16,4 @@ pub(super) fn build_phenotype_run_plans(phenotype_names: &[String]) -> Vec<plan:
             }
         })
         .collect()
-}
-
-pub(super) fn build_phenotype_compute_groups(
-    phenotype_names: &[String],
-    multi_phenotype_sample_mode: MultiPhenotypeSampleModeValue,
-) -> ConfigResult<Vec<plan::PhenotypeComputeGroup>> {
-    plan::build_phenotype_compute_groups(
-        phenotype_names,
-        conversion::plan_multi_phenotype_sample_mode(multi_phenotype_sample_mode),
-    )
-    .map_err(conversion::plan_error_to_config_error)
 }

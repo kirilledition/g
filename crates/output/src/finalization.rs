@@ -11,14 +11,13 @@ mod regenie_text;
 
 pub(crate) use parquet::{
     RegenieStep2FinalizationTiming, manifest_output_chunk_file_paths, output_format_name,
-    write_final_parquet_from_chunk_files, write_final_parquet_from_chunk_files_with_timing_for_dtype,
+    write_final_parquet_from_chunk_files_with_timing, write_final_parquet_from_chunk_files_with_timing_for_dtype,
 };
 #[cfg(test)]
 pub(crate) use parquet::{
     prepare_chunk_batch_for_final_writer, project_chunk_batch_to_final_batch, sorted_output_chunk_file_paths,
-    write_final_parquet_from_chunk_files_with_timing,
 };
-pub(crate) use regenie_text::{write_final_regenie_from_chunk_files, write_final_regenie_from_chunk_files_with_timing};
+pub(crate) use regenie_text::write_final_regenie_from_chunk_files_with_timing;
 
 #[cfg(test)]
 use crate::{manifest, schema};
@@ -32,22 +31,24 @@ pub fn finalize_output_run_chunks(
     match output_format {
         OutputFileFormat::Arrow | OutputFileFormat::Parquet => {
             let final_parquet_path = run_directory.join("final.parquet");
-            write_final_parquet_from_chunk_files(
+            write_final_parquet_from_chunk_files_with_timing(
                 chunks_directory,
                 &final_parquet_path,
                 association_mode,
                 output_format,
-            )?;
+            )
+            .map(|_| ())?;
             Ok(final_parquet_path)
         }
         OutputFileFormat::Regenie => {
             let final_regenie_path = run_directory.join("final.regenie");
-            write_final_regenie_from_chunk_files(
+            write_final_regenie_from_chunk_files_with_timing(
                 chunks_directory,
                 &final_regenie_path,
                 association_mode,
                 output_format,
-            )?;
+            )
+            .map(|_| ())?;
             Ok(final_regenie_path)
         }
     }
@@ -235,12 +236,13 @@ mod tests {
         .expect("manifest should be written");
 
         let final_regenie_path = run_directory.join("final.regenie");
-        write_final_regenie_from_chunk_files(
+        write_final_regenie_from_chunk_files_with_timing(
             &regenie_directory,
             &final_regenie_path,
             "regenie2_binary",
             OutputFileFormat::Regenie,
         )
+        .map(|_| ())
         .expect("final REGENIE text should write");
 
         let final_lines = std::fs::read_to_string(&final_regenie_path)

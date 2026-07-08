@@ -347,17 +347,6 @@ mod tests {
     }
 
     #[test]
-    fn plans_callback_scheduler_dosage_buffer_reuse() {
-        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
-
-        assert_eq!(
-            scheduler_state.plan_dosage_buffer_reuse(&[4, 5], &[2, 3]).unwrap(),
-            DosageBufferReusePlan { requires_slice: true, slice_dimensions: vec![2, 3] },
-        );
-        assert_eq!(scheduler_state.plan_dosage_buffer_reuse(&[2, 3], &[3, 2]), None);
-    }
-
-    #[test]
     fn plans_variant_major_dosage_batch_handoff() {
         assert_eq!(
             plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
@@ -402,20 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn plans_callback_scheduler_variant_major_dosage_batch_handoff() {
-        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
-
-        assert_eq!(
-            scheduler_state.plan_variant_major_dosage_batch_handoff(2, 2, 2).unwrap(),
-            VariantMajorDosageBatchHandoffPlan { chunk_count: 2 },
-        );
-        assert_eq!(
-            scheduler_state.plan_variant_major_dosage_batch_handoff(2, 1, 2).unwrap_err(),
-            ScheduleError::VariantMajorDosageBatchLengthMismatch,
-        );
-    }
-
-    #[test]
     fn rejects_invalid_variant_major_dosage_batch_handoffs() {
         assert_eq!(
             plan_variant_major_dosage_batch_handoff(2, 1, 2).unwrap_err(),
@@ -431,9 +406,6 @@ mod tests {
     fn plans_dosage_work_handoff() {
         assert_eq!(plan_dosage_work_handoff(2).unwrap(), DosageWorkHandoffPlan { chunk_count: 2 });
         assert_eq!(plan_dosage_work_handoff(0).unwrap_err(), ScheduleError::EmptyDosageWorkHandoff);
-
-        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
-        assert_eq!(scheduler_state.plan_dosage_work_handoff(1).unwrap(), DosageWorkHandoffPlan { chunk_count: 1 });
     }
 
     #[test]
@@ -791,14 +763,12 @@ mod tests {
 
     #[test]
     fn plans_result_write_handoff() {
-        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
-
         assert_eq!(
             plan_result_write_handoff(true),
             ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item: true, is_stop_signal: false },
         );
         assert_eq!(
-            scheduler_state.plan_result_write_handoff(false),
+            plan_result_write_handoff(false),
             ResultWriteHandoffPlan { should_enqueue: true, has_result_work_item: false, is_stop_signal: true },
         );
     }
@@ -823,14 +793,8 @@ mod tests {
 
     #[test]
     fn plans_result_write_item_dispatch() {
-        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
-
         assert_eq!(
-            scheduler_state
-                .plan_result_write_item_dispatch(
-                    RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
-                    RESULT_WRITE_ITEM_KIND_SINGLE_RESULT,
-                )
+            plan_result_write_item_dispatch(RESULT_WRITE_ITEM_KIND_SINGLE_RESULT, RESULT_WRITE_ITEM_KIND_SINGLE_RESULT)
                 .unwrap(),
             ResultWriteItemDispatchPlan {
                 result_work_item_kind: RESULT_WRITE_ITEM_KIND_SINGLE_RESULT.to_owned(),
@@ -893,10 +857,8 @@ mod tests {
 
     #[test]
     fn plans_dosage_work_item_dispatch() {
-        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
-
         assert_eq!(
-            scheduler_state.plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE).unwrap(),
+            plan_dosage_work_item_dispatch(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE).unwrap(),
             DosageWorkItemDispatchPlan {
                 dosage_work_item_kind: DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE.to_owned(),
                 processing_path: Some(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE.to_owned()),
@@ -942,12 +904,8 @@ mod tests {
 
     #[test]
     fn plans_dosage_work_item_stage_duration_attribution() {
-        let scheduler_state = CallbackSchedulerState::new(1, 1, Some(1), Some(1)).unwrap();
-
         assert_eq!(
-            scheduler_state
-                .plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE, 1, 3.0)
-                .unwrap(),
+            plan_dosage_work_item_stage_duration(DOSAGE_WORK_ITEM_KIND_SAMPLE_MAJOR_DOSAGE, 1, 3.0).unwrap(),
             DosageWorkItemStageDurationPlan { chunk_count: 1, duration_per_chunk: 3.0 },
         );
         assert_eq!(
@@ -1202,9 +1160,9 @@ mod tests {
         assert_eq!(scheduler_state.dosage_worker_error_message(), None);
         assert_eq!(scheduler_state.result_worker_error_message(), None);
 
-        assert!((scheduler_state.backpressure_poll_timeout_seconds() - 0.1).abs() < f64::EPSILON);
-        assert_eq!(scheduler_state.plan_worker_finish(), expected_callback_worker_finish_plan(),);
-        assert_eq!(scheduler_state.plan_worker_abort(), expected_callback_worker_abort_plan(),);
+        assert!((callback_worker_backpressure_poll_timeout_seconds() - 0.1).abs() < f64::EPSILON);
+        assert_eq!(plan_callback_worker_finish(), expected_callback_worker_finish_plan(),);
+        assert_eq!(plan_callback_worker_abort(), expected_callback_worker_abort_plan(),);
 
         assert_eq!(
             scheduler_state.plan_dosage_worker_join(None),
@@ -1235,11 +1193,8 @@ mod tests {
 
     #[test]
     fn plans_callback_scheduler_queue_observations() {
-        let scheduler_state = CallbackSchedulerState::new(3, 2, Some(7), Some(8)).unwrap();
-
         assert_eq!(
-            scheduler_state
-                .plan_queue_operation_observation(DOSAGE_BUFFER_POOL_NAME, QUEUE_RETURN_OPERATION, 0.25, true)
+            plan_callback_queue_operation_observation(DOSAGE_BUFFER_POOL_NAME, QUEUE_RETURN_OPERATION, 0.25, true)
                 .unwrap(),
             CallbackQueueOperationObservationPlan {
                 queue_name: DOSAGE_BUFFER_POOL_NAME.to_string(),
@@ -1248,9 +1203,15 @@ mod tests {
             },
         );
         assert_eq!(
-            scheduler_state
-                .plan_queue_backpressure_observation(DOSAGE_BUFFER_POOL_NAME, QUEUE_RETURN_OPERATION, 1, 2, 0.25, true)
-                .unwrap(),
+            plan_callback_queue_backpressure_observation(
+                DOSAGE_BUFFER_POOL_NAME,
+                QUEUE_RETURN_OPERATION,
+                1,
+                2,
+                0.25,
+                true
+            )
+            .unwrap(),
             CallbackQueueBackpressureObservation {
                 queue_name: DOSAGE_BUFFER_POOL_NAME.to_string(),
                 operation_name: QUEUE_RETURN_OPERATION.to_string(),
@@ -1261,8 +1222,7 @@ mod tests {
             },
         );
         assert_eq!(
-            scheduler_state
-                .plan_queue_stage_observation(DOSAGE_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION, 0.5, true)
+            plan_callback_queue_stage_observation(DOSAGE_QUEUE_NAME, QUEUE_PRODUCER_BLOCKING_OPERATION, 0.5, true)
                 .unwrap(),
             CallbackQueueStageObservationPlan {
                 queue_name: DOSAGE_QUEUE_NAME.to_string(),
@@ -1272,16 +1232,15 @@ mod tests {
             },
         );
         assert_eq!(
-            scheduler_state
-                .plan_queue_stage_backpressure_observation(
-                    DOSAGE_QUEUE_NAME,
-                    QUEUE_PRODUCER_BLOCKING_OPERATION,
-                    3,
-                    3,
-                    0.5,
-                    true,
-                )
-                .unwrap(),
+            plan_callback_queue_stage_backpressure_observation(
+                DOSAGE_QUEUE_NAME,
+                QUEUE_PRODUCER_BLOCKING_OPERATION,
+                3,
+                3,
+                0.5,
+                true,
+            )
+            .unwrap(),
             CallbackQueueStageBackpressureObservation {
                 queue_name: DOSAGE_QUEUE_NAME.to_string(),
                 operation_name: QUEUE_PRODUCER_BLOCKING_OPERATION.to_string(),

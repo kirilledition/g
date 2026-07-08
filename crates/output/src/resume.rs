@@ -21,7 +21,7 @@ pub fn scan_committed_chunk_identifiers(chunks_directory: &Path) -> Result<Vec<i
 }
 
 pub fn validate_strict_manifest_chunks(chunks_directory: &Path, manifest_json: &str) -> Result<Vec<i64>, OutputError> {
-    let manifest_commits = read_manifest_chunk_commits(manifest_json)?;
+    let manifest_commits = manifest::read_run_manifest_chunk_commits_from_text(manifest_json)?;
     let mut committed_identifiers = BTreeSet::new();
     let mut expected_schema: Option<Arc<Schema>> = None;
     for (chunk_file_name, chunk_commits) in group_manifest_commits_by_file(manifest_commits) {
@@ -46,7 +46,7 @@ pub fn repair_strict_manifest_chunk_commits(
     chunks_directory: &Path,
     manifest_json: &str,
 ) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
-    let mut repaired_commits = read_manifest_chunk_commits(manifest_json)?
+    let mut repaired_commits = manifest::read_run_manifest_chunk_commits_from_text(manifest_json)?
         .into_iter()
         .map(|chunk_commit| (chunk_commit.chunk_identifier, chunk_commit))
         .collect::<BTreeMap<_, _>>();
@@ -90,10 +90,6 @@ pub fn repair_strict_manifest_chunk_commits(
         }
     }
     Ok(repaired_commits.into_values().collect())
-}
-
-fn read_manifest_chunk_commits(manifest_json: &str) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
-    manifest::read_run_manifest_chunk_commits_from_text(manifest_json)
 }
 
 fn group_manifest_commits_by_file(

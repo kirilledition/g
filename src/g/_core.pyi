@@ -402,7 +402,9 @@ class NativeRunLifecyclePhenotypeRun:
     def effective_config_path(self) -> str: ...
     def existing_manifest_payload(self) -> dict[str, object] | None: ...
 
-class NativeRunLifecycleOutputInitialization:
+class NativePreparedOutputBundle:
+    @property
+    def writer_sessions(self) -> tuple[OutputWriterSession, ...]: ...
     @property
     def output_count(self) -> int: ...
     def committed_chunk_counts(self) -> list[int]: ...
@@ -410,9 +412,9 @@ class NativeRunLifecycleOutputInitialization:
     def shared_committed_chunk_identifiers(self) -> list[int]: ...
     def shared_committed_chunk_identifiers_with(
         self,
-        other_initializations: typing.Sequence[NativeRunLifecycleOutputInitialization],
+        other_bundles: typing.Sequence[NativePreparedOutputBundle],
     ) -> list[int]: ...
-    def multi_trait_chunk_write_planner(self, writer_session_count: int) -> NativeMultiTraitChunkWritePlanner: ...
+    def multi_trait_chunk_write_planner(self) -> NativeMultiTraitChunkWritePlanner: ...
 
 class NativeRunLifecycleSession:
     def __init__(
@@ -429,16 +431,11 @@ class NativeRunLifecycleSession:
     def prepared_phenotype_runs(self) -> tuple[NativeRunLifecyclePhenotypeRun, ...]: ...
     def prepared_phenotype_run(self, phenotype_name: str) -> NativeRunLifecyclePhenotypeRun: ...
     def mark_dispatch_started(self) -> None: ...
-    def validate_output_resume_compatibility(
+    def prepare_output_bundles(
         self,
-        phenotype_names: typing.Sequence[str],
-        current_headers: typing.Sequence[object],
-    ) -> None: ...
-    def initialize_output_runs(
-        self,
-        phenotype_names: typing.Sequence[str],
-        current_headers: typing.Sequence[object],
-    ) -> NativeRunLifecycleOutputInitialization: ...
+        output_groups: typing.Sequence[tuple[typing.Sequence[str], typing.Sequence[object]]],
+        stage_timing_recorder: NativeStageTimingRecorder | None,
+    ) -> tuple[NativePreparedOutputBundle, ...]: ...
     def finalize_success(self, final_output_paths: typing.Sequence[str | None]) -> NativeRunArtifacts: ...
 
 class ChunkStatsComputeArrays(typing.TypedDict, total=False):
@@ -603,6 +600,20 @@ class Regenie2RunEngine:
         committed_chunk_identifiers: list[int] | None = None,
         callback_batch_size: int = 1,
     ) -> int: ...
+
+def run_bgen_delivery_with_writer_sessions(
+    engine: Regenie2RunEngine,
+    sample_indices: npt.NDArray[np.int64],
+    native_aligned_sample_data: NativeAlignedSampleData | None,
+    native_multi_aligned_sample_data: NativeMultiAlignedSampleData | None,
+    writer_sessions: typing.Sequence[OutputWriterSession],
+    callback: object,
+    stage_timing_recorder: NativeStageTimingRecorder | None,
+    writer_finish_thread_count: int,
+    committed_chunk_identifiers: typing.Sequence[int] | None,
+    variant_major_packed8_probability_pairs: bool,
+    pipeline_label: str,
+) -> list[str | None]: ...
 
 class RegeniePredictionSource:
     def __init__(
@@ -1175,19 +1186,6 @@ class NativeBgenDeliveryPolicy:
     @property
     def effective_trusted_no_missing_diploid(self) -> bool: ...
 
-def plan_bgen_delivery_cleanup_actions(cleanup_outcome: str, callback_finished: bool) -> list[str]: ...
-def finish_output_writer_sessions(
-    writer_sessions: typing.Sequence[OutputWriterSession],
-    requested_thread_count: int,
-) -> list[str | None]: ...
-def finish_interrupted_output_writer_sessions(
-    writer_sessions: typing.Sequence[OutputWriterSession],
-    requested_thread_count: int,
-    signal_exit_code: int,
-    signal_name: str,
-    signal_number: int,
-) -> None: ...
-
 class NativeStageTimingRecorder:
     exact_stage_timings: bool
     def __init__(self, exact_stage_timings: bool) -> None: ...
@@ -1554,21 +1552,6 @@ class OutputWriterSession:
     def finish(self) -> str | None: ...
     def finish_interrupted(self, signal_name: str) -> None: ...
     def abort(self) -> None: ...
-
-def create_output_writer_sessions(
-    run_directories: typing.Sequence[str],
-    chunks_directories: typing.Sequence[str],
-    association_mode: g.types.AssociationMode | str,
-    writer_thread_count: int,
-    writer_queue_depth: int,
-    output_format: g.types.OutputFormat | str,
-    output_statistic_dtype: g.types.FloatingPointDtype | str,
-    finalize_parquet: bool,
-    chunks_per_arrow_file: int,
-    arrow_compression: g.types.ArrowCompression | str,
-    parquet_compression: g.types.ParquetCompression | str,
-    collect_stage_timings: bool,
-) -> tuple[OutputWriterSession, ...]: ...
 
 class NativeManifestFileFingerprintCache:
     def __init__(self) -> None: ...

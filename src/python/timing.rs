@@ -65,7 +65,7 @@ impl NativeStageTimingRecorder {
         Ok(self.lock_recorder()?.exact_stage_timings())
     }
 
-    fn should_collect_exact_stage_timings(&self) -> PyResult<bool> {
+    pub(crate) fn should_collect_exact_stage_timings(&self) -> PyResult<bool> {
         Ok(self.lock_recorder()?.should_collect_exact_stage_timings())
     }
 
@@ -250,6 +250,16 @@ impl NativeStageTimingRecorder {
 impl NativeStageTimingRecorder {
     fn from_recorder(recorder: native_timing::StageTimingRecorder) -> Self {
         Self { recorder: Mutex::new(recorder) }
+    }
+
+    pub(crate) fn record_stage_duration(&self, stage_name: &str, duration_seconds: f64) -> PyResult<()> {
+        self.lock_recorder()?.add_stage_duration(stage_name.to_string(), duration_seconds);
+        Ok(())
+    }
+
+    pub(crate) fn set_native_bgen_profile_snapshot(&self, profile_snapshot: BTreeMap<String, i64>) -> PyResult<()> {
+        self.lock_recorder()?.set_native_bgen_profile(profile_snapshot);
+        Ok(())
     }
 
     fn lock_recorder(&self) -> PyResult<MutexGuard<'_, native_timing::StageTimingRecorder>> {

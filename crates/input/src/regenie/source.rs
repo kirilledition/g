@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::sample::{MultiAlignedSampleData, SampleKeyMode};
 
 use super::alignment::{
-    align_chromosome_predictions, validate_target_sample_keys, validate_unique_target_individual_identifiers,
+    align_prediction_values, validate_target_sample_keys, validate_unique_target_individual_identifiers,
 };
 use super::cache::{LocoAlignmentCache, LocoPredictionCache};
 use super::chromosome::normalize_chromosome;
@@ -249,5 +249,11 @@ fn load_aligned_chromosome_predictions(
         target_individual_identifiers,
         sample_key_mode,
     )?;
-    Ok(align_chromosome_predictions(loco_predictions, alignment_indices))
+    Ok(loco_predictions
+        .chromosome_predictions
+        .iter()
+        .map(|(chromosome, prediction_values)| {
+            (chromosome.clone(), align_prediction_values(prediction_values, alignment_indices))
+        })
+        .collect())
 }

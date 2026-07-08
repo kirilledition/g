@@ -9,11 +9,11 @@ mod phenotype;
 mod runtime;
 
 use compute::build_compute_request;
-use conversion::plan_trait_type;
+use conversion::{plan_error_to_config_error, plan_multi_phenotype_sample_mode, plan_trait_type};
 use correction::build_correction_plan;
 use input::build_input_request;
 use output::build_output_writer_plan;
-use phenotype::{build_phenotype_compute_groups, build_phenotype_run_plans};
+use phenotype::build_phenotype_run_plans;
 use runtime::build_runtime_plan;
 
 use super::resolved::RegenieConfigData;
@@ -45,10 +45,11 @@ pub fn compile_run_request(config: &RegenieConfigData) -> ConfigResult<plan::Run
         output: build_output_writer_plan(config)?,
         runtime: build_runtime_plan(config),
         phenotype_runs: build_phenotype_run_plans(&phenotype_names),
-        phenotype_compute_groups: build_phenotype_compute_groups(
+        phenotype_compute_groups: plan::build_phenotype_compute_groups(
             &phenotype_names,
-            config.g_compute.multi_phenotype_sample_mode,
-        )?,
+            plan_multi_phenotype_sample_mode(config.g_compute.multi_phenotype_sample_mode),
+        )
+        .map_err(plan_error_to_config_error)?,
         stage_timings_json: config.g_diagnostics.stage_timings_json.clone(),
     })
 }

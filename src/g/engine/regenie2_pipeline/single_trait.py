@@ -150,7 +150,6 @@ def run_single_trait_bgen_pipeline(
     context: pipeline_context.Regenie2PipelineContext,
     phenotype_name: str,
     covariate_names: tuple[str, ...] | None,
-    prepared_run: _core.NativeRunLifecyclePhenotypeRun,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -242,16 +241,11 @@ def run_single_trait_bgen_pipeline(
         multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.SINGLE_PHENOTYPE,
         phenotype_compute_group=resolved_compute_group,
     )
-    initialized_outputs = outputs.initialize_pipeline_output_runs(
-        context=context,
-        phenotype_names=(phenotype_name,),
-        current_headers_by_trait=(current_header,),
-    )
-    writer_sessions = outputs.create_pipeline_writer_sessions(
-        context=context,
-        prepared_runs_by_trait=(prepared_run,),
-    )
-    writer_session = writer_sessions[0]
+    prepared_output_bundle = context.lifecycle_session.prepare_output_bundles(
+        (((phenotype_name,), (current_header,)),),
+        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
+    )[0]
+    writer_session = prepared_output_bundle.writer_sessions[0]
     callback = callbacks.build_single_trait_callback(
         context=context,
         run_input=run_input,
@@ -266,7 +260,9 @@ def run_single_trait_bgen_pipeline(
     return native_dispatch_delivery.run_bgen_engine_with_callback(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=outputs.committed_chunk_identifiers(initialized_outputs, 0),
+        committed_chunk_identifiers={
+            int(chunk_identifier) for chunk_identifier in prepared_output_bundle.committed_chunk_identifiers(0)
+        },
         writer_session=writer_session,
         callback=callback,
         stage_timing_recorder=context.stage_timing_recorder,
@@ -316,7 +312,6 @@ def run_regenie2_linear_bgen_pipeline(request: dispatch_requests.SingleTraitLine
         context=context,
         phenotype_name=request.phenotype_name,
         covariate_names=common_request.covariate_names,
-        prepared_run=request.prepared_run,
         staging_depth=common_request.staging_depth,
         native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,
@@ -376,7 +371,6 @@ def run_regenie2_binary_bgen_pipeline(request: dispatch_requests.SingleTraitBina
         context=context,
         phenotype_name=request.phenotype_name,
         covariate_names=common_request.covariate_names,
-        prepared_run=request.prepared_run,
         staging_depth=common_request.staging_depth,
         native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,

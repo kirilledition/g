@@ -75,7 +75,6 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
             context=context,
             phenotype_names=request.phenotype_names,
             covariate_names=common_request.covariate_names,
-            prepared_runs_by_phenotype=request.prepared_runs,
             staging_depth=common_request.staging_depth,
             native_callback_batch_size=common_request.native_callback_batch_size,
             result_in_flight_limit=common_request.result_in_flight_limit,
@@ -166,25 +165,31 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         sample_key_mode=native_dispatch_groups.resolve_sample_key_mode(context.alignment_config).value,
     )
     engine_timing.record_stage_duration(context.stage_timing_recorder, "prediction_source_load", prediction_start_time)
+    multi_group.run_multi_phenotype_group_preflight(
+        context=context,
+        engine=engine,
+        run_input=run_input,
+        prediction_source=prediction_source,
+    )
+    output_bundle = multi_group.prepare_multi_phenotype_output_bundle(
+        context=context,
+        engine=engine,
+        run_input=run_input,
+        compute_group=resolved_compute_group,
+        output_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
+    )
     return multi_group.run_prepared_multi_phenotype_bgen_group(
         context=context,
         engine=engine,
         run_input=run_input,
         prediction_source=prediction_source,
         compute_group=resolved_compute_group,
-        prepared_runs_by_phenotype=typing.cast(
-            "tuple[_core.NativeRunLifecyclePhenotypeRun, ...]",
-            pipeline_context.select_by_phenotype_indices(
-                request.prepared_runs,
-                resolved_compute_group.phenotype_indices,
-            ),
-        ),
+        output_bundle=output_bundle,
         staging_depth=common_request.staging_depth,
         native_callback_batch_size=common_request.native_callback_batch_size,
         result_in_flight_limit=common_request.result_in_flight_limit,
         dosage_buffer_limit=common_request.dosage_buffer_limit,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-        output_sample_mode=types.MultiPhenotypeSampleMode.COMPLETE_CASE,
     )
 
 

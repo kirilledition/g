@@ -13,7 +13,8 @@ impl BenchmarkFixture {
     fn new() -> Self {
         let timestamp =
             SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after UNIX epoch").as_nanos();
-        let root_path = std::env::temp_dir().join(format!("g-cli-frontend-bench-{}-{timestamp}", std::process::id()));
+        let root_path =
+            std::env::temp_dir().join(format!("g-interface-frontend-bench-{}-{timestamp}", std::process::id()));
         std::fs::create_dir_all(&root_path).expect("benchmark fixture directory should be created");
         std::fs::write(root_path.join("dataset.bgen"), b"").expect("BGEN fixture should be written");
         std::fs::write(root_path.join("phenotype.tsv"), "FID IID trait\n")
@@ -105,19 +106,21 @@ fn benchmark_frontend_dispatch(criterion: &mut Criterion) {
 
     let mut group = criterion.benchmark_group("cli_frontend_dispatch");
     group.bench_function("root_help", |bencher| {
-        bencher.iter(|| hint::black_box(g_cli::dispatch_native_cli(hint::black_box(&root_help_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&root_help_arguments))));
     });
     group.bench_function("regenie_help", |bencher| {
-        bencher.iter(|| hint::black_box(g_cli::dispatch_native_cli(hint::black_box(&regenie_help_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&regenie_help_arguments))));
     });
     group.bench_function("parse_error", |bencher| {
-        bencher.iter(|| hint::black_box(g_cli::dispatch_native_cli(hint::black_box(&parse_error_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&parse_error_arguments))));
     });
     group.bench_function("valid_config_refusal", |bencher| {
-        bencher.iter(|| hint::black_box(g_cli::dispatch_native_cli(hint::black_box(&valid_config_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&valid_config_arguments))));
     });
     group.bench_function("valid_toml_config_refusal", |bencher| {
-        bencher.iter(|| hint::black_box(g_cli::dispatch_native_cli(hint::black_box(&valid_toml_config_arguments))));
+        bencher.iter(|| {
+            hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&valid_toml_config_arguments)));
+        });
     });
     group.finish();
 }

@@ -14,7 +14,7 @@ pub use close::{
 pub use envelope::{
     TelemetryEventEnvelope, build_current_telemetry_event_envelope, build_telemetry_event_envelope, generate_run_id,
 };
-pub use serialization::{serialize_telemetry_payload_json_line, serialize_telemetry_payload_json_text};
+pub use serialization::serialize_telemetry_payload_json_line;
 pub use state::{
     TelemetryEventEmissionPlan, TelemetryProgressEmissionPlan, TelemetryProgressThrottleState,
     TelemetryRunSessionState, TelemetryRunSessionWriterPlan, plan_telemetry_event_emission,

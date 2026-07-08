@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use ::toml::{Table, Value};
 use serde::Serialize;
+use toml::{Table, Value};
 
 use super::defaults::load_default_config_data;
 use super::overlay::{ConfigLayer, resolve_config_layers};
@@ -10,21 +10,8 @@ use super::partial::PartialConfig;
 use super::resolved::{ConfigProvenance, RegenieConfigData};
 use super::{ConfigError, ConfigResult, OPTION_SCHEMA_VERSION};
 
-impl ConfigLayer {
-    pub(crate) fn from_toml_table(toml_table: &Table, source: &str) -> ConfigResult<Self> {
-        let partial_config = partial_config_from_toml_table(toml_table.clone(), source)?;
-        config_layer_from_toml_partial_config(partial_config)
-    }
-}
-
 pub(crate) fn partial_config_from_toml_text(toml_text: &str, source: &str) -> ConfigResult<PartialConfig> {
     ::toml::from_str::<PartialConfig>(toml_text)
-        .map_err(|error| ConfigError::new(format!("Invalid TOML config {source}: {error}")))
-}
-
-fn partial_config_from_toml_table(toml_table: Table, source: &str) -> ConfigResult<PartialConfig> {
-    toml_table
-        .try_into::<PartialConfig>()
         .map_err(|error| ConfigError::new(format!("Invalid TOML config {source}: {error}")))
 }
 
@@ -95,7 +82,11 @@ pub fn from_toml_path(path: &Path) -> ConfigResult<RegenieConfigData> {
 ///
 /// Returns an error when option names, values, or the resolved runtime config are invalid.
 pub fn from_options(raw_options: &Table) -> ConfigResult<RegenieConfigData> {
-    resolve_config_layers([ConfigLayer::from_toml_table(raw_options, "Python options")?])
+    let partial_config = raw_options
+        .clone()
+        .try_into::<PartialConfig>()
+        .map_err(|error| ConfigError::new(format!("Invalid TOML config Python options: {error}")))?;
+    resolve_config_layers([config_layer_from_toml_partial_config(partial_config)?])
 }
 
 /// Write deterministic effective TOML for a resolved config.

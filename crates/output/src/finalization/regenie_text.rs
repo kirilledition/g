@@ -9,21 +9,6 @@ use crate::writer::{self, OutputFileFormat};
 
 use super::{RegenieStep2FinalizationTiming, manifest_output_chunk_file_paths, output_format_name};
 
-pub(crate) fn write_final_regenie_from_chunk_files(
-    chunks_directory: &Path,
-    final_regenie_path: &Path,
-    association_mode: &str,
-    output_format: OutputFileFormat,
-) -> Result<(), OutputError> {
-    write_final_regenie_from_chunk_files_with_timing(
-        chunks_directory,
-        final_regenie_path,
-        association_mode,
-        output_format,
-    )
-    .map(|_| ())
-}
-
 pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
     chunks_directory: &Path,
     final_regenie_path: &Path,

@@ -44,21 +44,6 @@ pub(crate) struct RegenieStep2FinalizationTiming {
     pub(crate) total_seconds: f64,
 }
 
-pub(crate) fn write_final_parquet_from_chunk_files(
-    chunks_directory: &Path,
-    final_parquet_path: &Path,
-    association_mode: &str,
-    output_format: OutputFileFormat,
-) -> Result<(), OutputError> {
-    write_final_parquet_from_chunk_files_with_timing(
-        chunks_directory,
-        final_parquet_path,
-        association_mode,
-        output_format,
-    )
-    .map(|_| ())
-}
-
 pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
     chunks_directory: &Path,
     final_parquet_path: &Path,

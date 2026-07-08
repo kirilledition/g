@@ -2,15 +2,19 @@
 
 ## This crate owns
 
-Frontend configuration normalization for CLI, TOML, and Python options.
+Frontend configuration normalization for CLI, TOML, and Python options, plus
+the native `g` CLI binary shell.
 
 ## Public types
 
-Resolved config data, resolved config enum values, config metadata, CLI outcome payloads, and `ConfigError`/`ConfigResult`.
+Resolved config data, resolved config enum values, config metadata, CLI outcome
+payloads, native CLI outcome payloads, and `ConfigError`/`ConfigResult`.
 
 ## Public functions
 
-Load packaged config, parse options/TOML, dump/write TOML, validate config, compile `g-plan` run requests, and dispatch CLI parsing.
+Load packaged config, parse options/TOML, dump/write TOML, validate config,
+compile `g-plan` run requests, dispatch CLI parsing, and dispatch the native
+CLI frontend.
 
 ## This crate must not expose
 
@@ -22,4 +26,4 @@ Keep work at config/build time only. Do not perform data-file scans or compute-s
 
 ## Allowed downstream users
 
-`g-cli` and root PyO3 facade.
+Native binary entrypoint and root PyO3 facade.

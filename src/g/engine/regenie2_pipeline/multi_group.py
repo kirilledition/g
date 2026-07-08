@@ -22,22 +22,59 @@ if typing.TYPE_CHECKING:
     from g import execution_plan, types
 
 
-def prepare_multi_phenotype_bgen_group_delivery(
+def build_multi_phenotype_output_headers(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    compute_group: execution_plan.PhenotypeComputeGroup,
+    output_sample_mode: types.MultiPhenotypeSampleMode,
+) -> tuple[outputs.RunManifestHeaderInput, ...]:
+    """Build current output manifest headers for a compatible phenotype group."""
+    return tuple(
+        outputs.build_pipeline_manifest_header(
+            context=context,
+            phenotype_name=phenotype_name,
+            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
+            sample_count=int(run_input.sample_indices.shape[0]),
+            variant_count=int(engine.variant_count),
+            multi_phenotype_sample_mode=output_sample_mode,
+            phenotype_compute_group=compute_group,
+        )
+        for phenotype_name in compute_group.phenotype_names
+    )
+
+
+def prepare_multi_phenotype_output_bundle(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    engine: _core.Regenie2RunEngine,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    compute_group: execution_plan.PhenotypeComputeGroup,
+    output_sample_mode: types.MultiPhenotypeSampleMode,
+) -> _core.NativePreparedOutputBundle:
+    """Prepare output runs and writer sessions for a compatible phenotype group."""
+    current_headers = build_multi_phenotype_output_headers(
+        context=context,
+        engine=engine,
+        run_input=run_input,
+        compute_group=compute_group,
+        output_sample_mode=output_sample_mode,
+    )
+    return context.lifecycle_session.prepare_output_bundles(
+        ((compute_group.phenotype_names, current_headers),),
+        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
+    )[0]
+
+
+def run_multi_phenotype_group_preflight(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
-    compute_group: execution_plan.PhenotypeComputeGroup,
-    prepared_runs_by_phenotype: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
-    staging_depth: int,
-    native_callback_batch_size: int,
-    result_in_flight_limit: int | None,
-    dosage_buffer_limit: int | None,
-    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: types.MultiPhenotypeSampleMode,
-) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
-    """Prepare one compatible phenotype group for native BGEN delivery."""
+) -> None:
+    """Run native preflight for one compatible phenotype group."""
     _core.record_prediction_source_loaded_telemetry(
         context.telemetry_session,
         context.association_mode.value,
@@ -72,29 +109,24 @@ def prepare_multi_phenotype_bgen_group_delivery(
         len(run_input.phenotype_names),
         int(run_input.sample_indices.shape[0]),
     )
-    current_headers = tuple(
-        outputs.build_pipeline_manifest_header(
-            context=context,
-            phenotype_name=phenotype_name,
-            covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
-            sample_count=int(run_input.sample_indices.shape[0]),
-            variant_count=int(engine.variant_count),
-            multi_phenotype_sample_mode=output_sample_mode,
-            phenotype_compute_group=compute_group,
-        )
-        for phenotype_name in compute_group.phenotype_names
-    )
-    initialized_outputs = outputs.initialize_pipeline_output_runs(
-        context=context,
-        phenotype_names=compute_group.phenotype_names,
-        current_headers_by_trait=current_headers,
-    )
-    writer_sessions = outputs.create_pipeline_writer_sessions(
-        context=context,
-        prepared_runs_by_trait=prepared_runs_by_phenotype,
-    )
-    writer_session_tuple = writer_sessions
-    chunk_write_planner = initialized_outputs.multi_trait_chunk_write_planner(len(writer_session_tuple))
+
+
+def prepare_multi_phenotype_bgen_group_delivery(
+    *,
+    context: pipeline_context.Regenie2PipelineContext,
+    run_input: native_dispatch_models.NativeBgenMultiRunInput,
+    prediction_source: typing.Any,
+    compute_group: execution_plan.PhenotypeComputeGroup,
+    output_bundle: _core.NativePreparedOutputBundle,
+    staging_depth: int,
+    native_callback_batch_size: int,
+    result_in_flight_limit: int | None,
+    dosage_buffer_limit: int | None,
+    null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
+) -> pipeline_context.PreparedMultiPhenotypeGroupDelivery:
+    """Prepare one compatible phenotype group callback for native BGEN delivery."""
+    writer_session_tuple = output_bundle.writer_sessions
+    chunk_write_planner = output_bundle.multi_trait_chunk_write_planner()
     callback = callbacks.build_multi_phenotype_group_callback(
         context=context,
         run_input=run_input,
@@ -113,7 +145,7 @@ def prepare_multi_phenotype_bgen_group_delivery(
         run_input=run_input,
         callback=callback,
         writer_sessions=writer_session_tuple,
-        output_initialization=initialized_outputs,
+        output_bundle=output_bundle,
     )
 
 
@@ -124,33 +156,33 @@ def run_prepared_multi_phenotype_bgen_group(
     run_input: native_dispatch_models.NativeBgenMultiRunInput,
     prediction_source: typing.Any,
     compute_group: execution_plan.PhenotypeComputeGroup,
-    prepared_runs_by_phenotype: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
+    output_bundle: _core.NativePreparedOutputBundle,
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
     dosage_buffer_limit: int | None,
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
-    output_sample_mode: types.MultiPhenotypeSampleMode,
 ) -> tuple[Path | None, ...]:
     """Run one prepared compatible phenotype group through one BGEN pass."""
     prepared_delivery = prepare_multi_phenotype_bgen_group_delivery(
         context=context,
-        engine=engine,
         run_input=run_input,
         prediction_source=prediction_source,
         compute_group=compute_group,
-        prepared_runs_by_phenotype=prepared_runs_by_phenotype,
+        output_bundle=output_bundle,
         staging_depth=staging_depth,
         native_callback_batch_size=native_callback_batch_size,
         result_in_flight_limit=result_in_flight_limit,
         dosage_buffer_limit=dosage_buffer_limit,
         null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-        output_sample_mode=output_sample_mode,
     )
     return native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
         engine=engine,
         run_input=run_input,
-        committed_chunk_identifiers=outputs.shared_committed_chunk_identifiers(prepared_delivery.output_initialization),
+        committed_chunk_identifiers={
+            int(chunk_identifier)
+            for chunk_identifier in prepared_delivery.output_bundle.shared_committed_chunk_identifiers()
+        },
         writer_sessions=prepared_delivery.writer_sessions,
         callback=prepared_delivery.callback,
         stage_timing_recorder=context.stage_timing_recorder,

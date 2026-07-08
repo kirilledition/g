@@ -1,8 +1,9 @@
 #![allow(clippy::elidable_lifetime_names)]
 #![allow(clippy::fn_params_excessive_bools)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::time::Instant;
 
 use g_engine::Regenie2RunEngineCore;
 use g_genotype::ChunkSpec as NativeChunkSpec;
@@ -10,7 +11,7 @@ use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
 use g_runtime as native_run_events;
 use g_runtime as native_trusted_validation;
 use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
@@ -22,15 +23,22 @@ use super::genotype::{
     ChunkStats, VariantMetadata, VariantMetadataTuple, build_committed_identifier_set,
     convert_variant_metadata_columns_to_tuple,
 };
+use super::output::{self, OutputWriterSession};
 use super::profile::build_profile_snapshot_dict;
 use super::run_events;
 use super::sample_alignment::{
     NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData, parse_sample_key_mode,
 };
+use super::timing::NativeStageTimingRecorder;
 
 #[pyclass]
 struct Regenie2RunEngine {
     engine: Regenie2RunEngineCore,
+}
+
+struct BgenDeliveryCleanupExecution {
+    final_parquet_paths: Vec<Option<String>>,
+    callback_finished: bool,
 }
 
 #[pymethods]
@@ -388,6 +396,303 @@ impl Regenie2RunEngine {
             _ => Err(PyRuntimeError::new_err("Native BGEN delivery plan selected a dosage method for packed8.")),
         }
     }
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_pass_by_value)]
+fn run_bgen_delivery_with_writer_sessions<'py>(
+    py: Python<'py>,
+    engine: PyRef<'py, Regenie2RunEngine>,
+    sample_indices: PyReadonlyArray1<'py, i64>,
+    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
+    writer_sessions: Vec<PyRef<'py, OutputWriterSession>>,
+    callback: &Bound<'py, PyAny>,
+    stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+    writer_finish_thread_count: i64,
+    committed_chunk_identifiers: Option<Vec<usize>>,
+    variant_major_packed8_probability_pairs: bool,
+    pipeline_label: String,
+) -> PyResult<Vec<Option<String>>> {
+    let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
+    let mut callback_finished = false;
+    let delivery_result = run_bgen_delivery_attempt(
+        py,
+        &engine,
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        &writer_sessions,
+        callback,
+        stage_timing_recorder_reference,
+        writer_finish_thread_count,
+        committed_chunk_identifiers,
+        variant_major_packed8_probability_pairs,
+        &pipeline_label,
+        &mut callback_finished,
+    );
+    match delivery_result {
+        Ok(final_parquet_paths) => {
+            run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
+                usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
+                &pipeline_label,
+            )?;
+            Ok(final_parquet_paths)
+        }
+        Err(error) => handle_bgen_delivery_error(
+            py,
+            error,
+            callback_finished,
+            callback,
+            &writer_sessions,
+            stage_timing_recorder_reference,
+            writer_finish_thread_count,
+            &pipeline_label,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_bgen_delivery_attempt<'py>(
+    py: Python<'py>,
+    engine: &Regenie2RunEngine,
+    sample_indices: PyReadonlyArray1<'py, i64>,
+    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
+    writer_sessions: &[PyRef<'py, OutputWriterSession>],
+    callback: &Bound<'py, PyAny>,
+    stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    writer_finish_thread_count: i64,
+    committed_chunk_identifiers: Option<Vec<usize>>,
+    variant_major_packed8_probability_pairs: bool,
+    pipeline_label: &str,
+    callback_finished: &mut bool,
+) -> PyResult<Vec<Option<String>>> {
+    if stage_timing_recorder.is_some() {
+        engine.engine.reader().reset_profile();
+    }
+    let delivery_start_time = Instant::now();
+    let committed_chunk_count = committed_chunk_identifiers.as_ref().map_or(0, Vec::len);
+    run_events::record_native_dispatch_delivery_started_diagnostic_event(
+        usize_to_i64(committed_chunk_count, "Committed chunk count")?,
+        pipeline_label,
+        variant_major_packed8_probability_pairs,
+    )?;
+    callback.call_method0("start")?;
+    let callback_batch_size = callback.getattr("native_callback_batch_size")?.extract::<i64>()?;
+    let processed_chunk_count = if variant_major_packed8_probability_pairs {
+        engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
+            py,
+            sample_indices,
+            native_aligned_sample_data,
+            native_multi_aligned_sample_data,
+            callback,
+            committed_chunk_identifiers,
+            callback_batch_size,
+        )?
+    } else {
+        engine.run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
+            py,
+            sample_indices,
+            native_aligned_sample_data,
+            native_multi_aligned_sample_data,
+            callback,
+            committed_chunk_identifiers,
+            callback_batch_size,
+        )?
+    };
+    record_stage_duration(stage_timing_recorder, "native_engine_delivery", delivery_start_time)?;
+    run_events::record_native_dispatch_delivery_finished_diagnostic_event(
+        pipeline_label,
+        usize_to_i64(processed_chunk_count, "Processed chunk count")?,
+    )?;
+    if let Some(stage_timing_recorder) = stage_timing_recorder {
+        stage_timing_recorder
+            .set_native_bgen_profile_snapshot(native_bgen_profile_snapshot_as_i64(engine.profile_snapshot())?)?;
+    }
+    let cleanup_execution = execute_bgen_delivery_cleanup_actions(
+        py,
+        g_engine::BgenDeliveryCleanupOutcome::Success,
+        *callback_finished,
+        callback,
+        writer_sessions,
+        writer_finish_thread_count,
+        stage_timing_recorder,
+        None,
+    )?;
+    *callback_finished = cleanup_execution.callback_finished;
+    Ok(cleanup_execution.final_parquet_paths)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_bgen_delivery_error<'py>(
+    py: Python<'py>,
+    error: PyErr,
+    callback_finished: bool,
+    callback: &Bound<'py, PyAny>,
+    writer_sessions: &[PyRef<'py, OutputWriterSession>],
+    stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    writer_finish_thread_count: i64,
+    pipeline_label: &str,
+) -> PyResult<Vec<Option<String>>> {
+    if let Some(interrupted_event) = maybe_shutdown_event_from_error(py, &error)? {
+        run_events::record_native_dispatch_delivery_interrupted_diagnostic_event(
+            pipeline_label,
+            interrupted_event.exit_code,
+            &interrupted_event.signal_name,
+            interrupted_event.signal_number,
+        )?;
+        let cleanup_result = execute_bgen_delivery_cleanup_actions(
+            py,
+            g_engine::BgenDeliveryCleanupOutcome::Interrupted,
+            callback_finished,
+            callback,
+            writer_sessions,
+            writer_finish_thread_count,
+            stage_timing_recorder,
+            Some(&interrupted_event),
+        );
+        return match cleanup_result {
+            Ok(_) => Err(error),
+            Err(cleanup_error) => {
+                execute_bgen_delivery_cleanup_actions(
+                    py,
+                    g_engine::BgenDeliveryCleanupOutcome::InterruptedCleanupFailure,
+                    callback_finished,
+                    callback,
+                    writer_sessions,
+                    writer_finish_thread_count,
+                    stage_timing_recorder,
+                    Some(&interrupted_event),
+                )?;
+                Err(cleanup_error)
+            }
+        };
+    }
+
+    let exception = error.value(py);
+    let exception_type = exception.get_type().name()?.to_string_lossy().into_owned();
+    let exception_message = exception.str()?.to_string_lossy().into_owned();
+    run_events::record_native_dispatch_delivery_failed_diagnostic_event(
+        &exception_message,
+        &exception_type,
+        pipeline_label,
+    )?;
+    let cleanup_result = execute_bgen_delivery_cleanup_actions(
+        py,
+        g_engine::BgenDeliveryCleanupOutcome::Failure,
+        callback_finished,
+        callback,
+        writer_sessions,
+        writer_finish_thread_count,
+        stage_timing_recorder,
+        None,
+    );
+    match cleanup_result {
+        Ok(_) => Err(error),
+        Err(cleanup_error) => Err(cleanup_error),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_bgen_delivery_cleanup_actions<'py>(
+    py: Python<'py>,
+    cleanup_outcome: g_engine::BgenDeliveryCleanupOutcome,
+    callback_finished: bool,
+    callback: &Bound<'py, PyAny>,
+    writer_sessions: &[PyRef<'py, OutputWriterSession>],
+    writer_finish_thread_count: i64,
+    stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    interrupted_event: Option<&native_run_events::RunInterruptedEventPayload>,
+) -> PyResult<BgenDeliveryCleanupExecution> {
+    let cleanup_plan = g_engine::plan_bgen_delivery_cleanup(cleanup_outcome, callback_finished);
+    let mut final_parquet_paths = Vec::new();
+    let mut resolved_callback_finished = callback_finished;
+    for cleanup_action in cleanup_plan.cleanup_actions() {
+        match cleanup_action {
+            g_engine::BgenDeliveryCleanupAction::DrainCallback => {
+                let callback_finish_start_time = Instant::now();
+                run_events::record_native_dispatch_callback_drain_started_diagnostic_event()?;
+                callback.call_method0("finish")?;
+                record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)?;
+                resolved_callback_finished = true;
+            }
+            g_engine::BgenDeliveryCleanupAction::FinishWriterSessions => {
+                let writer_finish_start_time = Instant::now();
+                final_parquet_paths = output::finish_output_writer_sessions_for_delivery(
+                    py,
+                    writer_sessions,
+                    writer_finish_thread_count,
+                )?;
+                record_stage_duration(
+                    stage_timing_recorder,
+                    "writer_finish_and_parquet_finalization",
+                    writer_finish_start_time,
+                )?;
+            }
+            g_engine::BgenDeliveryCleanupAction::FinishInterruptedWriterSessions => {
+                let Some(interrupted_event) = interrupted_event else {
+                    return Err(PyRuntimeError::new_err("Interrupted writer cleanup requires a shutdown request."));
+                };
+                let writer_finish_start_time = Instant::now();
+                output::finish_interrupted_output_writer_sessions_for_delivery(
+                    py,
+                    writer_sessions,
+                    writer_finish_thread_count,
+                    interrupted_event.exit_code,
+                    &interrupted_event.signal_name,
+                    interrupted_event.signal_number,
+                )?;
+                record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)?;
+            }
+            g_engine::BgenDeliveryCleanupAction::AbortCallback => {
+                let _ = callback.call_method0("abort");
+            }
+            g_engine::BgenDeliveryCleanupAction::AbortWriterSessions => {
+                output::abort_output_writer_sessions_for_delivery(writer_sessions);
+            }
+            g_engine::BgenDeliveryCleanupAction::WriteStageTimingSnapshot => {}
+        }
+    }
+    Ok(BgenDeliveryCleanupExecution { final_parquet_paths, callback_finished: resolved_callback_finished })
+}
+
+fn record_stage_duration(
+    stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    stage_name: &str,
+    start_time: Instant,
+) -> PyResult<()> {
+    if let Some(stage_timing_recorder) = stage_timing_recorder {
+        stage_timing_recorder.record_stage_duration(stage_name, start_time.elapsed().as_secs_f64())?;
+    }
+    Ok(())
+}
+
+fn maybe_shutdown_event_from_error(
+    py: Python<'_>,
+    error: &PyErr,
+) -> PyResult<Option<native_run_events::RunInterruptedEventPayload>> {
+    match run_events::run_interrupted_event_payload_from_shutdown_request(error.value(py)) {
+        Ok(interrupted_event) => Ok(Some(interrupted_event)),
+        Err(interrupted_error) if interrupted_error.is_instance_of::<PyAttributeError>(py) => Ok(None),
+        Err(interrupted_error) => Err(interrupted_error),
+    }
+}
+
+fn native_bgen_profile_snapshot_as_i64(profile_snapshot: HashMap<String, u64>) -> PyResult<BTreeMap<String, i64>> {
+    profile_snapshot
+        .into_iter()
+        .map(|(key, value)| {
+            let converted_value =
+                i64::try_from(value).map_err(|_| PyValueError::new_err("Native BGEN profile counter overflowed."))?;
+            Ok((key, converted_value))
+        })
+        .collect()
+}
+
+fn usize_to_i64(value: usize, value_name: &str) -> PyResult<i64> {
+    i64::try_from(value).map_err(|_| PyValueError::new_err(format!("{value_name} exceeds native int64 capacity.")))
 }
 
 fn flush_variant_major_dosage_batch<'py>(
@@ -773,5 +1078,6 @@ impl Regenie2RunEngine {
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Regenie2RunEngine>()?;
+    module.add_function(wrap_pyfunction!(run_bgen_delivery_with_writer_sessions, module)?)?;
     Ok(())
 }

@@ -2,133 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
-import enum
-import time
 import typing
-from dataclasses import dataclass
 from pathlib import Path
 
 from g import _core
-from g.engine import timing as engine_timing
-from g.runner import lifecycle
 
 if typing.TYPE_CHECKING:
+    from g.engine import timing as engine_timing
     from g.engine.native_dispatch import models
-
-
-class BgenDeliveryCleanupAction(enum.StrEnum):
-    """Native BGEN delivery cleanup action selected by engine lifecycle policy."""
-
-    DRAIN_CALLBACK = "drain_callback"
-    FINISH_WRITER_SESSIONS = "finish_writer_sessions"
-    FINISH_INTERRUPTED_WRITER_SESSIONS = "finish_interrupted_writer_sessions"
-    ABORT_CALLBACK = "abort_callback"
-    ABORT_WRITER_SESSIONS = "abort_writer_sessions"
-    WRITE_STAGE_TIMING_SNAPSHOT = "write_stage_timing_snapshot"
-
-
-class BgenDeliveryCleanupOutcome(enum.StrEnum):
-    """Native BGEN delivery cleanup outcome selected by engine lifecycle."""
-
-    SUCCESS = "success"
-    INTERRUPTED = "interrupted"
-    FAILURE = "failure"
-    INTERRUPTED_CLEANUP_FAILURE = "interrupted_cleanup_failure"
-
-
-@dataclass(frozen=True)
-class BgenDeliveryCleanupExecution:
-    """Result of executing one native BGEN delivery cleanup plan.
-
-    Attributes:
-        final_parquet_paths: Final Parquet paths produced by successful writer finalization.
-        callback_finished: Whether the callback was drained by this cleanup path.
-
-    """
-
-    final_parquet_paths: tuple[Path | None, ...]
-    callback_finished: bool
-
-
-def finish_writer_sessions(
-    *,
-    writer_sessions: tuple[typing.Any, ...],
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-    writer_finish_thread_count: int,
-) -> tuple[Path | None, ...]:
-    """Finish writer sessions and optionally finalize Parquet output."""
-    writer_finish_start_time = time.perf_counter()
-    final_parquet_path_values = _core.finish_output_writer_sessions(
-        typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions),
-        writer_finish_thread_count,
-    )
-    final_parquet_paths = tuple(
-        None if final_parquet_path is None else Path(final_parquet_path)
-        for final_parquet_path in final_parquet_path_values
-    )
-    engine_timing.record_stage_duration(
-        stage_timing_recorder, "writer_finish_and_parquet_finalization", writer_finish_start_time
-    )
-    return final_parquet_paths
-
-
-def execute_bgen_delivery_cleanup_actions(
-    *,
-    cleanup_actions: typing.Sequence[str],
-    callback_finished: bool,
-    callback: models.BgenDeliveryCallbackProtocol,
-    writer_sessions: tuple[typing.Any, ...],
-    writer_finish_thread_count: int,
-    stage_timing_recorder: engine_timing.StageTimingRecorder | None,
-    shutdown_request: lifecycle.GracefulShutdownRequested | None,
-) -> BgenDeliveryCleanupExecution:
-    """Execute cleanup side effects in the native lifecycle action order."""
-    final_parquet_paths: tuple[Path | None, ...] = ()
-    resolved_callback_finished = callback_finished
-    for cleanup_action_value in cleanup_actions:
-        cleanup_action = BgenDeliveryCleanupAction(cleanup_action_value)
-        if cleanup_action is BgenDeliveryCleanupAction.DRAIN_CALLBACK:
-            callback_finish_start_time = time.perf_counter()
-            _core.record_native_dispatch_callback_drain_started_diagnostic_event()
-            callback.finish()
-            engine_timing.record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)
-            resolved_callback_finished = True
-        elif cleanup_action is BgenDeliveryCleanupAction.FINISH_WRITER_SESSIONS:
-            final_parquet_paths = finish_writer_sessions(
-                writer_sessions=writer_sessions,
-                writer_finish_thread_count=writer_finish_thread_count,
-                stage_timing_recorder=stage_timing_recorder,
-            )
-        elif cleanup_action is BgenDeliveryCleanupAction.FINISH_INTERRUPTED_WRITER_SESSIONS:
-            if shutdown_request is None:
-                message = "Interrupted writer cleanup requires a shutdown request."
-                raise RuntimeError(message)
-            writer_finish_start_time = time.perf_counter()
-            _core.finish_interrupted_output_writer_sessions(
-                typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions),
-                writer_finish_thread_count,
-                shutdown_request.exit_code,
-                shutdown_request.signal_name,
-                shutdown_request.shutdown_signal.number,
-            )
-            engine_timing.record_stage_duration(
-                stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time
-            )
-        elif cleanup_action is BgenDeliveryCleanupAction.ABORT_CALLBACK:
-            with contextlib.suppress(Exception):
-                callback.abort()
-        elif cleanup_action is BgenDeliveryCleanupAction.ABORT_WRITER_SESSIONS:
-            for writer_session in writer_sessions:
-                with contextlib.suppress(Exception):
-                    writer_session.abort()
-        elif cleanup_action is BgenDeliveryCleanupAction.WRITE_STAGE_TIMING_SNAPSHOT:
-            # The runner writes final timing outputs once after dispatch.
-            continue
-    return BgenDeliveryCleanupExecution(
-        final_parquet_paths=final_parquet_paths,
-        callback_finished=resolved_callback_finished,
-    )
 
 
 def run_bgen_engine_with_writer_sessions(
@@ -144,126 +25,23 @@ def run_bgen_engine_with_writer_sessions(
     pipeline_label: str,
 ) -> tuple[Path | None, ...]:
     """Run native BGEN chunk delivery and close all output writers."""
-    callback_finished = False
-    final_parquet_paths: tuple[Path | None, ...] = ()
-    try:
-        if stage_timing_recorder is not None:
-            engine.reset_profile()
-        engine_delivery_start_time = time.perf_counter()
-        committed_chunk_identifier_list = sorted(committed_chunk_identifiers or set())
-        _core.record_native_dispatch_delivery_started_diagnostic_event(
-            committed_chunk_count=len(committed_chunk_identifier_list),
-            pipeline_label=pipeline_label,
-            variant_major_packed8_probability_pairs=variant_major_packed8_probability_pairs,
-        )
-        callback.start()
-        if variant_major_packed8_probability_pairs:
-            processed_chunk_count = int(
-                engine.run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
-                    run_input.sample_indices,
-                    run_input.native_aligned_sample_data,
-                    run_input.native_multi_aligned_sample_data,
-                    callback,
-                    committed_chunk_identifiers=committed_chunk_identifier_list,
-                    callback_batch_size=callback.native_callback_batch_size,
-                )
-            )
-        else:
-            processed_chunk_count = int(
-                engine.run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
-                    run_input.sample_indices,
-                    run_input.native_aligned_sample_data,
-                    run_input.native_multi_aligned_sample_data,
-                    callback,
-                    committed_chunk_identifiers=committed_chunk_identifier_list,
-                    callback_batch_size=callback.native_callback_batch_size,
-                )
-            )
-        engine_timing.record_stage_duration(stage_timing_recorder, "native_engine_delivery", engine_delivery_start_time)
-        _core.record_native_dispatch_delivery_finished_diagnostic_event(
-            pipeline_label=pipeline_label,
-            processed_chunk_count=processed_chunk_count,
-        )
-        if stage_timing_recorder is not None:
-            stage_timing_recorder.set_native_bgen_profile(engine.profile_snapshot())
-        cleanup_actions = _core.plan_bgen_delivery_cleanup_actions(
-            BgenDeliveryCleanupOutcome.SUCCESS.value,
-            callback_finished,
-        )
-        cleanup_execution = execute_bgen_delivery_cleanup_actions(
-            cleanup_actions=cleanup_actions,
-            callback_finished=callback_finished,
-            callback=callback,
-            writer_sessions=writer_sessions,
-            writer_finish_thread_count=writer_finish_thread_count,
-            stage_timing_recorder=stage_timing_recorder,
-            shutdown_request=None,
-        )
-        callback_finished = cleanup_execution.callback_finished
-        final_parquet_paths = cleanup_execution.final_parquet_paths
-    except lifecycle.GracefulShutdownRequested as shutdown_request:
-        _core.record_native_dispatch_delivery_interrupted_diagnostic_event(
-            pipeline_label=pipeline_label,
-            signal_exit_code=shutdown_request.exit_code,
-            signal_name=shutdown_request.signal_name,
-            signal_number=shutdown_request.shutdown_signal.number,
-        )
-        cleanup_actions = _core.plan_bgen_delivery_cleanup_actions(
-            BgenDeliveryCleanupOutcome.INTERRUPTED.value,
-            callback_finished,
-        )
-        try:
-            cleanup_execution = execute_bgen_delivery_cleanup_actions(
-                cleanup_actions=cleanup_actions,
-                callback_finished=callback_finished,
-                callback=callback,
-                writer_sessions=writer_sessions,
-                writer_finish_thread_count=writer_finish_thread_count,
-                stage_timing_recorder=stage_timing_recorder,
-                shutdown_request=shutdown_request,
-            )
-            callback_finished = cleanup_execution.callback_finished
-        except BaseException:
-            cleanup_failure_actions = _core.plan_bgen_delivery_cleanup_actions(
-                BgenDeliveryCleanupOutcome.INTERRUPTED_CLEANUP_FAILURE.value,
-                callback_finished,
-            )
-            execute_bgen_delivery_cleanup_actions(
-                cleanup_actions=cleanup_failure_actions,
-                callback_finished=callback_finished,
-                callback=callback,
-                writer_sessions=writer_sessions,
-                writer_finish_thread_count=writer_finish_thread_count,
-                stage_timing_recorder=stage_timing_recorder,
-                shutdown_request=shutdown_request,
-            )
-            raise
-        raise
-    except BaseException as exception:
-        _core.record_native_dispatch_delivery_failed_diagnostic_event(
-            exception_message=str(exception),
-            exception_type=type(exception).__name__,
-            pipeline_label=pipeline_label,
-        )
-        cleanup_actions = _core.plan_bgen_delivery_cleanup_actions(
-            BgenDeliveryCleanupOutcome.FAILURE.value,
-            callback_finished,
-        )
-        execute_bgen_delivery_cleanup_actions(
-            cleanup_actions=cleanup_actions,
-            callback_finished=callback_finished,
-            callback=callback,
-            writer_sessions=writer_sessions,
-            writer_finish_thread_count=writer_finish_thread_count,
-            stage_timing_recorder=stage_timing_recorder,
-            shutdown_request=None,
-        )
-        raise
-    _core.record_native_dispatch_pipeline_finished_diagnostic_event(
-        final_parquet_path_count=len(final_parquet_paths),
-        pipeline_label=pipeline_label,
+    final_parquet_path_values = _core.run_bgen_delivery_with_writer_sessions(
+        engine,
+        run_input.sample_indices,
+        run_input.native_aligned_sample_data,
+        run_input.native_multi_aligned_sample_data,
+        typing.cast("tuple[_core.OutputWriterSession, ...]", writer_sessions),
+        callback,
+        None if stage_timing_recorder is None else stage_timing_recorder.native_recorder,
+        writer_finish_thread_count,
+        sorted(committed_chunk_identifiers or set()),
+        variant_major_packed8_probability_pairs,
+        pipeline_label,
     )
-    return final_parquet_paths
+    return tuple(
+        None if final_parquet_path is None else Path(final_parquet_path)
+        for final_parquet_path in final_parquet_path_values
+    )
 
 
 def run_bgen_engine_with_callback(

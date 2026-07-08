@@ -17,7 +17,7 @@ use g_runtime as native_run_events;
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyModule, PyTuple};
+use pyo3::types::{PyAny, PyModule};
 
 use super::{
     errors,
@@ -183,7 +183,7 @@ impl OutputWriterSession {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_output_writer_session(
+pub(crate) fn build_output_writer_session(
     run_directory: String,
     chunks_directory: String,
     association_mode: String,
@@ -215,38 +215,22 @@ fn build_output_writer_session(
     Ok(OutputWriterSession { inner })
 }
 
-#[pyfunction]
-#[pyo3(signature = (
-    run_directories,
-    chunks_directories,
-    association_mode,
-    writer_thread_count,
-    writer_queue_depth,
-    output_format,
-    output_statistic_dtype,
-    finalize_parquet,
-    chunks_per_arrow_file,
-    arrow_compression,
-    parquet_compression,
-    collect_stage_timings
-))]
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-fn create_output_writer_sessions<'py>(
+pub(crate) fn create_output_writer_session_batch<'py>(
     py: Python<'py>,
     run_directories: Vec<String>,
     chunks_directories: Vec<String>,
-    association_mode: String,
+    association_mode: &str,
     writer_thread_count: usize,
     writer_queue_depth: usize,
-    output_format: String,
-    output_statistic_dtype: String,
+    output_format: &str,
+    output_statistic_dtype: &str,
     finalize_parquet: bool,
     chunks_per_arrow_file: usize,
-    arrow_compression: String,
-    parquet_compression: String,
+    arrow_compression: &str,
+    parquet_compression: &str,
     collect_stage_timings: bool,
-) -> PyResult<Bound<'py, PyTuple>> {
+) -> PyResult<Vec<Py<OutputWriterSession>>> {
     if run_directories.len() != chunks_directories.len() {
         return Err(PyValueError::new_err(format!(
             "Output writer run directory count ({}) does not match chunks directory count ({}).",
@@ -255,29 +239,28 @@ fn create_output_writer_sessions<'py>(
         )));
     }
     let writer_session_count = writer_session_count_as_i64(run_directories.len())?;
-    record_pipeline_output_writer_sessions_create_started(&association_mode, writer_session_count)?;
-    let writer_sessions = run_directories
+    record_pipeline_output_writer_sessions_create_started(association_mode, writer_session_count)?;
+    run_directories
         .into_iter()
         .zip(chunks_directories)
         .map(|(run_directory, chunks_directory)| {
             let writer_session = build_output_writer_session(
                 run_directory,
                 chunks_directory,
-                association_mode.clone(),
+                association_mode.to_string(),
                 writer_thread_count,
                 writer_queue_depth,
-                &output_format,
-                &output_statistic_dtype,
+                output_format,
+                output_statistic_dtype,
                 finalize_parquet,
                 chunks_per_arrow_file,
-                arrow_compression.clone(),
-                parquet_compression.clone(),
+                arrow_compression.to_string(),
+                parquet_compression.to_string(),
                 collect_stage_timings,
             )?;
             Py::new(py, writer_session)
         })
-        .collect::<PyResult<Vec<_>>>()?;
-    PyTuple::new(py, &writer_sessions)
+        .collect()
 }
 
 fn extract_optional_readonly_array1_i32<'py>(
@@ -552,11 +535,9 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
     Ok(())
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn finish_output_writer_sessions(
+pub(crate) fn finish_output_writer_sessions_for_delivery(
     py: Python<'_>,
-    writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+    writer_sessions: &[PyRef<'_, OutputWriterSession>],
     requested_thread_count: i64,
 ) -> PyResult<Vec<Option<String>>> {
     let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
@@ -569,21 +550,19 @@ fn finish_output_writer_sessions(
         .map_err(|error| errors::convert_output_error("finish_output_writer_sessions", error))
 }
 
-#[pyfunction]
-#[allow(clippy::needless_pass_by_value)]
-fn finish_interrupted_output_writer_sessions(
+pub(crate) fn finish_interrupted_output_writer_sessions_for_delivery(
     py: Python<'_>,
-    writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
+    writer_sessions: &[PyRef<'_, OutputWriterSession>],
     requested_thread_count: i64,
     signal_exit_code: i64,
-    signal_name: String,
+    signal_name: &str,
     signal_number: i64,
 ) -> PyResult<()> {
     let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
     record_writer_sessions_interrupted_flush_started(
         requested_thread_count,
         signal_exit_code,
-        &signal_name,
+        signal_name,
         signal_number,
         writer_session_count,
     )?;
@@ -591,13 +570,15 @@ fn finish_interrupted_output_writer_sessions(
         .map_err(|error| errors::convert_schedule_error(&error))?;
     let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
     py.detach(|| {
-        finish_interrupted_native_output_writer_sessions(
-            &native_writer_sessions,
-            finish_plan.thread_count,
-            &signal_name,
-        )
+        finish_interrupted_native_output_writer_sessions(&native_writer_sessions, finish_plan.thread_count, signal_name)
     })
     .map_err(|error| errors::convert_output_error("finish_interrupted_output_writer_sessions", error))
+}
+
+pub(crate) fn abort_output_writer_sessions_for_delivery(writer_sessions: &[PyRef<'_, OutputWriterSession>]) {
+    for writer_session in writer_sessions {
+        let _ = writer_session.inner.abort();
+    }
 }
 
 fn record_writer_sessions_finish_started(requested_thread_count: i64, writer_session_count: i64) -> PyResult<()> {
@@ -639,9 +620,6 @@ fn record_pipeline_output_writer_sessions_create_started(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeManifestFileFingerprintCache>()?;
     module.add_class::<OutputWriterSession>()?;
-    module.add_function(wrap_pyfunction!(create_output_writer_sessions, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_interrupted_output_writer_sessions, module)?)?;
-    module.add_function(wrap_pyfunction!(finish_output_writer_sessions, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_native_chunk_with_output_dtype, module)?)?;
     module.add_function(wrap_pyfunction!(write_regenie2_multi_native_chunk_with_output_dtype, module)?)?;
     Ok(())

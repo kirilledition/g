@@ -27,7 +27,6 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     context: pipeline_context.Regenie2PipelineContext,
     phenotype_names: tuple[str, ...],
     covariate_names: tuple[str, ...] | None,
-    prepared_runs_by_phenotype: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -150,7 +149,14 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         grouped_sample_set_fingerprints,
         len(grouped_run_inputs),
     )
-    validate_grouped_per_phenotype_resume_compatibility(
+    for grouped_run_input in grouped_run_inputs:
+        multi_group.run_multi_phenotype_group_preflight(
+            context=context,
+            engine=engine,
+            run_input=grouped_run_input.run_input,
+            prediction_source=grouped_run_input.prediction_source,
+        )
+    output_bundles_by_group = prepare_grouped_per_phenotype_output_bundles(
         context=context,
         engine=engine,
         grouped_run_inputs=grouped_run_inputs,
@@ -161,8 +167,8 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             context=context,
             engine=engine,
             grouped_run_inputs=grouped_run_inputs,
+            output_bundles_by_group=output_bundles_by_group,
             phenotype_names=phenotype_names,
-            prepared_runs_by_phenotype=prepared_runs_by_phenotype,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
@@ -171,7 +177,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         )
 
     final_parquet_paths_by_index: list[Path | None] = [None] * len(phenotype_names)
-    for grouped_run_input in grouped_run_inputs:
+    for grouped_run_input, output_bundle in zip(grouped_run_inputs, output_bundles_by_group, strict=True):
         compute_group = grouped_run_input.compute_group
         group_multi_run_input = grouped_run_input.run_input
         group_final_parquet_paths = multi_group.run_prepared_multi_phenotype_bgen_group(
@@ -180,19 +186,12 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
             run_input=group_multi_run_input,
             prediction_source=grouped_run_input.prediction_source,
             compute_group=compute_group,
-            prepared_runs_by_phenotype=typing.cast(
-                "tuple[_core.NativeRunLifecyclePhenotypeRun, ...]",
-                pipeline_context.select_by_phenotype_indices(
-                    prepared_runs_by_phenotype,
-                    compute_group.phenotype_indices,
-                ),
-            ),
+            output_bundle=output_bundle,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
         for phenotype_index, final_parquet_path in zip(
             compute_group.phenotype_indices,
@@ -203,37 +202,32 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     return tuple(final_parquet_paths_by_index)
 
 
-def validate_grouped_per_phenotype_resume_compatibility(
+def prepare_grouped_per_phenotype_output_bundles(
     *,
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
-) -> None:
-    """Validate all grouped per-phenotype manifests before initializing any group."""
-    if not context.lifecycle_session.output_resume:
-        return
-    selected_phenotype_names: list[str] = []
-    selected_current_headers: list[outputs.RunManifestHeaderInput] = []
+) -> tuple[_core.NativePreparedOutputBundle, ...]:
+    """Prepare all grouped per-phenotype output bundles in one native batch."""
+    output_groups: list[tuple[tuple[str, ...], tuple[outputs.RunManifestHeaderInput, ...]]] = []
     for grouped_run_input in grouped_run_inputs:
         compute_group = grouped_run_input.compute_group
         run_input = grouped_run_input.run_input
-        for phenotype_name in compute_group.phenotype_names:
-            selected_phenotype_names.append(phenotype_name)
-            selected_current_headers.append(
-                outputs.build_pipeline_manifest_header(
+        output_groups.append(
+            (
+                compute_group.phenotype_names,
+                multi_group.build_multi_phenotype_output_headers(
                     context=context,
-                    phenotype_name=phenotype_name,
-                    covariate_names=tuple(run_input.native_multi_aligned_sample_data.covariate_names),
-                    sample_count=int(run_input.sample_indices.shape[0]),
-                    variant_count=int(engine.variant_count),
-                    multi_phenotype_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
-                    phenotype_compute_group=compute_group,
-                )
+                    engine=engine,
+                    run_input=run_input,
+                    compute_group=compute_group,
+                    output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
+                ),
             )
-    outputs.validate_pipeline_resume_compatibility(
-        context=context,
-        phenotype_names=tuple(selected_phenotype_names),
-        current_headers_by_trait=tuple(selected_current_headers),
+        )
+    return context.lifecycle_session.prepare_output_bundles(
+        tuple(output_groups),
+        None if context.stage_timing_recorder is None else context.stage_timing_recorder.native_recorder,
     )
 
 
@@ -290,8 +284,8 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     context: pipeline_context.Regenie2PipelineContext,
     engine: _core.Regenie2RunEngine,
     grouped_run_inputs: tuple[native_dispatch_models.NativeBgenGroupedRunInput, ...],
+    output_bundles_by_group: tuple[_core.NativePreparedOutputBundle, ...],
     phenotype_names: tuple[str, ...],
-    prepared_runs_by_phenotype: tuple[_core.NativeRunLifecyclePhenotypeRun, ...],
     staging_depth: int,
     native_callback_batch_size: int,
     result_in_flight_limit: int | None,
@@ -312,25 +306,17 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     prepared_deliveries = tuple(
         multi_group.prepare_multi_phenotype_bgen_group_delivery(
             context=context,
-            engine=engine,
             run_input=grouped_run_input.run_input,
             prediction_source=grouped_run_input.prediction_source,
             compute_group=grouped_run_input.compute_group,
-            prepared_runs_by_phenotype=typing.cast(
-                "tuple[_core.NativeRunLifecyclePhenotypeRun, ...]",
-                pipeline_context.select_by_phenotype_indices(
-                    prepared_runs_by_phenotype,
-                    grouped_run_input.compute_group.phenotype_indices,
-                ),
-            ),
+            output_bundle=output_bundle,
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
             null_logistic_nonconvergence_policy=null_logistic_nonconvergence_policy,
-            output_sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE,
         )
-        for grouped_run_input in grouped_run_inputs
+        for grouped_run_input, output_bundle in zip(grouped_run_inputs, output_bundles_by_group, strict=True)
     )
     group_fanouts = tuple(
         callback_shared.MultiPhenotypeGroupFanout(
@@ -351,9 +337,12 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
     final_parquet_paths = native_dispatch_delivery.run_bgen_engine_with_writer_sessions(
         engine=engine,
         run_input=union_run_input,
-        committed_chunk_identifiers=outputs.shared_committed_chunk_identifiers_across(
-            tuple(prepared_delivery.output_initialization for prepared_delivery in prepared_deliveries)
-        ),
+        committed_chunk_identifiers={
+            int(chunk_identifier)
+            for chunk_identifier in prepared_deliveries[0].output_bundle.shared_committed_chunk_identifiers_with(
+                tuple(prepared_delivery.output_bundle for prepared_delivery in prepared_deliveries[1:])
+            )
+        },
         writer_sessions=writer_sessions,
         callback=callback_grouped.GroupedMultiPhenotypeFanoutCallback(group_fanouts),
         stage_timing_recorder=context.stage_timing_recorder,

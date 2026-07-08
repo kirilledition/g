@@ -3,6 +3,7 @@ mod cli;
 mod defaults;
 mod domain;
 mod error;
+mod native_cli;
 mod options;
 mod overlay;
 mod partial;

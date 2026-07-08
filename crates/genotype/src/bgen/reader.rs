@@ -225,13 +225,15 @@ impl BgenReaderCore {
                 "row-major BGEN dosage",
             )?
         };
-        self.read_dosage_f32_into_address_with_selection(
+        self.read_dosage_f32_into_address_with_selection_and_optional_stats(
             &sample_selection,
             variant_start,
             variant_stop,
             output_buffer.pointer_address(),
             output_value_count,
-        )?;
+            false,
+        )
+        .map(|_| ())?;
         preprocess::preprocess_row_major_dosage_matrix(
             output_buffer.values_mut(),
             selected_sample_count,
@@ -265,25 +267,6 @@ impl BgenReaderCore {
         Err(BgenError::UnsupportedFormat(
             "Packed8 BGEN probability-pair delivery requires trusted no-missing diploid validation.".to_string(),
         ))
-    }
-
-    fn read_dosage_f32_into_address_with_selection(
-        &self,
-        sample_selection: &SampleSelection,
-        variant_start: usize,
-        variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
-    ) -> Result<(), BgenError> {
-        self.read_dosage_f32_into_address_with_selection_and_optional_stats(
-            sample_selection,
-            variant_start,
-            variant_stop,
-            output_pointer_address,
-            output_value_count,
-            false,
-        )
-        .map(|_| ())
     }
 
     fn read_dosage_f32_into_address_with_selection_and_optional_stats(

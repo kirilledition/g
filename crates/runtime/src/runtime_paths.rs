@@ -5,17 +5,8 @@ use std::path::{Path, PathBuf};
 const UNKNOWN_USER_NAME: &str = "unknown";
 
 #[must_use]
-pub fn default_local_temporary_root() -> PathBuf {
-    std::env::temp_dir()
-}
-
-#[must_use]
 pub fn default_local_cache_directory(directory_name: &str) -> PathBuf {
-    build_default_local_cache_directory(
-        &default_local_temporary_root(),
-        &default_local_cache_user_name(),
-        directory_name,
-    )
+    build_default_local_cache_directory(&std::env::temp_dir(), &default_local_cache_user_name(), directory_name)
 }
 
 #[must_use]

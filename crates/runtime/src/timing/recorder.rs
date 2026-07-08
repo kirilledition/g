@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::final_outputs::{
     FinalTimingOutputsWriteResultPayload, TimingFileError, plan_stage_timing_recorder, plan_timing_file_write,
-    should_collect_exact_stage_timings, write_profile_summary_payload, write_stage_timing_snapshot_payload,
+    write_profile_summary_payload, write_stage_timing_snapshot_payload,
 };
 use super::payloads::{
     ChunkStageTiming, NullLogisticDiagnosticValue, NumericDiagnosticValue, ProfileSummaryPayload,
@@ -38,7 +38,7 @@ impl StageTimingRecorder {
 
     #[must_use]
     pub const fn should_collect_exact_stage_timings(&self) -> bool {
-        should_collect_exact_stage_timings(self.exact_stage_timings)
+        self.exact_stage_timings
     }
 
     #[must_use]

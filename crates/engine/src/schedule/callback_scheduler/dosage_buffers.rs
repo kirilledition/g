@@ -1,10 +1,10 @@
 use crate::schedule::{
     DOSAGE_BUFFER_POOL_NAME, DosageBufferAcquireAttemptPlan, DosageBufferDiscardAttemptPlan,
     DosageBufferPoolObservationPlan, DosageBufferRegisterAttemptPlan, DosageBufferReturnAttemptPlan,
-    DosageBufferReusePlan, QUEUE_ALLOCATE_OPERATION, QUEUE_CONSUMER_WAIT_OPERATION, QUEUE_DISCARD_OPERATION,
-    QUEUE_RETURN_OPERATION, QUEUE_REUSE_OPERATION, callback_worker_backpressure_poll_timeout_seconds,
-    plan_dosage_buffer_acquire_attempt, plan_dosage_buffer_discard_attempt, plan_dosage_buffer_pool_observation,
-    plan_dosage_buffer_register_attempt, plan_dosage_buffer_return_attempt, plan_dosage_buffer_reuse,
+    QUEUE_ALLOCATE_OPERATION, QUEUE_CONSUMER_WAIT_OPERATION, QUEUE_DISCARD_OPERATION, QUEUE_RETURN_OPERATION,
+    QUEUE_REUSE_OPERATION, callback_worker_backpressure_poll_timeout_seconds, plan_dosage_buffer_acquire_attempt,
+    plan_dosage_buffer_discard_attempt, plan_dosage_buffer_pool_observation, plan_dosage_buffer_register_attempt,
+    plan_dosage_buffer_return_attempt,
 };
 
 use super::CallbackSchedulerState;
@@ -103,15 +103,6 @@ impl CallbackSchedulerState {
     pub fn plan_dosage_buffer_pool_consumer_wait_observation(&self) -> DosageBufferPoolObservationPlan {
         debug_assert!(self.dosage_buffer_pool_state.buffer_limit() > 0);
         plan_dosage_buffer_pool_observation(QUEUE_CONSUMER_WAIT_OPERATION, true)
-    }
-
-    #[must_use]
-    pub fn plan_dosage_buffer_reuse(
-        &self,
-        buffered_shape: &[usize],
-        expected_shape: &[usize],
-    ) -> Option<DosageBufferReusePlan> {
-        plan_dosage_buffer_reuse(buffered_shape, expected_shape)
     }
 
     pub(super) fn dosage_buffer_pool_backpressure_observation(

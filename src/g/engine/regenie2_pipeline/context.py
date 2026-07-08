@@ -143,7 +143,7 @@ class PreparedMultiPhenotypeGroupDelivery:
         run_input: Aligned multi-phenotype input for this compatible group.
         callback: Compute callback for this group.
         writer_sessions: Output writer sessions in this group's phenotype order.
-        output_initialization: Native output initialization state for committed-chunk policy.
+        output_bundle: Native output bundle for committed-chunk policy and writer state.
 
     """
 
@@ -152,7 +152,7 @@ class PreparedMultiPhenotypeGroupDelivery:
     run_input: native_dispatch_models.NativeBgenMultiRunInput
     callback: callbacks.MultiPhenotypeGroupCallbackProtocol
     writer_sessions: tuple[typing.Any, ...]
-    output_initialization: _core.NativeRunLifecycleOutputInitialization
+    output_bundle: _core.NativePreparedOutputBundle
 
 
 def build_regenie2_pipeline_context(

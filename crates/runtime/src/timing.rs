@@ -12,7 +12,7 @@ pub use final_outputs::{
     StageTimingRecorderPlan, TimingFileError, TimingFileWritePlan,
     build_final_timing_outputs_write_started_diagnostic_payload, plan_stage_timing_recorder, plan_timing_file_write,
     resolve_final_timing_output_context, serialize_final_timing_outputs_write_started_diagnostic_fields_json,
-    should_collect_exact_stage_timings, write_profile_summary_payload, write_stage_timing_snapshot_payload,
+    write_profile_summary_payload, write_stage_timing_snapshot_payload,
 };
 pub use payloads::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,
@@ -293,11 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_exact_stage_timing_collection_policy() {
-        assert!(should_collect_exact_stage_timings(true));
-        assert!(!should_collect_exact_stage_timings(false));
-    }
-
     #[test]
     fn plans_stage_timing_recorder_creation() {
         assert_eq!(

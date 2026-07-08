@@ -11,7 +11,7 @@ fn main() {
 }
 
 fn run(arguments: &[String]) -> i32 {
-    let outcome = g_cli::dispatch_native_cli(arguments);
+    let outcome = g_interface::dispatch_native_cli(arguments);
     if let Err(error) = write_outcome(&outcome) {
         eprintln!("Error: failed to write native CLI output: {error}");
         return OUTPUT_WRITE_FAILURE_EXIT_CODE;
@@ -19,7 +19,7 @@ fn run(arguments: &[String]) -> i32 {
     outcome.exit_code
 }
 
-fn write_outcome(outcome: &g_cli::NativeCliOutcome) -> io::Result<()> {
+fn write_outcome(outcome: &g_interface::NativeCliOutcome) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     stdout.write_all(outcome.stdout.as_bytes())?;

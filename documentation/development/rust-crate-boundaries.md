@@ -5,8 +5,8 @@ Each Rust crate exposes one facade through crate-root `pub use` items. Implement
 Allowed ownership:
 
 - `g-plan`: stable run/config/prepared-plan DTOs.
-- `g-interface`: user config and CLI/TOML/Python-option normalization.
-- `g-cli`: native CLI dispatch shell.
+- `g-interface`: user config, CLI/TOML/Python-option normalization, and native
+  CLI dispatch shell.
 - `g-genotype`: BGEN/genotype source, chunk specs, preprocessing stats.
 - `g-input`: sample/phenotype/covariate/prediction alignment.
 - `g-output`: output sessions, manifests, resume, finalization.

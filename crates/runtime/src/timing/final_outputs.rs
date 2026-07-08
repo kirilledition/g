@@ -76,11 +76,6 @@ impl Error for TimingFileError {
 }
 
 #[must_use]
-pub const fn should_collect_exact_stage_timings(exact_stage_timings: bool) -> bool {
-    exact_stage_timings
-}
-
-#[must_use]
 pub const fn plan_stage_timing_recorder(stage_timing_path_configured: bool, force: bool) -> StageTimingRecorderPlan {
     StageTimingRecorderPlan {
         should_create: stage_timing_path_configured || force,

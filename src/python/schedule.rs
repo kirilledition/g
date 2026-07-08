@@ -307,29 +307,10 @@ impl NativeMultiTraitChunkWritePlanner {
     }
 }
 
-#[pyfunction]
-fn plan_bgen_delivery_cleanup_actions(cleanup_outcome: &str, callback_finished: bool) -> PyResult<Vec<String>> {
-    let native_cleanup_outcome = match cleanup_outcome {
-        "success" => native_schedule::BgenDeliveryCleanupOutcome::Success,
-        "interrupted" => native_schedule::BgenDeliveryCleanupOutcome::Interrupted,
-        "failure" => native_schedule::BgenDeliveryCleanupOutcome::Failure,
-        "interrupted_cleanup_failure" => native_schedule::BgenDeliveryCleanupOutcome::InterruptedCleanupFailure,
-        _ => {
-            return Err(PyValueError::new_err(format!("Unsupported BGEN delivery cleanup outcome: {cleanup_outcome}")));
-        }
-    };
-    Ok(native_schedule::plan_bgen_delivery_cleanup(native_cleanup_outcome, callback_finished)
-        .cleanup_actions()
-        .iter()
-        .map(|cleanup_action| cleanup_action.as_value().to_string())
-        .collect())
-}
-
 fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBgenDeliveryPolicy>()?;
     module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlanner>()?;
-    module.add_function(wrap_pyfunction!(plan_bgen_delivery_cleanup_actions, module)?)?;
     Ok(())
 }
 
@@ -950,6 +931,7 @@ impl NativeGpuGenotypeFormatResolutionPlan {
     }
 }
 
+#[allow(clippy::unused_self)]
 impl NativeCallbackSchedulerState {
     pub(crate) fn from_limits(
         staging_depth: i64,
@@ -1103,11 +1085,11 @@ impl NativeCallbackSchedulerState {
     }
 
     pub(crate) fn plan_worker_finish_value(&self) -> NativeCallbackWorkerFinishPlan {
-        self.inner.plan_worker_finish().into()
+        native_schedule::plan_callback_worker_finish().into()
     }
 
     pub(crate) fn plan_worker_abort_value(&self) -> NativeCallbackWorkerAbortPlan {
-        self.inner.plan_worker_abort().into()
+        native_schedule::plan_callback_worker_abort().into()
     }
 
     pub(crate) fn plan_worker_error_raise_value(&self) -> NativeCallbackWorkerErrorRaisePlan {
@@ -1177,7 +1159,7 @@ impl NativeCallbackSchedulerState {
         buffered_shape: &[usize],
         expected_shape: &[usize],
     ) -> Option<NativeDosageBufferReusePlan> {
-        self.inner.plan_dosage_buffer_reuse(buffered_shape, expected_shape).map(Into::into)
+        native_schedule::plan_dosage_buffer_reuse(buffered_shape, expected_shape).map(Into::into)
     }
 
     pub(crate) fn plan_dosage_queue_put_attempt_value(
@@ -1207,7 +1189,7 @@ impl NativeCallbackSchedulerState {
     }
 
     pub(crate) fn plan_result_write_handoff_value(&self, has_result_work_item: bool) -> NativeResultWriteHandoffPlan {
-        self.inner.plan_result_write_handoff(has_result_work_item).into()
+        native_schedule::plan_result_write_handoff(has_result_work_item).into()
     }
 
     pub(crate) fn plan_result_write_drain_completion_value(
@@ -1232,9 +1214,11 @@ impl NativeCallbackSchedulerState {
         result_work_item_kind: native_schedule::ResultWriteItemKind,
         expected_result_work_item_kind: native_schedule::ResultWriteItemKind,
     ) -> NativeResultWriteItemDispatchPlan {
-        self.inner
-            .plan_result_write_item_dispatch_for_kinds(result_work_item_kind, expected_result_work_item_kind)
-            .into()
+        native_schedule::plan_result_write_item_dispatch_for_kinds(
+            result_work_item_kind,
+            expected_result_work_item_kind,
+        )
+        .into()
     }
 
     pub(crate) fn plan_result_queue_put_attempt_value(
@@ -1269,18 +1253,19 @@ impl NativeCallbackSchedulerState {
         genotype_matrix_by_variant_count: usize,
         chunk_stats_count: usize,
     ) -> PyResult<NativeVariantMajorDosageBatchHandoffPlan> {
-        self.inner
-            .plan_variant_major_dosage_batch_handoff(
-                metadata_count,
-                genotype_matrix_by_variant_count,
-                chunk_stats_count,
-            )
-            .map(Into::into)
-            .map_err(|error| convert_schedule_error(&error))
+        native_schedule::plan_variant_major_dosage_batch_handoff(
+            metadata_count,
+            genotype_matrix_by_variant_count,
+            chunk_stats_count,
+        )
+        .map(Into::into)
+        .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_work_handoff_value(&self, chunk_count: usize) -> PyResult<NativeDosageWorkHandoffPlan> {
-        self.inner.plan_dosage_work_handoff(chunk_count).map(Into::into).map_err(|error| convert_schedule_error(&error))
+        native_schedule::plan_dosage_work_handoff(chunk_count)
+            .map(Into::into)
+            .map_err(|error| convert_schedule_error(&error))
     }
 
     pub(crate) fn plan_dosage_work_drain_completion_value(
@@ -1294,8 +1279,7 @@ impl NativeCallbackSchedulerState {
         &self,
         dosage_work_item_kind: &str,
     ) -> PyResult<NativeDosageWorkItemDispatchPlan> {
-        self.inner
-            .plan_dosage_work_item_dispatch(dosage_work_item_kind)
+        native_schedule::plan_dosage_work_item_dispatch(dosage_work_item_kind)
             .map(Into::into)
             .map_err(|error| convert_schedule_error(&error))
     }
@@ -1306,8 +1290,7 @@ impl NativeCallbackSchedulerState {
         chunk_count: usize,
         elapsed_seconds: f64,
     ) -> PyResult<NativeDosageWorkItemStageDurationPlan> {
-        self.inner
-            .plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
+        native_schedule::plan_dosage_work_item_stage_duration(dosage_work_item_kind, chunk_count, elapsed_seconds)
             .map(Into::into)
             .map_err(|error| convert_schedule_error(&error))
     }

@@ -756,12 +756,12 @@ def test_rust_architecture_policy_rejects_forbidden_internal_dependencies() -> N
     )
 
 
-def test_rust_architecture_policy_restricts_native_cli_frontend_dependencies() -> None:
+def test_rust_architecture_policy_restricts_interface_frontend_dependencies() -> None:
     metadata_payload = build_metadata_payload(
         (
-            build_package_payload("g-cli", ("g-engine", "g-interface")),
+            build_package_payload("g-interface", ("g-engine", "g-plan")),
             build_package_payload("g-engine", ()),
-            build_package_payload("g-interface", ()),
+            build_package_payload("g-plan", ()),
         )
     )
 
@@ -769,7 +769,7 @@ def test_rust_architecture_policy_restricts_native_cli_frontend_dependencies() -
 
     assert violations == (
         check_rust_architecture.RustArchitectureViolation(
-            package_name="g-cli",
+            package_name="g-interface",
             dependency_name="g-engine",
             message="workspace package depends on a forbidden internal crate",
         ),

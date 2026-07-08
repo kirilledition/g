@@ -298,7 +298,6 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-plan": set(),
-    "g-cli": {"g-interface"},
     "g-interface": {"g-plan"},
     "g-genotype": set(),
     "g-input": {"g-genotype", "g-plan"},
@@ -307,7 +306,6 @@ ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-engine": {"g-genotype", "g-input", "g-output", "g-plan", "g-runtime"},
 }
 CRATE_ROOT_BY_PACKAGE: dict[str, Path] = {
-    "g-cli": Path("crates/cli"),
     "g-engine": Path("crates/engine"),
     "g-genotype": Path("crates/genotype"),
     "g-input": Path("crates/input"),

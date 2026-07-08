@@ -1,9 +1,7 @@
 use crate::schedule::{
-    CallbackQueueBackpressureObservation, CallbackQueueOperationObservationPlan,
-    CallbackQueueStageBackpressureObservation, CallbackQueueStageObservationPlan, DOSAGE_QUEUE_NAME,
+    CallbackQueueBackpressureObservation, CallbackQueueStageBackpressureObservation, DOSAGE_QUEUE_NAME,
     RESULT_IN_FLIGHT_SLOTS_NAME, RESULT_QUEUE_NAME, ScheduleError, plan_callback_queue_backpressure_observation,
-    plan_callback_queue_operation_observation, plan_callback_queue_stage_backpressure_observation,
-    plan_callback_queue_stage_observation,
+    plan_callback_queue_stage_backpressure_observation,
 };
 
 use super::CallbackSchedulerState;
@@ -15,47 +13,6 @@ struct CallbackBoundedResourceOccupancy {
 }
 
 impl CallbackSchedulerState {
-    /// Plan one aggregate callback queue or bounded-resource observation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the queue/resource and operation pair is not part
-    /// of the callback scheduler observation contract.
-    pub fn plan_queue_operation_observation(
-        &self,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> Result<CallbackQueueOperationObservationPlan, ScheduleError> {
-        plan_callback_queue_operation_observation(queue_name, operation_name, elapsed_seconds, blocked)
-    }
-
-    /// Plan one aggregate callback queue or bounded-resource backpressure observation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the queue/resource and operation pair is not part
-    /// of the callback scheduler observation contract.
-    pub fn plan_queue_backpressure_observation(
-        &self,
-        queue_name: &str,
-        operation_name: &str,
-        queue_depth: usize,
-        queue_capacity: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> Result<CallbackQueueBackpressureObservation, ScheduleError> {
-        plan_callback_queue_backpressure_observation(
-            queue_name,
-            operation_name,
-            queue_depth,
-            queue_capacity,
-            elapsed_seconds,
-            blocked,
-        )
-    }
-
     /// Plan a callback queue or result-slot observation using native occupancy.
     ///
     /// # Errors
@@ -94,47 +51,6 @@ impl CallbackSchedulerState {
         blocked: bool,
     ) -> Result<CallbackQueueBackpressureObservation, ScheduleError> {
         self.dosage_buffer_pool_backpressure_observation(operation_name, free_buffer_count, elapsed_seconds, blocked)
-    }
-
-    /// Plan one timed callback queue or bounded-resource observation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the queue/resource and operation pair does not
-    /// have a canonical callback timing stage.
-    pub fn plan_queue_stage_observation(
-        &self,
-        queue_name: &str,
-        operation_name: &str,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> Result<CallbackQueueStageObservationPlan, ScheduleError> {
-        plan_callback_queue_stage_observation(queue_name, operation_name, elapsed_seconds, blocked)
-    }
-
-    /// Plan one timed callback queue or bounded-resource backpressure observation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the queue/resource and operation pair does not
-    /// have a canonical callback timing stage.
-    pub fn plan_queue_stage_backpressure_observation(
-        &self,
-        queue_name: &str,
-        operation_name: &str,
-        queue_depth: usize,
-        queue_capacity: usize,
-        elapsed_seconds: f64,
-        blocked: bool,
-    ) -> Result<CallbackQueueStageBackpressureObservation, ScheduleError> {
-        plan_callback_queue_stage_backpressure_observation(
-            queue_name,
-            operation_name,
-            queue_depth,
-            queue_capacity,
-            elapsed_seconds,
-            blocked,
-        )
     }
 
     /// Plan a timed callback queue or result-slot observation using native occupancy.

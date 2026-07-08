@@ -439,12 +439,13 @@ fn finalization_writes_footer_metadata() {
         .expect("manifest commits should record");
 
     let final_parquet_path = run_directory.join("final.parquet");
-    finalization::write_final_parquet_from_chunk_files(
+    finalization::write_final_parquet_from_chunk_files_with_timing(
         &chunks_directory,
         &final_parquet_path,
         "regenie2_binary",
         OutputFileFormat::Arrow,
     )
+    .map(|_| ())
     .expect("final parquet should write");
 
     let parquet_file = File::open(final_parquet_path).expect("final parquet should open");

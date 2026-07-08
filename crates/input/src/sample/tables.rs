@@ -61,7 +61,7 @@ pub(super) fn read_single_phenotype_table(
     sample_row_indices_by_key: &HashMap<SampleKey, usize>,
     sample_count: usize,
 ) -> SampleAlignmentResult<SinglePhenotypeTable> {
-    let mut reader = open_phenotype_table_reader(phenotype_path)?;
+    let mut reader = open_tabular_reader(phenotype_path, "phenotype table", b'\t')?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
     let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
@@ -117,7 +117,7 @@ pub(super) fn read_multi_phenotype_table(
     sample_row_indices_by_key: &HashMap<SampleKey, usize>,
     sample_count: usize,
 ) -> SampleAlignmentResult<MultiPhenotypeTable> {
-    let mut reader = open_phenotype_table_reader(phenotype_path)?;
+    let mut reader = open_tabular_reader(phenotype_path, "phenotype table", b'\t')?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
     let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
@@ -222,14 +222,6 @@ pub(super) fn multi_phenotype_parse_candidate_mask(phenotype_table: &MultiPhenot
             })
         })
         .collect()
-}
-
-fn open_phenotype_table_reader(table_path: &Path) -> SampleAlignmentResult<StreamingTabularReader<File>> {
-    open_tabular_reader(table_path, "phenotype table", b'\t')
-}
-
-fn open_covariate_table_reader(table_path: &Path) -> SampleAlignmentResult<StreamingTabularReader<File>> {
-    open_tabular_reader(table_path, "covariate table", b'\t')
 }
 
 // Phenotype and covariate tables intentionally use tab-only parsing.
@@ -446,7 +438,7 @@ fn read_covariate_table(
     parse_candidate_mask: &[bool],
     sample_count: usize,
 ) -> SampleAlignmentResult<CovariateTable> {
-    let mut reader = open_covariate_table_reader(covariate_path)?;
+    let mut reader = open_tabular_reader(covariate_path, "covariate table", b'\t')?;
     let headers = read_tabular_header(&mut reader, covariate_path)?;
     let covariate_path_text = covariate_path.display().to_string();
     let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {

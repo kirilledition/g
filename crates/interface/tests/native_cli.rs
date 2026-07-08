@@ -11,7 +11,7 @@ fn string_arguments(arguments: &[&str]) -> Vec<String> {
 
 fn run_native_binary(arguments: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_g"))
-        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .env_remove(g_interface::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args(arguments)
         .output()
         .expect("native g binary should execute")
@@ -20,7 +20,7 @@ fn run_native_binary(arguments: &[&str]) -> std::process::Output {
 fn unique_fixture_directory() -> PathBuf {
     let timestamp =
         SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after UNIX epoch").as_nanos();
-    std::env::temp_dir().join(format!("g-cli-native-bin-{}-{timestamp}", std::process::id()))
+    std::env::temp_dir().join(format!("g-interface-native-bin-{}-{timestamp}", std::process::id()))
 }
 
 fn write_valid_fixture(fixture_directory: &Path) {
@@ -136,16 +136,16 @@ fn native_binary_validates_config_before_refusing_execution() {
     let arguments = valid_regenie_arguments(&fixture_directory);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
-        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .env_remove(g_interface::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args(arguments)
         .output()
         .expect("native g binary should execute");
 
-    assert_eq!(output.status.code(), Some(g_cli::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE));
+    assert_eq!(output.status.code(), Some(g_interface::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE));
     assert_eq!(String::from_utf8(output.stdout).expect("stdout should be UTF-8"), "");
     assert_eq!(
         String::from_utf8(output.stderr).expect("stderr should be UTF-8"),
-        g_cli::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE,
+        g_interface::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE,
     );
 
     fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
@@ -159,7 +159,7 @@ fn native_binary_validates_toml_and_cli_overrides_before_refusing_execution() {
     let config_path = write_regenie_toml(&fixture_directory, &missing_bgen_path);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
-        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .env_remove(g_interface::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args([
             "regenie",
             "--config",
@@ -174,11 +174,11 @@ fn native_binary_validates_toml_and_cli_overrides_before_refusing_execution() {
         .output()
         .expect("native g binary should execute");
 
-    assert_eq!(output.status.code(), Some(g_cli::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE));
+    assert_eq!(output.status.code(), Some(g_interface::NATIVE_EXECUTION_UNAVAILABLE_EXIT_CODE));
     assert_eq!(String::from_utf8(output.stdout).expect("stdout should be UTF-8"), "");
     assert_eq!(
         String::from_utf8(output.stderr).expect("stderr should be UTF-8"),
-        g_cli::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE,
+        g_interface::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE,
     );
 
     fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
@@ -192,7 +192,7 @@ fn native_binary_reports_toml_validation_errors_before_execution_boundary() {
     let config_path = write_regenie_toml(&fixture_directory, &missing_bgen_path);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
-        .env_remove(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
+        .env_remove(g_interface::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE)
         .args([
             "regenie",
             "--config",
@@ -207,7 +207,7 @@ fn native_binary_reports_toml_validation_errors_before_execution_boundary() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(String::from_utf8(output.stdout).expect("stdout should be UTF-8"), "");
     assert!(stderr.contains("--bgen path does not exist"));
-    assert!(!stderr.contains(g_cli::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE));
+    assert!(!stderr.contains(g_interface::NATIVE_EXECUTION_UNAVAILABLE_MESSAGE));
 
     fs::remove_dir_all(&fixture_directory).expect("fixture directory should be removed");
 }
@@ -221,7 +221,7 @@ fn native_binary_delegates_validated_config_to_python_bridge_when_enabled() {
     let arguments = valid_regenie_arguments(&fixture_directory);
 
     let output = Command::new(env!("CARGO_BIN_EXE_g"))
-        .env(g_cli::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE, fake_python_path)
+        .env(g_interface::NATIVE_PYTHON_BRIDGE_ENVIRONMENT_VARIABLE, fake_python_path)
         .args(arguments)
         .output()
         .expect("native g binary should execute");

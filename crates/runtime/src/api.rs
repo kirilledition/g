@@ -107,9 +107,7 @@ pub use run_metadata::{
     RunMetadataError, build_execution_run_artifacts, build_execution_run_artifacts_from_sequences,
     build_multi_run_artifacts, build_phenotype_run_artifacts, build_run_manifest_extension,
 };
-pub use runtime_paths::{
-    build_default_local_cache_directory, default_local_cache_directory, default_local_temporary_root,
-};
+pub use runtime_paths::{build_default_local_cache_directory, default_local_cache_directory};
 pub use runtime_policy::{LoggingRuntimePolicyPayload, build_logging_runtime_policy, describe_logging_runtime_policy};
 pub use runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,
@@ -134,7 +132,6 @@ pub use telemetry_session::{
     TelemetryWriterCounterSnapshot, build_current_telemetry_event_envelope, build_telemetry_close_event_payload,
     build_telemetry_close_metadata, build_telemetry_event_envelope, generate_run_id, plan_telemetry_close,
     plan_telemetry_event_emission, plan_telemetry_progress_emission, serialize_telemetry_payload_json_line,
-    serialize_telemetry_payload_json_text,
 };
 pub use telemetry_writer::{
     TelemetryLineWriter, TelemetrySessionWriter, TelemetryWriterFactory, build_log_file_writer,
@@ -151,8 +148,8 @@ pub use timing::{
     TransferMetadataKey, TransferMetadataObservation, TransferMetadataSnapshot,
     build_final_timing_outputs_write_started_diagnostic_payload, build_transfer_metadata_observation,
     plan_stage_timing_recorder, plan_timing_file_write, resolve_final_timing_output_context,
-    serialize_final_timing_outputs_write_started_diagnostic_fields_json, should_collect_exact_stage_timings,
-    write_profile_summary_payload, write_stage_timing_snapshot_payload,
+    serialize_final_timing_outputs_write_started_diagnostic_fields_json, write_profile_summary_payload,
+    write_stage_timing_snapshot_payload,
 };
 pub use trusted_validation::{
     TrustedBgenValidationCacheDirectoryError, TrustedBgenValidationCacheLookupError,

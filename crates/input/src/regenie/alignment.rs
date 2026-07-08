@@ -5,20 +5,7 @@ use std::sync::Arc;
 use crate::sample::SampleKeyMode;
 
 use super::PredictionError;
-use super::loco::{LocoPredictions, LocoSampleIndex};
-
-pub(super) fn align_chromosome_predictions(
-    loco_predictions: &LocoPredictions,
-    alignment_indices: &[usize],
-) -> HashMap<String, Arc<[f32]>> {
-    loco_predictions
-        .chromosome_predictions
-        .iter()
-        .map(|(chromosome, prediction_values)| {
-            (chromosome.clone(), align_prediction_values(prediction_values, alignment_indices))
-        })
-        .collect()
-}
+use super::loco::LocoSampleIndex;
 
 pub(super) fn align_prediction_values(prediction_values: &Arc<[f32]>, alignment_indices: &[usize]) -> Arc<[f32]> {
     if is_identity_alignment(alignment_indices, prediction_values.len()) {

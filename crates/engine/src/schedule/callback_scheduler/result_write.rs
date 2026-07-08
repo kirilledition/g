@@ -1,8 +1,4 @@
-use crate::schedule::{
-    ResultWriteDrainCompletionPlan, ResultWriteHandoffPlan, ResultWriteItemDispatchPlan, ResultWriteItemKind,
-    ResultWriteItemResourceReleasePlan, ScheduleError, plan_result_write_handoff, plan_result_write_item_dispatch,
-    plan_result_write_item_dispatch_for_kinds,
-};
+use crate::schedule::{ResultWriteDrainCompletionPlan, ResultWriteItemResourceReleasePlan};
 
 use super::CallbackSchedulerState;
 
@@ -33,11 +29,6 @@ impl CallbackSchedulerState {
     }
 
     #[must_use]
-    pub const fn plan_result_write_handoff(&self, has_result_work_item: bool) -> ResultWriteHandoffPlan {
-        plan_result_write_handoff(has_result_work_item)
-    }
-
-    #[must_use]
     pub const fn plan_result_write_drain_completion(
         &self,
         has_result_work_item: bool,
@@ -48,27 +39,5 @@ impl CallbackSchedulerState {
             should_flush_binary_correction_diagnostics: !has_result_work_item
                 && flush_binary_correction_diagnostics_on_stop,
         }
-    }
-
-    /// Plan which result consumer should process a dequeued work item.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when either work-item kind is unsupported.
-    pub fn plan_result_write_item_dispatch(
-        &self,
-        result_work_item_kind: &str,
-        expected_result_work_item_kind: &str,
-    ) -> Result<ResultWriteItemDispatchPlan, ScheduleError> {
-        plan_result_write_item_dispatch(result_work_item_kind, expected_result_work_item_kind)
-    }
-
-    #[must_use]
-    pub fn plan_result_write_item_dispatch_for_kinds(
-        &self,
-        result_work_item_kind: ResultWriteItemKind,
-        expected_result_work_item_kind: ResultWriteItemKind,
-    ) -> ResultWriteItemDispatchPlan {
-        plan_result_write_item_dispatch_for_kinds(result_work_item_kind, expected_result_work_item_kind)
     }
 }
