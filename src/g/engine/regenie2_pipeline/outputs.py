@@ -14,6 +14,8 @@ from g.engine.native_dispatch import groups as native_dispatch_groups
 if typing.TYPE_CHECKING:
     from g.engine.regenie2_pipeline import context as pipeline_context
 
+RUN_EVENT_RECORDER: _core.NativeRunEventRecorder = _core.NativeRunEventRecorder()
+
 
 class OutputPreparationBgenEngineProtocol(typing.Protocol):
     """Minimal engine shape needed for output preparation."""
@@ -45,7 +47,7 @@ def open_pipeline_bgen_engine(
 ) -> _core.NativeRunEngineSession:
     """Open the native BGEN engine and emit shared telemetry."""
     engine_start_time = time.perf_counter()
-    _core.record_pipeline_bgen_engine_open_started_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_bgen_engine_open_started(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,
@@ -76,7 +78,7 @@ def open_pipeline_bgen_engine(
         "bgen_engine_open_index_setup",
         engine_start_time,
     )
-    _core.record_pipeline_bgen_engine_opened_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_bgen_engine_opened(
         phenotype_count=phenotype_count,
         phenotype_name=phenotype_name,
         pipeline_label=pipeline_label,

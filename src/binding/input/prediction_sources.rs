@@ -23,8 +23,8 @@ pub(crate) struct RegeniePredictionSource {
 }
 
 #[pyclass]
-struct MultiRegeniePredictionSource {
-    source: NativeMultiPredictionSource,
+pub(crate) struct MultiRegeniePredictionSource {
+    pub(crate) source: NativeMultiPredictionSource,
 }
 
 #[pymethods]
@@ -216,4 +216,38 @@ pub(crate) fn load_regenie_prediction_source_from_aligned_sample_data(
     )
     .map_err(|error| convert_prediction_error("load_prediction_source_from_native_pipeline_bundle", &error))?;
     Ok(RegeniePredictionSource { source })
+}
+
+pub(crate) fn load_multi_regenie_prediction_source_from_multi_aligned_sample_data(
+    prediction_list_path: &str,
+    aligned_sample_data: &NativeMultiAlignedSampleData,
+    sample_key_mode: &str,
+) -> PyResult<MultiRegeniePredictionSource> {
+    let parsed_sample_key_mode = parse_sample_key_mode(sample_key_mode)?;
+    let source = NativeMultiPredictionSource::load(
+        Path::new(prediction_list_path),
+        &aligned_sample_data.data.phenotype_names,
+        &aligned_sample_data.data.family_identifiers,
+        &aligned_sample_data.data.individual_identifiers,
+        parsed_sample_key_mode,
+    )
+    .map_err(|error| convert_prediction_error("load_multi_prediction_source_from_native_pipeline_bundle", &error))?;
+    Ok(MultiRegeniePredictionSource { source })
+}
+
+pub(crate) fn load_multi_regenie_prediction_sources_from_grouped_aligned_sample_data(
+    prediction_list_path: &str,
+    grouped_aligned_sample_data: &NativeGroupedAlignedSampleData,
+    sample_key_mode: &str,
+) -> PyResult<Vec<MultiRegeniePredictionSource>> {
+    let parsed_sample_key_mode = parse_sample_key_mode(sample_key_mode)?;
+    let aligned_sample_data_groups =
+        grouped_aligned_sample_data.data.groups.iter().map(|group| &group.aligned_sample_data).collect::<Vec<_>>();
+    let sources = NativeMultiPredictionSource::load_grouped(
+        Path::new(prediction_list_path),
+        &aligned_sample_data_groups,
+        parsed_sample_key_mode,
+    )
+    .map_err(|error| convert_prediction_error("load_multi_prediction_source_from_native_grouped_bundle", &error))?;
+    Ok(sources.into_iter().map(|source| MultiRegeniePredictionSource { source }).collect())
 }

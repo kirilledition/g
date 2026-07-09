@@ -217,11 +217,33 @@ Already completed:
   module facades have been removed.
 - Phase 10 callback scheduler/resource ownership is mostly complete; Python
   still retains transitional JAX/backend wiring and some side-effect adapters.
+- Root `_core.record_*_diagnostic_event` raw helper exports have been replaced
+  for production Python by typed recorder/context classes.
+- Output write dtype planning and writer finish thread planning now live in
+  `g-output`; the PyO3 output binding keeps Python buffer extraction and
+  `OutputWriterSession` adaptation.
+- Multi-trait output write iteration and Arrow array construction now live in
+  `g-output`; the PyO3 output binding extracts NumPy row slices and converts
+  Python metadata/stat buffers only.
+- Python option table normalization now lives in `g-interface`; the PyO3 config
+  binding converts Python objects into TOML-shaped values only.
+- Single-trait preflight value, prediction, and covariate-rank checks now live
+  in `g-engine`; the production engine binding no longer imports debug
+  preflight helpers.
+- Native BGEN delivery attempt planning and delivery error cleanup-outcome
+  planning now live in `g-engine`; the PyO3 engine binding executes Python
+  callback and writer side effects selected by those plans.
+- `NativeRunEngineSession` owns production run orchestration, including
+  dispatch selection, BGEN opening, sample alignment, prediction-source loading,
+  preflight, output bundle preparation, delivery, cleanup, writer finalization,
+  telemetry, and success finalization. Python supplies JAX runtime setup and
+  callback construction only.
 
 Still active:
 
-- Production Python still depends on `execution_plan.py`,
-  `engine/regenie2_pipeline/`, and `engine/native_dispatch/`.
+- `execution_plan.py`, `engine/regenie2_pipeline/`, and
+  `engine/native_dispatch/` remain as legacy/test/debug code, but production
+  runner execution no longer depends on them.
 - Large PyO3 modules remain, especially `engine/run_engine.rs`,
   `telemetry/run_events.rs`, `output/mod.rs`, and `config/mod.rs`.
 - `crates/input/src/sample/mod.rs` still contains real alignment logic.
@@ -230,26 +252,22 @@ Still active:
 
 ### 1. Binding Adapter Collapse
 
-Continue shrinking PyO3 modules so they adapt rather than decide.
-
-- `src/binding/engine/run_engine.rs`: move remaining scheduling, cleanup, and
-  dispatch policy into `g-engine`.
-- `src/binding/telemetry/run_events.rs`: expose typed handles or recorders, not
-  every event builder.
-- `src/binding/output/mod.rs`: keep writer/session/chunk handle adapters only.
-- `src/binding/config/mod.rs`: keep PyO3 config classes, but move validation and
-  planning policy to `g-interface`.
+Completed for the current native ownership boundary. `src/binding` now adapts
+Python objects, invokes Python callbacks, executes writer/session side effects,
+emits native event payloads, and converts errors; Rust-domain planning lives in
+the relevant crates. Further shrinkage of the same large PyO3 files depends on
+the native session owning more orchestration and belongs to the following
+roadmap items.
 
 ### 2. Native Engine Ownership
 
-Move the remaining production orchestration out of Python.
+Completed for production execution. `NativeRunEngineSession.run_to_completion`
+now owns lifecycle, input/output preparation, dispatch orchestration, cleanup,
+telemetry, and finalization. Python runner code configures JAX, builds the
+native session, and passes a callback factory for JAX compute callbacks.
 
-- `NativeRunEngineSession` should own lifecycle, input/output preparation,
-  dispatch orchestration, cleanup, telemetry, and finalization.
-- Python should supply JAX backend setup and compute callbacks only.
-- Remove production dependence on `src/g/execution_plan.py`,
-  `src/g/engine/regenie2_pipeline/`, and `src/g/engine/native_dispatch/` after
-  the native session owns equivalent behavior.
+Remaining deletion of legacy Python orchestration modules is a follow-up only
+after tests and debug tooling stop importing them.
 
 ### 3. Callback Runtime Finalization
 

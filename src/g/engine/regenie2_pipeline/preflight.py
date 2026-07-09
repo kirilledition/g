@@ -10,6 +10,7 @@ import numpy as np
 import g._core
 
 NATIVE_PREFLIGHT_VALIDATOR = g._core.NativePreflightValidator()
+RUN_EVENT_RECORDER: g._core.NativeRunEventRecorder = g._core.NativeRunEventRecorder()
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def emit_preflight_warnings(
     trusted_no_missing_diploid: bool,
 ) -> None:
     """Emit all non-fatal preflight warnings through native tracing."""
-    g._core.record_preflight_warning_diagnostic_events(
+    RUN_EVENT_RECORDER.preflight_warnings(
         list(preflight_report.warning_messages),
         chromosome_count=preflight_report.chromosome_count,
         covariate_count=preflight_report.covariate_count,

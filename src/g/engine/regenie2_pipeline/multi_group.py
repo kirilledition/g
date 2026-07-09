@@ -17,6 +17,8 @@ if typing.TYPE_CHECKING:
 
     from g import execution_plan, types
 
+RUN_EVENT_RECORDER: _core.NativeRunEventRecorder = _core.NativeRunEventRecorder()
+
 
 def prepare_multi_phenotype_output_bundle(
     *,
@@ -52,7 +54,7 @@ def run_multi_phenotype_group_preflight(
         len(run_input.phenotype_names),
     )
     preflight_start_time = time.perf_counter()
-    _core.record_pipeline_multi_group_preflight_started_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_group_preflight_started(
         phenotype_count=len(run_input.phenotype_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
@@ -67,7 +69,7 @@ def run_multi_phenotype_group_preflight(
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,
     )
     engine_timing.record_stage_duration(context.stage_timing_recorder, "preflight_validation", preflight_start_time)
-    _core.record_pipeline_multi_group_preflight_completed_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_group_preflight_completed(
         phenotype_count=len(run_input.phenotype_names),
         sample_count=int(run_input.sample_indices.shape[0]),
         trusted_no_missing_diploid=context.effective_trusted_no_missing_diploid,

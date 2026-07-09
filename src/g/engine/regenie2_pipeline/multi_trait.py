@@ -22,6 +22,8 @@ from g.engine.regenie2_pipeline import context as pipeline_context
 if typing.TYPE_CHECKING:
     from pathlib import Path
 
+RUN_EVENT_RECORDER: _core.NativeRunEventRecorder = _core.NativeRunEventRecorder()
+
 
 def run_regenie2_multi_phenotype_bgen_pipeline(
     request: dispatch_requests.MultiTraitLinearPipelineRequest | dispatch_requests.MultiTraitBinaryPipelineRequest,
@@ -84,7 +86,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     if request.sample_mode != types.MultiPhenotypeSampleMode.COMPLETE_CASE:
         message = "Multi-phenotype sample mode must be per-phenotype or complete-case."
         raise ValueError(message)
-    _core.record_pipeline_multi_trait_started_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_trait_started(
         association_mode=context.association_mode.value,
         phenotype_count=len(request.phenotype_names),
         sample_mode=request.sample_mode.value,
@@ -97,7 +99,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         phenotype_count=len(planned_compute_group.phenotype_names),
     )
     alignment_start_time = time.perf_counter()
-    _core.record_pipeline_multi_trait_input_load_started_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_trait_input_load_started(
         phenotype_count=len(planned_compute_group.phenotype_names)
     )
     run_input = native_dispatch_loaders.load_native_bgen_multi_run_input(
@@ -125,7 +127,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_count = int(run_input.sample_indices.shape[0])
     phenotype_count = len(run_input.phenotype_names)
     covariate_count = len(run_input.native_multi_aligned_sample_data.covariate_names)
-    _core.record_pipeline_multi_trait_input_aligned_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_trait_input_aligned(
         covariate_count=covariate_count,
         phenotype_count=phenotype_count,
         sample_count=sample_count,
@@ -143,7 +145,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
     sample_set_fingerprints = tuple(
         resolved_compute_group.sample_set_fingerprint for _ in resolved_compute_group.phenotype_names
     )
-    _core.record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_phenotype_sample_summary(
         phenotype_count=len(sample_counts),
         phenotype_group_count=1,
         sample_counts_differ=len(set(sample_counts)) > 1,
@@ -158,7 +160,7 @@ def run_regenie2_multi_phenotype_bgen_pipeline(
         1,
     )
     prediction_start_time = time.perf_counter()
-    _core.record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(phenotype_count=phenotype_count)
+    RUN_EVENT_RECORDER.pipeline_multi_trait_prediction_source_load_started(phenotype_count=phenotype_count)
     prediction_source = _core.MultiRegeniePredictionSource.from_native_multi_aligned_sample_data(
         str(context.prediction_list_path),
         run_input.native_multi_aligned_sample_data,

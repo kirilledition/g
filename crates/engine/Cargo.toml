@@ -11,6 +11,7 @@ g-input = { workspace = true }
 g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
+nalgebra = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 

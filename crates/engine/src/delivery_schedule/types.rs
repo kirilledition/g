@@ -16,6 +16,12 @@ pub enum BgenDeliveryCleanupOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BgenDeliveryErrorKind {
+    Failure,
+    Interrupted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BgenDeliveryCleanupAction {
     AbortCallback,
     AbortWriterSessions,
@@ -113,4 +119,16 @@ impl BgenDeliveryMethod {
 pub struct BgenDeliveryInvocationPlan {
     pub delivery_method: BgenDeliveryMethod,
     pub callback_batch_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BgenDeliveryAttemptPlan {
+    pub committed_chunk_count: usize,
+    pub invocation_plan: BgenDeliveryInvocationPlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BgenDeliveryErrorHandlingPlan {
+    pub cleanup_outcome: BgenDeliveryCleanupOutcome,
+    pub fallback_cleanup_outcome: Option<BgenDeliveryCleanupOutcome>,
 }

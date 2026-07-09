@@ -27,17 +27,17 @@ pub(crate) use crate::callback_worker_schedule::{
     plan_callback_worker_error_raise, plan_callback_worker_start_attempt, update_callback_worker_error,
 };
 pub use crate::delivery_schedule::{
-    BgenDeliveryCleanupAction, BgenDeliveryCleanupOutcome, BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan,
-    BgenDeliveryMethod, GpuGenotypeFormatResolutionPlan, plan_auto_gpu_genotype_format_after_trusted_validation,
-    plan_bgen_delivery_cleanup, plan_bgen_delivery_invocation, plan_gpu_genotype_format_auto_to_dosage,
+    BgenDeliveryAttemptPlan, BgenDeliveryCleanupAction, BgenDeliveryCleanupOutcome, BgenDeliveryCleanupPlan,
+    BgenDeliveryErrorHandlingPlan, BgenDeliveryErrorKind, BgenDeliveryInvocationPlan, BgenDeliveryMethod,
+    GpuGenotypeFormatResolutionPlan, plan_auto_gpu_genotype_format_after_trusted_validation,
+    plan_bgen_delivery_attempt, plan_bgen_delivery_cleanup, plan_bgen_delivery_error_handling,
+    plan_bgen_delivery_invocation, plan_gpu_genotype_format_auto_to_dosage,
     plan_single_trait_binary_gpu_genotype_format_resolution, resolve_bgen_delivery_method,
     resolve_delivery_callback_batch_size, resolve_effective_trusted_no_missing_diploid,
     resolve_grouped_union_callback_batch_size, resolve_manifest_gpu_genotype_format,
 };
 pub use crate::output_schedule::{
-    MultiTraitChunkWritePlan, MultiTraitOutputWritePlan, SingleTraitOutputWritePlan, WriterFinishExecutionPlan,
-    intersect_committed_chunk_identifier_sets, plan_multi_trait_chunk_write, plan_multi_trait_output_write,
-    plan_single_trait_output_write, plan_writer_finish_execution, resolve_writer_finish_thread_count,
+    MultiTraitChunkWritePlan, intersect_committed_chunk_identifier_sets, plan_multi_trait_chunk_write,
 };
 pub use callback_queue::{
     CallbackQueueGetAttemptPlan, CallbackQueueGetObservationPlan, CallbackQueueOccupancyState,

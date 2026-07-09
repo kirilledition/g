@@ -21,4 +21,11 @@ pub use crate::session::{
     OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
     finish_output_writer_sessions, validate_trait_major_statistic_shape,
 };
+pub use crate::write_plan::{
+    MultiTraitOutputWritePlan, Regenie2StatisticSliceBundle, SingleTraitOutputWritePlan, WriterFinishExecutionPlan,
+    finish_interrupted_output_writer_sessions_with_requested_threads,
+    finish_output_writer_sessions_with_requested_threads, plan_multi_trait_output_write,
+    plan_single_trait_output_write, plan_writer_finish_execution, resolve_writer_finish_thread_count,
+    write_regenie2_multi_trait_chunk_f32, write_regenie2_multi_trait_chunk_f64,
+};
 pub use crate::writer::OutputFileFormat;

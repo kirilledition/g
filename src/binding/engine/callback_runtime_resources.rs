@@ -21,7 +21,7 @@ use super::callback_queue::{
     NativeCallbackObjectQueue, NativeCallbackObjectQueueGetResult, NativeCallbackWaitSignal, NativeCallbackWorkerThread,
 };
 use super::callback_summary::NativeBinaryCorrectionSummary;
-use super::schedule::{
+use super::callback_schedule::{
     NativeCallbackQueueBackpressureObservation, NativeCallbackQueueGetObservationPlan,
     NativeCallbackQueuePutObservationPlan, NativeCallbackQueueStageBackpressureObservation,
     NativeCallbackSchedulerState, NativeCallbackWorkerErrorRaisePlan, NativeCallbackWorkerFinishPlan,

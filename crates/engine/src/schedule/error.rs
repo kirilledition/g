@@ -26,12 +26,6 @@ pub enum ScheduleError {
     DosageBufferLimitOverflow { dosage_buffer_limit: i64 },
     #[error("queue limit default for staging_depth exceeds platform capacity: {staging_depth}")]
     QueueLimitDefaultOverflow { staging_depth: usize },
-    #[error("Writer finish thread count must be positive.")]
-    NonPositiveWriterFinishThreadCount,
-    #[error("Writer session count exceeds platform capacity: {session_count}")]
-    WriterSessionCountOverflow { session_count: i64 },
-    #[error("Writer finish thread count exceeds platform capacity: {thread_count}")]
-    WriterFinishThreadCountOverflow { thread_count: i64 },
     #[error("Variant-major dosage batch inputs must have identical lengths.")]
     VariantMajorDosageBatchLengthMismatch,
     #[error("Variant-major dosage batch must contain at least one chunk.")]

@@ -12,6 +12,7 @@ mod resume;
 mod schema;
 mod session;
 mod timing;
+mod write_plan;
 mod writer;
 
 pub use api::*;

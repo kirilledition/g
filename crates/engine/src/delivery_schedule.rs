@@ -12,10 +12,11 @@ pub use genotype_format::{
     resolve_manifest_gpu_genotype_format,
 };
 pub use invocation::{
-    plan_bgen_delivery_invocation, resolve_bgen_delivery_method, resolve_delivery_callback_batch_size,
-    resolve_grouped_union_callback_batch_size,
+    plan_bgen_delivery_attempt, plan_bgen_delivery_error_handling, plan_bgen_delivery_invocation,
+    resolve_bgen_delivery_method, resolve_delivery_callback_batch_size, resolve_grouped_union_callback_batch_size,
 };
 pub use types::{
-    BgenDeliveryCleanupAction, BgenDeliveryCleanupOutcome, BgenDeliveryCleanupPlan, BgenDeliveryInvocationPlan,
-    BgenDeliveryMethod, GpuGenotypeFormatResolutionPlan,
+    BgenDeliveryAttemptPlan, BgenDeliveryCleanupAction, BgenDeliveryCleanupOutcome, BgenDeliveryCleanupPlan,
+    BgenDeliveryErrorHandlingPlan, BgenDeliveryErrorKind, BgenDeliveryInvocationPlan, BgenDeliveryMethod,
+    GpuGenotypeFormatResolutionPlan,
 };

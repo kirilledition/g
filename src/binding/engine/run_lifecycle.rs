@@ -19,7 +19,7 @@ use super::config::{NativeRunRequest, RegenieConfig};
 use super::errors;
 use super::json_bridge;
 use super::output;
-use super::run_events::{self, NativeRunArtifacts};
+use crate::binding::telemetry::run_events::{self, NativeRunArtifacts};
 use super::runtime_state::NativeRuntimeCompatibilityToken;
 use super::schedule::NativeMultiTraitChunkWritePlanner;
 use super::timing::NativeStageTimingRecorder;
@@ -215,6 +215,14 @@ impl NativeRunLifecycleSession {
 
     pub(crate) fn run_request_handle(&self) -> NativeRunRequest {
         NativeRunRequest::new(self.run_request.clone())
+    }
+
+    pub(crate) fn run_request_data(&self) -> &g_plan::RunRequest {
+        &self.run_request
+    }
+
+    pub(crate) fn prepared_run_existing_manifest_json(&self, phenotype_name: &str) -> PyResult<Option<String>> {
+        Ok(self.prepared_run_state(phenotype_name)?.existing_manifest_json.clone())
     }
 
     pub(crate) fn prepared_phenotype_runs_tuple<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
@@ -492,6 +500,43 @@ impl NativePreparedOutputBundle {
         self.initialization
             .committed_chunk_identifiers(output_index)
             .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))?
+            .iter()
+            .map(|identifier| {
+                usize::try_from(*identifier).map_err(|_| {
+                    PyValueError::new_err(format!("Committed chunk identifier {identifier} is out of range."))
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn writer_session_handles(&self, py: Python<'_>) -> Vec<Py<output::OutputWriterSession>> {
+        self.writer_sessions.iter().map(|session| session.clone_ref(py)).collect()
+    }
+
+    pub(crate) fn shared_committed_chunk_identifiers_usize(&self) -> PyResult<Vec<usize>> {
+        self.initialization
+            .shared_committed_chunk_identifiers()
+            .iter()
+            .map(|identifier| {
+                usize::try_from(*identifier).map_err(|_| {
+                    PyValueError::new_err(format!("Committed chunk identifier {identifier} is out of range."))
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn multi_trait_chunk_write_planner_handle(&self) -> PyResult<NativeMultiTraitChunkWritePlanner> {
+        NativeMultiTraitChunkWritePlanner::from_i64_committed_chunk_identifier_sets(
+            self.writer_sessions.len(),
+            self.initialization.committed_chunk_identifier_sets(),
+        )
+    }
+
+    pub(crate) fn shared_committed_chunk_identifiers_across_bundles_usize(
+        bundles: &[PyRef<'_, NativePreparedOutputBundle>],
+    ) -> PyResult<Vec<usize>> {
+        let initializations = bundles.iter().map(|bundle| &bundle.initialization).collect::<Vec<_>>();
+        g_engine::PipelineOutputInitialization::shared_committed_chunk_identifiers_across(initializations)
             .iter()
             .map(|identifier| {
                 usize::try_from(*identifier).map_err(|_| {

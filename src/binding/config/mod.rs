@@ -16,7 +16,7 @@ pub(crate) mod host_policy;
 
 use super::errors;
 use conversion::{
-    enum_value, normalized_toml_table_from_py_options, optional_enum_value, optional_path, path_to_string, string_tuple,
+    enum_value, optional_enum_value, optional_path, path_to_string, string_tuple, toml_table_from_py_mapping,
 };
 
 #[pyclass(name = "InputConfig", skip_from_py_object)]
@@ -1049,7 +1049,7 @@ impl GDiagnosticsConfig {
 impl RegenieConfig {
     #[staticmethod]
     fn from_options(raw_options: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let option_table = normalized_toml_table_from_py_options(raw_options)?;
+        let option_table = toml_table_from_py_mapping(raw_options)?;
         interface::from_options(&option_table)
             .map(Self::new)
             .map_err(|error| errors::convert_config_error("from_options", &error))

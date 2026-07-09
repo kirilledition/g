@@ -9,8 +9,8 @@ use pyo3::types::PyModule;
 use g_engine as native_callback_diagnostics;
 use g_runtime as native_run_events;
 
-use super::errors::convert_callback_diagnostics_error;
-use super::logging;
+use crate::binding::errors::convert_callback_diagnostics_error;
+use crate::binding::telemetry::logging;
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]

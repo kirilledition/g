@@ -21,6 +21,8 @@ if typing.TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+RUN_EVENT_RECORDER: _core.NativeRunEventRecorder = _core.NativeRunEventRecorder()
+
 
 def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     *,
@@ -34,7 +36,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     null_logistic_nonconvergence_policy: types.NullLogisticNonconvergencePolicy,
 ) -> tuple[Path | None, ...]:
     """Group independently aligned phenotypes and run one BGEN pass per compatible group."""
-    _core.record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_grouped_per_phenotype_started(
         association_mode=context.association_mode.value,
         phenotype_count=len(phenotype_names),
         sample_mode=types.MultiPhenotypeSampleMode.PER_PHENOTYPE.value,
@@ -112,7 +114,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
     engine_timing.record_stage_duration(
         context.stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time
     )
-    _core.record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_grouped_per_phenotype_groups_prepared(
         phenotype_count=len(phenotype_names),
         phenotype_group_count=len(grouped_run_inputs),
     )
@@ -135,7 +137,7 @@ def run_regenie2_grouped_per_phenotype_bgen_pipeline(
         for grouped_run_input in grouped_run_inputs
         for _ in grouped_run_input.compute_group.phenotype_names
     )
-    _core.record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_multi_phenotype_sample_summary(
         phenotype_count=len(grouped_sample_counts),
         phenotype_group_count=len(grouped_run_inputs),
         sample_counts_differ=len(set(grouped_sample_counts)) > 1,
@@ -292,7 +294,7 @@ def run_prepared_grouped_per_phenotype_union_bgen_pipeline(
         int(grouped_run_input.run_input.sample_indices.shape[0]) for grouped_run_input in grouped_run_inputs
     )
     union_sample_count = int(union_sample_indices.shape[0])
-    _core.record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+    RUN_EVENT_RECORDER.pipeline_grouped_union_delivery_selected(
         grouped_sample_count=grouped_sample_count,
         phenotype_group_count=len(grouped_run_inputs),
         union_sample_count=union_sample_count,

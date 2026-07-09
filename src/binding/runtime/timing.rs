@@ -27,6 +27,15 @@ pub(crate) struct NativeFinalTimingOutputContext {
 
 #[pymethods]
 impl NativeFinalTimingOutputContext {
+    #[staticmethod]
+    #[allow(clippy::needless_pass_by_value)]
+    fn from_sources(
+        diagnostics_stage_timing_path: Option<String>,
+        telemetry_session: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        resolve_final_timing_output_context(diagnostics_stage_timing_path, telemetry_session)
+    }
+
     #[getter]
     fn stage_timing_path(&self) -> Option<String> {
         self.inner.stage_timing_path.clone()
@@ -45,6 +54,14 @@ impl NativeFinalTimingOutputContext {
     #[getter]
     fn force_stage_timing_recorder(&self) -> bool {
         self.inner.force_stage_timing_recorder
+    }
+
+    fn record_outputs_write_started_diagnostic(&self) -> PyResult<()> {
+        record_final_timing_outputs_write_started_diagnostic_event(
+            self.inner.stage_timing_path.clone(),
+            self.inner.profile_summary_path.clone(),
+            self.inner.run_id.clone(),
+        )
     }
 }
 
@@ -269,7 +286,6 @@ impl NativeStageTimingRecorder {
     }
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn resolve_final_timing_output_context(
     diagnostics_stage_timing_path: Option<String>,
@@ -297,7 +313,6 @@ pub(crate) fn resolve_final_timing_output_context(
     Ok(NativeFinalTimingOutputContext { inner: context })
 }
 
-#[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
     stage_timing_path: Option<String>,
@@ -317,8 +332,6 @@ pub(crate) fn record_final_timing_outputs_write_started_diagnostic_event(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeFinalTimingOutputContext>()?;
     module.add_class::<NativeStageTimingRecorder>()?;
-    module.add_function(wrap_pyfunction!(resolve_final_timing_output_context, module)?)?;
-    module.add_function(wrap_pyfunction!(record_final_timing_outputs_write_started_diagnostic_event, module)?)?;
     Ok(())
 }
 

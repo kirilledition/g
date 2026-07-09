@@ -6,12 +6,10 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
-use g_engine as native_schedule;
 use g_output::{
     NativeChunkHandle, NativeChunkStats as NativeOutputChunkStats, OutputWriterSession as NativeOutputWriterSession,
     VariantMetadataColumns as NativeOutputVariantMetadataColumns,
 };
-use g_plan::FloatingPointDtype;
 use g_runtime as native_run_events;
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -205,15 +203,6 @@ fn extract_optional_readonly_array2_i32<'py>(
     extra_code.map(|array| array.extract().map_err(Into::into)).transpose()
 }
 
-fn parse_output_statistic_dtype(output_statistic_dtype: &str) -> PyResult<FloatingPointDtype> {
-    FloatingPointDtype::from_str_value(output_statistic_dtype).ok_or_else(|| {
-        PyValueError::new_err(format!(
-            "output_statistic_dtype must be one of {}, observed '{output_statistic_dtype}'.",
-            FloatingPointDtype::accepted_values().join(", "),
-        ))
-    })
-}
-
 #[pyfunction]
 #[pyo3(signature = (writer_session, metadata, chunk_stats, output_statistic_dtype, beta, standard_error, chi_squared, log10_p_value, extra_code=None))]
 #[allow(clippy::too_many_arguments)]
@@ -230,8 +219,8 @@ pub(crate) fn write_regenie2_native_chunk_with_output_dtype<'py>(
     log10_p_value: &Bound<'py, PyAny>,
     extra_code: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<()> {
-    let output_statistic_dtype = parse_output_statistic_dtype(&output_statistic_dtype)?;
-    let write_plan = native_schedule::plan_single_trait_output_write(true, output_statistic_dtype);
+    let write_plan = g_output::plan_single_trait_output_write(&output_statistic_dtype)
+        .map_err(|error| errors::convert_output_error("plan_single_trait_output_write", error))?;
     if write_plan.uses_float64_native_writer {
         return writer_session.write_regenie2_native_chunk_f64(
             py,
@@ -273,9 +262,8 @@ pub(crate) fn write_regenie2_multi_native_chunk_with_output_dtype<'py>(
     log10_p_value: &Bound<'py, PyAny>,
     extra_code: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<()> {
-    let output_statistic_dtype = parse_output_statistic_dtype(&output_statistic_dtype)?;
-    let write_plan =
-        native_schedule::plan_multi_trait_output_write(active_trait_indices.len(), true, output_statistic_dtype);
+    let write_plan = g_output::plan_multi_trait_output_write(active_trait_indices.len(), &output_statistic_dtype)
+        .map_err(|error| errors::convert_output_error("plan_multi_trait_output_write", error))?;
     if !write_plan.use_native_multi_writer {
         return Ok(());
     }
@@ -310,7 +298,7 @@ pub(crate) fn write_regenie2_multi_native_chunk_with_output_dtype<'py>(
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_regenie2_multi_native_chunk(
-    py: Python<'_>,
+    _py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
     active_trait_indices: Vec<usize>,
     metadata: PyRef<'_, PyVariantMetadata>,
@@ -362,59 +350,64 @@ pub(crate) fn write_regenie2_multi_native_chunk(
     let chi_squared_values = chi_squared.as_array();
     let log10_p_value_values = log10_p_value.as_array();
     let extra_code_values = extra_code.as_ref().map(PyReadonlyArray2::as_array);
-    for trait_index in active_trait_indices {
+    let mut beta_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut standard_error_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut chi_squared_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut log10_p_value_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut extra_code_rows = Vec::with_capacity(active_trait_indices.len());
+    for &trait_index in &active_trait_indices {
         if trait_index >= writer_sessions.len() {
             return Err(PyValueError::new_err("Active trait index is out of bounds for writer sessions."));
         }
-        let beta_row = beta_values.row(trait_index);
-        let standard_error_row = standard_error_values.row(trait_index);
-        let chi_squared_row = chi_squared_values.row(trait_index);
-        let log10_p_value_row = log10_p_value_values.row(trait_index);
-        let beta_slice = beta_row.as_slice().ok_or_else(|| PyValueError::new_err("beta row is not contiguous."))?;
-        let standard_error_slice = standard_error_row
-            .as_slice()
-            .ok_or_else(|| PyValueError::new_err("standard_error row is not contiguous."))?;
-        let chi_squared_slice =
-            chi_squared_row.as_slice().ok_or_else(|| PyValueError::new_err("chi_squared row is not contiguous."))?;
-        let log10_p_value_slice = log10_p_value_row
-            .as_slice()
-            .ok_or_else(|| PyValueError::new_err("log10_p_value row is not contiguous."))?;
-        let extra_code_row = extra_code_values.as_ref().map(|extra_code_array| extra_code_array.row(trait_index));
-        let extra_code_slice = match extra_code_row.as_ref() {
-            None => None,
-            Some(extra_code_array_row) => Some(
-                extra_code_array_row
+        beta_rows.push(beta_values.row(trait_index));
+        standard_error_rows.push(standard_error_values.row(trait_index));
+        chi_squared_rows.push(chi_squared_values.row(trait_index));
+        log10_p_value_rows.push(log10_p_value_values.row(trait_index));
+        if let Some(extra_code_array) = extra_code_values.as_ref() {
+            extra_code_rows.push(extra_code_array.row(trait_index));
+        }
+    }
+    let mut active_statistic_rows = Vec::with_capacity(active_trait_indices.len());
+    for active_row_index in 0..active_trait_indices.len() {
+        let extra_code_slice = if extra_code_values.is_some() {
+            Some(
+                extra_code_rows[active_row_index]
                     .as_slice()
                     .ok_or_else(|| PyValueError::new_err("extra_code row is not contiguous."))?,
-            ),
+            )
+        } else {
+            None
         };
-        let beta_array = build_copied_arrow_array::<f32, Float32Type>(beta_slice);
-        let standard_error_array = build_copied_arrow_array::<f32, Float32Type>(standard_error_slice);
-        let chi_squared_array = build_copied_arrow_array::<f32, Float32Type>(chi_squared_slice);
-        let log10_p_value_array = build_copied_arrow_array::<f32, Float32Type>(log10_p_value_slice);
-        let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
-        let statistic_arrays = Regenie2StatisticArrays {
-            beta: beta_array,
-            standard_error: standard_error_array,
-            chi_squared: chi_squared_array,
-            log10_p_value: log10_p_value_array,
-            extra_code: extra_code_array,
-        };
-        write_regenie2_chunk_arrays_detached(
-            py,
-            &writer_sessions[trait_index].inner,
-            chunk_handle.clone(),
-            statistic_arrays,
-            "write_regenie2_multi_native_chunk",
-        )?;
+        active_statistic_rows.push(g_output::Regenie2StatisticSliceBundle {
+            beta: beta_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("beta row is not contiguous."))?,
+            standard_error: standard_error_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("standard_error row is not contiguous."))?,
+            chi_squared: chi_squared_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("chi_squared row is not contiguous."))?,
+            log10_p_value: log10_p_value_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("log10_p_value row is not contiguous."))?,
+            extra_code: extra_code_slice,
+        });
     }
-    Ok(())
+    let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
+    g_output::write_regenie2_multi_trait_chunk_f32(
+        &native_writer_sessions,
+        &active_trait_indices,
+        &chunk_handle,
+        &active_statistic_rows,
+    )
+    .map_err(|error| errors::convert_output_error("write_regenie2_multi_native_chunk", error))
 }
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn write_regenie2_multi_native_chunk_f64(
-    py: Python<'_>,
+    _py: Python<'_>,
     writer_sessions: Vec<PyRef<'_, OutputWriterSession>>,
     active_trait_indices: Vec<usize>,
     metadata: PyRef<'_, PyVariantMetadata>,
@@ -466,53 +459,58 @@ pub(crate) fn write_regenie2_multi_native_chunk_f64(
     let chi_squared_values = chi_squared.as_array();
     let log10_p_value_values = log10_p_value.as_array();
     let extra_code_values = extra_code.as_ref().map(PyReadonlyArray2::as_array);
-    for trait_index in active_trait_indices {
+    let mut beta_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut standard_error_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut chi_squared_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut log10_p_value_rows = Vec::with_capacity(active_trait_indices.len());
+    let mut extra_code_rows = Vec::with_capacity(active_trait_indices.len());
+    for &trait_index in &active_trait_indices {
         if trait_index >= writer_sessions.len() {
             return Err(PyValueError::new_err("Active trait index is out of bounds for writer sessions."));
         }
-        let beta_row = beta_values.row(trait_index);
-        let standard_error_row = standard_error_values.row(trait_index);
-        let chi_squared_row = chi_squared_values.row(trait_index);
-        let log10_p_value_row = log10_p_value_values.row(trait_index);
-        let beta_slice = beta_row.as_slice().ok_or_else(|| PyValueError::new_err("beta row is not contiguous."))?;
-        let standard_error_slice = standard_error_row
-            .as_slice()
-            .ok_or_else(|| PyValueError::new_err("standard_error row is not contiguous."))?;
-        let chi_squared_slice =
-            chi_squared_row.as_slice().ok_or_else(|| PyValueError::new_err("chi_squared row is not contiguous."))?;
-        let log10_p_value_slice = log10_p_value_row
-            .as_slice()
-            .ok_or_else(|| PyValueError::new_err("log10_p_value row is not contiguous."))?;
-        let extra_code_row = extra_code_values.as_ref().map(|extra_code_array| extra_code_array.row(trait_index));
-        let extra_code_slice = match extra_code_row.as_ref() {
-            None => None,
-            Some(extra_code_array_row) => Some(
-                extra_code_array_row
+        beta_rows.push(beta_values.row(trait_index));
+        standard_error_rows.push(standard_error_values.row(trait_index));
+        chi_squared_rows.push(chi_squared_values.row(trait_index));
+        log10_p_value_rows.push(log10_p_value_values.row(trait_index));
+        if let Some(extra_code_array) = extra_code_values.as_ref() {
+            extra_code_rows.push(extra_code_array.row(trait_index));
+        }
+    }
+    let mut active_statistic_rows = Vec::with_capacity(active_trait_indices.len());
+    for active_row_index in 0..active_trait_indices.len() {
+        let extra_code_slice = if extra_code_values.is_some() {
+            Some(
+                extra_code_rows[active_row_index]
                     .as_slice()
                     .ok_or_else(|| PyValueError::new_err("extra_code row is not contiguous."))?,
-            ),
+            )
+        } else {
+            None
         };
-        let beta_array = build_copied_arrow_array::<f64, Float64Type>(beta_slice);
-        let standard_error_array = build_copied_arrow_array::<f64, Float64Type>(standard_error_slice);
-        let chi_squared_array = build_copied_arrow_array::<f64, Float64Type>(chi_squared_slice);
-        let log10_p_value_array = build_copied_arrow_array::<f64, Float64Type>(log10_p_value_slice);
-        let extra_code_array = extra_code_slice.map(build_copied_arrow_array::<i32, Int32Type>);
-        let statistic_arrays = Regenie2StatisticArrays {
-            beta: beta_array,
-            standard_error: standard_error_array,
-            chi_squared: chi_squared_array,
-            log10_p_value: log10_p_value_array,
-            extra_code: extra_code_array,
-        };
-        write_regenie2_chunk_arrays_detached(
-            py,
-            &writer_sessions[trait_index].inner,
-            chunk_handle.clone(),
-            statistic_arrays,
-            "write_regenie2_multi_native_chunk_f64",
-        )?;
+        active_statistic_rows.push(g_output::Regenie2StatisticSliceBundle {
+            beta: beta_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("beta row is not contiguous."))?,
+            standard_error: standard_error_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("standard_error row is not contiguous."))?,
+            chi_squared: chi_squared_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("chi_squared row is not contiguous."))?,
+            log10_p_value: log10_p_value_rows[active_row_index]
+                .as_slice()
+                .ok_or_else(|| PyValueError::new_err("log10_p_value row is not contiguous."))?,
+            extra_code: extra_code_slice,
+        });
     }
-    Ok(())
+    let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
+    g_output::write_regenie2_multi_trait_chunk_f64(
+        &native_writer_sessions,
+        &active_trait_indices,
+        &chunk_handle,
+        &active_statistic_rows,
+    )
+    .map_err(|error| errors::convert_output_error("write_regenie2_multi_native_chunk_f64", error))
 }
 
 pub(crate) fn finish_output_writer_sessions_for_delivery(
@@ -522,12 +520,12 @@ pub(crate) fn finish_output_writer_sessions_for_delivery(
 ) -> PyResult<Vec<Option<String>>> {
     let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
     record_writer_sessions_finish_started(requested_thread_count, writer_session_count)?;
-    let finish_plan = native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
-        .map_err(|error| errors::convert_schedule_error(&error))?;
     let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
-    py.detach(|| g_output::finish_output_writer_sessions(&native_writer_sessions, finish_plan.thread_count))
-        .map(optional_path_values_to_strings)
-        .map_err(|error| errors::convert_output_error("finish_output_writer_sessions", error))
+    py.detach(|| {
+        g_output::finish_output_writer_sessions_with_requested_threads(&native_writer_sessions, requested_thread_count)
+    })
+    .map(optional_path_values_to_strings)
+    .map_err(|error| errors::convert_output_error("finish_output_writer_sessions", error))
 }
 
 pub(crate) fn finish_interrupted_output_writer_sessions_for_delivery(
@@ -546,13 +544,11 @@ pub(crate) fn finish_interrupted_output_writer_sessions_for_delivery(
         signal_number,
         writer_session_count,
     )?;
-    let finish_plan = native_schedule::plan_writer_finish_execution(writer_session_count, requested_thread_count)
-        .map_err(|error| errors::convert_schedule_error(&error))?;
     let native_writer_sessions = writer_sessions.iter().map(|writer_session| &writer_session.inner).collect::<Vec<_>>();
     py.detach(|| {
-        g_output::finish_interrupted_output_writer_sessions(
+        g_output::finish_interrupted_output_writer_sessions_with_requested_threads(
             &native_writer_sessions,
-            finish_plan.thread_count,
+            requested_thread_count,
             signal_name,
         )
     })

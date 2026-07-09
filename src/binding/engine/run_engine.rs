@@ -14,6 +14,7 @@ use g_engine as native_engine_debug;
 use g_engine::Regenie2RunEngineCore;
 use g_genotype::{ChunkSpec as NativeChunkSpec, OutputBufferAddress, OutputValueCount};
 use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
+use g_plan as native_plan;
 use g_runtime as native_trusted_validation;
 use g_runtime as native_run_events;
 use numpy::ndarray::Array2;
@@ -36,9 +37,8 @@ use super::genotype::{
 };
 use super::output::{self, OutputWriterSession};
 use super::prediction_sources::{self, RegeniePredictionSource};
-use super::preflight;
 use super::profile::build_profile_snapshot_dict;
-use super::run_events::{self, NativeRunArtifacts};
+use crate::binding::telemetry::run_events::{self, NativeRunArtifacts};
 use super::run_lifecycle::{
     NativeOutputRuntimeGroupInput, NativePreparedOutputBundle, NativeRunLifecyclePhenotypeRun,
     NativeRunLifecycleSession,
@@ -60,6 +60,31 @@ struct NativeSingleTraitRunInput {
     data: native_input::AlignedSampleData,
 }
 
+#[pyclass(name = "NativeMultiTraitRunInput", skip_from_py_object)]
+struct NativeMultiTraitRunInput {
+    data: native_input::MultiAlignedSampleData,
+}
+
+#[pyclass(name = "NativeRunCallbackContext", skip_from_py_object)]
+#[derive(Clone)]
+struct NativeRunCallbackContext {
+    association_mode: String,
+    trait_type: String,
+    correction_method: String,
+    correction_p_threshold: f64,
+    correction_firth_se: bool,
+    staging_depth: i64,
+    native_callback_batch_size: i64,
+    result_in_flight_limit: Option<i64>,
+    dosage_buffer_limit: Option<i64>,
+    score_dtype: String,
+    firth_dtype: String,
+    output_statistic_dtype: String,
+    jax_device: String,
+    gpu_genotype_format: String,
+    requested_gpu_genotype_format: String,
+}
+
 #[pyclass(name = "NativeSingleTraitPipelineBundle", skip_from_py_object)]
 struct NativeSingleTraitPipelineBundle {
     run_input: Py<NativeSingleTraitRunInput>,
@@ -79,6 +104,33 @@ struct NativeRunEngineSession {
 struct BgenDeliveryCleanupExecution {
     final_parquet_paths: Vec<Option<String>>,
     callback_finished: bool,
+}
+
+struct NativeRunResolvedExecution {
+    backend_plan: native_plan::AssociationBackendPlan,
+    requested_gpu_genotype_format: String,
+    resolved_gpu_genotype_format: String,
+    effective_trusted_no_missing_diploid: bool,
+    binary_kernel_config_json: Option<String>,
+}
+
+struct NativeGroupedRunInputState {
+    compute_group: native_input::ResolvedPhenotypeComputeGroup,
+    phenotype_indices: Vec<usize>,
+    run_input: Py<NativeMultiTraitRunInput>,
+    aligned_sample_data: Py<NativeMultiAlignedSampleData>,
+    prediction_source: Py<prediction_sources::MultiRegeniePredictionSource>,
+    sample_indices: Vec<usize>,
+    sample_count: i64,
+}
+
+struct NativePreparedMultiGroupDelivery {
+    phenotype_indices: Vec<usize>,
+    aligned_sample_data: Py<NativeMultiAlignedSampleData>,
+    callback: Py<PyAny>,
+    writer_sessions: Vec<Py<OutputWriterSession>>,
+    output_bundle: Py<NativePreparedOutputBundle>,
+    sample_indices: Vec<usize>,
 }
 
 #[pymethods]
@@ -132,6 +184,148 @@ impl NativeSingleTraitRunInput {
     #[getter]
     fn covariate_names(&self) -> Vec<String> {
         self.data.covariate_names.clone()
+    }
+}
+
+#[pymethods]
+impl NativeMultiTraitRunInput {
+    #[getter]
+    #[allow(clippy::unused_self)]
+    fn native_aligned_sample_data(&self, py: Python<'_>) -> Py<PyAny> {
+        py.None()
+    }
+
+    #[getter]
+    fn native_multi_aligned_sample_data(&self) -> NativeMultiAlignedSampleData {
+        NativeMultiAlignedSampleData::new(self.data.clone())
+    }
+
+    #[getter]
+    fn phenotype_names(&self) -> Vec<String> {
+        self.data.phenotype_names.clone()
+    }
+
+    #[getter]
+    fn sample_indices<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<i64>>> {
+        Ok(usize_slice_to_py_i64(&self.data.sample_indices, "sample_indices")?.into_pyarray(py))
+    }
+
+    #[getter]
+    fn phenotype_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let phenotype_matrix = Array2::from_shape_vec(
+            (self.data.phenotype_row_count, self.data.phenotype_column_count),
+            self.data.phenotype_matrix_values.clone(),
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(phenotype_matrix.into_pyarray(py))
+    }
+
+    #[getter]
+    fn covariate_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let covariate_matrix = Array2::from_shape_vec(
+            (self.data.covariate_row_count, self.data.covariate_column_count),
+            self.data.covariate_matrix_values.clone(),
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(covariate_matrix.into_pyarray(py))
+    }
+
+    #[getter]
+    fn is_binary_trait(&self) -> bool {
+        self.data.is_binary_trait
+    }
+
+    #[getter]
+    fn family_identifiers(&self) -> Vec<String> {
+        self.data.family_identifiers.clone()
+    }
+
+    #[getter]
+    fn individual_identifiers(&self) -> Vec<String> {
+        self.data.individual_identifiers.clone()
+    }
+
+    #[getter]
+    fn covariate_names(&self) -> Vec<String> {
+        self.data.covariate_names.clone()
+    }
+}
+
+#[pymethods]
+impl NativeRunCallbackContext {
+    #[getter]
+    fn association_mode(&self) -> &str {
+        &self.association_mode
+    }
+
+    #[getter]
+    fn trait_type(&self) -> &str {
+        &self.trait_type
+    }
+
+    #[getter]
+    fn correction_method(&self) -> &str {
+        &self.correction_method
+    }
+
+    #[getter]
+    fn correction_p_threshold(&self) -> f64 {
+        self.correction_p_threshold
+    }
+
+    #[getter]
+    fn correction_firth_se(&self) -> bool {
+        self.correction_firth_se
+    }
+
+    #[getter]
+    fn staging_depth(&self) -> i64 {
+        self.staging_depth
+    }
+
+    #[getter]
+    fn native_callback_batch_size(&self) -> i64 {
+        self.native_callback_batch_size
+    }
+
+    #[getter]
+    fn result_in_flight_limit(&self) -> Option<i64> {
+        self.result_in_flight_limit
+    }
+
+    #[getter]
+    fn dosage_buffer_limit(&self) -> Option<i64> {
+        self.dosage_buffer_limit
+    }
+
+    #[getter]
+    fn score_dtype(&self) -> &str {
+        &self.score_dtype
+    }
+
+    #[getter]
+    fn firth_dtype(&self) -> &str {
+        &self.firth_dtype
+    }
+
+    #[getter]
+    fn output_statistic_dtype(&self) -> &str {
+        &self.output_statistic_dtype
+    }
+
+    #[getter]
+    fn jax_device(&self) -> &str {
+        &self.jax_device
+    }
+
+    #[getter]
+    fn gpu_genotype_format(&self) -> &str {
+        &self.gpu_genotype_format
+    }
+
+    #[getter]
+    fn requested_gpu_genotype_format(&self) -> &str {
+        &self.requested_gpu_genotype_format
     }
 }
 
@@ -494,9 +688,9 @@ impl NativeRunEngineSession {
         effective_trusted_no_missing_diploid: bool,
         trusted_bgen_validation_mode: String,
         telemetry_session: Option<&Bound<'py, PyAny>>,
-        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
     ) -> PyResult<NativeSingleTraitPipelineBundle> {
-        let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
+        let stage_timing_recorder_reference = stage_timing_recorder;
         run_events::record_pipeline_single_trait_started_diagnostic_event(
             &association_mode,
             &phenotype_name,
@@ -643,13 +837,14 @@ impl NativeRunEngineSession {
             effective_trusted_no_missing_diploid,
             option_usize_to_i64(variant_limit, "BGEN variant limit")?,
         )?;
-        let preflight_shape = preflight::validate_single_trait_preflight_values(
+        let preflight_shape = native_engine_debug::validate_single_trait_preflight_values(
             &aligned_sample_data.data.phenotype_vector,
             aligned_sample_data.data.covariate_row_count,
             aligned_sample_data.data.covariate_column_count,
             &aligned_sample_data.data.covariate_matrix_values,
             is_binary_trait,
-        )?;
+        )
+        .map_err(|error| convert_preflight_error(&error))?;
         let required_chromosomes = self.with_open_engine(|engine| {
             engine.required_chromosomes(variant_limit).map_err(|error| convert_preflight_error(&error))
         })?;
@@ -658,15 +853,21 @@ impl NativeRunEngineSession {
                 .source
                 .chromosome_predictions(chromosome)
                 .map_err(|error| convert_prediction_error("chromosome_predictions", &error))?;
-            preflight::validate_single_prediction_values(chromosome, prediction_values, preflight_shape.sample_count)?;
+            native_engine_debug::validate_single_prediction_values(
+                chromosome,
+                prediction_values,
+                preflight_shape.sample_count,
+            )
+            .map_err(|error| convert_preflight_error(&error))?;
         }
         let chromosome_count = usize_to_i64(required_chromosomes.len(), "Chromosome count")?;
-        let preflight_report = preflight::build_preflight_report(
+        let preflight_report = native_engine_debug::build_preflight_report_payload(
             preflight_shape.sample_count,
             preflight_shape.covariate_count,
             chromosome_count,
             effective_trusted_no_missing_diploid,
-        )?;
+        )
+        .map_err(|error| convert_preflight_error(&error))?;
         run_events::record_preflight_warning_diagnostic_events(
             preflight_report.warning_messages.clone(),
             preflight_report.chromosome_count,
@@ -742,60 +943,24 @@ impl NativeRunEngineSession {
         variant_major_packed8_probability_pairs: bool,
         pipeline_label: String,
     ) -> PyResult<Option<String>> {
-        let run_input_handle = bundle.run_input.clone_ref(py);
-        let writer_session_handle = bundle.writer_session.clone_ref(py);
-        let committed_chunk_identifiers = bundle.committed_chunk_identifiers.clone();
-        drop(bundle);
-
-        let run_input_data = run_input_handle.bind(py).borrow().data.clone();
-        let sample_indices_array =
-            usize_slice_to_py_i64(&run_input_data.sample_indices, "sample_indices")?.into_pyarray(py);
-        let sample_indices = sample_indices_array.readonly();
-        let native_aligned_sample_data = Py::new(py, NativeAlignedSampleData::new(run_input_data))?;
-        let native_aligned_sample_data_reference = native_aligned_sample_data.bind(py).borrow();
-        let writer_session_reference = writer_session_handle.bind(py).borrow();
-        let writer_sessions = vec![writer_session_reference];
-        let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
-        let engine_guard = self.lock_engine()?;
-        let engine = engine_guard
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
-        let mut callback_finished = false;
-        let delivery_result = run_bgen_delivery_attempt(
+        self.run_single_trait_pipeline_bundle_internal(
             py,
-            engine,
-            &sample_indices,
-            Some(native_aligned_sample_data_reference),
-            None,
-            &writer_sessions,
+            &bundle,
             callback,
-            stage_timing_recorder_reference,
-            1,
-            Some(committed_chunk_identifiers),
+            stage_timing_recorder.as_deref(),
             variant_major_packed8_probability_pairs,
             &pipeline_label,
-            &mut callback_finished,
-        );
-        match delivery_result {
-            Ok(final_parquet_paths) => {
-                run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
-                    usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
-                    &pipeline_label,
-                )?;
-                Ok(final_parquet_paths.into_iter().next().flatten())
-            }
-            Err(error) => handle_bgen_delivery_error(
-                py,
-                error,
-                callback_finished,
-                callback,
-                &writer_sessions,
-                stage_timing_recorder_reference,
-                1,
-                &pipeline_label,
-            )
-            .map(|final_parquet_paths| final_parquet_paths.into_iter().next().flatten()),
-        }
+        )
+    }
+
+    fn run_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+    ) -> PyResult<NativeRunArtifacts> {
+        self.run_to_completion_internal(py, callback_factory, telemetry_session, stage_timing_recorder.as_deref())
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -838,6 +1003,1151 @@ impl NativeRunEngineSession {
             .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
         operation(engine)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn run_to_completion_internal<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    ) -> PyResult<NativeRunArtifacts> {
+        let output_start_time = Instant::now();
+        run_events::record_runner_execution_plan_build_started_diagnostic_event()?;
+        let run_request = self.lifecycle.run_request_data().clone();
+        let phenotype_count = usize_to_i64(run_request.phenotype_runs.len(), "Phenotype count")?;
+        let resolved_execution =
+            self.resolve_run_execution(py, callback_factory, telemetry_session, stage_timing_recorder, &run_request)?;
+        run_events::record_execution_plan_prepared_events(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            run_request.trait_request.trait_type.as_str(),
+            phenotype_count,
+            i64::from(run_request.trait_request.chunk_size),
+            run_request.compute.variant_limit.map(i64::from),
+            run_request.compute.device.as_str(),
+        )?;
+        record_stage_duration(stage_timing_recorder, "output_run_preparation", output_start_time)?;
+        run_events::record_runner_execution_plan_dispatch_started_diagnostic_event(
+            phenotype_count,
+            run_request.association_mode.as_str(),
+        )?;
+        self.lifecycle.mark_dispatch_started_internal()?;
+        let final_output_paths = if run_request.phenotype_runs.len() > 1 {
+            self.run_multi_trait_to_completion(
+                py,
+                callback_factory,
+                telemetry_session,
+                stage_timing_recorder,
+                &run_request,
+                &resolved_execution,
+            )?
+        } else {
+            self.run_single_trait_to_completion(
+                py,
+                callback_factory,
+                telemetry_session,
+                stage_timing_recorder,
+                &run_request,
+                &resolved_execution,
+            )?
+        };
+        run_events::record_runner_execution_plan_finalization_started_diagnostic_event(
+            phenotype_count,
+            run_request.association_mode.as_str(),
+        )?;
+        let artifacts = self.lifecycle.finalize_success_artifacts(final_output_paths)?;
+        run_events::record_runner_metadata_artifacts_finalized_diagnostic_event(
+            run_request.association_mode.as_str(),
+            phenotype_count,
+        )?;
+        Ok(artifacts)
+    }
+
+    fn resolve_run_execution<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+    ) -> PyResult<NativeRunResolvedExecution> {
+        let binary_kernel_config_json =
+            callback_factory.call_method0("binary_kernel_config_json")?.extract::<Option<String>>()?;
+        let resolved_gpu_genotype_format =
+            self.resolve_gpu_genotype_format(py, telemetry_session, stage_timing_recorder, run_request)?;
+        let backend_plan = native_plan::plan_association_backend(
+            run_request.association_mode,
+            run_request.compute.device,
+            resolved_gpu_genotype_format,
+        )
+        .map_err(|error| super::errors::convert_prepared_plan_error(&error))?;
+        let effective_trusted_no_missing_diploid = native_engine_debug::resolve_effective_trusted_no_missing_diploid(
+            run_request.compute.trusted_no_missing_diploid,
+            backend_plan.resolved_genotype_format == native_plan::GpuGenotypeFormat::Packed8,
+        );
+        Ok(NativeRunResolvedExecution {
+            backend_plan,
+            requested_gpu_genotype_format: run_request.compute.requested_gpu_genotype_format.as_str().to_string(),
+            resolved_gpu_genotype_format: resolved_gpu_genotype_format.as_str().to_string(),
+            effective_trusted_no_missing_diploid,
+            binary_kernel_config_json,
+        })
+    }
+
+    fn resolve_gpu_genotype_format<'py>(
+        &self,
+        py: Python<'py>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+    ) -> PyResult<native_plan::GpuGenotypeFormat> {
+        let is_single_binary = run_request.phenotype_runs.len() == 1
+            && run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary;
+        if !is_single_binary {
+            let resolution_reason =
+                if run_request.phenotype_runs.len() == 1 { "single_trait_linear" } else { "multi_phenotype" };
+            let native_resolution_plan = native_engine_debug::plan_gpu_genotype_format_auto_to_dosage(
+                run_request.compute.requested_gpu_genotype_format.as_str(),
+                resolution_reason,
+            )
+            .map_err(|error| convert_schedule_error(&error))?;
+            run_events::record_gpu_genotype_format_resolved_native_plan_events(
+                telemetry_session,
+                &native_resolution_plan,
+            )?;
+            return concrete_gpu_genotype_format_from_resolution_plan(&native_resolution_plan);
+        }
+
+        let phenotype_name = run_request
+            .phenotype_runs
+            .first()
+            .ok_or_else(|| PyRuntimeError::new_err("Single-trait run request has no phenotype run."))?
+            .phenotype_name
+            .clone();
+        let existing_manifest_json = self.lifecycle.prepared_run_existing_manifest_json(&phenotype_name)?;
+        let manifest_fields = manifest_gpu_genotype_format_fields(existing_manifest_json.as_deref())?;
+        let native_resolution_plan = native_engine_debug::plan_single_trait_binary_gpu_genotype_format_resolution(
+            run_request.compute.requested_gpu_genotype_format.as_str(),
+            manifest_fields.0.as_deref(),
+            manifest_fields.1.as_deref(),
+            self.lifecycle.output_resume_value(),
+            run_request.compute.device.as_str(),
+        )
+        .map_err(|error| convert_schedule_error(&error))?;
+        run_events::record_gpu_genotype_format_resolved_native_plan_events(telemetry_session, &native_resolution_plan)?;
+        if !native_resolution_plan.requires_trusted_validation {
+            return concrete_gpu_genotype_format_from_resolution_plan(&native_resolution_plan);
+        }
+
+        let trusted_resolution_plan =
+            match self.try_open_trusted_bgen_engine_for_gpu_format_resolution(py, stage_timing_recorder, run_request) {
+                Ok(()) => native_engine_debug::plan_auto_gpu_genotype_format_after_trusted_validation(None),
+                Err(error) => {
+                    let error_message = error.value(py).str()?.to_string_lossy().into_owned();
+                    native_engine_debug::plan_auto_gpu_genotype_format_after_trusted_validation(Some(&error_message))
+                }
+            };
+        run_events::record_gpu_genotype_format_resolved_native_plan_events(
+            telemetry_session,
+            &trusted_resolution_plan,
+        )?;
+        concrete_gpu_genotype_format_from_resolution_plan(&trusted_resolution_plan)
+    }
+
+    fn try_open_trusted_bgen_engine_for_gpu_format_resolution(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+    ) -> PyResult<()> {
+        let engine_start_time = Instant::now();
+        self.open_bgen_engine_internal(
+            py,
+            &run_request.input.bgen_path,
+            u32_value_as_usize(run_request.trait_request.chunk_size, "trait chunk size")?,
+            run_request.compute.variant_limit.map(|value| u32_value_as_usize(value, "variant limit")).transpose()?,
+            true,
+            Some(run_request.compute.trusted_bgen_validation_mode.as_str()),
+        )?;
+        record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_single_trait_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+    ) -> PyResult<Vec<Option<String>>> {
+        let phenotype_run = run_request
+            .phenotype_runs
+            .first()
+            .ok_or_else(|| PyRuntimeError::new_err("Single-trait run request has no phenotype run."))?;
+        run_events::record_runner_single_phenotype_dispatch_started_diagnostic_event(
+            run_request.association_mode.as_str(),
+            &phenotype_run.phenotype_name,
+        )?;
+        if run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary {
+            run_events::record_runner_binary_engine_dispatch_started_diagnostic_event(&phenotype_run.phenotype_name)?;
+        } else {
+            run_events::record_runner_linear_engine_dispatch_started_diagnostic_event(&phenotype_run.phenotype_name)?;
+        }
+        let pipeline_label = if run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary {
+            "binary"
+        } else {
+            "linear"
+        };
+        let bundle = self.prepare_single_trait_pipeline_bundle(
+            py,
+            phenotype_run.phenotype_name.clone(),
+            Some(run_request.input.covariate_names.clone()),
+            run_request.association_mode.as_str().to_string(),
+            resolved_execution.backend_plan.kind.as_str().to_string(),
+            resolved_execution.backend_plan.device.as_str().to_string(),
+            resolved_execution.resolved_gpu_genotype_format.clone(),
+            resolved_execution.requested_gpu_genotype_format.clone(),
+            run_request.compute.score_dtype.as_str().to_string(),
+            run_request.compute.firth_dtype.as_str().to_string(),
+            resolved_execution.binary_kernel_config_json.clone(),
+            run_request.input.sample_key_mode.as_str().to_string(),
+            run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary,
+            pipeline_label.to_string(),
+            run_request.input.bgen_path.clone(),
+            run_request.input.sample_path.clone(),
+            run_request.input.phenotype_path.clone(),
+            run_request.input.covariate_path.clone(),
+            run_request.input.prediction_list_path.clone(),
+            u32_value_as_usize(run_request.trait_request.chunk_size, "trait chunk size")?,
+            run_request.compute.variant_limit.map(|value| u32_value_as_usize(value, "variant limit")).transpose()?,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.compute.trusted_bgen_validation_mode.as_str().to_string(),
+            telemetry_session,
+            stage_timing_recorder,
+        )?;
+        let callback_context = Py::new(py, callback_context_from_request(run_request, resolved_execution)?)?;
+        let callback = callback_factory.call_method1(
+            "build_single_trait_callback",
+            (
+                callback_context,
+                bundle.run_input.clone_ref(py),
+                bundle.prediction_source.clone_ref(py),
+                bundle.writer_session.clone_ref(py),
+            ),
+        )?;
+        let final_output_path = self.run_single_trait_pipeline_bundle_internal(
+            py,
+            &bundle,
+            &callback,
+            stage_timing_recorder,
+            resolved_execution.backend_plan.resolved_genotype_format == native_plan::GpuGenotypeFormat::Packed8,
+            "Native BGEN",
+        )?;
+        run_events::record_phenotype_writer_finished_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            &phenotype_run.phenotype_name,
+            final_output_path.clone(),
+        )?;
+        Ok(vec![final_output_path])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_multi_trait_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+    ) -> PyResult<Vec<Option<String>>> {
+        let phenotype_count = usize_to_i64(run_request.phenotype_runs.len(), "Phenotype count")?;
+        run_events::record_runner_multi_phenotype_dispatch_started_diagnostic_event(
+            phenotype_count,
+            run_request.association_mode.as_str(),
+        )?;
+        if run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary {
+            run_events::record_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_event(phenotype_count)?;
+        } else {
+            run_events::record_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_event(phenotype_count)?;
+        }
+        let final_output_paths = match run_request.compute.multi_phenotype_sample_mode {
+            native_plan::MultiPhenotypeSampleMode::CompleteCase => self.run_complete_case_multi_trait_to_completion(
+                py,
+                callback_factory,
+                telemetry_session,
+                stage_timing_recorder,
+                run_request,
+                resolved_execution,
+            )?,
+            native_plan::MultiPhenotypeSampleMode::PerPhenotype => self.run_grouped_per_phenotype_to_completion(
+                py,
+                callback_factory,
+                telemetry_session,
+                stage_timing_recorder,
+                run_request,
+                resolved_execution,
+            )?,
+        };
+        run_events::record_multi_phenotype_writer_finished_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            phenotype_count,
+            final_output_paths.clone(),
+        )?;
+        Ok(final_output_paths)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_complete_case_multi_trait_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+    ) -> PyResult<Vec<Option<String>>> {
+        let planned_compute_group = complete_case_compute_group_from_request(run_request)?;
+        let phenotype_count = usize_to_i64(planned_compute_group.phenotype_names.len(), "Phenotype count")?;
+        run_events::record_pipeline_multi_trait_started_diagnostic_event(
+            run_request.association_mode.as_str(),
+            phenotype_count,
+            native_plan::MultiPhenotypeSampleMode::CompleteCase.as_str(),
+        )?;
+        self.open_pipeline_bgen_engine_with_events(
+            py,
+            telemetry_session,
+            stage_timing_recorder,
+            run_request,
+            resolved_execution,
+            "multi-phenotype",
+            None,
+            Some(phenotype_count),
+        )?;
+        let alignment_start_time = Instant::now();
+        run_events::record_pipeline_multi_trait_input_load_started_diagnostic_event(phenotype_count)?;
+        let aligned_sample_data = self.with_open_engine(|engine| {
+            align_multi_sample_data_for_engine(
+                engine,
+                py,
+                run_request.input.sample_path.clone(),
+                run_request.input.phenotype_path.clone(),
+                planned_compute_group.phenotype_names.clone(),
+                run_request.input.covariate_path.clone(),
+                Some(run_request.input.covariate_names.clone()),
+                run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary,
+                run_request.input.sample_key_mode.as_str(),
+            )
+        })?;
+        let resolved_compute_group = native_input::resolve_complete_case_compute_group(
+            &aligned_sample_data.data,
+            u32_indices_to_usize(&planned_compute_group.phenotype_indices, "phenotype compute group index")?,
+            planned_compute_group.phenotype_names.clone(),
+            Some(run_request.input.prediction_list_path.as_str()),
+            parse_sample_key_mode(run_request.input.sample_key_mode.as_str())?,
+        );
+        record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)?;
+        let sample_count = usize_to_i64(aligned_sample_data.data.sample_indices.len(), "Aligned sample count")?;
+        let covariate_count = usize_to_i64(aligned_sample_data.data.covariate_names.len(), "Covariate count")?;
+        run_events::record_pipeline_multi_trait_input_aligned_diagnostic_event(
+            covariate_count,
+            phenotype_count,
+            sample_count,
+        )?;
+        run_events::record_sample_alignment_completed_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            None,
+            Some(phenotype_count),
+            Some(sample_count),
+            Some(covariate_count),
+            None,
+        )?;
+        self.record_multi_phenotype_sample_summary(
+            telemetry_session,
+            run_request,
+            native_plan::MultiPhenotypeSampleMode::CompleteCase,
+            &[resolved_compute_group.clone()],
+            &[sample_count],
+        )?;
+        let prediction_start_time = Instant::now();
+        run_events::record_pipeline_multi_trait_prediction_source_load_started_diagnostic_event(phenotype_count)?;
+        let prediction_source =
+            prediction_sources::load_multi_regenie_prediction_source_from_multi_aligned_sample_data(
+                &run_request.input.prediction_list_path,
+                &aligned_sample_data,
+                run_request.input.sample_key_mode.as_str(),
+            )?;
+        record_stage_duration(stage_timing_recorder, "prediction_source_load", prediction_start_time)?;
+        self.run_multi_group_preflight(
+            telemetry_session,
+            stage_timing_recorder,
+            run_request,
+            resolved_execution,
+            &aligned_sample_data.data,
+            &prediction_source,
+        )?;
+        let output_bundle = self.prepare_multi_trait_output_bundle(
+            py,
+            stage_timing_recorder,
+            run_request,
+            resolved_execution,
+            &aligned_sample_data.data,
+            &resolved_compute_group,
+            native_plan::MultiPhenotypeSampleMode::CompleteCase,
+        )?;
+        let run_input = Py::new(py, NativeMultiTraitRunInput { data: aligned_sample_data.data.clone() })?;
+        let aligned_sample_data_handle = Py::new(py, aligned_sample_data)?;
+        let prediction_source_handle = Py::new(py, prediction_source)?;
+        let prepared_delivery = self.prepare_multi_group_delivery(
+            py,
+            callback_factory,
+            run_request,
+            resolved_execution,
+            run_input,
+            aligned_sample_data_handle,
+            prediction_source_handle,
+            output_bundle,
+            u32_indices_to_usize(&planned_compute_group.phenotype_indices, "phenotype compute group index")?,
+        )?;
+        self.run_prepared_multi_group_delivery(
+            py,
+            stage_timing_recorder,
+            resolved_execution,
+            prepared_delivery,
+            "Multi-phenotype native BGEN",
+            i64::from(run_request.output.writer_thread_count),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
+    fn run_grouped_per_phenotype_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+    ) -> PyResult<Vec<Option<String>>> {
+        let phenotype_names = phenotype_names_from_request(run_request);
+        let phenotype_count = usize_to_i64(phenotype_names.len(), "Phenotype count")?;
+        run_events::record_pipeline_grouped_per_phenotype_started_diagnostic_event(
+            run_request.association_mode.as_str(),
+            phenotype_count,
+            native_plan::MultiPhenotypeSampleMode::PerPhenotype.as_str(),
+        )?;
+        self.open_pipeline_bgen_engine_with_events(
+            py,
+            telemetry_session,
+            stage_timing_recorder,
+            run_request,
+            resolved_execution,
+            "grouped per-phenotype",
+            None,
+            Some(phenotype_count),
+        )?;
+        let alignment_start_time = Instant::now();
+        let grouped_aligned_sample_data = self.with_open_engine(|engine| {
+            align_grouped_sample_data_for_engine(
+                engine,
+                py,
+                run_request.input.sample_path.clone(),
+                run_request.input.phenotype_path.clone(),
+                phenotype_names.clone(),
+                run_request.input.covariate_path.clone(),
+                Some(run_request.input.covariate_names.clone()),
+                run_request.trait_request.trait_type == native_plan::RegenieTraitType::Binary,
+                run_request.input.sample_key_mode.as_str(),
+            )
+        })?;
+        let prediction_sources =
+            prediction_sources::load_multi_regenie_prediction_sources_from_grouped_aligned_sample_data(
+                &run_request.input.prediction_list_path,
+                &grouped_aligned_sample_data,
+                run_request.input.sample_key_mode.as_str(),
+            )?;
+        if grouped_aligned_sample_data.data.groups.len() != prediction_sources.len() {
+            return Err(PyValueError::new_err("Grouped prediction source count does not match aligned group count."));
+        }
+        let grouped_run_inputs =
+            self.build_grouped_run_inputs(py, run_request, grouped_aligned_sample_data, prediction_sources)?;
+        record_stage_duration(stage_timing_recorder, "sample_phenotype_covariate_alignment", alignment_start_time)?;
+        run_events::record_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_event(
+            phenotype_count,
+            usize_to_i64(grouped_run_inputs.len(), "Phenotype group count")?,
+        )?;
+        run_events::record_sample_alignment_completed_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            None,
+            Some(phenotype_count),
+            None,
+            None,
+            Some(usize_to_i64(grouped_run_inputs.len(), "Phenotype group count")?),
+        )?;
+        self.record_multi_phenotype_sample_summary(
+            telemetry_session,
+            run_request,
+            native_plan::MultiPhenotypeSampleMode::PerPhenotype,
+            &grouped_run_inputs.iter().map(|group| group.compute_group.clone()).collect::<Vec<_>>(),
+            &grouped_run_inputs.iter().map(|group| group.sample_count).collect::<Vec<_>>(),
+        )?;
+        for grouped_run_input in &grouped_run_inputs {
+            let prediction_source_reference = grouped_run_input.prediction_source.bind(py).borrow();
+            let aligned_sample_reference = grouped_run_input.aligned_sample_data.bind(py).borrow();
+            self.run_multi_group_preflight(
+                telemetry_session,
+                stage_timing_recorder,
+                run_request,
+                resolved_execution,
+                &aligned_sample_reference.data,
+                &prediction_source_reference,
+            )?;
+        }
+        let output_bundles = self.prepare_grouped_output_bundles(
+            py,
+            stage_timing_recorder,
+            run_request,
+            resolved_execution,
+            &grouped_run_inputs,
+        )?;
+        if should_use_union_grouped_bgen_delivery(resolved_execution, &grouped_run_inputs) {
+            return self.run_grouped_union_delivery(
+                py,
+                callback_factory,
+                stage_timing_recorder,
+                run_request,
+                resolved_execution,
+                grouped_run_inputs,
+                output_bundles,
+                phenotype_names.len(),
+            );
+        }
+        let mut final_paths_by_index = vec![None; phenotype_names.len()];
+        for (grouped_run_input, output_bundle) in grouped_run_inputs.into_iter().zip(output_bundles) {
+            let phenotype_indices = grouped_run_input.phenotype_indices.clone();
+            let prepared_delivery = self.prepare_multi_group_delivery(
+                py,
+                callback_factory,
+                run_request,
+                resolved_execution,
+                grouped_run_input.run_input,
+                grouped_run_input.aligned_sample_data,
+                grouped_run_input.prediction_source,
+                output_bundle,
+                grouped_run_input.phenotype_indices,
+            )?;
+            let group_paths = self.run_prepared_multi_group_delivery(
+                py,
+                stage_timing_recorder,
+                resolved_execution,
+                prepared_delivery,
+                "Multi-phenotype native BGEN",
+                i64::from(run_request.output.writer_thread_count),
+            )?;
+            scatter_group_final_paths(&mut final_paths_by_index, &phenotype_indices, &group_paths)?;
+        }
+        Ok(final_paths_by_index)
+    }
+}
+
+impl NativeRunEngineSession {
+    fn run_single_trait_pipeline_bundle_internal<'py>(
+        &self,
+        py: Python<'py>,
+        bundle: &NativeSingleTraitPipelineBundle,
+        callback: &Bound<'py, PyAny>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        variant_major_packed8_probability_pairs: bool,
+        pipeline_label: &str,
+    ) -> PyResult<Option<String>> {
+        let run_input_handle = bundle.run_input.clone_ref(py);
+        let writer_session_handle = bundle.writer_session.clone_ref(py);
+        let committed_chunk_identifiers = bundle.committed_chunk_identifiers.clone();
+
+        let run_input_data = run_input_handle.bind(py).borrow().data.clone();
+        let sample_indices_array =
+            usize_slice_to_py_i64(&run_input_data.sample_indices, "sample_indices")?.into_pyarray(py);
+        let sample_indices = sample_indices_array.readonly();
+        let native_aligned_sample_data = Py::new(py, NativeAlignedSampleData::new(run_input_data))?;
+        let native_aligned_sample_data_reference = native_aligned_sample_data.bind(py).borrow();
+        let writer_session_reference = writer_session_handle.bind(py).borrow();
+        let writer_sessions = vec![writer_session_reference];
+        let engine_guard = self.lock_engine()?;
+        let engine = engine_guard
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
+        let mut callback_finished = false;
+        let delivery_result = run_bgen_delivery_attempt(
+            py,
+            engine,
+            &sample_indices,
+            Some(native_aligned_sample_data_reference),
+            None,
+            &writer_sessions,
+            callback,
+            stage_timing_recorder,
+            1,
+            Some(committed_chunk_identifiers),
+            variant_major_packed8_probability_pairs,
+            pipeline_label,
+            &mut callback_finished,
+        );
+        match delivery_result {
+            Ok(final_parquet_paths) => {
+                run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
+                    usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
+                    pipeline_label,
+                )?;
+                Ok(final_parquet_paths.into_iter().next().flatten())
+            }
+            Err(error) => handle_bgen_delivery_error(
+                py,
+                error,
+                callback_finished,
+                callback,
+                &writer_sessions,
+                stage_timing_recorder,
+                1,
+                pipeline_label,
+            )
+            .map(|final_parquet_paths| final_parquet_paths.into_iter().next().flatten()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_pipeline_bgen_engine_with_events(
+        &self,
+        py: Python<'_>,
+        telemetry_session: Option<&Bound<'_, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        pipeline_label: &str,
+        phenotype_name: Option<&str>,
+        phenotype_count: Option<i64>,
+    ) -> PyResult<()> {
+        let engine_start_time = Instant::now();
+        run_events::record_pipeline_bgen_engine_open_started_diagnostic_event(
+            phenotype_count,
+            phenotype_name,
+            pipeline_label,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.compute.variant_limit.map(i64::from),
+        )?;
+        run_events::record_association_backend_selected_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            resolved_execution.backend_plan.kind.as_str(),
+            resolved_execution.backend_plan.device.as_str(),
+            resolved_execution.backend_plan.resolved_genotype_format.as_str(),
+            phenotype_name.map(str::to_string),
+            phenotype_count,
+        )?;
+        self.open_bgen_engine_internal(
+            py,
+            &run_request.input.bgen_path,
+            u32_value_as_usize(run_request.trait_request.chunk_size, "trait chunk size")?,
+            run_request.compute.variant_limit.map(|value| u32_value_as_usize(value, "variant limit")).transpose()?,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            Some(run_request.compute.trusted_bgen_validation_mode.as_str()),
+        )?;
+        record_stage_duration(stage_timing_recorder, "bgen_engine_open_index_setup", engine_start_time)?;
+        let (sample_count, variant_count) = self.with_open_engine(|engine| {
+            Ok((
+                usize_to_i64(engine.reader().sample_count(), "BGEN sample count")?,
+                usize_to_i64(engine.reader().variant_count(), "BGEN variant count")?,
+            ))
+        })?;
+        run_events::record_pipeline_bgen_engine_opened_diagnostic_event(
+            phenotype_count,
+            phenotype_name,
+            pipeline_label,
+            sample_count,
+            variant_count,
+        )?;
+        run_events::record_bgen_engine_opened_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            resolved_execution.backend_plan.kind.as_str(),
+            sample_count,
+            variant_count,
+            phenotype_name.map(str::to_string),
+            phenotype_count,
+        )
+    }
+
+    fn record_multi_phenotype_sample_summary(
+        &self,
+        telemetry_session: Option<&Bound<'_, PyAny>>,
+        run_request: &native_plan::RunRequest,
+        sample_mode: native_plan::MultiPhenotypeSampleMode,
+        compute_groups: &[native_input::ResolvedPhenotypeComputeGroup],
+        sample_counts_by_group: &[i64],
+    ) -> PyResult<()> {
+        let mut sample_counts = Vec::new();
+        let mut sample_set_fingerprints = Vec::new();
+        for (compute_group, sample_count) in compute_groups.iter().zip(sample_counts_by_group) {
+            for _ in &compute_group.phenotype_names {
+                sample_counts.push(*sample_count);
+                sample_set_fingerprints.push(Some(compute_group.sample_set_fingerprint.clone()));
+            }
+        }
+        let sample_counts_differ = sample_counts.iter().any(|sample_count| Some(sample_count) != sample_counts.first());
+        run_events::record_pipeline_multi_phenotype_sample_summary_diagnostic_event(
+            usize_to_i64(sample_counts.len(), "Phenotype count")?,
+            usize_to_i64(compute_groups.len(), "Phenotype group count")?,
+            sample_counts_differ,
+            sample_mode.as_str(),
+        )?;
+        run_events::record_multi_phenotype_sample_summary_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            sample_mode.as_str(),
+            sample_counts,
+            sample_set_fingerprints,
+            usize_to_i64(compute_groups.len(), "Phenotype group count")?,
+        )
+    }
+
+    fn run_multi_group_preflight(
+        &self,
+        telemetry_session: Option<&Bound<'_, PyAny>>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        aligned_sample_data: &native_input::MultiAlignedSampleData,
+        prediction_source: &prediction_sources::MultiRegeniePredictionSource,
+    ) -> PyResult<()> {
+        let phenotype_count = usize_to_i64(aligned_sample_data.phenotype_names.len(), "Phenotype count")?;
+        let sample_count = usize_to_i64(aligned_sample_data.sample_indices.len(), "Aligned sample count")?;
+        run_events::record_prediction_source_loaded_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            None,
+            Some(phenotype_count),
+        )?;
+        let preflight_start_time = Instant::now();
+        run_events::record_pipeline_multi_group_preflight_started_diagnostic_event(
+            phenotype_count,
+            sample_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.compute.variant_limit.map(i64::from),
+        )?;
+        let preflight_shape = native_engine_debug::validate_multi_trait_preflight_values(
+            aligned_sample_data.phenotype_row_count,
+            aligned_sample_data.phenotype_column_count,
+            &aligned_sample_data.phenotype_matrix_values,
+            aligned_sample_data.covariate_row_count,
+            aligned_sample_data.covariate_column_count,
+            &aligned_sample_data.covariate_matrix_values,
+            aligned_sample_data.is_binary_trait,
+        )
+        .map_err(|error| convert_preflight_error(&error))?;
+        let required_chromosomes = self.with_open_engine(|engine| {
+            engine
+                .required_chromosomes(
+                    run_request
+                        .compute
+                        .variant_limit
+                        .map(|value| u32_value_as_usize(value, "variant limit"))
+                        .transpose()?,
+                )
+                .map_err(|error| convert_preflight_error(&error))
+        })?;
+        for chromosome in &required_chromosomes {
+            let prediction_matrix = prediction_source
+                .source
+                .chromosome_prediction_matrix(chromosome)
+                .map_err(|error| convert_prediction_error("chromosome_prediction_matrix", &error))?;
+            native_engine_debug::validate_multi_prediction_values(
+                chromosome,
+                &prediction_matrix.prediction_values,
+                preflight_shape.trait_count,
+                preflight_shape.sample_count,
+            )
+            .map_err(|error| convert_preflight_error(&error))?;
+        }
+        let chromosome_count = usize_to_i64(required_chromosomes.len(), "Chromosome count")?;
+        let preflight_report = native_engine_debug::build_preflight_report_payload(
+            preflight_shape.sample_count,
+            preflight_shape.covariate_count,
+            chromosome_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+        )
+        .map_err(|error| convert_preflight_error(&error))?;
+        run_events::record_preflight_warning_diagnostic_events(
+            preflight_report.warning_messages.clone(),
+            preflight_report.chromosome_count,
+            preflight_report.covariate_count,
+            "multi_trait",
+            preflight_report.sample_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+        )?;
+        record_stage_duration(stage_timing_recorder, "preflight_validation", preflight_start_time)?;
+        run_events::record_pipeline_multi_group_preflight_completed_diagnostic_event(
+            phenotype_count,
+            sample_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.compute.variant_limit.map(i64::from),
+        )?;
+        run_events::record_multi_phenotype_preflight_completed_telemetry(
+            telemetry_session,
+            run_request.association_mode.as_str(),
+            phenotype_count,
+            sample_count,
+        )
+    }
+
+    fn prepare_multi_trait_output_bundle(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        aligned_sample_data: &native_input::MultiAlignedSampleData,
+        compute_group: &native_input::ResolvedPhenotypeComputeGroup,
+        output_sample_mode: native_plan::MultiPhenotypeSampleMode,
+    ) -> PyResult<Py<NativePreparedOutputBundle>> {
+        let engine_variant_count =
+            self.with_open_engine(|engine| usize_to_i64(engine.reader().variant_count(), "BGEN variant count"))?;
+        let sample_count = usize_to_i64(aligned_sample_data.sample_indices.len(), "Aligned sample count")?;
+        let output_group = build_multi_trait_output_group(
+            &aligned_sample_data.covariate_names,
+            sample_count,
+            output_sample_mode,
+            compute_group,
+        )?;
+        let mut output_bundles = self.lifecycle.prepare_output_bundle_objects_from_runtime_plan_internal(
+            py,
+            vec![output_group],
+            engine_variant_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.input.sample_key_mode.as_str().to_string(),
+            resolved_execution.binary_kernel_config_json.clone(),
+            resolved_execution.requested_gpu_genotype_format.clone(),
+            resolved_execution.resolved_gpu_genotype_format.clone(),
+            run_request.compute.score_dtype.as_str().to_string(),
+            run_request.compute.firth_dtype.as_str().to_string(),
+            stage_timing_recorder,
+        )?;
+        output_bundles
+            .pop()
+            .ok_or_else(|| PyRuntimeError::new_err("Multi-trait output preparation returned no bundle."))
+    }
+
+    fn build_grouped_run_inputs(
+        &self,
+        py: Python<'_>,
+        run_request: &native_plan::RunRequest,
+        grouped_aligned_sample_data: NativeGroupedAlignedSampleData,
+        prediction_sources: Vec<prediction_sources::MultiRegeniePredictionSource>,
+    ) -> PyResult<Vec<NativeGroupedRunInputState>> {
+        let planned_names_by_index = planned_phenotype_names_by_index(run_request)?;
+        let parsed_sample_key_mode = parse_sample_key_mode(run_request.input.sample_key_mode.as_str())?;
+        grouped_aligned_sample_data
+            .data
+            .groups
+            .into_iter()
+            .zip(prediction_sources)
+            .map(|(group, prediction_source)| {
+                let phenotype_indices = group.phenotype_indices.clone();
+                let group_phenotype_names = phenotype_indices
+                    .iter()
+                    .map(|phenotype_index| {
+                        planned_names_by_index.get(phenotype_index).cloned().ok_or_else(|| {
+                            PyValueError::new_err(format!("No planned phenotype name for index {phenotype_index}."))
+                        })
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                let compute_group = native_input::resolve_per_phenotype_compute_group(
+                    &group.aligned_sample_data,
+                    phenotype_indices.clone(),
+                    group_phenotype_names,
+                    Some(run_request.input.prediction_list_path.as_str()),
+                    parsed_sample_key_mode,
+                );
+                let sample_count =
+                    usize_to_i64(group.aligned_sample_data.sample_indices.len(), "Aligned sample count")?;
+                let sample_indices = group.aligned_sample_data.sample_indices.clone();
+                Ok(NativeGroupedRunInputState {
+                    compute_group,
+                    phenotype_indices,
+                    run_input: Py::new(py, NativeMultiTraitRunInput { data: group.aligned_sample_data.clone() })?,
+                    aligned_sample_data: Py::new(py, NativeMultiAlignedSampleData::new(group.aligned_sample_data))?,
+                    prediction_source: Py::new(py, prediction_source)?,
+                    sample_indices,
+                    sample_count,
+                })
+            })
+            .collect()
+    }
+
+    fn prepare_grouped_output_bundles(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        grouped_run_inputs: &[NativeGroupedRunInputState],
+    ) -> PyResult<Vec<Py<NativePreparedOutputBundle>>> {
+        let engine_variant_count =
+            self.with_open_engine(|engine| usize_to_i64(engine.reader().variant_count(), "BGEN variant count"))?;
+        let mut output_groups = Vec::with_capacity(grouped_run_inputs.len());
+        for grouped_run_input in grouped_run_inputs {
+            let aligned_sample_data = grouped_run_input.aligned_sample_data.bind(py).borrow();
+            output_groups.push(build_multi_trait_output_group(
+                &aligned_sample_data.data.covariate_names,
+                grouped_run_input.sample_count,
+                native_plan::MultiPhenotypeSampleMode::PerPhenotype,
+                &grouped_run_input.compute_group,
+            )?);
+        }
+        self.lifecycle.prepare_output_bundle_objects_from_runtime_plan_internal(
+            py,
+            output_groups,
+            engine_variant_count,
+            resolved_execution.effective_trusted_no_missing_diploid,
+            run_request.input.sample_key_mode.as_str().to_string(),
+            resolved_execution.binary_kernel_config_json.clone(),
+            resolved_execution.requested_gpu_genotype_format.clone(),
+            resolved_execution.resolved_gpu_genotype_format.clone(),
+            run_request.compute.score_dtype.as_str().to_string(),
+            run_request.compute.firth_dtype.as_str().to_string(),
+            stage_timing_recorder,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_multi_group_delivery<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        run_input: Py<NativeMultiTraitRunInput>,
+        aligned_sample_data: Py<NativeMultiAlignedSampleData>,
+        prediction_source: Py<prediction_sources::MultiRegeniePredictionSource>,
+        output_bundle: Py<NativePreparedOutputBundle>,
+        phenotype_indices: Vec<usize>,
+    ) -> PyResult<NativePreparedMultiGroupDelivery> {
+        let (writer_sessions, chunk_write_planner) = {
+            let output_bundle_reference = output_bundle.bind(py).borrow();
+            (
+                output_bundle_reference.writer_session_handles(py),
+                output_bundle_reference.multi_trait_chunk_write_planner_handle()?,
+            )
+        };
+        let writer_sessions_tuple = PyTuple::new(py, &writer_sessions)?;
+        let callback_context = Py::new(py, callback_context_from_request(run_request, resolved_execution)?)?;
+        let callback = callback_factory
+            .call_method1(
+                "build_multi_trait_callback",
+                (
+                    callback_context,
+                    run_input.clone_ref(py),
+                    prediction_source.clone_ref(py),
+                    writer_sessions_tuple,
+                    chunk_write_planner,
+                ),
+            )?
+            .unbind();
+        let sample_indices = aligned_sample_data.bind(py).borrow().data.sample_indices.clone();
+        Ok(NativePreparedMultiGroupDelivery {
+            phenotype_indices,
+            aligned_sample_data,
+            callback,
+            writer_sessions,
+            output_bundle,
+            sample_indices,
+        })
+    }
+
+    fn run_prepared_multi_group_delivery(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        resolved_execution: &NativeRunResolvedExecution,
+        prepared_delivery: NativePreparedMultiGroupDelivery,
+        pipeline_label: &str,
+        writer_finish_thread_count: i64,
+    ) -> PyResult<Vec<Option<String>>> {
+        let sample_indices_array =
+            usize_slice_to_py_i64(&prepared_delivery.sample_indices, "sample_indices")?.into_pyarray(py);
+        let sample_indices = sample_indices_array.readonly();
+        let aligned_sample_data_reference = prepared_delivery.aligned_sample_data.bind(py).borrow();
+        let writer_session_references =
+            prepared_delivery.writer_sessions.iter().map(|session| session.bind(py).borrow()).collect::<Vec<_>>();
+        let committed_chunk_identifiers = {
+            let output_bundle_reference = prepared_delivery.output_bundle.bind(py).borrow();
+            output_bundle_reference.shared_committed_chunk_identifiers_usize()?
+        };
+        let callback = prepared_delivery.callback.bind(py);
+        let engine_guard = self.lock_engine()?;
+        let engine = engine_guard
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
+        let mut callback_finished = false;
+        let delivery_result = run_bgen_delivery_attempt(
+            py,
+            engine,
+            &sample_indices,
+            None,
+            Some(aligned_sample_data_reference),
+            &writer_session_references,
+            callback,
+            stage_timing_recorder,
+            writer_finish_thread_count,
+            Some(committed_chunk_identifiers),
+            resolved_execution.backend_plan.resolved_genotype_format == native_plan::GpuGenotypeFormat::Packed8,
+            pipeline_label,
+            &mut callback_finished,
+        );
+        match delivery_result {
+            Ok(final_parquet_paths) => {
+                run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
+                    usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
+                    pipeline_label,
+                )?;
+                Ok(final_parquet_paths)
+            }
+            Err(error) => handle_bgen_delivery_error(
+                py,
+                error,
+                callback_finished,
+                callback,
+                &writer_session_references,
+                stage_timing_recorder,
+                writer_finish_thread_count,
+                pipeline_label,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_grouped_union_delivery<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+        run_request: &native_plan::RunRequest,
+        resolved_execution: &NativeRunResolvedExecution,
+        grouped_run_inputs: Vec<NativeGroupedRunInputState>,
+        output_bundles: Vec<Py<NativePreparedOutputBundle>>,
+        phenotype_count: usize,
+    ) -> PyResult<Vec<Option<String>>> {
+        native_engine_debug::resolve_grouped_union_callback_batch_size(i64::from(
+            run_request.compute.native_callback_batch_size,
+        ))
+        .map_err(|error| convert_schedule_error(&error))?;
+        let sample_indices_by_group =
+            grouped_run_inputs.iter().map(|group| group.sample_indices.clone()).collect::<Vec<_>>();
+        let union_sample_indices = native_input::build_union_sample_indices(&sample_indices_by_group);
+        let grouped_sample_count = sample_indices_by_group.iter().map(Vec::len).sum::<usize>();
+        run_events::record_pipeline_grouped_union_delivery_selected_diagnostic_event(
+            usize_to_i64(grouped_sample_count, "Grouped sample count")?,
+            usize_to_i64(grouped_run_inputs.len(), "Phenotype group count")?,
+            usize_to_i64(union_sample_indices.len(), "Union sample count")?,
+        )?;
+        let mut prepared_deliveries = Vec::with_capacity(grouped_run_inputs.len());
+        for (grouped_run_input, output_bundle) in grouped_run_inputs.into_iter().zip(output_bundles) {
+            prepared_deliveries.push(self.prepare_multi_group_delivery(
+                py,
+                callback_factory,
+                run_request,
+                resolved_execution,
+                grouped_run_input.run_input,
+                grouped_run_input.aligned_sample_data,
+                grouped_run_input.prediction_source,
+                output_bundle,
+                grouped_run_input.phenotype_indices,
+            )?);
+        }
+        let callbacks = prepared_deliveries.iter().map(|delivery| delivery.callback.clone_ref(py)).collect::<Vec<_>>();
+        let mut sample_position_arrays = Vec::with_capacity(prepared_deliveries.len());
+        for prepared_delivery in &prepared_deliveries {
+            let sample_position_values = native_input::build_group_sample_position_array(
+                &union_sample_indices,
+                &prepared_delivery.sample_indices,
+            )
+            .map_err(|error| convert_input_error("build_group_sample_position_array", error.into()))?;
+            sample_position_arrays.push(sample_position_values.into_pyarray(py).unbind());
+        }
+        let callbacks_tuple = PyTuple::new(py, &callbacks)?;
+        let sample_position_arrays_tuple = PyTuple::new(py, &sample_position_arrays)?;
+        let fanout_callback = callback_factory
+            .call_method1("build_grouped_fanout_callback", (callbacks_tuple, sample_position_arrays_tuple))?
+            .unbind();
+        let writer_sessions = prepared_deliveries
+            .iter()
+            .flat_map(|delivery| delivery.writer_sessions.iter().map(|session| session.clone_ref(py)))
+            .collect::<Vec<_>>();
+        let writer_session_references =
+            writer_sessions.iter().map(|session| session.bind(py).borrow()).collect::<Vec<_>>();
+        let bundle_references =
+            prepared_deliveries.iter().map(|delivery| delivery.output_bundle.bind(py).borrow()).collect::<Vec<_>>();
+        let committed_chunk_identifiers =
+            NativePreparedOutputBundle::shared_committed_chunk_identifiers_across_bundles_usize(&bundle_references)?;
+        let union_sample_indices_array =
+            usize_slice_to_py_i64(&union_sample_indices, "union_sample_indices")?.into_pyarray(py);
+        let union_sample_indices_reference = union_sample_indices_array.readonly();
+        let callback = fanout_callback.bind(py);
+        let engine_guard = self.lock_engine()?;
+        let engine = engine_guard
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
+        let mut callback_finished = false;
+        let delivery_result = run_bgen_delivery_attempt(
+            py,
+            engine,
+            &union_sample_indices_reference,
+            None,
+            None,
+            &writer_session_references,
+            callback,
+            stage_timing_recorder,
+            1,
+            Some(committed_chunk_identifiers),
+            false,
+            "Grouped per-phenotype union native BGEN",
+            &mut callback_finished,
+        );
+        let final_parquet_paths = match delivery_result {
+            Ok(final_parquet_paths) => {
+                run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
+                    usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
+                    "Grouped per-phenotype union native BGEN",
+                )?;
+                final_parquet_paths
+            }
+            Err(error) => handle_bgen_delivery_error(
+                py,
+                error,
+                callback_finished,
+                callback,
+                &writer_session_references,
+                stage_timing_recorder,
+                1,
+                "Grouped per-phenotype union native BGEN",
+            )?,
+        };
+        let mut final_paths_by_index = vec![None; phenotype_count];
+        let mut final_path_offset = 0;
+        for prepared_delivery in prepared_deliveries {
+            let group_path_count = prepared_delivery.phenotype_indices.len();
+            let group_paths = final_parquet_paths[final_path_offset..final_path_offset + group_path_count].to_vec();
+            final_path_offset += group_path_count;
+            scatter_group_final_paths(&mut final_paths_by_index, &prepared_delivery.phenotype_indices, &group_paths)?;
+        }
+        Ok(final_paths_by_index)
     }
 }
 
@@ -1233,36 +2543,30 @@ fn run_bgen_delivery_attempt<'py>(
     }
     let delivery_start_time = Instant::now();
     let committed_chunk_count = committed_chunk_identifiers.as_ref().map_or(0, Vec::len);
+    callback.call_method0("start")?;
+    let callback_batch_size = callback.getattr("native_callback_batch_size")?.extract::<i64>()?;
+    let attempt_plan = plan_bgen_delivery_attempt_for_binding(
+        Some(callback_batch_size),
+        variant_major_packed8_probability_pairs,
+        native_multi_aligned_sample_data.is_some(),
+        native_aligned_sample_data.is_some(),
+        committed_chunk_count,
+    )?;
     run_events::record_native_dispatch_delivery_started_diagnostic_event(
-        usize_to_i64(committed_chunk_count, "Committed chunk count")?,
+        usize_to_i64(attempt_plan.committed_chunk_count, "Committed chunk count")?,
         pipeline_label,
         variant_major_packed8_probability_pairs,
     )?;
-    callback.call_method0("start")?;
-    let callback_batch_size = callback.getattr("native_callback_batch_size")?.extract::<i64>()?;
-    let processed_chunk_count = if variant_major_packed8_probability_pairs {
-        run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
-            engine,
-            py,
-            sample_indices,
-            native_aligned_sample_data,
-            native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )?
-    } else {
-        run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
-            engine,
-            py,
-            sample_indices,
-            native_aligned_sample_data,
-            native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )?
-    };
+    let processed_chunk_count = run_bgen_delivery_invocation(
+        engine,
+        py,
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        callback,
+        committed_chunk_identifiers,
+        attempt_plan.invocation_plan,
+    )?;
     record_stage_duration(stage_timing_recorder, "native_engine_delivery", delivery_start_time)?;
     run_events::record_native_dispatch_delivery_finished_diagnostic_event(
         pipeline_label,
@@ -1299,6 +2603,9 @@ fn handle_bgen_delivery_error<'py>(
     pipeline_label: &str,
 ) -> PyResult<Vec<Option<String>>> {
     if let Some(interrupted_event) = maybe_shutdown_event_from_error(py, &error)? {
+        let error_handling_plan = native_engine_debug::plan_bgen_delivery_error_handling(
+            native_engine_debug::BgenDeliveryErrorKind::Interrupted,
+        );
         run_events::record_native_dispatch_delivery_interrupted_diagnostic_event(
             pipeline_label,
             interrupted_event.exit_code,
@@ -1307,7 +2614,7 @@ fn handle_bgen_delivery_error<'py>(
         )?;
         let cleanup_result = execute_bgen_delivery_cleanup_actions(
             py,
-            native_engine_debug::BgenDeliveryCleanupOutcome::Interrupted,
+            error_handling_plan.cleanup_outcome,
             callback_finished,
             callback,
             writer_sessions,
@@ -1318,16 +2625,18 @@ fn handle_bgen_delivery_error<'py>(
         return match cleanup_result {
             Ok(_) => Err(error),
             Err(cleanup_error) => {
-                execute_bgen_delivery_cleanup_actions(
-                    py,
-                    native_engine_debug::BgenDeliveryCleanupOutcome::InterruptedCleanupFailure,
-                    callback_finished,
-                    callback,
-                    writer_sessions,
-                    writer_finish_thread_count,
-                    stage_timing_recorder,
-                    Some(&interrupted_event),
-                )?;
+                if let Some(fallback_cleanup_outcome) = error_handling_plan.fallback_cleanup_outcome {
+                    execute_bgen_delivery_cleanup_actions(
+                        py,
+                        fallback_cleanup_outcome,
+                        callback_finished,
+                        callback,
+                        writer_sessions,
+                        writer_finish_thread_count,
+                        stage_timing_recorder,
+                        Some(&interrupted_event),
+                    )?;
+                }
                 Err(cleanup_error)
             }
         };
@@ -1341,9 +2650,11 @@ fn handle_bgen_delivery_error<'py>(
         &exception_type,
         pipeline_label,
     )?;
+    let error_handling_plan =
+        native_engine_debug::plan_bgen_delivery_error_handling(native_engine_debug::BgenDeliveryErrorKind::Failure);
     let cleanup_result = execute_bgen_delivery_cleanup_actions(
         py,
-        native_engine_debug::BgenDeliveryCleanupOutcome::Failure,
+        error_handling_plan.cleanup_outcome,
         callback_finished,
         callback,
         writer_sessions,
@@ -1478,6 +2789,164 @@ fn build_single_trait_output_group(
         Some(phenotype_compute_group.covariate_design_fingerprint.clone()),
         phenotype_compute_group.prediction_alignment_fingerprint.clone(),
     ))
+}
+
+fn build_multi_trait_output_group(
+    covariate_names: &[String],
+    sample_count: i64,
+    output_sample_mode: native_plan::MultiPhenotypeSampleMode,
+    phenotype_compute_group: &native_input::ResolvedPhenotypeComputeGroup,
+) -> PyResult<NativeOutputRuntimeGroupInput> {
+    let phenotype_indices = phenotype_compute_group
+        .phenotype_indices
+        .iter()
+        .copied()
+        .map(|index| usize_to_i64(index, "Phenotype compute group index"))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok((
+        phenotype_compute_group.phenotype_names.clone(),
+        covariate_names.to_vec(),
+        sample_count,
+        output_sample_mode.as_str().to_string(),
+        Some(phenotype_compute_group.group_mode.clone()),
+        Some(phenotype_indices),
+        Some(phenotype_compute_group.phenotype_names.clone()),
+        Some(phenotype_compute_group.sample_mode.clone()),
+        Some(phenotype_compute_group.sample_set_fingerprint.clone()),
+        Some(phenotype_compute_group.covariate_design_fingerprint.clone()),
+        phenotype_compute_group.prediction_alignment_fingerprint.clone(),
+    ))
+}
+
+fn callback_context_from_request(
+    run_request: &native_plan::RunRequest,
+    resolved_execution: &NativeRunResolvedExecution,
+) -> PyResult<NativeRunCallbackContext> {
+    Ok(NativeRunCallbackContext {
+        association_mode: run_request.association_mode.as_str().to_string(),
+        trait_type: run_request.trait_request.trait_type.as_str().to_string(),
+        correction_method: run_request.correction.method.as_str().to_string(),
+        correction_p_threshold: run_request.correction.p_threshold,
+        correction_firth_se: run_request.correction.firth_se,
+        staging_depth: i64::from(run_request.compute.staging_depth),
+        native_callback_batch_size: i64::from(run_request.compute.native_callback_batch_size),
+        result_in_flight_limit: run_request.compute.result_in_flight_limit.map(i64::from),
+        dosage_buffer_limit: run_request.compute.dosage_buffer_limit.map(i64::from),
+        score_dtype: run_request.compute.score_dtype.as_str().to_string(),
+        firth_dtype: run_request.compute.firth_dtype.as_str().to_string(),
+        output_statistic_dtype: run_request.output.output_statistic_dtype.as_str().to_string(),
+        jax_device: run_request.compute.device.as_str().to_string(),
+        gpu_genotype_format: resolved_execution.resolved_gpu_genotype_format.clone(),
+        requested_gpu_genotype_format: resolved_execution.requested_gpu_genotype_format.clone(),
+    })
+}
+
+fn concrete_gpu_genotype_format_from_resolution_plan(
+    native_resolution_plan: &native_engine_debug::GpuGenotypeFormatResolutionPlan,
+) -> PyResult<native_plan::GpuGenotypeFormat> {
+    let resolved_gpu_genotype_format = native_resolution_plan
+        .resolved_gpu_genotype_format
+        .as_deref()
+        .ok_or_else(|| PyRuntimeError::new_err("Native GPU genotype-format resolution plan is not resolved."))?;
+    native_plan::GpuGenotypeFormat::from_str_value(resolved_gpu_genotype_format).ok_or_else(|| {
+        PyValueError::new_err(format!("Unsupported resolved GPU genotype format '{resolved_gpu_genotype_format}'."))
+    })
+}
+
+fn manifest_gpu_genotype_format_fields(
+    existing_manifest_json: Option<&str>,
+) -> PyResult<(Option<String>, Option<String>)> {
+    let Some(existing_manifest_json) = existing_manifest_json else {
+        return Ok((None, None));
+    };
+    let manifest_value = serde_json::from_str::<serde_json::Value>(existing_manifest_json)
+        .map_err(|error| PyValueError::new_err(format!("Existing run manifest JSON is invalid: {error}")))?;
+    let manifest_gpu_genotype_format =
+        manifest_value.get("gpu_genotype_format").and_then(serde_json::Value::as_str).map(str::to_string);
+    let association_backend_genotype_format = if manifest_gpu_genotype_format.is_none() {
+        manifest_value
+            .get("association_backend")
+            .and_then(|association_backend| association_backend.get("genotype_format"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    } else {
+        None
+    };
+    Ok((manifest_gpu_genotype_format, association_backend_genotype_format))
+}
+
+fn complete_case_compute_group_from_request(
+    run_request: &native_plan::RunRequest,
+) -> PyResult<native_plan::PhenotypeComputeGroup> {
+    run_request
+        .phenotype_compute_groups
+        .iter()
+        .find(|group| group.group_mode == native_plan::PhenotypeComputeGroupMode::CompleteCase)
+        .cloned()
+        .ok_or_else(|| PyValueError::new_err("A complete-case phenotype compute group is required."))
+}
+
+fn phenotype_names_from_request(run_request: &native_plan::RunRequest) -> Vec<String> {
+    run_request.phenotype_runs.iter().map(|phenotype_run| phenotype_run.phenotype_name.clone()).collect()
+}
+
+fn planned_phenotype_names_by_index(run_request: &native_plan::RunRequest) -> PyResult<BTreeMap<usize, String>> {
+    run_request
+        .phenotype_runs
+        .iter()
+        .map(|phenotype_run| {
+            Ok((
+                u32_value_as_usize(phenotype_run.phenotype_index, "phenotype index")?,
+                phenotype_run.phenotype_name.clone(),
+            ))
+        })
+        .collect()
+}
+
+fn u32_indices_to_usize(values: &[u32], value_name: &str) -> PyResult<Vec<usize>> {
+    values.iter().copied().map(|value| u32_value_as_usize(value, value_name)).collect()
+}
+
+fn u32_value_as_usize(value: u32, field_name: &str) -> PyResult<usize> {
+    usize::try_from(value).map_err(|_| PyValueError::new_err(format!("{field_name} does not fit into usize.")))
+}
+
+fn should_use_union_grouped_bgen_delivery(
+    resolved_execution: &NativeRunResolvedExecution,
+    grouped_run_inputs: &[NativeGroupedRunInputState],
+) -> bool {
+    if grouped_run_inputs.len() <= 1 {
+        return false;
+    }
+    if resolved_execution.backend_plan.resolved_genotype_format == native_plan::GpuGenotypeFormat::Packed8 {
+        return false;
+    }
+    if !resolved_execution.effective_trusted_no_missing_diploid {
+        return false;
+    }
+    let sample_indices_by_group =
+        grouped_run_inputs.iter().map(|grouped_run_input| grouped_run_input.sample_indices.clone()).collect::<Vec<_>>();
+    let union_sample_count = native_input::build_union_sample_indices(&sample_indices_by_group).len();
+    let grouped_sample_count =
+        grouped_run_inputs.iter().map(|grouped_run_input| grouped_run_input.sample_indices.len()).sum();
+    union_sample_count < grouped_sample_count
+}
+
+fn scatter_group_final_paths(
+    final_paths_by_index: &mut [Option<String>],
+    phenotype_indices: &[usize],
+    group_paths: &[Option<String>],
+) -> PyResult<()> {
+    if phenotype_indices.len() != group_paths.len() {
+        return Err(PyValueError::new_err("Grouped final output path count does not match phenotype index count."));
+    }
+    for (phenotype_index, final_output_path) in phenotype_indices.iter().copied().zip(group_paths.iter().cloned()) {
+        let target_path = final_paths_by_index.get_mut(phenotype_index).ok_or_else(|| {
+            PyValueError::new_err(format!("Phenotype output index {phenotype_index} is outside the run."))
+        })?;
+        *target_path = final_output_path;
+    }
+    Ok(())
 }
 
 fn flush_variant_major_dosage_batch<'py>(
@@ -1692,13 +3161,83 @@ fn run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source<'py>(
     committed_chunk_identifiers: Option<Vec<usize>>,
     callback_batch_size: i64,
 ) -> PyResult<usize> {
-    let invocation_plan = native_engine_debug::plan_bgen_delivery_invocation(
+    let attempt_plan = plan_bgen_delivery_attempt_for_binding(
         Some(callback_batch_size),
         false,
         native_multi_aligned_sample_data.is_some(),
         native_aligned_sample_data.is_some(),
+        committed_chunk_identifiers.as_ref().map_or(0, Vec::len),
+    )?;
+    run_bgen_delivery_invocation(
+        engine,
+        py,
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        callback,
+        committed_chunk_identifiers,
+        attempt_plan.invocation_plan,
     )
-    .map_err(|error| convert_schedule_error(&error))?;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source<'py>(
+    engine: &Regenie2RunEngineCore,
+    py: Python<'py>,
+    sample_indices: &PyReadonlyArray1<'py, i64>,
+    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
+    callback: &Bound<'py, PyAny>,
+    committed_chunk_identifiers: Option<Vec<usize>>,
+    callback_batch_size: i64,
+) -> PyResult<usize> {
+    let attempt_plan = plan_bgen_delivery_attempt_for_binding(
+        Some(callback_batch_size),
+        true,
+        native_multi_aligned_sample_data.is_some(),
+        native_aligned_sample_data.is_some(),
+        committed_chunk_identifiers.as_ref().map_or(0, Vec::len),
+    )?;
+    run_bgen_delivery_invocation(
+        engine,
+        py,
+        sample_indices,
+        native_aligned_sample_data,
+        native_multi_aligned_sample_data,
+        callback,
+        committed_chunk_identifiers,
+        attempt_plan.invocation_plan,
+    )
+}
+
+fn plan_bgen_delivery_attempt_for_binding(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+    committed_chunk_count: usize,
+) -> PyResult<native_engine_debug::BgenDeliveryAttemptPlan> {
+    native_engine_debug::plan_bgen_delivery_attempt(
+        callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+        committed_chunk_count,
+    )
+    .map_err(|error| convert_schedule_error(&error))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_bgen_delivery_invocation<'py>(
+    engine: &Regenie2RunEngineCore,
+    py: Python<'py>,
+    sample_indices: &PyReadonlyArray1<'py, i64>,
+    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
+    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
+    callback: &Bound<'py, PyAny>,
+    committed_chunk_identifiers: Option<Vec<usize>>,
+    invocation_plan: native_engine_debug::BgenDeliveryInvocationPlan,
+) -> PyResult<usize> {
     match invocation_plan.delivery_method {
         native_engine_debug::BgenDeliveryMethod::DosageNativeMultiAlignedSamples => {
             let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
@@ -1737,29 +3276,6 @@ fn run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source<'py>(
                 invocation_plan.callback_batch_size,
             )
         }
-        _ => Err(PyRuntimeError::new_err("Native BGEN delivery plan selected a packed8 method for dosage.")),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source<'py>(
-    engine: &Regenie2RunEngineCore,
-    py: Python<'py>,
-    sample_indices: &PyReadonlyArray1<'py, i64>,
-    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-    callback: &Bound<'py, PyAny>,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-    callback_batch_size: i64,
-) -> PyResult<usize> {
-    let invocation_plan = native_engine_debug::plan_bgen_delivery_invocation(
-        Some(callback_batch_size),
-        true,
-        native_multi_aligned_sample_data.is_some(),
-        native_aligned_sample_data.is_some(),
-    )
-    .map_err(|error| convert_schedule_error(&error))?;
-    match invocation_plan.delivery_method {
         native_engine_debug::BgenDeliveryMethod::Packed8NativeMultiAlignedSamples => {
             let aligned_sample_data = native_multi_aligned_sample_data.ok_or_else(|| {
                 PyRuntimeError::new_err("Native BGEN delivery plan selected missing multi-aligned sample data.")
@@ -1794,7 +3310,6 @@ fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_samp
                 committed_chunk_identifiers,
             )
         }
-        _ => Err(PyRuntimeError::new_err("Native BGEN delivery plan selected a dosage method for packed8.")),
     }
 }
 
@@ -2089,6 +3604,8 @@ fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeMultiTraitRunInput>()?;
+    module.add_class::<NativeRunCallbackContext>()?;
     module.add_class::<NativeRunEngineSession>()?;
     module.add_class::<NativeSingleTraitPipelineBundle>()?;
     module.add_class::<NativeSingleTraitRunInput>()?;

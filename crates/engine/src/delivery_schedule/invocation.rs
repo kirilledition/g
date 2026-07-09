@@ -1,6 +1,9 @@
 use crate::schedule::ScheduleError;
 
-use super::types::{BgenDeliveryInvocationPlan, BgenDeliveryMethod};
+use super::types::{
+    BgenDeliveryAttemptPlan, BgenDeliveryCleanupOutcome, BgenDeliveryErrorHandlingPlan, BgenDeliveryErrorKind,
+    BgenDeliveryInvocationPlan, BgenDeliveryMethod,
+};
 
 const DEFAULT_DELIVERY_CALLBACK_BATCH_SIZE: i64 = 1;
 
@@ -46,6 +49,42 @@ pub fn plan_bgen_delivery_invocation(
         has_native_aligned_sample_data,
     );
     Ok(BgenDeliveryInvocationPlan { delivery_method, callback_batch_size })
+}
+
+/// Plan one native BGEN delivery attempt.
+///
+/// # Errors
+///
+/// Returns an error when the requested callback batch size is invalid for the
+/// selected delivery mode.
+pub fn plan_bgen_delivery_attempt(
+    callback_batch_size: Option<i64>,
+    variant_major_packed8_probability_pairs: bool,
+    has_native_multi_aligned_sample_data: bool,
+    has_native_aligned_sample_data: bool,
+    committed_chunk_count: usize,
+) -> Result<BgenDeliveryAttemptPlan, ScheduleError> {
+    let invocation_plan = plan_bgen_delivery_invocation(
+        callback_batch_size,
+        variant_major_packed8_probability_pairs,
+        has_native_multi_aligned_sample_data,
+        has_native_aligned_sample_data,
+    )?;
+    Ok(BgenDeliveryAttemptPlan { committed_chunk_count, invocation_plan })
+}
+
+#[must_use]
+pub const fn plan_bgen_delivery_error_handling(error_kind: BgenDeliveryErrorKind) -> BgenDeliveryErrorHandlingPlan {
+    match error_kind {
+        BgenDeliveryErrorKind::Interrupted => BgenDeliveryErrorHandlingPlan {
+            cleanup_outcome: BgenDeliveryCleanupOutcome::Interrupted,
+            fallback_cleanup_outcome: Some(BgenDeliveryCleanupOutcome::InterruptedCleanupFailure),
+        },
+        BgenDeliveryErrorKind::Failure => BgenDeliveryErrorHandlingPlan {
+            cleanup_outcome: BgenDeliveryCleanupOutcome::Failure,
+            fallback_cleanup_outcome: None,
+        },
+    }
 }
 
 /// Resolve the callback batch size for grouped union BGEN delivery.

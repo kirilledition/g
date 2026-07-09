@@ -8,7 +8,7 @@ use pyo3::types::PyModule;
 
 use g_engine as native_schedule;
 
-use super::errors::convert_schedule_error;
+use crate::binding::errors::convert_schedule_error;
 
 #[pyclass]
 pub(crate) struct NativeCallbackQueueLimits {

@@ -6,7 +6,8 @@ pub(crate) mod telemetry_policy;
 
 use pyo3::prelude::*;
 
-pub(crate) use crate::binding::debug::{callback_progress, schedule};
+pub(crate) use crate::binding::engine::callback_progress;
+pub(crate) use crate::binding::engine::callback_schedule as schedule;
 pub(crate) use crate::binding::errors;
 pub(crate) use crate::binding::json_bridge;
 pub(crate) use crate::binding::runtime::jax_runtime;

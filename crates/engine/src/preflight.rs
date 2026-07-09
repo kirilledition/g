@@ -1,5 +1,6 @@
 //! Native preflight report and scan-shape helpers.
 
+mod arrays;
 mod common;
 mod error;
 mod payloads;
@@ -8,6 +9,10 @@ mod report;
 mod shape;
 mod variants;
 
+pub use arrays::{
+    validate_multi_prediction_values, validate_multi_trait_preflight_values, validate_single_prediction_values,
+    validate_single_trait_preflight_values,
+};
 pub use error::PreflightError;
 pub use payloads::{MultiTraitPreflightShapePayload, PreflightReportPayload, SingleTraitPreflightShapePayload};
 pub use prediction::{validate_multi_prediction_preflight_shape, validate_single_prediction_preflight_shape};
