@@ -2,22 +2,22 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; durable implementation map | main branch as of 2026-06-30 runtime architecture | Development maintainers |
+| Pre-release draft; durable implementation map | main branch as of 2026-07-09 runtime architecture | Development maintainers |
 
-`g` separates the user interface, execution plan, native I/O, JAX kernels, and output writer so performance-sensitive behavior is explicit.
+`g` separates the user interface, immutable run contracts, native I/O, JAX kernels, and output writer so performance-sensitive behavior is explicit.
 
 ## High-level Flow
 
 ```text
 CLI / TOML
         |
-RegenieConfig
+g-interface (RegenieConfig)
         |
-ExecutionPlan
+NativeRunEngineSession (g-engine orchestration)
         |
 Rust BGEN decode + sample alignment + output writer
         |
-JAX quantitative / binary association kernels
+Python JAX callbacks (compute + materialize)
         |
 Arrow chunks + optional finalized Parquet
 ```
@@ -26,33 +26,31 @@ Arrow chunks + optional finalized Parquet
 
 ```text
 src/g/
-  cli.py                         thin Python dispatcher into the Rust CLI frontend
-  execution_plan.py              immutable normalized run plans
-  runner/                        runtime orchestration, telemetry, dispatch, artifacts
-  jax_runtime.py                 JAX runtime policy, resolution, diagnostics, setup
+  runner/                        CLI shell, JAX setup wiring, telemetry session, run entry
   engine/
-    regenie2_pipeline/           native-driven BGEN pipeline wrappers
-      backend.py                 association backend selection before dispatch
-    callbacks/                   JAX callback workers and result materialization
-    native_dispatch/             Rust bridge for engine/alignment/predictions
-    telemetry.py                 JSONL run telemetry
-    timing.py                    synchronized profile summaries
-    preflight.py                 pre-run validation
+    callbacks/                   JAX compute callbacks, thin glue over native runtime resources
+      factory.py                 callback factory for native-owned runs
+      base.py                    local state + write/compute side effects
+      linear.py / binary.py      association callbacks
+    timing.py                    stage timing recorder bridge
   compute/
     regenie2_linear/             quantitative state and score kernels
     regenie2_binary/             binary score, candidates, Firth, diagnostics
-  io.py                          output paths, manifest, writer bridge
+  jax_runtime.py                 JAX runtime policy, resolution, diagnostics, setup
+  types.py                       shared Python enums/types
 ```
 
 ## Native Runtime
 
 ```text
-crates/plan/src/                 Rust execution-plan policy payloads and deterministic plan IDs
-crates/interface/src/            Rust CLI/config frontend, clap, toml/Serde, option specs
-crates/genotype/src/             BGEN mmap/index/decode/preprocess/profile
+crates/plan/src/                 immutable run/config/prepared-plan contracts
+crates/interface/src/            CLI/config frontend, clap, toml/Serde
+crates/genotype/src/             BGEN mmap/index/decode/preprocess
 crates/input/src/                sample/phenotype/covariate and prediction alignment
 crates/output/src/               Arrow IPC chunks, Parquet finalization, manifests
-src/binding/                      PyO3 config/plan/runtime bindings and logging bridge
+crates/runtime/src/              logging, telemetry, timing, shutdown, Rayon/JAX policy
+crates/engine/src/               orchestration, preflight, schedule plans, delivery policy
+src/binding/engine/              PyO3 adaptation including callback runtime resources
 ```
 
 ## Design Principles
@@ -63,9 +61,12 @@ src/binding/                      PyO3 config/plan/runtime bindings and logging 
 - Run manifests protect resume correctness.
 - Profiling should be structured and reproducible.
 - Performance work should be benchmarked end to end.
+- Python does not own domain orchestration; `NativeRunEngineSession` owns the run.
+- Callback queues, workers, slots, and buffer pools are native-owned.
 
 More detailed internal notes:
 
+- [Architecture Cleanup](architecture-cleanup.md)
 - [Configuration Frontend](configuration-frontend.md)
 - [Native I/O](native-io.md)
 - [Compute Kernels](compute-kernels.md)

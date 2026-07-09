@@ -1536,38 +1536,14 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn register_run_lifecycle_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Production Python only uses the recorder, run artifacts, and a few free helpers.
+    // Remaining record_* helpers stay as Rust `pub(crate)` functions for binding-internal use.
     module.add_class::<NativeRunEventRecorder>()?;
     module.add_class::<NativeRunArtifacts>()?;
-    module.add_class::<NativeRunArtifactPayload>()?;
-    module.add_class::<NativeRunCompletedEvent>()?;
-    module.add_class::<NativeRunInterruptedEvent>()?;
-    module.add_class::<NativeRunFailedEvent>()?;
     module.add_function(wrap_pyfunction!(record_runner_run_started_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_interrupted_events, module)?)?;
     module.add_function(wrap_pyfunction!(record_runner_run_failed_events, module)?)?;
     module.add_function(wrap_pyfunction!(attach_run_metadata_and_record_completed_events, module)?)?;
-    module.add_function(wrap_pyfunction!(record_execution_plan_prepared_events, module)?)?;
-    module.add_function(wrap_pyfunction!(record_callback_progress_update_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_callback_progress_event_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_binary_correction_summary_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_phenotype_writer_finished_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_phenotype_writer_finished_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_sample_alignment_completed_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_prediction_source_loaded_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_single_trait_preflight_completed_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_phenotype_preflight_completed_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_multi_phenotype_sample_summary_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_association_backend_selected_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(record_bgen_engine_opened_telemetry, module)?)?;
-    module.add_function(wrap_pyfunction!(plan_gpu_genotype_format_auto_to_dosage_and_record_events, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        plan_single_trait_binary_gpu_genotype_format_resolution_and_record_events,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(
-        plan_auto_gpu_genotype_format_after_trusted_validation_and_record_events,
-        module
-    )?)?;
     Ok(())
 }
 

@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 pub(crate) mod cli;
 pub(crate) mod config;
 pub(crate) mod convert;
-pub(crate) mod debug;
 pub(crate) mod engine;
 pub(crate) mod errors;
 pub(crate) mod genotype;
@@ -35,7 +34,6 @@ fn register_root_compatibility_aliases(module: &Bound<'_, PyModule>) -> PyResult
     telemetry::register_module(module)?;
     cli::register_module(module)?;
     output::register_module(module)?;
-    debug::register_root_compatibility_aliases(module)?;
     Ok(())
 }
 
@@ -49,7 +47,6 @@ fn register_domain_submodules(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_submodule(module, "runtime", runtime::register_module)?;
     register_submodule(module, "telemetry", telemetry::register_module)?;
     register_submodule(module, "output", output::register_module)?;
-    register_submodule(module, "debug", debug::register_module)?;
     Ok(())
 }
 

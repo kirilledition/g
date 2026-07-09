@@ -85,7 +85,6 @@ pub(crate) fn parse_telemetry_mode(telemetry_mode: &str) -> PyResult<native_tele
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeTelemetryPaths>()?;
     module.add_function(wrap_pyfunction!(resolve_output_run_root_value, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_telemetry_paths, module)?)?;
     Ok(())

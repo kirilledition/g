@@ -117,9 +117,9 @@ g._core.input
 g._core.output
 ```
 
-`g._core.debug` is only for debug, compatibility, and migration internals. Root
-`g._core` symbols are compatibility aliases only; new Python callers must use a
-domain submodule.
+Root `g._core` symbols are compatibility aliases only; new Python callers must
+use a domain submodule. The former `_core.debug` surface was removed after
+callback runtime promotion into `_core.engine`.
 
 ### Python Ownership
 
@@ -136,12 +136,13 @@ src/g/jax_runtime/
 src/g/compute/
 ```
 
-Migration targets to delete or demote after Rust ownership lands:
+Deleted after Rust ownership landed:
 
 ```text
 src/g/execution_plan.py
 src/g/engine/regenie2_pipeline/
 src/g/engine/native_dispatch/
+src/g/engine/dispatch_requests.py
 src/g/engine/callbacks/runtime.py
 ```
 
@@ -201,7 +202,6 @@ Already completed:
 - Cargo workspace and target crates exist.
 - `src/binding` is domain-organized.
 - `_core.<domain>` submodules exist.
-- `_core.debug` owns debug callback/schedule/preflight bindings.
 - CLI uses `_core.cli.run_with_python_backend`.
 - Binding layer policy, integer policy, integer audit, raw pointer wrappers,
   checked conversion helpers, and architecture checks exist.
@@ -215,8 +215,6 @@ Already completed:
 - `g-engine`, `g-runtime`, and `g-output` expose public Rust APIs only through
   `api.rs`; their public `debug`, `events`, `trusted_validation`, and `admin`
   module facades have been removed.
-- Phase 10 callback scheduler/resource ownership is mostly complete; Python
-  still retains transitional JAX/backend wiring and some side-effect adapters.
 - Root `_core.record_*_diagnostic_event` raw helper exports have been replaced
   for production Python by typed recorder/context classes.
 - Output write dtype planning and writer finish thread planning now live in
@@ -238,15 +236,23 @@ Already completed:
   preflight, output bundle preparation, delivery, cleanup, writer finalization,
   telemetry, and success finalization. Python supplies JAX runtime setup and
   callback construction only.
+- Legacy Python orchestration modules
+  (`execution_plan.py`, `engine/regenie2_pipeline/`, `engine/native_dispatch/`,
+  `engine/dispatch_requests.py`) have been deleted.
+- Callback runtime resources, queues, schedule adapters, progress, and summary
+  bindings live under `src/binding/engine/` (not `_core.debug`).
+- Worker loops, dosage acquire/enqueue, and start/finish/abort execution run in
+  `NativeCallbackRuntimeResources` / delivery; Python `engine/callbacks/base.py`
+  retains local state plus JAX compute and result materialize/write hooks.
+- `engine/callbacks/runtime.py` and the legacy `Regenie2RunEngine` Python class
+  have been removed.
 
 Still active:
 
-- `execution_plan.py`, `engine/regenie2_pipeline/`, and
-  `engine/native_dispatch/` remain as legacy/test/debug code, but production
-  runner execution no longer depends on them.
 - Large PyO3 modules remain, especially `engine/run_engine.rs`,
   `telemetry/run_events.rs`, `output/mod.rs`, and `config/mod.rs`.
 - `crates/input/src/sample/mod.rs` still contains real alignment logic.
+- Tests and some tooling may still need restabilization against the cleaned API.
 
 ## Remaining Roadmap
 
@@ -261,24 +267,25 @@ roadmap items.
 
 ### 2. Native Engine Ownership
 
-Completed for production execution. `NativeRunEngineSession.run_to_completion`
-now owns lifecycle, input/output preparation, dispatch orchestration, cleanup,
-telemetry, and finalization. Python runner code configures JAX, builds the
-native session, and passes a callback factory for JAX compute callbacks.
-
-Remaining deletion of legacy Python orchestration modules is a follow-up only
-after tests and debug tooling stop importing them.
+**Completed (strict).** Production runs only through
+`NativeRunEngineSession.run_to_completion`. Python supplies JAX setup
+(`runner`) and compute callbacks (`engine/callbacks` + `compute`). Dual-path
+Python orchestration packages are deleted. Delivery lifecycle and genotype
+enqueue for single/multi-trait paths are native-owned in the binding session
+delivery path. Residual large size of `run_engine.rs` is **§1 Binding Adapter
+Collapse**, not open §2 work.
 
 ### 3. Callback Runtime Finalization
 
-Finish removing transitional Python callback runtime ownership.
-
-- Rust owns queue capacity, result slots, dosage buffers, worker lifecycle,
-  writer handoff, progress, cleanup, and scheduling decisions.
-- Python retains only local callback item storage/wakeups until the Rust-owned
-  session can remove them.
-- Delete or demote `src/g/engine/callbacks/runtime.py` and matching PyO3 debug
-  resources when no production path uses them.
+**Completed (strict).** `NativeCallbackRuntimeResources` owns queues, slots,
+dosage buffers, worker loops, start/finish/abort execution, and dosage enqueue
+for production single/multi-trait delivery. Delivery calls resources directly
+for acquire/put/lifecycle (not Python `start`/`finish`/`compute_preprocessed_*`
+enqueue entrypoints). Python callbacks retain local state (errors, pending
+diagnostics, JAX/writer handles), implement JAX compute hooks, result
+materialize/write, and thin result-slot/put helpers. `callbacks/runtime.py` is
+deleted; `base.py` is compute/write glue only. Grouped union fanout still uses a
+Python slice helper that enqueues via each child's native resources.
 
 ### 4. Module Boundary Cleanup
 
@@ -307,8 +314,8 @@ Extend existing architecture checks rather than adding isolated scripts.
 - Public export changes require `PUBLIC_API.md` updates.
 - Production Python must not import `_core.debug`.
 - Root `_core` compatibility aliases must be allowlisted and shrink over time.
-- After native ownership lands, production Python imports from
-  `regenie2_pipeline`, `native_dispatch`, and callback runtime are rejected.
+- Production Python imports of `regenie2_pipeline`, `native_dispatch`,
+  `execution_plan`, `dispatch_requests`, and `callbacks.runtime` are rejected.
 - Integer casts remain checked or allowlisted.
 
 ## Superseded Work

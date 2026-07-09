@@ -545,9 +545,7 @@ pub(crate) fn initialize_process_logging_runtime_policy(
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimePolicy>()?;
-    module.add_class::<NativeJaxRuntimeSetupLifecyclePlan>()?;
     module.add_class::<NativeLoggingRuntimePolicy>()?;
-    module.add_class::<NativeRayonThreadPoolConfigurationPlan>()?;
     module.add_class::<NativeRunRuntime>()?;
     module.add_class::<NativeRuntimeCompatibilityToken>()?;
     module.add_class::<NativeRuntimePolicy>()?;

@@ -233,6 +233,10 @@ impl NativeCallbackWorkerErrorRaisePlan {
     pub(crate) fn should_raise_value(&self) -> bool {
         self.inner.should_raise
     }
+
+    pub(crate) fn error_message_value(&self) -> Option<&str> {
+        self.inner.error_message.as_deref()
+    }
 }
 
 #[pymethods]
@@ -308,8 +312,6 @@ impl NativeMultiTraitChunkWritePlanner {
 }
 
 fn register_output_and_delivery_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeBgenDeliveryPolicy>()?;
-    module.add_class::<NativeMultiTraitChunkWritePlan>()?;
     module.add_class::<NativeMultiTraitChunkWritePlanner>()?;
     Ok(())
 }
@@ -1988,9 +1990,7 @@ fn register_dosage_buffer_exports(module: &Bound<'_, PyModule>) {
 }
 
 fn register_dosage_work_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeDosageWorkHandoffPlan>()?;
-    module.add_class::<NativeDosageWorkItemStageDurationPlan>()?;
-    module.add_class::<NativeVariantMajorDosageBatchHandoffPlan>()?;
+    let _ = module;
     Ok(())
 }
 
@@ -1999,6 +1999,6 @@ fn register_result_write_exports(module: &Bound<'_, PyModule>) {
 }
 
 fn register_gpu_format_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeGpuGenotypeFormatResolutionPlan>()?;
+    let _ = module;
     Ok(())
 }

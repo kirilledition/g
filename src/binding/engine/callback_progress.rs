@@ -202,7 +202,7 @@ pub(crate) fn build_callback_chunk_identity(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCallbackProgressTelemetryEvent>()?;
-    module.add_class::<NativeCallbackProgressUpdate>()?;
+    // Progress types are binding-internal; not registered on g._core.
+    let _ = module;
     Ok(())
 }

@@ -399,7 +399,6 @@ fn jax_runtime_diagnostic_value_from_py(
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeJaxRuntimeDiagnosticRecorder>()?;
     module.add_class::<NativeJaxRuntimeDiagnosticEvent>()?;
-    module.add_class::<NativeJaxRuntimeDiagnosticField>()?;
     module.add_class::<NativeJaxRuntimeSetupReport>()?;
     module.add_class::<NativeJaxRuntimeSetupSession>()?;
     Ok(())

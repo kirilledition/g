@@ -50,11 +50,6 @@ use super::sample_alignment::{
 };
 use super::timing::NativeStageTimingRecorder;
 
-#[pyclass]
-struct Regenie2RunEngine {
-    engine: Regenie2RunEngineCore,
-}
-
 #[pyclass(name = "NativeSingleTraitRunInput", skip_from_py_object)]
 struct NativeSingleTraitRunInput {
     data: native_input::AlignedSampleData,
@@ -377,32 +372,33 @@ impl NativeRunEngineSession {
         })
     }
 
-    #[getter]
+    fn run_to_completion<'py>(
+        &self,
+        py: Python<'py>,
+        callback_factory: &Bound<'py, PyAny>,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+    ) -> PyResult<NativeRunArtifacts> {
+        self.run_to_completion_internal(py, callback_factory, telemetry_session, stage_timing_recorder.as_deref())
+    }
+}
+
+impl NativeRunEngineSession {
     fn phase(&self) -> PyResult<&'static str> {
         self.lifecycle.phase_label()
     }
-
-    #[getter]
     fn output_resume(&self) -> bool {
         self.lifecycle.output_resume_value()
     }
-
-    #[getter]
     fn run_request(&self) -> NativeRunRequest {
         self.lifecycle.run_request_handle()
     }
-
-    #[getter]
     fn sample_count(&self) -> PyResult<usize> {
         self.with_open_engine(|engine| Ok(engine.reader().sample_count()))
     }
-
-    #[getter]
     fn variant_count(&self) -> PyResult<usize> {
         self.with_open_engine(|engine| Ok(engine.reader().variant_count()))
     }
-
-    #[getter]
     fn contains_embedded_samples(&self) -> PyResult<bool> {
         self.with_open_engine(|engine| Ok(engine.reader().contains_embedded_samples()))
     }
@@ -410,8 +406,6 @@ impl NativeRunEngineSession {
     fn prepared_phenotype_runs<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         self.lifecycle.prepared_phenotype_runs_tuple(py)
     }
-
-    #[allow(clippy::needless_pass_by_value)]
     fn prepared_phenotype_run(&self, phenotype_name: String) -> PyResult<NativeRunLifecyclePhenotypeRun> {
         self.lifecycle.prepared_phenotype_run_handle(phenotype_name)
     }
@@ -423,15 +417,6 @@ impl NativeRunEngineSession {
     fn has_open_bgen_engine(&self) -> PyResult<bool> {
         Ok(self.lock_engine()?.is_some())
     }
-
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        bgen_path,
-        chunk_size,
-        variant_limit=None,
-        trusted_no_missing_diploid=false,
-        trusted_bgen_validation_mode=None,
-    ))]
     fn open_bgen_engine(
         &self,
         py: Python<'_>,
@@ -454,18 +439,7 @@ impl NativeRunEngineSession {
     fn sample_identifiers(&self) -> PyResult<Vec<String>> {
         self.with_open_engine(|engine| Ok(engine.reader().sample_identifiers()))
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_name,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
     fn align_sample_data(
         &self,
         py: Python<'_>,
@@ -491,18 +465,7 @@ impl NativeRunEngineSession {
             )
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_names,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
     fn align_multi_sample_data(
         &self,
         py: Python<'_>,
@@ -528,18 +491,7 @@ impl NativeRunEngineSession {
             )
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_names,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
     fn align_grouped_sample_data(
         &self,
         py: Python<'_>,
@@ -582,8 +534,6 @@ impl NativeRunEngineSession {
                 .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))
         })
     }
-
-    #[pyo3(signature = (variant_limit=None))]
     fn required_chromosomes(&self, variant_limit: Option<usize>) -> PyResult<Vec<String>> {
         self.with_open_engine(|engine| {
             engine.required_chromosomes(variant_limit).map_err(|error| convert_preflight_error(&error))
@@ -614,8 +564,6 @@ impl NativeRunEngineSession {
                 .map_err(|error| convert_bgen_error("mark_trusted_no_missing_diploid_validated", error))
         })
     }
-
-    #[allow(clippy::needless_pass_by_value)]
     fn validate_trusted_no_missing_diploid_with_default_cache(
         &self,
         py: Python<'_>,
@@ -626,10 +574,7 @@ impl NativeRunEngineSession {
             validate_trusted_no_missing_diploid_with_default_cache_for_engine(engine, py, &bgen_path, &validation_mode)
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::type_complexity)]
-    #[allow(clippy::needless_pass_by_value)]
     fn prepare_output_bundles_from_runtime_plan<'py>(
         &self,
         py: Python<'py>,
@@ -658,10 +603,7 @@ impl NativeRunEngineSession {
             stage_timing_recorder.as_deref(),
         )
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_lines)]
-    #[allow(clippy::needless_pass_by_value)]
     fn prepare_single_trait_pipeline_bundle<'py>(
         &self,
         py: Python<'py>,
@@ -931,8 +873,6 @@ impl NativeRunEngineSession {
             committed_chunk_identifiers,
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::needless_pass_by_value)]
     fn run_single_trait_pipeline_bundle<'py>(
         &self,
@@ -952,22 +892,8 @@ impl NativeRunEngineSession {
             &pipeline_label,
         )
     }
-
-    fn run_to_completion<'py>(
-        &self,
-        py: Python<'py>,
-        callback_factory: &Bound<'py, PyAny>,
-        telemetry_session: Option<&Bound<'py, PyAny>>,
-        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
-    ) -> PyResult<NativeRunArtifacts> {
-        self.run_to_completion_internal(py, callback_factory, telemetry_session, stage_timing_recorder.as_deref())
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn finalize_success(&self, final_output_paths: Vec<Option<String>>) -> PyResult<NativeRunArtifacts> {
-        self.lifecycle.finalize_success_artifacts(final_output_paths)
-    }
 }
+
 
 impl NativeRunEngineSession {
     fn lock_engine(&self) -> PyResult<MutexGuard<'_, Option<Regenie2RunEngineCore>>> {
@@ -2151,375 +2077,118 @@ impl NativeRunEngineSession {
     }
 }
 
-#[pymethods]
-impl Regenie2RunEngine {
-    #[new]
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (bgen_path, chunk_size, variant_limit=None, trusted_no_missing_diploid=false))]
-    fn new(
-        py: Python<'_>,
-        bgen_path: String,
-        chunk_size: usize,
-        variant_limit: Option<usize>,
-        trusted_no_missing_diploid: bool,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            engine: open_bgen_engine_core(py, &bgen_path, chunk_size, variant_limit, trusted_no_missing_diploid)?,
-        })
-    }
-
-    #[getter]
-    fn sample_count(&self) -> usize {
-        self.engine.reader().sample_count()
-    }
-
-    #[getter]
-    fn variant_count(&self) -> usize {
-        self.engine.reader().variant_count()
-    }
-
-    #[getter]
-    fn contains_embedded_samples(&self) -> bool {
-        self.engine.reader().contains_embedded_samples()
-    }
-
-    fn sample_identifiers(&self) -> Vec<String> {
-        self.engine.reader().sample_identifiers()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_name,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
-    fn align_sample_data(
-        &self,
-        py: Python<'_>,
-        sample_path: Option<String>,
-        phenotype_path: String,
-        phenotype_name: String,
-        covariate_path: Option<String>,
-        covariate_names: Option<Vec<String>>,
-        is_binary_trait: bool,
-        sample_key_mode: String,
-    ) -> PyResult<NativeAlignedSampleData> {
-        align_sample_data_for_engine(
-            &self.engine,
-            py,
-            sample_path,
-            phenotype_path,
-            phenotype_name,
-            covariate_path,
-            covariate_names,
-            is_binary_trait,
-            &sample_key_mode,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_names,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
-    fn align_multi_sample_data(
-        &self,
-        py: Python<'_>,
-        sample_path: Option<String>,
-        phenotype_path: String,
-        phenotype_names: Vec<String>,
-        covariate_path: Option<String>,
-        covariate_names: Option<Vec<String>>,
-        is_binary_trait: bool,
-        sample_key_mode: String,
-    ) -> PyResult<NativeMultiAlignedSampleData> {
-        align_multi_sample_data_for_engine(
-            &self.engine,
-            py,
-            sample_path,
-            phenotype_path,
-            phenotype_names,
-            covariate_path,
-            covariate_names,
-            is_binary_trait,
-            &sample_key_mode,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_path,
-        phenotype_path,
-        phenotype_names,
-        covariate_path=None,
-        covariate_names=None,
-        is_binary_trait=false,
-        sample_key_mode="iid".to_string()
-    ))]
-    fn align_grouped_sample_data(
-        &self,
-        py: Python<'_>,
-        sample_path: Option<String>,
-        phenotype_path: String,
-        phenotype_names: Vec<String>,
-        covariate_path: Option<String>,
-        covariate_names: Option<Vec<String>>,
-        is_binary_trait: bool,
-        sample_key_mode: String,
-    ) -> PyResult<NativeGroupedAlignedSampleData> {
-        align_grouped_sample_data_for_engine(
-            &self.engine,
-            py,
-            sample_path,
-            phenotype_path,
-            phenotype_names,
-            covariate_path,
-            covariate_names,
-            is_binary_trait,
-            &sample_key_mode,
-        )
-    }
-
-    fn chromosome_boundary_indices(&self) -> Vec<usize> {
-        self.engine.reader().chromosome_boundary_indices()
-    }
-
-    fn variant_metadata_slice(
-        &self,
-        py: Python<'_>,
-        variant_start: usize,
-        variant_stop: usize,
-    ) -> PyResult<VariantMetadataTuple> {
-        py.detach(|| self.engine.reader().variant_metadata_slice(variant_start, variant_stop))
-            .map(convert_variant_metadata_columns_to_tuple)
-            .map_err(|error| convert_bgen_error("read_variant_metadata_slice", error))
-    }
-
-    #[pyo3(signature = (variant_limit=None))]
-    fn required_chromosomes(&self, variant_limit: Option<usize>) -> PyResult<Vec<String>> {
-        self.engine.required_chromosomes(variant_limit).map_err(|error| convert_preflight_error(&error))
-    }
-
-    fn reset_profile(&self) {
-        self.engine.reader().reset_profile();
-    }
-
-    fn profile_snapshot(&self) -> HashMap<String, u64> {
-        build_profile_snapshot_dict(&self.engine.reader().profile_snapshot())
-    }
-
-    fn validate_trusted_no_missing_diploid(&self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| self.engine.reader().validate_trusted_no_missing_diploid())
-            .map_err(|error| convert_bgen_error("validate_trusted_no_missing_diploid", error))
-    }
-
-    fn mark_trusted_no_missing_diploid_validated(&self, py: Python<'_>) -> PyResult<()> {
-        py.detach(|| self.engine.reader().mark_trusted_no_missing_diploid_validated())
-            .map_err(|error| convert_bgen_error("mark_trusted_no_missing_diploid_validated", error))
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn validate_trusted_no_missing_diploid_with_default_cache(
-        &self,
-        py: Python<'_>,
-        bgen_path: String,
-        validation_mode: String,
-    ) -> PyResult<()> {
-        validate_trusted_no_missing_diploid_with_default_cache_for_engine(
-            &self.engine,
-            py,
-            &bgen_path,
-            &validation_mode,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        callback,
-        committed_chunk_identifiers=None,
-        callback_batch_size=1,
-    ))]
-    fn run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source<'py>(
-        &self,
-        py: Python<'py>,
-        sample_indices: PyReadonlyArray1<'py, i64>,
-        native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-        native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-        callback_batch_size: i64,
-    ) -> PyResult<usize> {
-        run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source(
-            &self.engine,
-            py,
-            &sample_indices,
-            native_aligned_sample_data,
-            native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    #[pyo3(signature = (
-        sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        callback,
-        committed_chunk_identifiers=None,
-        callback_batch_size=1,
-    ))]
-    fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source<'py>(
-        &self,
-        py: Python<'py>,
-        sample_indices: PyReadonlyArray1<'py, i64>,
-        native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-        native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-        callback: &Bound<'py, PyAny>,
-        committed_chunk_identifiers: Option<Vec<usize>>,
-        callback_batch_size: i64,
-    ) -> PyResult<usize> {
-        run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source(
-            &self.engine,
-            py,
-            &sample_indices,
-            native_aligned_sample_data,
-            native_multi_aligned_sample_data,
-            callback,
-            committed_chunk_identifiers,
-            callback_batch_size,
-        )
-    }
+fn delivery_callback_batch_size(callback: &Bound<'_, PyAny>) -> PyResult<i64> {
+    callback.getattr("native_callback_batch_size")?.extract::<i64>()
 }
 
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-fn run_bgen_delivery_with_writer_sessions<'py>(
-    py: Python<'py>,
-    engine: PyRef<'py, Regenie2RunEngine>,
-    sample_indices: PyReadonlyArray1<'py, i64>,
-    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-    writer_sessions: Vec<PyRef<'py, OutputWriterSession>>,
-    callback: &Bound<'py, PyAny>,
-    stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
-    writer_finish_thread_count: i64,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-    variant_major_packed8_probability_pairs: bool,
-    pipeline_label: String,
-) -> PyResult<Vec<Option<String>>> {
-    let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
-    let mut callback_finished = false;
-    let delivery_result = run_bgen_delivery_attempt(
-        py,
-        &engine.engine,
-        &sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        &writer_sessions,
-        callback,
-        stage_timing_recorder_reference,
-        writer_finish_thread_count,
-        committed_chunk_identifiers,
-        variant_major_packed8_probability_pairs,
-        &pipeline_label,
-        &mut callback_finished,
-    );
-    match delivery_result {
-        Ok(final_parquet_paths) => {
-            run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
-                usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
-                &pipeline_label,
-            )?;
-            Ok(final_parquet_paths)
-        }
-        Err(error) => handle_bgen_delivery_error(
-            py,
-            error,
-            callback_finished,
-            callback,
-            &writer_sessions,
-            stage_timing_recorder_reference,
-            writer_finish_thread_count,
-            &pipeline_label,
-        ),
+fn for_each_owned_callback_runtime<'py, Function>(callback: &Bound<'py, PyAny>, mut operation: Function) -> PyResult<()>
+where
+    Function: FnMut(Bound<'py, PyAny>, Bound<'py, PyAny>) -> PyResult<()>,
+{
+    if callback.hasattr("callback_runtime_resources")? {
+        let resources = callback.getattr("callback_runtime_resources")?;
+        return operation(callback.clone(), resources);
     }
+    if !callback.hasattr("group_fanouts")? {
+        return Err(PyRuntimeError::new_err(
+            "Delivery callback is missing native callback runtime resources.",
+        ));
+    }
+    let group_fanouts = callback.getattr("group_fanouts")?;
+    for index in 0..group_fanouts.len()? {
+        let fanout = group_fanouts.get_item(index)?;
+        let child_callback = fanout.getattr("callback")?;
+        if !child_callback.hasattr("callback_runtime_resources")? {
+            return Err(PyRuntimeError::new_err(
+                "Grouped fanout child callback is missing native callback runtime resources.",
+            ));
+        }
+        let resources = child_callback.getattr("callback_runtime_resources")?;
+        operation(child_callback, resources)?;
+    }
+    Ok(())
 }
 
-#[pyfunction]
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::needless_pass_by_value)]
-fn run_bgen_session_delivery_with_writer_sessions<'py>(
-    py: Python<'py>,
-    engine_session: PyRef<'py, NativeRunEngineSession>,
-    sample_indices: PyReadonlyArray1<'py, i64>,
-    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-    writer_sessions: Vec<PyRef<'py, OutputWriterSession>>,
-    callback: &Bound<'py, PyAny>,
-    stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
-    writer_finish_thread_count: i64,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-    variant_major_packed8_probability_pairs: bool,
-    pipeline_label: String,
-) -> PyResult<Vec<Option<String>>> {
-    let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
-    let engine_guard = engine_session.lock_engine()?;
-    let engine = engine_guard
-        .as_ref()
-        .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
-    let mut callback_finished = false;
-    let delivery_result = run_bgen_delivery_attempt(
-        py,
-        engine,
-        &sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        &writer_sessions,
-        callback,
-        stage_timing_recorder_reference,
-        writer_finish_thread_count,
-        committed_chunk_identifiers,
-        variant_major_packed8_probability_pairs,
-        &pipeline_label,
-        &mut callback_finished,
-    );
-    match delivery_result {
-        Ok(final_parquet_paths) => {
-            run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
-                usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
-                &pipeline_label,
-            )?;
-            Ok(final_parquet_paths)
+fn delivery_start_callback_runtime(py: Python<'_>, callback: &Bound<'_, PyAny>) -> PyResult<()> {
+    let _ = py;
+    for_each_owned_callback_runtime(callback, |_owner, resources| {
+        resources.call_method0("start_workers")?;
+        Ok(())
+    })
+}
+
+fn delivery_abort_callback_runtime(py: Python<'_>, callback: &Bound<'_, PyAny>) -> PyResult<()> {
+    let _ = py;
+    for_each_owned_callback_runtime(callback, |_owner, resources| {
+        resources.call_method0("abort_worker_lifecycle")?;
+        Ok(())
+    })
+}
+
+fn delivery_finish_callback_runtime(py: Python<'_>, callback: &Bound<'_, PyAny>) -> PyResult<()> {
+    for_each_owned_callback_runtime(callback, |owner, resources| {
+        let pending = if owner.hasattr("binary_correction_pending_diagnostics")? {
+            owner.getattr("binary_correction_pending_diagnostics")?
+        } else {
+            pyo3::types::PyList::empty(py).into_any()
+        };
+        let finish_result =
+            resources.call_method1("finish_worker_lifecycle_for_pending_diagnostics", (pending,))?;
+        if finish_result.getattr("has_shutdown_timeout")?.extract::<bool>()? {
+            let worker_name = finish_result.getattr("shutdown_worker_name")?;
+            let timeout_seconds = finish_result.getattr("shutdown_timeout_seconds")?.extract::<f64>()?;
+            let shared = py.import("g.engine.callbacks.shared")?;
+            let error_type = shared.getattr("NativeBgenWorkerShutdownError")?;
+            let error = error_type.call((), Some(&{
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("worker_name", worker_name)?;
+                kwargs.set_item("timeout_seconds", timeout_seconds)?;
+                kwargs
+            }))?;
+            return Err(PyErr::from_value(error));
         }
-        Err(error) => handle_bgen_delivery_error(
+        if finish_result.getattr("raise_worker_error")?.extract::<bool>()?
+            && owner.hasattr("raise_worker_error_if_present")?
+        {
+            owner.call_method0("raise_worker_error_if_present")?;
+        }
+        let progress_event = finish_result.getattr("progress_completion_event")?;
+        let telemetry_session = if owner.hasattr("telemetry_session")? {
+            Some(owner.getattr("telemetry_session")?)
+        } else {
+            None
+        };
+        let progress_event_ref = if progress_event.is_none() {
+            None
+        } else {
+            Some(progress_event.extract()?)
+        };
+        run_events::record_callback_progress_event_telemetry(
             py,
-            error,
-            callback_finished,
-            callback,
-            &writer_sessions,
-            stage_timing_recorder_reference,
-            writer_finish_thread_count,
-            &pipeline_label,
-        ),
-    }
+            telemetry_session.as_ref(),
+            progress_event_ref,
+        )?;
+        if finish_result.getattr("emit_binary_correction_summary")?.extract::<bool>()? {
+            let mut summary_payload = finish_result.getattr("binary_correction_summary_payload")?;
+            if summary_payload.is_none()
+                && finish_result
+                    .getattr("flush_binary_correction_pending_diagnostics")?
+                    .extract::<bool>()?
+                && owner.hasattr("materialize_binary_correction_pending_diagnostics")?
+            {
+                owner.call_method0("materialize_binary_correction_pending_diagnostics")?;
+                summary_payload = resources.call_method0("binary_correction_summary_payload")?;
+            }
+            if !summary_payload.is_none() {
+                let summary_dict = summary_payload.cast::<pyo3::types::PyDict>()?;
+                run_events::record_binary_correction_summary_telemetry(
+                    telemetry_session.as_ref(),
+                    Some(summary_dict),
+                )?;
+            }
+        }
+        Ok(())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2543,8 +2212,8 @@ fn run_bgen_delivery_attempt<'py>(
     }
     let delivery_start_time = Instant::now();
     let committed_chunk_count = committed_chunk_identifiers.as_ref().map_or(0, Vec::len);
-    callback.call_method0("start")?;
-    let callback_batch_size = callback.getattr("native_callback_batch_size")?.extract::<i64>()?;
+    delivery_start_callback_runtime(py, callback)?;
+    let callback_batch_size = delivery_callback_batch_size(callback)?;
     let attempt_plan = plan_bgen_delivery_attempt_for_binding(
         Some(callback_batch_size),
         variant_major_packed8_probability_pairs,
@@ -2687,7 +2356,7 @@ fn execute_bgen_delivery_cleanup_actions<'py>(
             native_engine_debug::BgenDeliveryCleanupAction::DrainCallback => {
                 let callback_finish_start_time = Instant::now();
                 run_events::record_native_dispatch_callback_drain_started_diagnostic_event()?;
-                callback.call_method0("finish")?;
+                delivery_finish_callback_runtime(py, callback)?;
                 record_stage_duration(stage_timing_recorder, "callback_drain", callback_finish_start_time)?;
                 resolved_callback_finished = true;
             }
@@ -2720,7 +2389,7 @@ fn execute_bgen_delivery_cleanup_actions<'py>(
                 record_stage_duration(stage_timing_recorder, "writer_finish_interrupted", writer_finish_start_time)?;
             }
             native_engine_debug::BgenDeliveryCleanupAction::AbortCallback => {
-                let _ = callback.call_method0("abort");
+                let _ = delivery_abort_callback_runtime(py, callback);
             }
             native_engine_debug::BgenDeliveryCleanupAction::AbortWriterSessions => {
                 output::abort_output_writer_sessions_for_delivery(writer_sessions);
@@ -2965,6 +2634,25 @@ fn flush_variant_major_dosage_batch<'py>(
     Ok(())
 }
 
+fn flush_variant_major_dosage_batch_native(
+    resources: &Bound<'_, PyAny>,
+    metadata_batch: &mut Vec<Py<VariantMetadata>>,
+    output_array_batch: &mut Vec<Py<PyAny>>,
+    stats_batch: &mut Vec<Py<ChunkStats>>,
+) -> PyResult<()> {
+    if metadata_batch.is_empty() {
+        return Ok(());
+    }
+    let metadata_values = std::mem::take(metadata_batch);
+    let output_array_values = std::mem::take(output_array_batch);
+    let stats_values = std::mem::take(stats_batch);
+    resources.call_method1(
+        "enqueue_variant_major_dosage_chunk_batch",
+        (metadata_values, output_array_values, stats_values),
+    )?;
+    Ok(())
+}
+
 fn record_native_dispatch_bgen_engine_constructing(
     chunk_size: usize,
     source_path: &str,
@@ -3150,66 +2838,6 @@ fn align_grouped_sample_data_for_engine(
         .map_err(|error| convert_input_error("align_grouped_sample_data", error.into()))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_bgen_variant_major_dosage_buffered_chunks_for_best_sample_source<'py>(
-    engine: &Regenie2RunEngineCore,
-    py: Python<'py>,
-    sample_indices: &PyReadonlyArray1<'py, i64>,
-    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-    callback: &Bound<'py, PyAny>,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-    callback_batch_size: i64,
-) -> PyResult<usize> {
-    let attempt_plan = plan_bgen_delivery_attempt_for_binding(
-        Some(callback_batch_size),
-        false,
-        native_multi_aligned_sample_data.is_some(),
-        native_aligned_sample_data.is_some(),
-        committed_chunk_identifiers.as_ref().map_or(0, Vec::len),
-    )?;
-    run_bgen_delivery_invocation(
-        engine,
-        py,
-        sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        callback,
-        committed_chunk_identifiers,
-        attempt_plan.invocation_plan,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_bgen_variant_major_packed8_probability_pair_buffered_chunks_for_best_sample_source<'py>(
-    engine: &Regenie2RunEngineCore,
-    py: Python<'py>,
-    sample_indices: &PyReadonlyArray1<'py, i64>,
-    native_aligned_sample_data: Option<PyRef<'py, NativeAlignedSampleData>>,
-    native_multi_aligned_sample_data: Option<PyRef<'py, NativeMultiAlignedSampleData>>,
-    callback: &Bound<'py, PyAny>,
-    committed_chunk_identifiers: Option<Vec<usize>>,
-    callback_batch_size: i64,
-) -> PyResult<usize> {
-    let attempt_plan = plan_bgen_delivery_attempt_for_binding(
-        Some(callback_batch_size),
-        true,
-        native_multi_aligned_sample_data.is_some(),
-        native_aligned_sample_data.is_some(),
-        committed_chunk_identifiers.as_ref().map_or(0, Vec::len),
-    )?;
-    run_bgen_delivery_invocation(
-        engine,
-        py,
-        sample_indices,
-        native_aligned_sample_data,
-        native_multi_aligned_sample_data,
-        callback,
-        committed_chunk_identifiers,
-        attempt_plan.invocation_plan,
-    )
-}
-
 fn plan_bgen_delivery_attempt_for_binding(
     callback_batch_size: Option<i64>,
     variant_major_packed8_probability_pairs: bool,
@@ -3381,7 +3009,6 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
     let committed_identifier_set = build_committed_identifier_set(committed_chunk_identifiers);
     let chunk_specs =
         engine.plan_chunks(&committed_identifier_set).map_err(|error| convert_genotype_error("plan_chunks", error))?;
-    let acquire_dosage_buffer_method = callback.getattr("acquire_variant_major_dosage_buffer")?;
     if callback_batch_size > 1 {
         return run_prepared_bgen_variant_major_dosage_buffered_chunk_batches(
             engine,
@@ -3389,20 +3016,38 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
             selected_sample_count,
             callback,
             &chunk_specs,
-            &acquire_dosage_buffer_method,
             callback_batch_size,
         );
     }
     let chunk_batch_plan = native_engine_debug::plan_chunk_batches(&chunk_specs, callback_batch_size)
         .map_err(|error| convert_schedule_error(&error))?;
     let processed_chunk_count = chunk_batch_plan.chunk_count();
-    let compute_dosage_chunk_method = callback.getattr("compute_preprocessed_variant_major_dosage_chunk")?;
+    let resources = optional_callback_runtime_resources(callback)?;
+    let acquire_dosage_buffer_method = if resources.is_none() {
+        Some(callback.getattr("acquire_variant_major_dosage_buffer")?)
+    } else {
+        None
+    };
+    let compute_dosage_chunk_method = if resources.is_none() {
+        Some(callback.getattr("compute_preprocessed_variant_major_dosage_chunk")?)
+    } else {
+        None
+    };
     for chunk_batch in chunk_batch_plan.into_chunk_batches() {
         for chunk_spec in &chunk_batch {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object =
-                acquire_dosage_buffer_method.call1((selected_variant_count, selected_sample_count))?;
+            let output_array_object = if let Some(resources) = resources.as_ref() {
+                resources.call_method1(
+                    "acquire_variant_major_dosage_buffer",
+                    (selected_variant_count, selected_sample_count),
+                )?
+            } else {
+                acquire_dosage_buffer_method
+                    .as_ref()
+                    .expect("grouped acquire method")
+                    .call1((selected_variant_count, selected_sample_count))?
+            };
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
                 let output_shape = output_array.shape();
@@ -3445,10 +3090,27 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunks<'py>(
                 .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
             let metadata =
                 Py::new(py, VariantMetadata::new(variant_start_index, variant_stop_index, metadata_columns))?;
-            compute_dosage_chunk_method.call1((metadata, output_array_object, stats))?;
+            if let Some(resources) = resources.as_ref() {
+                resources.call_method1(
+                    "enqueue_variant_major_dosage_chunk",
+                    (metadata, output_array_object, stats),
+                )?;
+            } else {
+                compute_dosage_chunk_method
+                    .as_ref()
+                    .expect("grouped compute method")
+                    .call1((metadata, output_array_object, stats))?;
+            }
         }
     }
     Ok(processed_chunk_count)
+}
+
+fn optional_callback_runtime_resources<'py>(callback: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if callback.hasattr("callback_runtime_resources")? {
+        return Ok(Some(callback.getattr("callback_runtime_resources")?));
+    }
+    Ok(None)
 }
 
 fn run_prepared_bgen_variant_major_dosage_buffered_chunk_batches<'py>(
@@ -3457,11 +3119,19 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunk_batches<'py>(
     selected_sample_count: usize,
     callback: &Bound<'py, PyAny>,
     chunk_specs: &[NativeChunkSpec],
-    acquire_dosage_buffer_method: &Bound<'py, PyAny>,
     callback_batch_size: usize,
 ) -> PyResult<usize> {
-    let compute_dosage_chunk_batch_method =
-        callback.getattr("compute_preprocessed_variant_major_dosage_chunk_batch")?;
+    let resources = optional_callback_runtime_resources(callback)?;
+    let acquire_dosage_buffer_method = if resources.is_none() {
+        Some(callback.getattr("acquire_variant_major_dosage_buffer")?)
+    } else {
+        None
+    };
+    let compute_dosage_chunk_batch_method = if resources.is_none() {
+        Some(callback.getattr("compute_preprocessed_variant_major_dosage_chunk_batch")?)
+    } else {
+        None
+    };
     let chunk_batch_plan = native_engine_debug::plan_chunk_batches(chunk_specs, callback_batch_size)
         .map_err(|error| convert_schedule_error(&error))?;
     let processed_chunk_count = chunk_batch_plan.chunk_count();
@@ -3472,8 +3142,17 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunk_batches<'py>(
         for chunk_spec in &chunk_batch {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object =
-                acquire_dosage_buffer_method.call1((selected_variant_count, selected_sample_count))?;
+            let output_array_object = if let Some(resources) = resources.as_ref() {
+                resources.call_method1(
+                    "acquire_variant_major_dosage_buffer",
+                    (selected_variant_count, selected_sample_count),
+                )?
+            } else {
+                acquire_dosage_buffer_method
+                    .as_ref()
+                    .expect("grouped acquire method")
+                    .call1((selected_variant_count, selected_sample_count))?
+            };
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray2<'_, f32>>()?;
                 let output_shape = output_array.shape();
@@ -3520,12 +3199,21 @@ fn run_prepared_bgen_variant_major_dosage_buffered_chunk_batches<'py>(
             output_array_batch.push(output_array_object.unbind());
             stats_batch.push(stats);
         }
-        flush_variant_major_dosage_batch(
-            &compute_dosage_chunk_batch_method,
-            &mut metadata_batch,
-            &mut output_array_batch,
-            &mut stats_batch,
-        )?;
+        if let Some(resources) = resources.as_ref() {
+            flush_variant_major_dosage_batch_native(
+                resources,
+                &mut metadata_batch,
+                &mut output_array_batch,
+                &mut stats_batch,
+            )?;
+        } else {
+            flush_variant_major_dosage_batch(
+                compute_dosage_chunk_batch_method.as_ref().expect("grouped batch compute"),
+                &mut metadata_batch,
+                &mut output_array_batch,
+                &mut stats_batch,
+            )?;
+        }
     }
     Ok(processed_chunk_count)
 }
@@ -3543,15 +3231,32 @@ fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>
     let chunk_batch_plan =
         native_engine_debug::plan_chunk_batches(&chunk_specs, 1).map_err(|error| convert_schedule_error(&error))?;
     let processed_chunk_count = chunk_batch_plan.chunk_count();
-    let acquire_packed_buffer_method = callback.getattr("acquire_variant_major_packed8_probability_pair_buffer")?;
-    let compute_packed_chunk_method =
-        callback.getattr("compute_preprocessed_variant_major_packed8_probability_pair_chunk")?;
+    let resources = optional_callback_runtime_resources(callback)?;
+    let acquire_packed_buffer_method = if resources.is_none() {
+        Some(callback.getattr("acquire_variant_major_packed8_probability_pair_buffer")?)
+    } else {
+        None
+    };
+    let compute_packed_chunk_method = if resources.is_none() {
+        Some(callback.getattr("compute_preprocessed_variant_major_packed8_probability_pair_chunk")?)
+    } else {
+        None
+    };
     for chunk_batch in chunk_batch_plan.into_chunk_batches() {
         for chunk_spec in &chunk_batch {
             py.check_signals()?;
             let selected_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-            let output_array_object =
-                acquire_packed_buffer_method.call1((selected_variant_count, selected_sample_count))?;
+            let output_array_object = if let Some(resources) = resources.as_ref() {
+                resources.call_method1(
+                    "acquire_variant_major_packed8_probability_pair_buffer",
+                    (selected_variant_count, selected_sample_count),
+                )?
+            } else {
+                acquire_packed_buffer_method
+                    .as_ref()
+                    .expect("grouped packed acquire")
+                    .call1((selected_variant_count, selected_sample_count))?
+            };
             let stats = {
                 let mut output_array = output_array_object.extract::<PyReadwriteArray3<'_, u8>>()?;
                 let output_shape = output_array.shape();
@@ -3597,20 +3302,24 @@ fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>
                 .map_err(|error| convert_bgen_error("variant_metadata_slice", error))?;
             let metadata =
                 Py::new(py, VariantMetadata::new(variant_start_index, variant_stop_index, metadata_columns))?;
-            compute_packed_chunk_method.call1((metadata, output_array_object, stats))?;
+            if let Some(resources) = resources.as_ref() {
+                resources.call_method1(
+                    "enqueue_variant_major_packed8_probability_pair_chunk",
+                    (metadata, output_array_object, stats),
+                )?;
+            } else {
+                compute_packed_chunk_method
+                    .as_ref()
+                    .expect("grouped packed compute")
+                    .call1((metadata, output_array_object, stats))?;
+            }
         }
     }
     Ok(processed_chunk_count)
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeMultiTraitRunInput>()?;
     module.add_class::<NativeRunCallbackContext>()?;
     module.add_class::<NativeRunEngineSession>()?;
-    module.add_class::<NativeSingleTraitPipelineBundle>()?;
-    module.add_class::<NativeSingleTraitRunInput>()?;
-    module.add_class::<Regenie2RunEngine>()?;
-    module.add_function(wrap_pyfunction!(run_bgen_delivery_with_writer_sessions, module)?)?;
-    module.add_function(wrap_pyfunction!(run_bgen_session_delivery_with_writer_sessions, module)?)?;
     Ok(())
 }

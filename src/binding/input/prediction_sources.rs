@@ -195,8 +195,8 @@ impl MultiRegeniePredictionSource {
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<RegeniePredictionSource>()?;
-    module.add_class::<MultiRegeniePredictionSource>()?;
+    // Prediction sources remain pyclasses for binding-internal session use only.
+    let _ = module;
     Ok(())
 }
 

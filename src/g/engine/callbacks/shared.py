@@ -17,6 +17,22 @@ type HostGenotypeBuffer = npt.NDArray[np.float32] | npt.NDArray[np.uint8]
 type HostOrDeviceFloatArray = jax.Array | npt.NDArray[np.float32]
 
 
+def require_current_chromosome_state[ChromosomeStateType](
+    chromosome_state: ChromosomeStateType | None,
+    *,
+    chromosome: str | None,
+) -> ChromosomeStateType:
+    """Return a prepared chromosome state or fail with an explicit runtime error."""
+    if chromosome_state is not None:
+        return chromosome_state
+    if chromosome is None:
+        message = "Chromosome state was not prepared before chunk computation."
+    else:
+        message = f"Chromosome state for {chromosome!r} was not prepared before chunk computation."
+    raise RuntimeError(message)
+
+
+
 class MultiPhenotypeGroupCallbackProtocol(typing.Protocol):
     """Callback contract required by grouped union-sample fanout delivery."""
 
@@ -25,33 +41,9 @@ class MultiPhenotypeGroupCallbackProtocol(typing.Protocol):
         """Return the native callback batch size configured for delivery."""
         ...
 
-    def start(self) -> None:
-        """Start callback worker resources."""
-        ...
-
-    def finish(self) -> None:
-        """Drain callback worker resources."""
-        ...
-
-    def abort(self) -> None:
-        """Abort callback worker resources."""
-        ...
-
-    def acquire_variant_major_dosage_buffer(
-        self,
-        variant_count: int,
-        sample_count: int,
-    ) -> npt.NDArray[np.float32]:
-        """Return a variant-major dosage buffer for native delivery."""
-        ...
-
-    def compute_preprocessed_variant_major_dosage_chunk(
-        self,
-        metadata: typing.Any,
-        genotype_matrix_by_variant: npt.NDArray[np.float32],
-        chunk_stats: _core.ChunkStats,
-    ) -> None:
-        """Consume one preprocessed variant-major dosage chunk."""
+    @property
+    def callback_runtime_resources(self) -> typing.Any:
+        """Return the native callback runtime resources for this group."""
         ...
 
 

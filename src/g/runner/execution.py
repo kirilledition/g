@@ -6,9 +6,7 @@ import time
 import typing
 from pathlib import Path
 
-import g.engine.callbacks.factory as callback_factory
 from g import _core, types
-from g.engine import timing as engine_timing
 from g.runner import events, lifecycle, runtime
 
 RUN_EVENT_RECORDER: _core.NativeRunEventRecorder = _core.NativeRunEventRecorder()
@@ -115,6 +113,10 @@ def run_validated_regenie_config(
         device_start_time = time.perf_counter()
         RUN_EVENT_RECORDER.runner_jax_runtime_configuration_started()
         runtime.configure_runtime_before_jax_import(regenie_config.g_compute, telemetry_session=telemetry_session)
+        # Import JAX-facing modules only after process runtime / JAX knobs are configured.
+        import g.engine.callbacks.factory as callback_factory
+        from g.engine import timing as engine_timing
+
         stage_timing_recorder = engine_timing.build_stage_timing_recorder(
             final_stage_timing_path,
             force=native_final_timing_context.force_stage_timing_recorder,
@@ -131,6 +133,8 @@ def run_validated_regenie_config(
         return events.run_artifacts_from_native_artifacts(native_artifacts)
     finally:
         if stage_timing_recorder is not None:
+            from g.engine import timing as engine_timing
+
             engine_timing.record_stage_duration(stage_timing_recorder, "python_api_entry", api_entry_start_time)
             native_final_timing_context.record_outputs_write_started_diagnostic()
             engine_timing.write_final_timing_outputs(

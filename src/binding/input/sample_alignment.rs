@@ -336,16 +336,8 @@ pub(crate) fn parse_sample_key_mode(sample_key_mode: &str) -> PyResult<SampleKey
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeAlignedPhenotypeGroup>()?;
-    module.add_class::<NativeAlignedSampleData>()?;
-    module.add_class::<NativeGroupedAlignedSampleData>()?;
-    module.add_class::<NativeMultiAlignedSampleData>()?;
-    module.add_class::<NativeResolvedPhenotypeComputeGroup>()?;
-    module.add_function(wrap_pyfunction!(build_group_sample_position_array, module)?)?;
-    module.add_function(wrap_pyfunction!(build_grouped_union_sample_indices, module)?)?;
-    module.add_function(wrap_pyfunction!(build_union_sample_indices, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_complete_case_compute_group, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_per_phenotype_compute_group, module)?)?;
-    module.add_function(wrap_pyfunction!(resolve_single_phenotype_compute_group, module)?)?;
+    // Alignment types remain as private pyclasses for session/binding use; not exported for Python.
+    // Free dual-path builders are no longer registered on g._core.
+    let _ = module;
     Ok(())
 }

@@ -785,6 +785,82 @@ impl NativeCallbackRuntimeResources {
         Ok(())
     }
 
+    /// Acquire a host variant-major float32 dosage buffer for native BGEN decode.
+    fn acquire_variant_major_dosage_buffer<'py>(
+        &self,
+        py: Python<'py>,
+        variant_count: usize,
+        sample_count: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let expected_shape = vec![variant_count, sample_count];
+        self.acquire_host_buffer_with_shape(py, expected_shape, "float32")
+    }
+
+    /// Acquire a host variant-major packed8 probability-pair buffer for native BGEN decode.
+    fn acquire_variant_major_packed8_probability_pair_buffer<'py>(
+        &self,
+        py: Python<'py>,
+        variant_count: usize,
+        sample_count: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let expected_shape = vec![variant_count, sample_count, 2];
+        self.acquire_host_buffer_with_shape(py, expected_shape, "uint8")
+    }
+
+    /// Enqueue one preprocessed variant-major dosage chunk for asynchronous JAX compute.
+    fn enqueue_variant_major_dosage_chunk(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+        genotype_matrix_by_variant: &Bound<'_, PyAny>,
+        chunk_stats: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let shared = py.import("g.engine.callbacks.shared")?;
+        let work_item_type = shared.getattr("PreprocessedVariantMajorDosageChunkWorkItem")?;
+        let work_item = work_item_type.call1((metadata, genotype_matrix_by_variant, chunk_stats))?;
+        self.enqueue_dosage_work_item(py, &work_item)
+    }
+
+    /// Enqueue a batch of preprocessed variant-major dosage chunks.
+    fn enqueue_variant_major_dosage_chunk_batch(
+        &self,
+        py: Python<'_>,
+        metadata_batch: &Bound<'_, PyAny>,
+        genotype_matrix_by_variant_batch: &Bound<'_, PyAny>,
+        chunk_stats_batch: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let shared = py.import("g.engine.callbacks.shared")?;
+        let item_type = shared.getattr("PreprocessedVariantMajorDosageChunkWorkItem")?;
+        let batch_type = shared.getattr("PreprocessedVariantMajorDosageChunkBatchWorkItem")?;
+        let metadata_len = metadata_batch.len()?;
+        let mut work_items = Vec::with_capacity(metadata_len);
+        for index in 0..metadata_len {
+            let work_item = item_type.call1((
+                metadata_batch.get_item(index)?,
+                genotype_matrix_by_variant_batch.get_item(index)?,
+                chunk_stats_batch.get_item(index)?,
+            ))?;
+            work_items.push(work_item);
+        }
+        let work_items_tuple = PyTuple::new(py, work_items)?;
+        let work_item = batch_type.call1((work_items_tuple,))?;
+        self.enqueue_dosage_work_item(py, &work_item)
+    }
+
+    /// Enqueue one preprocessed packed8 probability-pair chunk.
+    fn enqueue_variant_major_packed8_probability_pair_chunk(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+        packed_probability_pairs_by_variant: &Bound<'_, PyAny>,
+        chunk_stats: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let shared = py.import("g.engine.callbacks.shared")?;
+        let work_item_type = shared.getattr("PreprocessedVariantMajorPacked8ProbabilityPairChunkWorkItem")?;
+        let work_item = work_item_type.call1((metadata, packed_probability_pairs_by_variant, chunk_stats))?;
+        self.enqueue_dosage_work_item(py, &work_item)
+    }
+
     fn plan_worker_error_raise(&self, py: Python<'_>) -> NativeCallbackWorkerErrorRaisePlan {
         let scheduler_state = self.callback_scheduler_state.bind(py).borrow();
         scheduler_state.plan_worker_error_raise_value()
@@ -856,6 +932,98 @@ impl NativeCallbackRuntimeResources {
     fn get_next_result_write_item_outcome(&self, py: Python<'_>) -> PyResult<NativeCallbackQueueOperationOutcome> {
         let get_result = self.get_validated_result_write_item_with_optional_observation_and_drain_completion(py)?;
         Ok(NativeCallbackQueueOperationOutcome::from_result_write_item_result(get_result))
+    }
+
+    /// Run the dosage worker loop against a Python callback owner.
+    ///
+    /// Ownership of queue waits, stop/drain, and dispatch selection stays native.
+    /// The owner supplies dosage compute and timing side effects only.
+    fn run_dosage_worker_loop(&self, py: Python<'_>, callback_owner: &Bound<'_, PyAny>) -> PyResult<()> {
+        loop {
+            let outcome = self.get_next_dosage_work_item_outcome(py)?;
+            if outcome.should_stop {
+                return Ok(());
+            }
+            if outcome.has_dispatch_error() {
+                let error_message = outcome
+                    .dispatch_error_message()
+                    .unwrap_or("Native dosage work dispatch plan omitted the error message.")
+                    .to_owned();
+                return Err(PyRuntimeError::new_err(error_message));
+            }
+            let Some(work_item) = outcome.item(py) else {
+                return Err(PyRuntimeError::new_err(
+                    "Native dosage work dispatch returned no work item without a stop signal.",
+                ));
+            };
+            let stage_backpressure_observation = outcome.stage_backpressure_observation(py);
+            let outcome_object = Py::new(py, outcome)?;
+            if let Some(observation) = stage_backpressure_observation {
+                callback_owner.call_method1("record_queue_stage_backpressure_observation", (observation,))?;
+                let python_callback_start = Instant::now();
+                callback_owner.call_method1(
+                    "process_dosage_work_item_with_dispatch_outcome",
+                    (work_item.bind(py), outcome_object.bind(py)),
+                )?;
+                let elapsed_seconds = python_callback_start.elapsed().as_secs_f64();
+                callback_owner.call_method1(
+                    "record_work_item_stage_elapsed_duration",
+                    (work_item, "python_callback", elapsed_seconds),
+                )?;
+            } else {
+                callback_owner.call_method1(
+                    "process_dosage_work_item_with_dispatch_outcome",
+                    (work_item.bind(py), outcome_object.bind(py)),
+                )?;
+            }
+        }
+    }
+
+    /// Run the result-write worker loop against a Python callback owner.
+    ///
+    /// Single- versus multi-result processing is selected from the configured
+    /// expected result work-item kind. The owner supplies materialize/write hooks.
+    fn run_result_worker_loop(&self, py: Python<'_>, callback_owner: &Bound<'_, PyAny>) -> PyResult<()> {
+        let process_multi_result = self.expected_result_work_item_kind == ResultWriteItemKind::MultiResult;
+        loop {
+            let outcome = self.get_next_result_write_item_outcome(py)?;
+            if outcome.should_flush_binary_correction_diagnostics {
+                callback_owner.call_method0("flush_binary_correction_diagnostics")?;
+            }
+            if outcome.should_stop {
+                return Ok(());
+            }
+            if let Some(observation) = outcome.stage_backpressure_observation(py) {
+                callback_owner.call_method1("record_queue_stage_backpressure_observation", (observation,))?;
+            }
+            if outcome.has_dispatch_error() {
+                let error_message = outcome
+                    .dispatch_error_message()
+                    .unwrap_or("Native result write dispatch plan omitted the error message.")
+                    .to_owned();
+                return Err(PyRuntimeError::new_err(error_message));
+            }
+            let Some(work_item) = outcome.item(py) else {
+                return Err(PyRuntimeError::new_err(
+                    "Native result write dispatch returned no work item without a stop signal.",
+                ));
+            };
+            if process_multi_result {
+                if !outcome.should_process_multi_result_write_item() {
+                    return Err(PyRuntimeError::new_err(
+                        "Native result write dispatch plan did not select a multi-result processing path.",
+                    ));
+                }
+                callback_owner.call_method1("process_multi_result_write_item", (work_item,))?;
+            } else {
+                if !outcome.should_process_result_write_item() {
+                    return Err(PyRuntimeError::new_err(
+                        "Native result write dispatch plan did not select a single-result processing path.",
+                    ));
+                }
+                callback_owner.call_method1("process_result_write_item", (work_item,))?;
+            }
+        }
     }
 
     fn acquire_result_in_flight_slot_until_available_outcome(
@@ -1139,6 +1307,134 @@ impl NativeCallbackRuntimeResources {
         work_item: &Bound<'_, PyAny>,
     ) -> PyResult<NativeDosageWorkHandoffPlan> {
         self.plan_dosage_work_handoff_for_object(py, work_item)
+    }
+
+    /// Put a result write item, raising worker failures and applying optional stage-timing backpressure.
+    fn put_result_write_item_handling_errors(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        self.start_workers(py)?;
+        let put_outcome = self.put_result_write_item_until_accepted_outcome(py, work_item)?;
+        Self::raise_from_worker_error_plan(
+            py,
+            put_outcome.worker_error_raise_plan(py),
+            "Native callback worker failed during result write enqueue.",
+        )?;
+        Self::record_stage_backpressure_if_present(py, stage_timing_recorder, put_outcome.stage_backpressure_observation(py))?;
+        Ok(())
+    }
+
+    /// Acquire a result in-flight slot, raising worker failures and applying optional stage-timing backpressure.
+    fn acquire_result_in_flight_slot_handling_errors(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let acquire_outcome = self.acquire_result_in_flight_slot_until_available_outcome(py)?;
+        Self::raise_from_worker_error_plan(
+            py,
+            acquire_outcome.worker_error_raise_plan(py),
+            "Native callback worker failed while acquiring a result in-flight slot.",
+        )?;
+        Self::record_stage_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            acquire_outcome.stage_backpressure_observation(py),
+        )?;
+        Ok(())
+    }
+
+    /// Release a result in-flight slot and apply optional queue backpressure timing.
+    fn release_result_in_flight_slot_handling_timing(
+        &self,
+        py: Python<'_>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let release_outcome = self.release_result_in_flight_slot_outcome(py)?;
+        Self::record_queue_backpressure_if_present(py, stage_timing_recorder, release_outcome.backpressure_observation(py))?;
+        Ok(())
+    }
+
+    /// Release a dosage buffer to the pool and apply optional pool backpressure timing.
+    fn release_dosage_buffer_handling_timing(
+        &self,
+        py: Python<'_>,
+        dosage_buffer: &Bound<'_, PyAny>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let operation_outcome = self.release_dosage_buffer_outcome(py, dosage_buffer)?;
+        Self::record_queue_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            operation_outcome.dosage_buffer_pool_backpressure_observation(py),
+        )?;
+        Ok(())
+    }
+
+    /// Release pre-write resources for a result item; returns whether the host buffer was released.
+    fn release_result_work_item_pre_write_resources_handling_timing(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let release_outcome = self.release_result_work_item_pre_write_resources_outcome(py, work_item)?;
+        Self::record_queue_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            release_outcome.dosage_buffer_pool_backpressure_observation(py),
+        )?;
+        Self::record_queue_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            release_outcome.result_in_flight_backpressure_observation(py),
+        )?;
+        Ok(release_outcome.released_host_buffer())
+    }
+
+    /// Release final resources for a result item and apply optional timing.
+    fn release_result_work_item_final_resources_handling_timing(
+        &self,
+        py: Python<'_>,
+        work_item: &Bound<'_, PyAny>,
+        host_dosage_buffer_released: bool,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let release_outcome =
+            self.release_result_work_item_final_resources_outcome(py, work_item, host_dosage_buffer_released)?;
+        Self::record_queue_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            release_outcome.dosage_buffer_pool_backpressure_observation(py),
+        )?;
+        Self::record_queue_backpressure_if_present(
+            py,
+            stage_timing_recorder,
+            release_outcome.result_in_flight_backpressure_observation(py),
+        )?;
+        Ok(())
+    }
+
+    /// Record progress and emit telemetry when a progress update is produced.
+    fn record_progress_and_emit_telemetry(
+        &self,
+        py: Python<'_>,
+        metadata: &Bound<'_, PyAny>,
+        telemetry_session: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let progress_update = self.record_progress_for_metadata(py, metadata)?;
+        let Some(progress_update) = progress_update else {
+            return Ok(());
+        };
+        let progress_update = Py::new(py, progress_update)?;
+        crate::binding::telemetry::run_events::record_callback_progress_update_telemetry(
+            py,
+            telemetry_session,
+            progress_update.bind(py).borrow(),
+        )
     }
 }
 
@@ -3162,12 +3458,142 @@ fn dosage_buffer_reuse_slice_tuple<'py>(py: Python<'py>, slice_dimensions: &[usi
     PyTuple::new(py, slices)
 }
 
+impl NativeCallbackRuntimeResources {
+    fn raise_from_worker_error_plan(
+        py: Python<'_>,
+        worker_error_raise_plan: Option<Py<NativeCallbackWorkerErrorRaisePlan>>,
+        default_message: &str,
+    ) -> PyResult<()> {
+        let Some(worker_error_raise_plan) = worker_error_raise_plan else {
+            return Ok(());
+        };
+        let plan = worker_error_raise_plan.bind(py).borrow();
+        if !plan.should_raise_value() {
+            return Ok(());
+        }
+        let error_message = plan
+            .error_message_value()
+            .unwrap_or(default_message)
+            .to_owned();
+        Err(PyRuntimeError::new_err(error_message))
+    }
+
+    fn acquire_host_buffer_with_shape<'py>(
+        &self,
+        py: Python<'py>,
+        expected_shape: Vec<usize>,
+        dtype_name: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let numpy = py.import("numpy")?;
+        let dtype = numpy.getattr(dtype_name)?;
+        let acquire_outcome =
+            self.acquire_reusable_dosage_buffer_or_allocate_outcome(py, expected_shape.clone(), &dtype)?;
+        Self::raise_from_worker_error_plan(
+            py,
+            acquire_outcome.worker_error_raise_plan(py),
+            "Native callback worker failed during dosage buffer acquisition.",
+        )?;
+        if acquire_outcome.should_allocate() {
+            let shape_tuple = PyTuple::new(py, &expected_shape)?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("order", "C")?;
+            let dosage_buffer = numpy.call_method("empty", (shape_tuple, &dtype), Some(&kwargs))?;
+            let register_outcome = self.register_dosage_buffer_outcome(py, &dosage_buffer)?;
+            Self::raise_from_worker_error_plan(
+                py,
+                register_outcome.worker_error_raise_plan(py),
+                "Native callback worker failed while registering a dosage buffer.",
+            )?;
+            return Ok(dosage_buffer);
+        }
+        let Some(dosage_buffer) = acquire_outcome.dosage_buffer(py) else {
+            return Err(PyRuntimeError::new_err(
+                "Native callback runtime returned no reusable dosage buffer and did not request allocation.",
+            ));
+        };
+        Ok(dosage_buffer.into_bound(py))
+    }
+
+    fn enqueue_dosage_work_item(&self, py: Python<'_>, work_item: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.start_workers(py)?;
+        let put_outcome = self.put_dosage_work_item_until_accepted_outcome(py, work_item)?;
+        Self::raise_from_worker_error_plan(
+            py,
+            put_outcome.worker_error_raise_plan(py),
+            "Native callback worker failed during dosage work enqueue.",
+        )?;
+        Ok(())
+    }
+}
+
+impl NativeCallbackRuntimeResources {
+    fn record_stage_backpressure_if_present(
+        py: Python<'_>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+        observation: Option<Py<super::callback_schedule::NativeCallbackQueueStageBackpressureObservation>>,
+    ) -> PyResult<()> {
+        let Some(stage_timing_recorder) = stage_timing_recorder else {
+            return Ok(());
+        };
+        let Some(observation) = observation else {
+            return Ok(());
+        };
+        let observation = observation.bind(py);
+        stage_timing_recorder.call_method1(
+            "add_stage_duration",
+            (observation.getattr("stage_name")?, observation.getattr("elapsed_seconds")?),
+        )?;
+        stage_timing_recorder.call_method(
+            "add_queue_backpressure_observation",
+            (),
+            Some(&{
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("queue_name", observation.getattr("queue_name")?)?;
+                kwargs.set_item("operation_name", observation.getattr("operation_name")?)?;
+                kwargs.set_item("queue_depth", observation.getattr("queue_depth")?)?;
+                kwargs.set_item("queue_capacity", observation.getattr("queue_capacity")?)?;
+                kwargs.set_item("elapsed_seconds", observation.getattr("elapsed_seconds")?)?;
+                kwargs.set_item("blocked_seconds", observation.getattr("blocked_seconds")?)?;
+                kwargs
+            }),
+        )?;
+        Ok(())
+    }
+
+    fn record_queue_backpressure_if_present(
+        py: Python<'_>,
+        stage_timing_recorder: Option<&Bound<'_, PyAny>>,
+        observation: Option<Py<super::callback_schedule::NativeCallbackQueueBackpressureObservation>>,
+    ) -> PyResult<()> {
+        let Some(stage_timing_recorder) = stage_timing_recorder else {
+            return Ok(());
+        };
+        let Some(observation) = observation else {
+            return Ok(());
+        };
+        let observation = observation.bind(py);
+        stage_timing_recorder.call_method(
+            "add_queue_backpressure_observation",
+            (),
+            Some(&{
+                let kwargs = pyo3::types::PyDict::new(py);
+                kwargs.set_item("queue_name", observation.getattr("queue_name")?)?;
+                kwargs.set_item("operation_name", observation.getattr("operation_name")?)?;
+                kwargs.set_item("queue_depth", observation.getattr("queue_depth")?)?;
+                kwargs.set_item("queue_capacity", observation.getattr("queue_capacity")?)?;
+                kwargs.set_item("elapsed_seconds", observation.getattr("elapsed_seconds")?)?;
+                kwargs.set_item("blocked_seconds", observation.getattr("blocked_seconds")?)?;
+                kwargs
+            }),
+        )?;
+        Ok(())
+    }
+}
+
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCallbackQueueOperationOutcome>()?;
     module.add_class::<NativeCallbackResourceOperationOutcome>()?;
     module.add_class::<NativeCallbackRuntimeResources>()?;
-    module.add_class::<NativeCallbackWorkerFinishLifecycleResult>()?;
-    module.add_class::<NativeDosageWorkItemStageDurationAttribution>()?;
     Ok(())
 }
 

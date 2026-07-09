@@ -1159,13 +1159,7 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<GOutputConfig>()?;
     module.add_class::<GDiagnosticsConfig>()?;
     module.add_class::<RegenieConfig>()?;
-    module.add_class::<CliOutcome>()?;
-    module.add_class::<NativeRunRequest>()?;
-    module.add_class::<NativePhenotypeRunPlan>()?;
-    module.add_class::<NativePhenotypeComputeGroup>()?;
-    module.add_class::<NativeBinaryCorrectionPlan>()?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
-    module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
     Ok(())
 }
 

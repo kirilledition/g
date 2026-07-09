@@ -7,7 +7,7 @@ import typing
 
 import jax
 
-import g.engine.callbacks.runtime as runtime
+import g.engine.callbacks.base as callback_base
 import g.engine.callbacks.shared as shared
 import g.engine.callbacks.transfers as transfers
 import g.engine.callbacks.writers as writers
@@ -23,7 +23,7 @@ if typing.TYPE_CHECKING:
     from g.runner import events
 
 
-class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
+class LinearRegenie2PipelineCallback(callback_base.NativeBgenCallbackRunner):
     """Compute/write callback used by the native BGEN pipeline for quantitative traits."""
 
     def __init__(
@@ -60,7 +60,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             worker_name="regenie2-linear-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
-            expected_result_work_item_kind=runtime.ResultWriteItemKind.SINGLE_RESULT,
+            expected_result_work_item_kind=callback_base.ResultWriteItemKind.SINGLE_RESULT,
             flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
@@ -149,7 +149,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = runtime.require_current_chromosome_state(
+            chromosome_state = shared.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
@@ -243,7 +243,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for a variant-major chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        chromosome_state = runtime.require_current_chromosome_state(
+        chromosome_state = shared.require_current_chromosome_state(
             self.current_chromosome_state,
             chromosome=self.current_chromosome,
         )
@@ -320,7 +320,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
     ) -> regenie2_linear.Regenie2LinearChunkResult:
         """Compute quantitative REGENIE step 2 statistics for one chunk."""
         self.prepare_chromosome_state(variant_metadata)
-        chromosome_state = runtime.require_current_chromosome_state(
+        chromosome_state = shared.require_current_chromosome_state(
             self.current_chromosome_state,
             chromosome=self.current_chromosome,
         )
@@ -351,7 +351,7 @@ class LinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         return result
 
 
-class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
+class MultiLinearRegenie2PipelineCallback(callback_base.NativeBgenCallbackRunner):
     """Compute/write callback for quantitative multi-phenotype REGENIE step 2."""
 
     def __init__(
@@ -390,7 +390,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             worker_name="regenie2-multi-linear-callback",
             staging_depth=staging_depth,
             native_callback_batch_size=native_callback_batch_size,
-            expected_result_work_item_kind=runtime.ResultWriteItemKind.MULTI_RESULT,
+            expected_result_work_item_kind=callback_base.ResultWriteItemKind.MULTI_RESULT,
             flush_binary_correction_diagnostics_on_result_stop=False,
             result_in_flight_limit=result_in_flight_limit,
             dosage_buffer_limit=dosage_buffer_limit,
@@ -399,12 +399,6 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
             output_statistic_dtype=output_statistic_dtype,
         )
 
-    def consume_result_write_items(self) -> None:
-        """Materialize computed multi-trait JAX results and write each trait in order."""
-        try:
-            self.consume_multi_result_write_items_with_native_runtime_resources()
-        except Exception as error:  # noqa: BLE001
-            self.result_worker_error = error
 
     def process_multi_result_write_item(self, multi_work_item: shared.Regenie2MultiResultWriteWorkItem) -> None:
         """Materialize and write one multi-trait linear result work item."""
@@ -448,7 +442,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = runtime.require_current_chromosome_state(
+            chromosome_state = shared.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
@@ -500,7 +494,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = runtime.require_current_chromosome_state(
+            chromosome_state = shared.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )
@@ -571,7 +565,7 @@ class MultiLinearRegenie2PipelineCallback(runtime.NativeBgenCallbackRunner):
         self.acquire_result_in_flight_slot()
         try:
             self.prepare_chromosome_state(variant_metadata)
-            chromosome_state = runtime.require_current_chromosome_state(
+            chromosome_state = shared.require_current_chromosome_state(
                 self.current_chromosome_state,
                 chromosome=self.current_chromosome,
             )

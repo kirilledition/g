@@ -627,9 +627,8 @@ impl NativePreparedOutputBundle {
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativePreparedOutputBundle>()?;
-    module.add_class::<NativeRunLifecyclePhenotypeRun>()?;
-    module.add_class::<NativeRunLifecycleSession>()?;
+    // Lifecycle types are binding-internal pyclasses; not registered on g._core.
+    let _ = module;
     Ok(())
 }
 

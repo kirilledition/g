@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-
 import numpy as np
 import numpy.typing as npt
 
@@ -25,29 +23,6 @@ class GroupedMultiPhenotypeFanoutCallback:
     def native_callback_batch_size(self) -> int:
         """Return the native callback batch size shared by grouped callbacks."""
         return self.group_fanouts[0].callback.native_callback_batch_size
-
-    def start(self) -> None:
-        """Start all group callbacks before native chunk delivery."""
-        for group_fanout in self.group_fanouts:
-            group_fanout.callback.start()
-
-    def finish(self) -> None:
-        """Drain all group callbacks after native chunk delivery."""
-        first_error: BaseException | None = None
-        for group_fanout in self.group_fanouts:
-            try:
-                group_fanout.callback.finish()
-            except BaseException as error:  # noqa: BLE001
-                if first_error is None:
-                    first_error = error
-        if first_error is not None:
-            raise first_error
-
-    def abort(self) -> None:
-        """Abort all group callbacks after a native delivery failure."""
-        for group_fanout in self.group_fanouts:
-            with contextlib.suppress(Exception):
-                group_fanout.callback.abort()
 
     def acquire_variant_major_dosage_buffer(
         self,
@@ -71,13 +46,14 @@ class GroupedMultiPhenotypeFanoutCallback:
         genotype_matrix_by_variant: npt.NDArray[np.float32],
         chunk_stats: _core.ChunkStats,
     ) -> None:
-        """Slice one union-sample dosage chunk and forward it to each group callback."""
+        """Slice one union-sample dosage chunk and enqueue on each group resource owner."""
         del chunk_stats
         variant_count = int(genotype_matrix_by_variant.shape[0])
         for group_fanout in self.group_fanouts:
             group_callback = group_fanout.callback
+            resources = group_callback.callback_runtime_resources
             group_sample_count = int(group_fanout.sample_position_array.shape[0])
-            group_genotype_matrix = group_callback.acquire_variant_major_dosage_buffer(
+            group_genotype_matrix = resources.acquire_variant_major_dosage_buffer(
                 variant_count,
                 group_sample_count,
             )
@@ -90,7 +66,7 @@ class GroupedMultiPhenotypeFanoutCallback:
             group_chunk_stats = _core.summarize_variant_major_dosage_chunk_stats(
                 np.ascontiguousarray(group_genotype_matrix, dtype=np.float32)
             )
-            group_callback.compute_preprocessed_variant_major_dosage_chunk(
+            resources.enqueue_variant_major_dosage_chunk(
                 metadata,
                 group_genotype_matrix,
                 group_chunk_stats,

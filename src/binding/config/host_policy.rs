@@ -70,8 +70,7 @@ fn build_phenotype_compute_groups<'py>(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeAssociationBackendPlan>()?;
-    module.add_function(wrap_pyfunction!(build_phenotype_compute_groups, module)?)?;
+    let _ = module;
     Ok(())
 }
 

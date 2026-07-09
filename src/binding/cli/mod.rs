@@ -224,12 +224,8 @@ pub(crate) fn run_cli_with_python_backend(
 }
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<NativeCliRunResult>()?;
-    module.add_class::<NativeCliTelemetryPaths>()?;
-    module.add_class::<NativeCliTelemetrySessionView>()?;
     module.add_class::<NativeCliRunContext>()?;
     module.add_function(wrap_pyfunction!(run_with_python_backend, module)?)?;
-    module.add_function(wrap_pyfunction!(run_cli_with_python_backend, module)?)?;
     Ok(())
 }
 
