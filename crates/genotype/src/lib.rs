@@ -1,14 +1,14 @@
 //! Genotype reader contracts and format-specific implementations.
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("g requires a 64-bit target.");
+
 mod api;
 mod bgen;
 mod buffer;
 mod common;
-pub mod debug;
 mod error;
-pub mod internal;
 mod planner;
 mod preprocess;
-mod source;
 
 pub use api::*;

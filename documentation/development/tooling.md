@@ -562,6 +562,10 @@ machine profile. It also ensures the optional profiler and nsight tools are
 installed inside the job. See
 `documentation/development/justfile.md` for full descriptions.
 
+`check-rust-architecture` also enforces the native integer-cast policy. It
+scans production Rust code for integer `as` casts and requires audited
+exceptions to be listed in `tooling/debug/integer_cast_allowlist.txt`.
+
 Useful overrides:
 
 - `tool.variant_limit=1000`: cap variants for smoke work.
@@ -1677,7 +1681,6 @@ Lightweight checks for tooling changes:
 ```bash
 uv run --no-sync ruff check tooling tests docs
 uv run --no-sync ty check src tests scripts tooling
-uv run --no-sync pytest tests/test_regenie_comparison_scripts.py tests/test_tooling_architecture.py
 ```
 
 Optional GPU smoke on `landau`:

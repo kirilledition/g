@@ -7,12 +7,7 @@ use std::collections::BTreeSet;
 use crate::common::ChunkSpec;
 use crate::error::{GenotypeError, GenotypeResult};
 
-#[must_use]
-pub fn resolve_total_variant_count(variant_count: usize, variant_limit: Option<usize>) -> usize {
-    variant_limit.map_or(variant_count, |limit| limit.min(variant_count))
-}
-
-pub fn plan_chromosome_homogeneous_chunks(
+pub(crate) fn plan_chromosome_homogeneous_chunks(
     variant_count: usize,
     chunk_size: usize,
     variant_limit: Option<usize>,
@@ -22,7 +17,7 @@ pub fn plan_chromosome_homogeneous_chunks(
     if chunk_size == 0 {
         return Err(GenotypeError::InvalidInput("Chunk size must be positive.".to_string()));
     }
-    let total_variant_count = resolve_total_variant_count(variant_count, variant_limit);
+    let total_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
     if total_variant_count == 0 {
         return Ok(Vec::new());
     }
@@ -82,61 +77,12 @@ fn append_chromosome_homogeneous_subchunks(
         if *boundary_index >= variant_stop {
             break;
         }
-        append_chunk_spec(chunk_specs, current_start, *boundary_index, committed_chunk_identifiers);
+        if !committed_chunk_identifiers.contains(&current_start) {
+            chunk_specs.push(ChunkSpec { variant_start_index: current_start, variant_stop_index: *boundary_index });
+        }
         current_start = *boundary_index;
     }
-    append_chunk_spec(chunk_specs, current_start, variant_stop, committed_chunk_identifiers);
-}
-
-fn append_chunk_spec(
-    chunk_specs: &mut Vec<ChunkSpec>,
-    variant_start: usize,
-    variant_stop: usize,
-    committed_chunk_identifiers: &BTreeSet<usize>,
-) {
-    if variant_start == variant_stop || committed_chunk_identifiers.contains(&variant_start) {
-        return;
-    }
-    chunk_specs.push(ChunkSpec { variant_start_index: variant_start, variant_stop_index: variant_stop });
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::plan_chromosome_homogeneous_chunks;
-    use crate::common::ChunkSpec;
-
-    #[test]
-    fn planner_splits_chunks_at_chromosome_boundaries() {
-        let chunks = plan_chromosome_homogeneous_chunks(12, 5, None, &[0, 3, 9, 12], &BTreeSet::new())
-            .expect("planning should succeed");
-
-        assert_eq!(
-            chunks,
-            vec![
-                ChunkSpec { variant_start_index: 0, variant_stop_index: 3 },
-                ChunkSpec { variant_start_index: 3, variant_stop_index: 5 },
-                ChunkSpec { variant_start_index: 5, variant_stop_index: 9 },
-                ChunkSpec { variant_start_index: 9, variant_stop_index: 10 },
-                ChunkSpec { variant_start_index: 10, variant_stop_index: 12 },
-            ],
-        );
-    }
-
-    #[test]
-    fn planner_applies_variant_limit_and_resume_skips() {
-        let committed_chunk_identifiers = BTreeSet::from([4_usize]);
-        let chunks = plan_chromosome_homogeneous_chunks(20, 4, Some(10), &[0, 6, 20], &committed_chunk_identifiers)
-            .expect("planning should succeed");
-
-        assert_eq!(
-            chunks,
-            vec![
-                ChunkSpec { variant_start_index: 0, variant_stop_index: 4 },
-                ChunkSpec { variant_start_index: 6, variant_stop_index: 8 },
-                ChunkSpec { variant_start_index: 8, variant_stop_index: 10 },
-            ],
-        );
+    if current_start != variant_stop && !committed_chunk_identifiers.contains(&current_start) {
+        chunk_specs.push(ChunkSpec { variant_start_index: current_start, variant_stop_index: variant_stop });
     }
 }

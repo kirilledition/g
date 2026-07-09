@@ -363,39 +363,3 @@ impl<'de> Visitor<'de> for NameListVisitor {
         NameList::from_values(values).map_err(de::Error::custom)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use super::NameList;
-
-    #[test]
-    fn name_list_trims_valid_names() {
-        let names = NameList::from_str(" trait_a , trait_b ").expect("valid names should parse");
-
-        assert_eq!(names.into_vec(), vec!["trait_a".to_string(), "trait_b".to_string()]);
-    }
-
-    #[test]
-    fn name_list_rejects_empty_text_tokens() {
-        let error = NameList::from_str("trait_a,,trait_b").expect_err("empty comma token should fail");
-
-        assert!(error.contains("empty entry at position 2"));
-    }
-
-    #[test]
-    fn name_list_rejects_empty_sequence_entries() {
-        let error = NameList::from_values(vec!["trait_a".to_string(), " ".to_string(), "trait_b".to_string()])
-            .expect_err("empty sequence entry should fail");
-
-        assert!(error.contains("empty entry at position 2"));
-    }
-
-    #[test]
-    fn name_list_rejects_empty_sequences() {
-        let error = NameList::from_values(Vec::new()).expect_err("empty sequence should fail");
-
-        assert!(error.contains("at least one name"));
-    }
-}

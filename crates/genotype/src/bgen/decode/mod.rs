@@ -11,6 +11,7 @@ use super::sample_selection::SampleSelection;
 use super::simd;
 use super::trusted;
 use super::{BgenError, CompressionType};
+use crate::buffer::raw_pointer::OutputBufferAddress;
 use crate::preprocess;
 
 mod config;
@@ -40,7 +41,7 @@ impl<Value> VariantMajorOutputMatrix<Value> {
     /// storage for every row requested through this helper. Concurrent workers must
     /// request disjoint variant rows for the same allocation.
     pub(super) unsafe fn from_pointer_address(
-        output_pointer_address: usize,
+        output_pointer_address: OutputBufferAddress,
         row_value_count: usize,
         row_context: &'static str,
     ) -> Result<Self, BgenError> {
@@ -48,6 +49,7 @@ impl<Value> VariantMajorOutputMatrix<Value> {
             return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
         }
         let value_alignment = std::mem::align_of::<Value>();
+        let output_pointer_address = output_pointer_address.get();
         if !output_pointer_address.is_multiple_of(value_alignment) {
             return Err(BgenError::Range(format!(
                 "{row_context} output pointer is not aligned to {value_alignment} bytes.",
@@ -85,7 +87,7 @@ impl<Value> RowMajorOutputMatrix<Value> {
     /// storage for every row requested through this helper. Concurrent workers must
     /// request disjoint variant columns or row ranges for the same allocation.
     unsafe fn from_pointer_address(
-        output_pointer_address: usize,
+        output_pointer_address: OutputBufferAddress,
         row_value_count: usize,
         row_context: &'static str,
     ) -> Result<Self, BgenError> {
@@ -93,6 +95,7 @@ impl<Value> RowMajorOutputMatrix<Value> {
             return Err(BgenError::Range(format!("{row_context} output row length must be positive.")));
         }
         let value_alignment = std::mem::align_of::<Value>();
+        let output_pointer_address = output_pointer_address.get();
         if !output_pointer_address.is_multiple_of(value_alignment) {
             return Err(BgenError::Range(format!(
                 "{row_context} output pointer is not aligned to {value_alignment} bytes.",
@@ -221,16 +224,27 @@ fn build_variant_decode_result(
     }
 }
 
+fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
+    i32::try_from(selected_sample_count).map_err(|_| {
+        BgenError::Range(format!(
+            "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
+        ))
+    })
+}
+
 pub(super) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {
     static UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP: OnceLock<Vec<f32>> = OnceLock::new();
     UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP.get_or_init(|| {
         let reciprocal_scale = 1.0_f32 / 255.0_f32;
         let mut dosage_lookup = Vec::with_capacity(usize::from(u16::MAX) + 1);
         for packed_probability_index in 0..=u16::MAX {
-            let homozygous_reference_probability =
-                f32::from((packed_probability_index & 0x00FF) as u8) * reciprocal_scale;
-            let heterozygous_probability =
-                f32::from(((packed_probability_index & 0xFF00) >> 8) as u8) * reciprocal_scale;
+            let homozygous_reference_probability = f32::from(
+                u8::try_from(packed_probability_index & 0x00FF).expect("low packed probability byte should fit u8"),
+            ) * reciprocal_scale;
+            let heterozygous_probability = f32::from(
+                u8::try_from((packed_probability_index & 0xFF00) >> 8)
+                    .expect("high packed probability byte should fit u8"),
+            ) * reciprocal_scale;
             dosage_lookup.push(2.0_f32 - ((2.0_f32 * homozygous_reference_probability) + heterozygous_probability));
         }
         dosage_lookup
@@ -281,7 +295,7 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record_chunk: &[VariantRecord],
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     selected_variant_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
@@ -319,7 +333,7 @@ pub(super) fn decode_variant_dosage_tile_into_row_major_matrix(
         thread_scratch.dosage_tile.set_len(tile_value_count);
     }
 
-    let tile_pointer_address = thread_scratch.dosage_tile.as_mut_ptr() as usize;
+    let tile_pointer_address = OutputBufferAddress::from_mut_ptr(thread_scratch.dosage_tile.as_mut_ptr());
     let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
     let mut selected_dosage_totals = if collect_dosage_totals { vec![0.0_f32; tile_variant_count] } else { Vec::new() };
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
@@ -383,7 +397,7 @@ fn decode_variant_dosage_tile_direct_into_row_major_matrix(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record_chunk: &[VariantRecord],
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     selected_variant_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
@@ -430,7 +444,7 @@ pub(super) fn decode_variant_major_dosage_tile(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record_chunk: &[VariantRecord],
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
@@ -499,7 +513,7 @@ fn decode_variant_dosages_into_row_major_matrix(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     variant_count: usize,
     profiling_enabled: bool,
@@ -749,7 +763,7 @@ fn decode_unphased_eight_bit_dosages_into_row_major_matrix(
     packed_probability_bytes: &[u8],
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     variant_count: usize,
     profiling_enabled: bool,
@@ -1064,7 +1078,7 @@ fn decode_variant_dosages_into_variant_major_matrix(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
@@ -1145,6 +1159,7 @@ fn decode_variant_dosages_into_variant_major_matrix(
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
     let mut bit_reader = PackedProbabilityReader::new(&probability_block[cursor..]);
+    selected_sample_count_to_i32(selected_sample_count)?;
     let mut output_matrix = unsafe {
         VariantMajorOutputMatrix::<f32>::from_pointer_address(
             output_pointer_address,
@@ -1259,7 +1274,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     packed_probability_bytes: &[u8],
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
@@ -1278,6 +1293,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
 
     let probability_decode_start_time = profiling_enabled.then(Instant::now);
     let output_write_start_time = profiling_enabled.then(Instant::now);
+    selected_sample_count_to_i32(selected_sample_count)?;
     let mut output_matrix = unsafe {
         VariantMajorOutputMatrix::<f32>::from_pointer_address(
             output_pointer_address,
@@ -1646,7 +1662,6 @@ impl<'a> PackedProbabilityReader<'a> {
         Self { packed_probability_bytes, byte_offset: 0, bit_buffer: 0, buffered_bit_count: 0 }
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     fn read_probability(&mut self, bit_count: u8) -> Result<u32, BgenError> {
         while self.buffered_bit_count < bit_count {
             let next_probability_byte = self.packed_probability_bytes.get(self.byte_offset).ok_or_else(|| {
@@ -1660,7 +1675,8 @@ impl<'a> PackedProbabilityReader<'a> {
         }
 
         let mask = if bit_count == 32 { u64::from(u32::MAX) } else { (1_u64 << bit_count) - 1 };
-        let probability_value = (self.bit_buffer & mask) as u32;
+        let probability_value =
+            u32::try_from(self.bit_buffer & mask).expect("masked BGEN probability value should fit u32");
         self.bit_buffer >>= bit_count;
         self.buffered_bit_count -= bit_count;
         Ok(probability_value)

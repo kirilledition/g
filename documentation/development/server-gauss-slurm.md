@@ -241,9 +241,8 @@ Baseline measured on `cantor` before the CPU workflow update, using a 40-CPU,
 
 - `just check`: 96.53 seconds with a cold Cargo dependency cache.
 - `just test`: failed after 714.91 seconds because `cantor` had no `git`
-  executable, causing `tests/test_symphony_sync_main.py` to fail near the end of
-  the serial run. Installing user-level `git` with `pixi global install git`
-  made `git` available on both `gauss` and `cantor`.
+  executable in the environment. Installing user-level `git` with
+  `pixi global install git` made `git` available on both `gauss` and `cantor`.
 
 Post-change timings on the same node and allocation:
 

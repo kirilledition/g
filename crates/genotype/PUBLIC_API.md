@@ -2,24 +2,33 @@
 
 ## This crate owns
 
-Genotype source contracts, BGEN source implementation, chunk planning, and genotype preprocessing summaries.
+BGEN reader implementation, chunk planning, and genotype preprocessing summaries.
 
 ## Public types
 
-BGEN source/error/profile types, `GenotypeError`/`GenotypeResult`, chunk specs/stats, variant metadata columns, and genotype reader trait.
+BGEN reader/error/profile types, `GenotypeError`/`GenotypeResult`, chunk specs/stats,
+variant metadata columns, and explicit caller-owned output buffer wrappers.
 
 ## Public functions
 
-BGEN decode knobs, chromosome-homogeneous chunk planning, row/variant-major preprocessing, and chunk-stat summary builders.
+BGEN reader methods for opening files, decoding batches, binding samples, reading metadata,
+profiling, trusted-mode validation, and reader-owned chromosome-homogeneous chunk planning.
+Variant-major preprocessing summaries and BGEN decode tuning setters are root
+exports for native binding adapters and genotype benches. The tuning setters are
+temporary compatibility exports until runtime configuration owns these knobs
+without direct genotype crate mutation.
 
 ## This crate must not expose
 
-Sample/phenotype alignment, output schema/writers, runtime/JAX policy, engine scheduling, callback queues, or PyO3 classes.
+Sample/phenotype alignment, output schema/writers, runtime/JAX policy, engine
+scheduling, callback queues, PyO3 classes, or public `debug`, `ffi`, or
+`internal` modules.
 
 ## Performance constraints
 
-Batch-oriented APIs only. Preserve caller-owned output buffers and avoid per-variant public calls or JSON conversion.
+Batch-oriented APIs only. Preserve caller-owned output buffers behind explicit FFI
+address/count wrappers and avoid per-variant public calls or JSON conversion.
 
 ## Allowed downstream users
 
-`g-engine`, root PyO3 facade, and genotype benches.
+`g-engine`, root PyO3 facade, and genotype benches through the root facade.

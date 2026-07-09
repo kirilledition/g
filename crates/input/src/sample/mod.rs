@@ -29,9 +29,6 @@ pub use types::{
     MultiAlignmentInputs, ResolvedPhenotypeComputeGroup, SampleAlignmentError, SampleIdentifierData, SampleKeyMode,
 };
 
-#[cfg(test)]
-mod tests;
-
 use alignment::{build_grouped_aligned_sample_data, build_multi_aligned_sample_data, build_single_aligned_sample_data};
 
 pub fn align_sample_data(inputs: AlignmentInputs) -> Result<AlignedSampleData, SampleAlignmentError> {

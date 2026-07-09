@@ -18,10 +18,6 @@ pub use stop::{
     plan_callback_worker_stop_poll, plan_dosage_callback_worker_join, plan_dosage_callback_worker_stop,
     plan_result_callback_worker_join, plan_result_callback_worker_stop, should_attempt_callback_worker_stop,
 };
-#[cfg(test)]
-pub(crate) use timeouts::{
-    CALLBACK_WORKER_BACKPRESSURE_POLL_TIMEOUT_SECONDS, CALLBACK_WORKER_STOP_POLL_TIMEOUT_CAP_SECONDS,
-};
 pub use timeouts::{
     callback_worker_backpressure_poll_timeout_seconds, callback_worker_shutdown_timeouts,
     resolve_callback_worker_stop_poll_timeout_seconds,

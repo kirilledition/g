@@ -8,6 +8,7 @@ use crate::bgen::error::BgenError;
 use crate::bgen::profile::{ReaderProfiling, ThreadLocalProfileSnapshot};
 use crate::bgen::sample_selection::SampleSelection;
 use crate::bgen::trusted;
+use crate::buffer::raw_pointer::{OutputBufferAddress, OutputValueCount};
 use crate::common::ChunkStats;
 use crate::preprocess;
 
@@ -49,7 +50,7 @@ struct VariantMajorDecodePlan<'a> {
 struct VariantMajorDecodeRequest<'a> {
     sample_selection: &'a SampleSelection,
     variant_start: usize,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     shape: VariantMajorReadShape,
     plan: VariantMajorDecodePlan<'a>,
 }
@@ -132,8 +133,8 @@ impl BgenReaderCore {
         &self,
         variant_start: usize,
         variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
+        output_pointer_address: OutputBufferAddress,
+        output_value_count: OutputValueCount,
     ) -> Result<ChunkStats, BgenError> {
         let sample_selection = self.prepared_sample_selection_arc()?;
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
@@ -171,8 +172,8 @@ impl BgenReaderCore {
         &self,
         variant_start: usize,
         variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
+        output_pointer_address: OutputBufferAddress,
+        output_value_count: OutputValueCount,
     ) -> Result<ChunkStats, BgenError> {
         let sample_selection = self.prepared_sample_selection_arc()?;
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
@@ -385,15 +386,16 @@ fn build_variant_major_decode_plan(
 
 fn validate_variant_major_dosage_output_value_count(
     read_shape: VariantMajorReadShape,
-    output_value_count: usize,
+    output_value_count: OutputValueCount,
 ) -> Result<(), BgenError> {
     let expected_output_value_count =
         read_shape.selected_sample_count.checked_mul(read_shape.selected_variant_count).ok_or_else(|| {
             BgenError::Range("Integer overflow while validating variant-major BGEN output buffer size.".to_string())
         })?;
-    if output_value_count != expected_output_value_count {
+    if output_value_count.get() != expected_output_value_count {
         return Err(BgenError::Range(format!(
-            "Variant-major output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
+            "Variant-major output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {}.",
+            output_value_count.get(),
         )));
     }
     Ok(())
@@ -401,7 +403,7 @@ fn validate_variant_major_dosage_output_value_count(
 
 fn validate_variant_major_packed8_probability_pair_output_value_count(
     read_shape: VariantMajorReadShape,
-    output_value_count: usize,
+    output_value_count: OutputValueCount,
 ) -> Result<(), BgenError> {
     let expected_output_value_count = read_shape
         .selected_variant_count
@@ -412,9 +414,10 @@ fn validate_variant_major_packed8_probability_pair_output_value_count(
                 "Integer overflow while validating packed8 BGEN probability-pair output buffer size.".to_string(),
             )
         })?;
-    if output_value_count != expected_output_value_count {
+    if output_value_count.get() != expected_output_value_count {
         return Err(BgenError::Range(format!(
-            "Variant-major packed8 output buffer shape mismatch for BGEN probability-pair read. Expected {expected_output_value_count} uint8 values, observed {output_value_count}.",
+            "Variant-major packed8 output buffer shape mismatch for BGEN probability-pair read. Expected {expected_output_value_count} uint8 values, observed {}.",
+            output_value_count.get(),
         )));
     }
     Ok(())

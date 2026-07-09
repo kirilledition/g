@@ -91,7 +91,7 @@ fn build_resolved_compute_group(
 }
 
 trait FingerprintAlignedSampleData {
-    fn sample_indices(&self) -> &[i64];
+    fn sample_indices(&self) -> &[usize];
 
     fn family_identifiers(&self) -> &[String];
 
@@ -107,7 +107,7 @@ trait FingerprintAlignedSampleData {
 }
 
 impl FingerprintAlignedSampleData for AlignedSampleData {
-    fn sample_indices(&self) -> &[i64] {
+    fn sample_indices(&self) -> &[usize] {
         &self.sample_indices
     }
 
@@ -137,7 +137,7 @@ impl FingerprintAlignedSampleData for AlignedSampleData {
 }
 
 impl FingerprintAlignedSampleData for MultiAlignedSampleData {
-    fn sample_indices(&self) -> &[i64] {
+    fn sample_indices(&self) -> &[usize] {
         &self.sample_indices
     }
 
@@ -169,7 +169,7 @@ impl FingerprintAlignedSampleData for MultiAlignedSampleData {
 fn fingerprint_sample_set(aligned_sample_data: &impl FingerprintAlignedSampleData) -> String {
     let mut fingerprint_hash = Sha256::new();
     update_fingerprint(&mut fingerprint_hash, "sample-set-v1");
-    update_i64_array_fingerprint(
+    update_usize_as_i64_array_fingerprint(
         &mut fingerprint_hash,
         "int64",
         &[aligned_sample_data.sample_indices().len()],
@@ -217,11 +217,17 @@ fn finalize_sha256_hex(fingerprint_hash: Sha256) -> String {
     digest_text
 }
 
-fn update_i64_array_fingerprint(fingerprint_hash: &mut Sha256, dtype_name: &str, shape: &[usize], values: &[i64]) {
+fn update_usize_as_i64_array_fingerprint(
+    fingerprint_hash: &mut Sha256,
+    dtype_name: &str,
+    shape: &[usize],
+    values: &[usize],
+) {
     update_fingerprint(fingerprint_hash, dtype_name);
     update_fingerprint(fingerprint_hash, &python_shape_repr(shape));
     for value in values {
-        fingerprint_hash.update(value.to_ne_bytes());
+        let schema_value = i64::try_from(*value).expect("sample index must fit into int64 fingerprint schema");
+        fingerprint_hash.update(schema_value.to_ne_bytes());
     }
 }
 

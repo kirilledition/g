@@ -1,0 +1,3 @@
+# path|source snippet|reason
+crates/runtime/src/telemetry_policy.rs|timestamp_seconds.floor() as i64|Timestamp formatting splits finite f64 seconds into chrono whole seconds.
+crates/runtime/src/telemetry_policy.rs|* 1_000_000_000.0) as u32|Timestamp formatting converts a bounded fractional second into nanoseconds.

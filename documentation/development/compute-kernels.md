@@ -94,13 +94,10 @@ Relevant tests include:
 
 - `tests/test_regenie2_linear.py`;
 - `tests/test_regenie2_binary.py`;
-- `tests/test_regenie2_binary_config.py`;
-- `tests/test_regenie2_binary_diagnostics.py`;
 - `tests/test_regenie2_binary_firth_null.py`;
 - `tests/test_regenie2_binary_full_model.py`;
 - `tests/test_regenie2_binary_scalar_firth.py`;
-- `tests/test_regenie_binary_correction_contract.py`;
 - `tests/test_regenie2_parity.py`;
-- `tests/test_regenie2_pipeline.py`.
+- `tests/parity/`.
 
 Use [Testing and Parity](testing-and-parity.md) for validation tier selection.

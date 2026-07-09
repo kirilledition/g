@@ -17,7 +17,8 @@ Allowed ownership:
 Rules:
 
 - Do not add crate-root `pub mod` for implementation modules.
-- Do not expose fake/test-only types from production facades; use `test_support`.
+- Do not expose fake/test-only types from production facades. Delete obsolete
+  test scaffolding when the corresponding tests are removed.
 - Do not bind low-level Rust helper chains through Python when one Rust owner can call another directly.
 - Keep hot paths batch-oriented and ownership-visible; avoid per-variant public calls and cross-crate JSON in compute paths.
 - Update `PUBLIC_API.md` when adding or removing public facade items.

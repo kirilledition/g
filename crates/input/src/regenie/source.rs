@@ -216,11 +216,6 @@ impl MultiPredictionSource {
     ) -> std::sync::MutexGuard<'_, HashMap<String, CachedChromosomePredictionMatrix>> {
         self.chromosome_prediction_matrix_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-
-    #[cfg(test)]
-    pub(super) fn cached_chromosome_prediction_matrix_count(&self) -> usize {
-        self.lock_chromosome_prediction_matrix_cache().len()
-    }
 }
 
 fn chromosome_prediction_matrix_from_cached(

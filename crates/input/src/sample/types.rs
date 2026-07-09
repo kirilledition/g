@@ -62,7 +62,7 @@ impl SampleKeyMode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlignedSampleData {
-    pub sample_indices: Vec<i64>,
+    pub sample_indices: Vec<usize>,
     pub family_identifiers: Vec<String>,
     pub individual_identifiers: Vec<String>,
     pub phenotype_name: String,
@@ -76,7 +76,7 @@ pub struct AlignedSampleData {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MultiAlignedSampleData {
-    pub sample_indices: Vec<i64>,
+    pub sample_indices: Vec<usize>,
     pub family_identifiers: Vec<String>,
     pub individual_identifiers: Vec<String>,
     pub phenotype_names: Vec<String>,
@@ -114,14 +114,14 @@ pub struct ResolvedPhenotypeComputeGroup {
 
 #[derive(Clone, Debug)]
 pub struct SampleIdentifierData {
-    pub sample_indices: Vec<i64>,
+    pub sample_indices: Vec<usize>,
     pub family_identifiers: Vec<String>,
     pub individual_identifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AlignmentInputs {
-    pub sample_indices: Vec<i64>,
+    pub sample_indices: Vec<usize>,
     pub family_identifiers: Vec<String>,
     pub individual_identifiers: Vec<String>,
     pub phenotype_path: String,
@@ -134,7 +134,7 @@ pub struct AlignmentInputs {
 
 #[derive(Clone, Debug)]
 pub struct MultiAlignmentInputs {
-    pub sample_indices: Vec<i64>,
+    pub sample_indices: Vec<usize>,
     pub family_identifiers: Vec<String>,
     pub individual_identifiers: Vec<String>,
     pub phenotype_path: String,

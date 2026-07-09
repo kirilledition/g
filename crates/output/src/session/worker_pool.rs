@@ -81,11 +81,6 @@ impl OutputWriterPool {
             push_worker_error(worker_errors, error.to_string());
         })
     }
-
-    #[cfg(test)]
-    pub(super) fn current_worker_count(&self) -> usize {
-        *self.worker_count.lock().expect("pool worker count should not be poisoned")
-    }
 }
 
 impl OutputWriteCompletionTracker {

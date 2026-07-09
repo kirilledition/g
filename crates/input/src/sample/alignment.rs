@@ -235,7 +235,7 @@ fn complete_multi_sample_array_indices(
         .collect()
 }
 
-fn sorted_sample_array_indices_by_sample_index(sample_indices: &[i64]) -> Vec<usize> {
+fn sorted_sample_array_indices_by_sample_index(sample_indices: &[usize]) -> Vec<usize> {
     let mut sorted_sample_array_indices: Vec<usize> = (0..sample_indices.len()).collect();
     sorted_sample_array_indices.sort_by_key(|sample_array_index| sample_indices[*sample_array_index]);
     sorted_sample_array_indices

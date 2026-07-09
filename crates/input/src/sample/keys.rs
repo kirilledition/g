@@ -9,7 +9,7 @@ pub(super) enum SampleKey {
 }
 
 pub(super) fn validate_sample_identifier_lengths(
-    sample_indices: &[i64],
+    sample_indices: &[usize],
     family_identifiers: &[String],
     individual_identifiers: &[String],
 ) -> Result<(), SampleAlignmentError> {

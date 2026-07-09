@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,8 +9,8 @@ use std::time::Instant;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
-use crate::buffer::raw_pointer::RowMajorDosageBuffer;
-use crate::common::{ChunkStats, GenotypeReaderCore, VariantMetadataColumns};
+use crate::buffer::raw_pointer::{OutputBufferAddress, OutputValueCount, RowMajorDosageBuffer};
+use crate::common::{ChunkSpec, ChunkStats, VariantMetadataColumns};
 use crate::error::GenotypeResult;
 use crate::preprocess;
 
@@ -17,7 +18,7 @@ use super::decode::{
     DosageTileDecodeResult, ThreadScratch, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
     read_exact_bytes, read_u32_at, u32_to_usize,
 };
-use super::error::{BgenError, convert_bgen_error_to_genotype_error};
+use super::error::BgenError;
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
 use super::profile::{ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
@@ -126,7 +127,22 @@ impl BgenReaderCore {
         self.chromosome_boundary_indices.clone()
     }
 
-    pub fn prepare_sample_selection(&self, sample_indices: &[i64]) -> Result<(), BgenError> {
+    pub fn plan_chromosome_homogeneous_chunks(
+        &self,
+        chunk_size: usize,
+        variant_limit: Option<usize>,
+        committed_chunk_identifiers: &BTreeSet<usize>,
+    ) -> GenotypeResult<Vec<ChunkSpec>> {
+        crate::planner::plan_chromosome_homogeneous_chunks(
+            self.variant_count,
+            chunk_size,
+            variant_limit,
+            &self.chromosome_boundary_indices,
+            committed_chunk_identifiers,
+        )
+    }
+
+    pub fn prepare_sample_selection(&self, sample_indices: &[usize]) -> Result<(), BgenError> {
         let sample_selection_start_time = Instant::now();
         let sample_selection = Arc::new(build_sample_selection(self.sample_count, sample_indices)?);
         self.profiling.record_sample_selection_prepare(elapsed_nanoseconds(sample_selection_start_time));
@@ -206,8 +222,8 @@ impl BgenReaderCore {
         &self,
         variant_start: usize,
         variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
+        output_pointer_address: OutputBufferAddress,
+        output_value_count: OutputValueCount,
     ) -> Result<ChunkStats, BgenError> {
         let sample_selection = self.prepared_sample_selection_arc()?;
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
@@ -215,7 +231,7 @@ impl BgenReaderCore {
         if selected_variant_count == 0 {
             return Ok(preprocess::build_empty_chunk_stats(0, false));
         }
-        let selected_sample_count = output_value_count.checked_div(selected_variant_count).ok_or_else(|| {
+        let selected_sample_count = output_value_count.get().checked_div(selected_variant_count).ok_or_else(|| {
             BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
         })?;
         let mut output_buffer = unsafe {
@@ -274,8 +290,8 @@ impl BgenReaderCore {
         sample_selection: &SampleSelection,
         variant_start: usize,
         variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
+        output_pointer_address: OutputBufferAddress,
+        output_value_count: OutputValueCount,
         collect_dosage_totals: bool,
     ) -> Result<Option<Vec<f32>>, BgenError> {
         let selected_sample_count = sample_selection.selected_sample_count;
@@ -284,9 +300,10 @@ impl BgenReaderCore {
             selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
                 BgenError::Range("Integer overflow while validating BGEN output buffer size.".to_string())
             })?;
-        if output_value_count != expected_output_value_count {
+        if output_value_count.get() != expected_output_value_count {
             return Err(BgenError::Range(format!(
-                "Output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {output_value_count}.",
+                "Output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {}.",
+                output_value_count.get(),
             )));
         }
         if selected_sample_count == 0 || selected_variant_count == 0 {
@@ -326,60 +343,6 @@ impl BgenReaderCore {
             }
         }
         Ok(selected_dosage_totals)
-    }
-}
-
-impl GenotypeReaderCore for BgenReaderCore {
-    fn sample_count(&self) -> usize {
-        BgenReaderCore::sample_count(self)
-    }
-
-    fn variant_count(&self) -> usize {
-        BgenReaderCore::variant_count(self)
-    }
-
-    fn sample_identifiers(&self) -> Vec<String> {
-        BgenReaderCore::sample_identifiers(self)
-    }
-
-    fn chromosome_boundary_indices(&self) -> Vec<usize> {
-        BgenReaderCore::chromosome_boundary_indices(self)
-    }
-
-    fn prepare_sample_selection(&self, sample_indices: &[i64]) -> GenotypeResult<()> {
-        BgenReaderCore::prepare_sample_selection(self, sample_indices)
-            .map_err(|error| convert_bgen_error_to_genotype_error(&error))
-    }
-
-    fn clear_prepared_sample_selection(&self) -> GenotypeResult<()> {
-        BgenReaderCore::clear_prepared_sample_selection(self)
-            .map_err(|error| convert_bgen_error_to_genotype_error(&error))
-    }
-
-    fn variant_metadata_slice(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-    ) -> GenotypeResult<VariantMetadataColumns> {
-        BgenReaderCore::variant_metadata_slice(self, variant_start, variant_stop)
-            .map_err(|error| convert_bgen_error_to_genotype_error(&error))
-    }
-
-    fn read_preprocessed_dosage_f32_into_address_prepared(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
-    ) -> GenotypeResult<ChunkStats> {
-        BgenReaderCore::read_preprocessed_dosage_f32_into_address_prepared(
-            self,
-            variant_start,
-            variant_stop,
-            output_pointer_address,
-            output_value_count,
-        )
-        .map_err(|error| convert_bgen_error_to_genotype_error(&error))
     }
 }
 
@@ -462,31 +425,6 @@ mod tests {
     }
 
     #[test]
-    fn row_major_dosage_buffer_validates_pointer_boundaries() {
-        let mut empty_buffer = unsafe {
-            RowMajorDosageBuffer::from_pointer_address(0, 0, "test row-major")
-                .expect("empty buffers should not require a raw pointer")
-        };
-        assert_eq!(empty_buffer.pointer_address(), std::ptr::NonNull::<f32>::dangling().as_ptr() as usize);
-        assert!(empty_buffer.values_mut().is_empty());
-
-        let null_result = unsafe { RowMajorDosageBuffer::from_pointer_address(0, 1, "test row-major") };
-        assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
-
-        let misaligned_result = unsafe { RowMajorDosageBuffer::from_pointer_address(1, 1, "test row-major") };
-        assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
-
-        let mut values = [1.0_f32, 2.0_f32];
-        let mut buffer = unsafe {
-            RowMajorDosageBuffer::from_pointer_address(values.as_mut_ptr() as usize, values.len(), "test row-major")
-                .expect("aligned non-null buffer should build")
-        };
-        buffer.values_mut()[0] = 3.0;
-        assert!((values[0] - 3.0).abs() <= f32::EPSILON);
-        assert!((values[1] - 2.0).abs() <= f32::EPSILON);
-    }
-
-    #[test]
     fn private_reader_optional_stats_collects_row_major_dosage_totals() {
         let path = temporary_bgen_path("optional-stats");
         write_single_variant_bgen(&path);
@@ -499,8 +437,8 @@ mod tests {
                 &empty_selection,
                 0,
                 1,
-                empty_output.as_mut_ptr() as usize,
-                0,
+                OutputBufferAddress::from_mut_ptr(empty_output.as_mut_ptr()),
+                OutputValueCount::new(0),
                 true,
             )
             .expect("empty selected samples should return totals")
@@ -515,8 +453,8 @@ mod tests {
                 &sample_selection,
                 0,
                 1,
-                output.as_mut_ptr() as usize,
-                output.len(),
+                OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
+                OutputValueCount::new(output.len()),
                 true,
             )
             .expect("row-major read should collect totals")

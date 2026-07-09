@@ -4,7 +4,7 @@ use std::path::Path;
 
 use g_input::resolve_prediction_loco_paths;
 use g_output::OutputError;
-use g_output::admin::{
+use g_output::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprint, ManifestFileFingerprintCache,
     build_current_run_manifest_header_json_with_cache,
 };
@@ -13,6 +13,18 @@ use serde_json::{Map, Value, json};
 struct PredictionLocoFileFingerprint {
     phenotype: String,
     fingerprint: ManifestFileFingerprint,
+}
+
+pub(crate) fn build_prediction_loco_files_json_with_cache(
+    prediction_list_path: &str,
+    phenotype_names: &[String],
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
+) -> Result<String, OutputError> {
+    let prediction_loco_files = prediction_loco_file_fingerprints_to_json_value(
+        build_prediction_loco_file_fingerprints_with_cache(prediction_list_path, phenotype_names, fingerprint_cache)?,
+    )?;
+    serde_json::to_string(&prediction_loco_files)
+        .map_err(|error| OutputError::Runtime(format!("Invalid prediction_loco_files value: {error}")))
 }
 
 /// Build a current run manifest header from a flexible JSON input value.

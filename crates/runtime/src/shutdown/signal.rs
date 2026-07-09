@@ -2,9 +2,6 @@ use signal_hook::consts::signal;
 
 use super::error::ShutdownError;
 
-#[cfg(test)]
-pub(super) use signal_hook::consts::signal::*;
-
 const SIGSTKFLT_NUMBER: i32 = 16;
 const SIGPWR_NUMBER: i32 = 30;
 const SIGRTMIN_NUMBER: i32 = 34;
@@ -92,12 +89,4 @@ fn linux_signal_name(signal_number: i32) -> Option<&'static str> {
         SIGRTMAX_NUMBER => Some("SIGRTMAX"),
         _ => None,
     }
-}
-
-#[cfg(test)]
-pub(super) mod test_constants {
-    pub const SIGSTKFLT_NUMBER: i32 = super::SIGSTKFLT_NUMBER;
-    pub const SIGPWR_NUMBER: i32 = super::SIGPWR_NUMBER;
-    pub const SIGRTMIN_NUMBER: i32 = super::SIGRTMIN_NUMBER;
-    pub const SIGRTMAX_NUMBER: i32 = super::SIGRTMAX_NUMBER;
 }

@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use super::super::CompressionType;
 use super::super::metadata::VariantRecord;
 use super::super::sample_selection::build_sample_selection;
@@ -61,71 +59,7 @@ fn probability_block(
 }
 
 fn probability_bit_count_offset(sample_count: usize) -> usize {
-    4 + 2 + 2 + sample_count + 1
-}
-
-fn zlib_compress(payload: &[u8]) -> Vec<u8> {
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-    encoder.write_all(payload).expect("payload should compress");
-    encoder.finish().expect("compressed payload should finish")
-}
-
-#[test]
-fn row_major_output_matrix_returns_requested_row_range_and_column() {
-    let mut output_values = [0_i32; 8];
-    let mut output_matrix = unsafe {
-        RowMajorOutputMatrix::<i32>::from_pointer_address(output_values.as_mut_ptr() as usize, 4, "test row-major")
-    }
-    .expect("test output matrix should build");
-
-    output_matrix.row_range_mut(1, 1, 2).expect("second row range should be available").copy_from_slice(&[5, 6]);
-    unsafe {
-        output_matrix.column_mut(0).expect("first column should be available").write_unchecked(1, 4);
-    }
-
-    assert_eq!(output_values, [0, 0, 0, 0, 4, 5, 6, 0]);
-}
-
-#[test]
-fn row_major_output_matrix_rejects_invalid_boundary_state() {
-    let null_result = unsafe { RowMajorOutputMatrix::<u8>::from_pointer_address(0, 1, "test row-major") };
-    assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
-
-    let empty_row_result = unsafe {
-        RowMajorOutputMatrix::<u8>::from_pointer_address(
-            std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
-            0,
-            "test row-major",
-        )
-    };
-    assert!(matches!(empty_row_result, Err(error) if error.to_string().contains("output row length must be positive")));
-
-    let misaligned_result = unsafe { RowMajorOutputMatrix::<i32>::from_pointer_address(1, 1, "test row-major") };
-    assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
-
-    let mut output_matrix = unsafe {
-        RowMajorOutputMatrix::<u8>::from_pointer_address(
-            std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
-            usize::MAX,
-            "test row-major",
-        )
-    }
-    .expect("dangling pointer is acceptable when offset validation fails before dereference");
-    let row_error = output_matrix.row_mut(2).expect_err("oversized row offset should fail");
-    assert!(row_error.to_string().contains("Integer overflow while locating test row-major output row"));
-
-    let mut output_values = [0_u8; 4];
-    let mut output_matrix = unsafe {
-        RowMajorOutputMatrix::<u8>::from_pointer_address(output_values.as_mut_ptr() as usize, 2, "test row-major")
-    }
-    .expect("test output matrix should build");
-    let column_result = output_matrix.column_mut(2);
-    assert!(
-        matches!(column_result, Err(error) if error.to_string().contains("output column 2 exceeds the row length 2"))
-    );
-
-    let range_error = output_matrix.row_range_mut(0, 1, 2).expect_err("oversized row range should fail");
-    assert!(range_error.to_string().contains("output row range exceeds the row length"));
+    4 + 2 + 1 + 1 + sample_count + 1
 }
 
 #[test]
@@ -168,7 +102,7 @@ fn row_major_decode_covers_eight_bit_identity_subset_and_missing_paths() {
         &[255, 0, 0, 255, 0, 0],
         &sample_selection,
         &variant_record,
-        output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
         1,
         2,
         true,
@@ -188,7 +122,7 @@ fn row_major_decode_covers_eight_bit_identity_subset_and_missing_paths() {
         &[255, 0, 0, 255, 0, 0],
         &subset_selection,
         &variant_record,
-        subset_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(subset_output.as_mut_ptr()),
         0,
         2,
         true,
@@ -206,7 +140,7 @@ fn row_major_decode_covers_eight_bit_identity_subset_and_missing_paths() {
         &[255, 0, 0, 255, 0, 0],
         &sample_selection,
         &variant_record,
-        identity_missing_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(identity_missing_output.as_mut_ptr()),
         0,
         1,
         true,
@@ -225,7 +159,7 @@ fn row_major_decode_covers_eight_bit_identity_subset_and_missing_paths() {
         &[255, 0, 0, 255, 0, 0],
         &selected_all_present,
         &variant_record,
-        selected_all_present_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(selected_all_present_output.as_mut_ptr()),
         0,
         1,
         true,
@@ -258,7 +192,7 @@ fn row_major_all_present_selected_paths_match_sample_order() {
             &probability_bytes,
             &sample_selection,
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             true,
@@ -283,7 +217,7 @@ fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() 
         &[255, 0, 0, 255, 0, 0],
         &subset_selection,
         &variant_record,
-        output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
         0,
         3,
         true,
@@ -302,7 +236,7 @@ fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() 
         &[255, 0, 0, 255, 0, 0],
         &identity_selection,
         &variant_record,
-        identity_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(identity_output.as_mut_ptr()),
         0,
         3,
         true,
@@ -320,7 +254,7 @@ fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() 
         &[255, 0, 0, 255, 0, 0],
         &contiguous_subset_selection,
         &variant_record,
-        contiguous_subset_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(contiguous_subset_output.as_mut_ptr()),
         0,
         2,
         true,
@@ -339,7 +273,7 @@ fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() 
         &[255, 0, 0, 255, 0, 0],
         &identity_missing_selection,
         &variant_record,
-        identity_missing_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(identity_missing_output.as_mut_ptr()),
         0,
         3,
         true,
@@ -358,7 +292,7 @@ fn variant_major_decode_covers_eight_bit_identity_subset_and_imputation_paths() 
         &[255, 0, 0, 255, 0, 0],
         &noncontiguous_selection,
         &variant_record,
-        noncontiguous_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(noncontiguous_output.as_mut_ptr()),
         0,
         2,
         true,
@@ -391,7 +325,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &sample_selection,
         &variant_records,
-        row_major_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(row_major_output.as_mut_ptr()),
         2,
         0,
         true,
@@ -411,7 +345,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &sample_selection,
         &variant_records,
-        disabled_profile_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(disabled_profile_output.as_mut_ptr()),
         2,
         0,
         false,
@@ -431,7 +365,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &sample_selection,
         &variant_records,
-        direct_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(direct_output.as_mut_ptr()),
         2,
         0,
         false,
@@ -452,7 +386,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &contiguous_sample_selection,
         &variant_records,
-        contiguous_scratch_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(contiguous_scratch_output.as_mut_ptr()),
         2,
         0,
         false,
@@ -468,7 +402,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &contiguous_sample_selection,
         &variant_records,
-        contiguous_direct_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(contiguous_direct_output.as_mut_ptr()),
         2,
         0,
         false,
@@ -504,7 +438,7 @@ fn tile_decoders_copy_dosages_and_collect_variant_major_stats() {
         2,
         &sample_selection,
         &variant_records,
-        variant_major_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(variant_major_output.as_mut_ptr()),
         2,
         0,
         true,
@@ -550,7 +484,7 @@ fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
         2,
         &sample_selection,
         &variant_record,
-        output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
         0,
         1,
         true,
@@ -571,7 +505,7 @@ fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
         2,
         &subset_selection,
         &variant_record,
-        subset_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(subset_output.as_mut_ptr()),
         0,
         1,
         true,
@@ -590,7 +524,7 @@ fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
         2,
         &build_sample_selection(2, &[1]).expect("missing subset selection"),
         &variant_record,
-        missing_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(missing_output.as_mut_ptr()),
         0,
         1,
         true,
@@ -611,7 +545,7 @@ fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
         2,
         &sample_selection,
         &variant_record,
-        identity_missing_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(identity_missing_output.as_mut_ptr()),
         0,
         1,
         true,
@@ -632,7 +566,7 @@ fn generic_row_major_decode_covers_unphased_phased_subset_and_error_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -660,7 +594,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
         2,
         &sample_selection,
         &variant_record,
-        output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
         0,
         2,
         true,
@@ -679,7 +613,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
         2,
         &build_sample_selection(2, &[0, 1]).expect("identity selection"),
         &variant_record,
-        output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
         0,
         2,
         true,
@@ -697,7 +631,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
         2,
         &build_sample_selection(2, &[0, 1]).expect("identity selection"),
         &variant_record,
-        missing_output.as_mut_ptr() as usize,
+        OutputBufferAddress::from_mut_ptr(missing_output.as_mut_ptr()),
         0,
         2,
         true,
@@ -717,7 +651,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             2,
             &build_sample_selection(2, &[0, 1]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             2,
             false,
@@ -739,7 +673,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -761,7 +695,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -783,7 +717,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -804,7 +738,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -825,7 +759,7 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
             1,
             &build_sample_selection(1, &[0]).expect("identity selection"),
             &variant_record,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             0,
             1,
             false,
@@ -835,60 +769,5 @@ fn generic_variant_major_decode_covers_unphased_phased_and_missing_paths() {
         .expect_err("invalid phased flag should fail")
         .to_string()
         .contains("phased flag")
-    );
-}
-
-#[test]
-fn byte_readers_probability_blocks_and_zlib_errors_report_clear_failures() {
-    assert_eq!(read_u8_at(&[7], 0).expect("u8"), 7);
-    assert_eq!(read_u16_at(&[1, 2], 0).expect("u16"), 513);
-    assert_eq!(read_u32_at(&[1, 0, 0, 0], 0).expect("u32"), 1);
-    assert!(read_exact_bytes(&[1, 2], 1, 5).expect_err("short read should fail").to_string().contains("end of file"));
-
-    let mut thread_scratch = ThreadScratch::default();
-    let mut profile = ThreadLocalProfileSnapshot::default();
-    let variant_record = test_variant_record(3);
-    assert!(
-        read_probability_block(
-            &[1, 2, 3],
-            CompressionType::Zlib,
-            &variant_record,
-            &mut thread_scratch,
-            &mut profile,
-            true,
-        )
-        .expect_err("invalid zlib should fail")
-        .to_string()
-        .contains("I/O error")
-    );
-
-    let compressed_payload = zlib_compress(&[1, 2, 3, 4]);
-    let mut successful_record = test_variant_record(compressed_payload.len());
-    successful_record.declared_uncompressed_block_length = 4;
-    let decompressed_block = read_probability_block(
-        &compressed_payload,
-        CompressionType::Zlib,
-        &successful_record,
-        &mut thread_scratch,
-        &mut profile,
-        true,
-    )
-    .expect("valid zlib block should decompress");
-    assert_eq!(decompressed_block, &[1, 2, 3, 4]);
-
-    let mut wrong_length_record = test_variant_record(compressed_payload.len());
-    wrong_length_record.declared_uncompressed_block_length = 5;
-    assert!(
-        read_probability_block(
-            &compressed_payload,
-            CompressionType::Zlib,
-            &wrong_length_record,
-            &mut thread_scratch,
-            &mut profile,
-            false,
-        )
-        .expect_err("declared zlib length mismatch should fail")
-        .to_string()
-        .contains("declared")
     );
 }

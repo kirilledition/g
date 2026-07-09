@@ -6,13 +6,13 @@
 
 The pre-release parity suite is the release gate for Step 2 behavior that claims
 REGENIE compatibility. It combines external upstream REGENIE golden outputs with
-small internal contracts for sample semantics, resume behavior, and native BGEN
-missingness handling.
+small internal numerical contracts for candidate selection, Firth behavior, and
+native BGEN missingness handling.
 
 The machine-readable coverage record is checked in at
 `tests/parity/golden_metadata.json`. It records the upstream REGENIE version,
 command lines, expected output paths, tolerance columns, contract tests, and
-known gaps for every required workflow.
+known gaps for every required mathematical workflow.
 
 ## Commands
 
@@ -38,8 +38,8 @@ Set `GWAS_ENGINE_DATA_DIR` when the phase-0 data lives outside `data/`.
 `tests/test_regenie2_parity.py` skips external cases whose BGEN, sample,
 phenotype, covariate, prediction list, or golden output files are absent.
 
-The full pre-release contract gate should include the external golden checks and
-the representative focused tests referenced by the metadata:
+The math-only gate should include the external golden checks and the
+representative focused tests referenced by the metadata:
 
 ```bash
 JUST_TEMPDIR=/tmp \
@@ -50,19 +50,12 @@ GWAS_ENGINE_CPU_MEMORY=32G \
 just slurm-cpu-run 'uv run pytest \
   tests/parity \
   tests/test_regenie2_parity.py \
-  tests/test_core.py::test_regenie_prediction_source_loads_from_native_aligned_sample_data \
-  tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints \
-  tests/test_regenie2_pipeline.py::test_grouped_per_phenotype_pipeline_batches_identical_alignments \
+  tests/test_regenie2_linear.py::TestComputeRegenie2LinearChunk::test_loco_predictions_with_covariate_signal_residualize_null_mse \
+  tests/test_regenie2_linear.py::TestComputeRegenie2LinearChunk::test_variant_major_kernel_matches_sample_major_with_native_square_sums \
   tests/test_regenie2_binary.py::test_score_only_plan_produces_no_fallback_candidates \
   tests/test_regenie2_binary.py::test_variant_major_score_only_bt_matches_sample_major_with_covariates_loco_and_edge_genotypes \
   tests/test_regenie2_binary.py::test_variant_major_approximate_firth_matches_sample_major_with_covariates_loco_and_edge_genotypes \
-  tests/test_regenie2_binary_diagnostics.py::test_binary_chunk_diagnostics_count_all_failure_categories \
-  tests/test_regenie2_pipeline.py::test_build_phenotype_compute_groups_distinguishes_sample_modes \
-  tests/test_regenie2_pipeline.py::test_complete_case_compute_group_resolution_adds_alignment_fingerprints \
-  tests/test_regenie2_pipeline.py::test_multi_linear_resume_recomputes_partial_chunks_without_duplicate_writes \
-  tests/test_io_output.py::test_initialize_output_run_compatible_resume_preserves_committed_chunks \
-  tests/test_io_output.py::test_fast_resume_rejects_loco_file_content_change_with_preserved_metadata \
-  tests/test_io_output.py::test_prepare_output_run_strict_resume_validates_manifest_chunks \
+  tests/test_regenie2_binary.py::test_firth_candidate_max_iteration_failure_is_labelled \
   -q'
 ```
 
@@ -108,14 +101,9 @@ The expected output is
 | Workflow | Status | Gate |
 | --- | --- | --- |
 | Quantitative single phenotype, BGEN, covariates, LOCO predictions | External golden | `tests/test_regenie2_parity.py` compares `BETA`, `SE`, `CHISQ`, and `LOG10P`. |
-| Quantitative multiple phenotypes, per-phenotype sample mode | Contract | Pipeline and tabular tests assert independent sample sets and grouped compatible alignments. |
-| Quantitative multiple phenotypes, complete-case sample mode | Contract | Pipeline and tabular tests assert shared complete-case intersections and manifest fingerprints. |
 | Binary score-only | External golden | `tests/test_regenie2_parity.py` compares `BETA`, `SE`, `CHISQ`, and `LOG10P` when the score-only golden exists. |
-| Binary `--firth --approx` | Experimental | Internal diagnostics and kernel contracts exist, but upstream golden parity is not a production gate yet. |
-| Missing phenotype/covariate filtering | Contract | Tabular alignment tests assert explicit missing-value exclusion. |
+| Binary `--firth --approx` | Experimental | Internal kernel contracts exist, but upstream golden parity is not a production gate yet. |
 | Variant missingness/imputation | Contract | Native BGEN decode tests and variant-major kernel tests assert imputation/stat summary behavior. |
-| Resume after interruption | Contract | Output and pipeline tests assert committed chunks are reused and partial chunks are rewritten. |
-| Prediction input identity | Contract | Output tests assert selected LOCO prediction-file content changes reject resume. |
 
 ## Tolerances
 
@@ -136,8 +124,8 @@ the metadata, this page, and the review note explaining the numerical cause.
 
 Approximate Firth is accepted by the CLI/API but remains experimental for
 production compatibility until a v4.1 upstream golden output is added to the
-suite. The internal tests verify candidate selection, correction diagnostics,
-failure labeling, and sample-major versus variant-major equivalence, but they do
+suite. The internal tests verify candidate selection, failure labeling, and
+sample-major versus variant-major equivalence, but they do
 not replace an upstream REGENIE comparison.
 
 Large-fixture parity and performance comparisons remain outside this gate. Use

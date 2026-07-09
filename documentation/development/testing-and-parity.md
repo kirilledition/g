@@ -2,10 +2,11 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development contract | main branch as of 2026-06-30 tests and parity workflow | Development maintainers |
+| Math-only Python suite | main branch as of 2026-07-09 tests and parity workflow | Correctness maintainers |
 
-This page defines how to validate changes without confusing fast local checks,
-full correctness runs, and external REGENIE parity work.
+This page defines how to validate mathematical correctness work without
+confusing fast local checks, full correctness runs, and external REGENIE parity
+work.
 
 ## Test Tiers
 
@@ -20,23 +21,26 @@ full correctness runs, and external REGENIE parity work.
 Do not run GPU workloads, heavy compilation, large test suites, or benchmark
 sweeps on a login node.
 
-## Correctness Ownership
+## Python Correctness Ownership
 
 | Area | Representative tests |
 | --- | --- |
-| CLI and lifecycle | `tests/test_cli.py`, `tests/test_cli_smoke.py` |
-| TOML/options/config | `tests/test_interface.py`, `tests/test_api.py`, `tests/test_preflight.py` |
-| Input parsing and sample alignment | `tests/test_io_source.py`, `tests/test_regenie2_pipeline.py`, Rust tests under `crates/input/src/` |
-| Output writer, schema, manifest, resume | `tests/test_io_output.py`, Rust tests under `crates/output/src/` |
 | Quantitative kernels | `tests/test_regenie2_linear.py`, `tests/test_regenie2_parity.py` |
-| Binary score and Firth kernels | `tests/test_regenie2_binary*.py`, `tests/test_regenie_binary_correction_contract.py` |
-| Pipeline orchestration | `tests/test_regenie2_pipeline.py`, `tests/test_callback_lifecycle.py` |
-| JAX runtime | `tests/test_jax_runtime.py`, `tests/test_warm_cache.py` |
-| Telemetry and timing | `tests/test_telemetry.py`, `tests/test_timing.py` |
-| Development tooling | `tests/test_tooling_architecture.py`, `tests/test_regenie_comparison_scripts.py` |
+| Binary score and Firth kernels | `tests/test_regenie2_binary.py`, `tests/test_regenie2_binary_firth_null.py`, `tests/test_regenie2_binary_full_model.py`, `tests/test_regenie2_binary_scalar_firth.py` |
+| REGENIE parity metadata and comparison helpers | `tests/parity/` |
 
-Use the narrowest test that covers the changed contract, then broaden when a
-change crosses module boundaries.
+The Python suite intentionally excludes non-mathematical product contracts such
+as CLI behavior, configuration validation, output/resume behavior, telemetry,
+pipeline orchestration, architecture checks, and tooling automation.
+
+## Rust Correctness Ownership
+
+The active Rust test surface is math-only and lives in `g-genotype`. Keep
+`cargo test -p g-genotype` focused on BGEN dosage decoding, imputation,
+variant summaries, and SIMD/scalar numerical equivalence.
+
+Rust product, runtime, CLI, IO, scheduling, and planning contracts stay out of
+the test suite until those APIs stabilize.
 
 ## REGENIE Parity Rules
 
@@ -70,20 +74,6 @@ When validating a numerical change, record:
 - device and dtype settings;
 - tolerance used for comparison;
 - whether differences are isolated to invalid or `TEST_FAIL` rows.
-
-## Output And Resume Tests
-
-Output changes must cover:
-
-- output path derivation;
-- Arrow/Parquet/REGENIE text chunk naming;
-- finalization behavior;
-- `run_manifest.json` compatibility;
-- `effective_config.toml`;
-- fast and strict resume behavior when chunk files and manifest disagree.
-
-Any output schema change must update public [Output Files](../public/output-files.md)
-and keep manifest/schema versions coherent.
 
 ## Documentation Changes
 

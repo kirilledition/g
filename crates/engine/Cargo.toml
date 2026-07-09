@@ -14,16 +14,5 @@ g-runtime = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
-[features]
-default = []
-test-support = []
-
-[dev-dependencies]
-criterion = { workspace = true }
-
-[[bench]]
-name = "coordinator"
-harness = false
-
 [lints]
 workspace = true

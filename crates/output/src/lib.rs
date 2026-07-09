@@ -1,6 +1,8 @@
 //! Native output persistence APIs.
 
-pub mod admin;
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("g requires a 64-bit target.");
+
 mod api;
 mod chunk;
 mod error;

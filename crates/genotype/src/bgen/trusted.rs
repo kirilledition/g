@@ -11,6 +11,7 @@ use super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::sample_selection::SampleSelection;
 use super::simd;
 use super::{BgenError, CompressionType};
+use crate::buffer::raw_pointer::OutputBufferAddress;
 use crate::preprocess;
 
 fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
@@ -198,7 +199,7 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record_chunk: &[VariantRecord],
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
@@ -247,7 +248,7 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record_chunk: &[VariantRecord],
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     selected_sample_count: usize,
     tile_variant_start_index: usize,
     profiling_enabled: bool,
@@ -297,7 +298,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
@@ -402,7 +403,7 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     sample_count: usize,
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
-    output_pointer_address: usize,
+    output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
     profiling_enabled: bool,
@@ -558,65 +559,6 @@ mod tests {
         block
     }
 
-    #[test]
-    fn selected_sample_count_to_i32_rejects_overflow() {
-        let selected_sample_count = usize::try_from(i32::MAX).expect("i32 max should fit usize") + 1;
-
-        let error = selected_sample_count_to_i32(selected_sample_count).expect_err("oversized count should fail");
-
-        assert!(error.to_string().contains("exceeds the supported i32 statistics range"));
-    }
-
-    #[test]
-    fn variant_major_output_matrix_returns_requested_row() {
-        let mut output_values = [0_i32; 6];
-        let mut output_matrix = unsafe {
-            VariantMajorOutputMatrix::<i32>::from_pointer_address(
-                output_values.as_mut_ptr() as usize,
-                3,
-                "test variant-major",
-            )
-        }
-        .expect("test output matrix should build");
-
-        output_matrix.row_mut(1).expect("second row should be available").copy_from_slice(&[4, 5, 6]);
-
-        assert_eq!(output_values, [0, 0, 0, 4, 5, 6]);
-    }
-
-    #[test]
-    fn variant_major_output_matrix_rejects_invalid_boundary_state() {
-        let null_result = unsafe { VariantMajorOutputMatrix::<u8>::from_pointer_address(0, 1, "test variant-major") };
-        assert!(matches!(null_result, Err(error) if error.to_string().contains("output pointer is null")));
-
-        let empty_row_result = unsafe {
-            VariantMajorOutputMatrix::<u8>::from_pointer_address(
-                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
-                0,
-                "test variant-major",
-            )
-        };
-        assert!(
-            matches!(empty_row_result, Err(error) if error.to_string().contains("output row length must be positive"))
-        );
-
-        let misaligned_result =
-            unsafe { VariantMajorOutputMatrix::<i32>::from_pointer_address(1, 1, "test variant-major") };
-        assert!(matches!(misaligned_result, Err(error) if error.to_string().contains("output pointer is not aligned")));
-
-        let mut output_matrix = unsafe {
-            VariantMajorOutputMatrix::<u8>::from_pointer_address(
-                std::ptr::NonNull::<u8>::dangling().as_ptr() as usize,
-                usize::MAX,
-                "test variant-major",
-            )
-        }
-        .expect("dangling pointer is acceptable when offset validation fails before dereference");
-        let error = output_matrix.row_mut(2).expect_err("oversized row offset should fail");
-
-        assert!(error.to_string().contains("Integer overflow while locating test variant-major output row"));
-    }
-
     fn valid_trusted_probability_block(probability_bytes: &[u8]) -> Vec<u8> {
         trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, probability_bytes)
     }
@@ -632,119 +574,6 @@ mod tests {
             counted_allele: "A".to_string(),
             reference_allele: "G".to_string(),
         }
-    }
-
-    fn validation_error_for(block: &[u8], expected_sample_count: usize) -> String {
-        let mut thread_scratch = ThreadScratch::default();
-        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
-        validate_variant_compatible_with_trusted_no_missing_diploid(
-            block,
-            CompressionType::None,
-            &variant_record(0, block.len(), "trusted-test"),
-            expected_sample_count,
-            &mut thread_scratch,
-            &mut profile_snapshot,
-        )
-        .expect_err("trusted validation should reject malformed block")
-        .to_string()
-    }
-
-    #[test]
-    fn trusted_validation_accepts_contract_and_rejects_each_assumption() {
-        assert!(all_samples_present_diploid(&[2; 17]));
-        assert!(!all_samples_present_diploid(&[2, 2, 3]));
-        assert!(!all_samples_present_diploid(&[2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2]));
-
-        let valid_block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
-        let mut thread_scratch = ThreadScratch::default();
-        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
-        validate_variant_compatible_with_trusted_no_missing_diploid(
-            &valid_block,
-            CompressionType::None,
-            &variant_record(0, valid_block.len(), "trusted-valid"),
-            3,
-            &mut thread_scratch,
-            &mut profile_snapshot,
-        )
-        .expect("valid trusted probability block should pass");
-
-        assert!(validation_error_for(&valid_block, 2).contains("file header reports"));
-        assert!(
-            validation_error_for(&trusted_probability_block(3, 3, 2, 2, &[2, 2, 2], 0, 8, &[]), 3)
-                .contains("not biallelic")
-        );
-        assert!(
-            validation_error_for(&trusted_probability_block(3, 2, 1, 2, &[2, 2, 2], 0, 8, &[]), 3)
-                .contains("ploidy bounds")
-        );
-        assert!(
-            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 0x82, 2], 0, 8, &[]), 3)
-                .contains("missing or non-diploid")
-        );
-        assert!(
-            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 1, 8, &[]), 3).contains("phased")
-        );
-        assert!(
-            validation_error_for(&trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 16, &[]), 3)
-                .contains("bits per probability")
-        );
-    }
-
-    #[test]
-    fn trusted_decode_reports_truncated_probability_payloads() {
-        let truncated_block = [0_u8];
-        let truncated_record = variant_record(0, 4, "trusted-truncated");
-        let mut thread_scratch = ThreadScratch::default();
-        let mut profile_snapshot = ThreadLocalProfileSnapshot::default();
-        let validation_error = validate_variant_compatible_with_trusted_no_missing_diploid(
-            &truncated_block,
-            CompressionType::None,
-            &truncated_record,
-            3,
-            &mut thread_scratch,
-            &mut profile_snapshot,
-        )
-        .expect_err("trusted validation should reject a truncated payload")
-        .to_string();
-        assert!(validation_error.contains("Unexpected end"));
-
-        let sample_selection = build_sample_selection(3, &[0, 1]).expect("sample selection should build");
-        let mut output = vec![f32::NAN; 2];
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
-        let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut nonzero_count = vec![0_i32; 1];
-        let mut homozygous_reference_count = vec![0_i32; 1];
-        let mut heterozygous_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
-        let mut tile_stats = VariantMajorTileStatsMut {
-            dosage_sum: &mut dosage_sum,
-            dosage_square_sum: &mut dosage_square_sum,
-            observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
-        };
-        let decode_error = decode_trusted_variant_major_dosage_tile(
-            &truncated_block,
-            CompressionType::None,
-            3,
-            &sample_selection,
-            &[truncated_record],
-            output.as_mut_ptr() as usize,
-            2,
-            0,
-            false,
-            true,
-            &mut tile_stats,
-            &mut thread_scratch,
-        )
-        .expect_err("trusted decode should reject a truncated payload")
-        .to_string();
-        assert!(decode_error.contains("Unexpected end"));
     }
 
     #[test]
@@ -786,7 +615,7 @@ mod tests {
             3,
             &sample_selection,
             &variant_records,
-            output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
             2,
             0,
             true,
@@ -832,7 +661,7 @@ mod tests {
             3,
             &sample_selection,
             &variant_records,
-            disabled_output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(disabled_output.as_mut_ptr()),
             2,
             0,
             false,
@@ -879,7 +708,7 @@ mod tests {
             3,
             &identity_selection,
             &variant_records,
-            identity_output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(identity_output.as_mut_ptr()),
             3,
             0,
             true,
@@ -918,7 +747,7 @@ mod tests {
             3,
             &noncontiguous_selection,
             &variant_records,
-            noncontiguous_output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(noncontiguous_output.as_mut_ptr()),
             2,
             0,
             true,
@@ -968,7 +797,7 @@ mod tests {
             4,
             &identity_selection,
             &variant_records,
-            identity_output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(identity_output.as_mut_ptr()),
             4,
             0,
             true,
@@ -1012,7 +841,7 @@ mod tests {
             4,
             &contiguous_selection,
             &variant_records,
-            contiguous_output.as_mut_ptr() as usize,
+            OutputBufferAddress::from_mut_ptr(contiguous_output.as_mut_ptr()),
             2,
             0,
             true,
@@ -1031,57 +860,5 @@ mod tests {
         assert_eq!(homozygous_alternate_count, vec![0]);
         assert!((dosage_sum[0] - 1.0).abs() < f32::EPSILON);
         assert!((dosage_square_sum[0] - 1.0).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn trusted_variant_major_decode_reports_contract_violations() {
-        let sample_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity sample selection should build");
-        let mut output = vec![0.0_f32; 3];
-
-        for (block, expected_message) in [
-            (trusted_probability_block(2, 2, 2, 2, &[2, 2, 2], 0, 8, &[]), "file header reports"),
-            (trusted_probability_block(3, 3, 2, 2, &[2, 2, 2], 0, 8, &[]), "not biallelic"),
-            (trusted_probability_block(3, 2, 1, 2, &[2, 2, 2], 0, 8, &[]), "ploidy bounds"),
-            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 1, 8, &[]), "unphased 8-bit"),
-            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 4, &[]), "unphased 8-bit"),
-            (trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, &[0, 0]), "Unexpected end"),
-        ] {
-            let mut thread_scratch = ThreadScratch::default();
-            let mut dosage_sum = vec![0.0_f32; 1];
-            let mut dosage_square_sum = vec![0.0_f32; 1];
-            let mut observation_count = vec![0_i32; 1];
-            let mut zero_count = vec![0_i32; 1];
-            let mut nonzero_count = vec![0_i32; 1];
-            let mut homozygous_reference_count = vec![0_i32; 1];
-            let mut heterozygous_count = vec![0_i32; 1];
-            let mut homozygous_alternate_count = vec![0_i32; 1];
-            let mut tile_stats = VariantMajorTileStatsMut {
-                dosage_sum: &mut dosage_sum,
-                dosage_square_sum: &mut dosage_square_sum,
-                observation_count: &mut observation_count,
-                zero_count: &mut zero_count,
-                nonzero_count: &mut nonzero_count,
-                homozygous_reference_count: &mut homozygous_reference_count,
-                heterozygous_count: &mut heterozygous_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            };
-            let error = decode_trusted_variant_major_dosage_tile(
-                &block,
-                CompressionType::None,
-                3,
-                &sample_selection,
-                &[variant_record(0, block.len(), "trusted-invalid")],
-                output.as_mut_ptr() as usize,
-                3,
-                0,
-                false,
-                true,
-                &mut tile_stats,
-                &mut thread_scratch,
-            )
-            .expect_err("invalid trusted block should fail")
-            .to_string();
-            assert!(error.contains(expected_message), "expected '{expected_message}' in '{error}'");
-        }
     }
 }

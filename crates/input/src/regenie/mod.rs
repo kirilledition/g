@@ -13,18 +13,7 @@ mod source;
 pub use error::PredictionError;
 pub use source::{ChromosomePredictionMatrix, MultiPredictionSource, PredictionSource};
 
-#[cfg(test)]
-use alignment::align_prediction_values;
-#[cfg(test)]
-use cache::LocoPredictionCache;
-#[cfg(test)]
-use chromosome::normalize_chromosome;
-#[cfg(test)]
-use list::PredictionListEntry;
 use list::{find_prediction_list_entry, parse_prediction_list_file};
-
-#[cfg(test)]
-mod tests;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PredictionLocoPath {

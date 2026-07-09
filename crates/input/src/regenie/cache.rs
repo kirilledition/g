@@ -30,11 +30,6 @@ impl LocoPredictionCache {
             }
         }
     }
-
-    #[cfg(test)]
-    pub(super) fn cached_file_count(&self) -> usize {
-        self.predictions_by_path.len()
-    }
 }
 
 impl LocoAlignmentCache {

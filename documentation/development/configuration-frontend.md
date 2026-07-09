@@ -97,13 +97,6 @@ dictionaries into the Rust-owned shape before calling the PyO3 config builder.
 
 ## Tests To Update
 
-Relevant test files include:
-
-- `tests/test_cli.py`
-- `tests/test_interface.py`
-- `tests/test_api.py`
-- `tests/test_preflight.py`
-- `tests/test_regenie2_pipeline.py`
-
-At minimum, new options should be covered by option-registry schema tests and by
-the runtime boundary that consumes them.
+Configuration frontend changes are no longer covered by Python product tests in
+the math-only suite. At minimum, new options should be covered by Rust
+option-registry, schema, and runtime-boundary tests under the owning crate.

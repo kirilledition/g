@@ -58,7 +58,7 @@ documentation/scratchpad/
 | Performance | `documentation/public/performance-guide.md` |
 | Troubleshooting | `documentation/public/troubleshooting.md` |
 | Architecture | `documentation/development/architecture.md` |
-| Rust migration | `documentation/development/rust-migration.md` |
+| Architecture cleanup and Rust migration | `documentation/development/architecture-cleanup.md` |
 | Config frontend | `documentation/development/configuration-frontend.md` |
 | Tooling/Justfile | `documentation/development/tooling.md`, `development/justfile.md` |
 

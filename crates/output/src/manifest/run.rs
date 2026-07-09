@@ -122,6 +122,19 @@ pub fn validate_run_manifest_compatibility(manifest_json: &str, current_header_j
     validation::validate_manifest_compatibility_values(&manifest, &current_header)
 }
 
+pub fn validate_output_run_resume_compatibility(
+    chunks_directory: &Path,
+    manifest_json: &str,
+    current_header_json: &str,
+    resume_mode: OutputResumeMode,
+) -> Result<(), OutputError> {
+    validate_run_manifest_compatibility(manifest_json, current_header_json)?;
+    if resume_mode == OutputResumeMode::Strict {
+        resume::repair_strict_manifest_chunk_commits(chunks_directory, manifest_json)?;
+    }
+    Ok(())
+}
+
 pub fn read_run_manifest_committed_chunk_identifiers_from_text(manifest_json: &str) -> Result<Vec<i64>, OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     read_run_manifest_committed_chunk_identifiers(&manifest)

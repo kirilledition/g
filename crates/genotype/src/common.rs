@@ -4,8 +4,6 @@
 
 use std::sync::Arc;
 
-use crate::error::GenotypeResult;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChunkSpec {
     pub variant_start_index: usize,
@@ -40,25 +38,4 @@ pub struct VariantMetadataColumns {
     pub position: Vec<i64>,
     pub allele_one: Vec<String>,
     pub allele_two: Vec<String>,
-}
-
-pub trait GenotypeReaderCore {
-    fn sample_count(&self) -> usize;
-    fn variant_count(&self) -> usize;
-    fn sample_identifiers(&self) -> Vec<String>;
-    fn chromosome_boundary_indices(&self) -> Vec<usize>;
-    fn prepare_sample_selection(&self, sample_indices: &[i64]) -> GenotypeResult<()>;
-    fn clear_prepared_sample_selection(&self) -> GenotypeResult<()>;
-    fn variant_metadata_slice(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-    ) -> GenotypeResult<VariantMetadataColumns>;
-    fn read_preprocessed_dosage_f32_into_address_prepared(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-        output_pointer_address: usize,
-        output_value_count: usize,
-    ) -> GenotypeResult<ChunkStats>;
 }

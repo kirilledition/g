@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use g_genotype::{BgenError, BgenGenotypeSource, ChunkSpec, GenotypeError};
+use g_genotype::{BgenError, BgenReaderCore, ChunkSpec, GenotypeError};
 
 use crate::preflight::PreflightError;
 use crate::trusted_validation::TrustedBgenValidationError;
 
 pub struct Regenie2RunEngineCore {
-    reader: BgenGenotypeSource,
+    reader: BgenReaderCore,
     chunk_size: usize,
     variant_limit: Option<usize>,
 }
@@ -27,12 +27,12 @@ impl Regenie2RunEngineCore {
         variant_limit: Option<usize>,
         trusted_no_missing_diploid: bool,
     ) -> Result<Self, BgenError> {
-        let reader = BgenGenotypeSource::open(bgen_path, trusted_no_missing_diploid)?;
+        let reader = BgenReaderCore::open(bgen_path, trusted_no_missing_diploid)?;
         Ok(Self { reader, chunk_size, variant_limit })
     }
 
     #[must_use]
-    pub const fn reader(&self) -> &BgenGenotypeSource {
+    pub const fn reader(&self) -> &BgenReaderCore {
         &self.reader
     }
 
@@ -43,13 +43,7 @@ impl Regenie2RunEngineCore {
     /// Returns an error when chunk sizing, variant limits, or committed chunk
     /// identifiers are inconsistent with the opened reader.
     pub fn plan_chunks(&self, committed_chunk_identifiers: &BTreeSet<usize>) -> Result<Vec<ChunkSpec>, GenotypeError> {
-        g_genotype::internal::plan_chromosome_homogeneous_chunks(
-            self.reader.variant_count(),
-            self.chunk_size,
-            self.variant_limit,
-            &self.reader.chromosome_boundary_indices(),
-            committed_chunk_identifiers,
-        )
+        self.reader.plan_chromosome_homogeneous_chunks(self.chunk_size, self.variant_limit, committed_chunk_identifiers)
     }
 
     /// Resolve unique chromosome labels represented in the requested scan.

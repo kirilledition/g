@@ -1,7 +1,8 @@
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use g_engine::debug::{
+use g_engine::PipelineOutputPreparationError;
+use g_engine::{
     CallbackDiagnosticsError, PipelineResumeCompatibilityError, PreflightError, ScheduleError,
     TrustedBgenValidationError,
 };
@@ -10,7 +11,7 @@ use g_input::{InputError, PredictionError};
 use g_interface::ConfigError;
 use g_output::OutputError;
 use g_plan::{HostPolicyError, PreparedPlanError};
-use g_runtime::debug::{
+use g_runtime::{
     LoggingSinkError, LoggingSinkInitializationError, RayonRuntimeError, RayonThreadPoolConfigurationError,
     TimingFileError, TransferMetadataError,
 };
@@ -21,6 +22,39 @@ pub(super) fn convert_schedule_error(error: &ScheduleError) -> PyErr {
 
 pub(super) fn convert_pipeline_resume_compatibility_error(error: &PipelineResumeCompatibilityError) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+pub(super) fn convert_pipeline_output_preparation_error(error: &PipelineOutputPreparationError) -> PyErr {
+    let (error_class, message) = match error {
+        PipelineOutputPreparationError::Output(OutputError::InvalidInput(message)) => {
+            ("output_invalid_input", message.clone())
+        }
+        PipelineOutputPreparationError::Output(OutputError::Runtime(message)) => ("output_runtime", message.clone()),
+        PipelineOutputPreparationError::ResumeCompatibility(_) => ("output_resume_compatibility", error.to_string()),
+        PipelineOutputPreparationError::AssociationBackend(_) => ("association_backend", error.to_string()),
+        PipelineOutputPreparationError::MissingGroupedOutputField { .. }
+        | PipelineOutputPreparationError::PhenotypeComputeGroupLengthMismatch
+        | PipelineOutputPreparationError::PhenotypeComputeGroupIndexOutOfRange
+        | PipelineOutputPreparationError::UnknownPreparedPhenotype { .. }
+        | PipelineOutputPreparationError::InvalidGpuGenotypeFormat { .. }
+        | PipelineOutputPreparationError::CommittedChunkCountOutOfRange
+        | PipelineOutputPreparationError::OutputIndexOutOfRange => ("output_preparation", error.to_string()),
+    };
+    tracing::warn!(
+        target: "g.python",
+        g_event = "native_boundary_error",
+        subsystem = "engine",
+        operation = "prepare_pipeline_output",
+        error_class = error_class,
+        error_message = %message,
+        "Converting Rust pipeline output preparation error to Python."
+    );
+    match error {
+        PipelineOutputPreparationError::Output(OutputError::Runtime(message)) => {
+            PyRuntimeError::new_err(message.clone())
+        }
+        _ => PyValueError::new_err(message),
+    }
 }
 
 pub(super) fn convert_preflight_error(error: &PreflightError) -> PyErr {

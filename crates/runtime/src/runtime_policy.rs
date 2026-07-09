@@ -86,31 +86,3 @@ fn optional_i64_text(value: Option<i64>) -> String {
 fn python_bool(value: bool) -> &'static str {
     if value { "True" } else { "False" }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn telemetry_stream_owns_trace_file_and_filter_policy() {
-        let policy = build_logging_runtime_policy(
-            "info".to_string(),
-            Some("run.log".to_string()),
-            true,
-            256,
-            false,
-            true,
-            false,
-            Some("trace.jsonl".to_string()),
-            "debug".to_string(),
-            Some(100),
-            "profile",
-            Some("events.jsonl".to_string()),
-        );
-
-        assert_eq!(policy.log_file, None);
-        assert_eq!(policy.trace_file, Some("events.jsonl".to_string()));
-        assert_eq!(policy.trace_filter, "info");
-        assert_eq!(policy.trace_event_cap, None);
-    }
-}

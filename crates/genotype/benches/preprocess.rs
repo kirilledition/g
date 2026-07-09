@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use g_genotype::internal as native_genotype;
+use g_genotype as native_genotype;
 use std::hint;
 
 fn dense_variant_major_dosages(selected_variant_count: usize, selected_sample_count: usize) -> Vec<f32> {
@@ -19,7 +19,11 @@ fn benchmark_variant_major_summary(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("preprocess_variant_major_summary");
     for selected_sample_count in [1024_usize, 2048, 4096, 8192, 16384] {
         let dosage_values = dense_variant_major_dosages(selected_variant_count, selected_sample_count);
-        group.throughput(criterion::Throughput::Elements((selected_variant_count * selected_sample_count) as u64));
+        let element_count = selected_variant_count
+            .checked_mul(selected_sample_count)
+            .and_then(|value| u64::try_from(value).ok())
+            .expect("benchmark element count should fit u64");
+        group.throughput(criterion::Throughput::Elements(element_count));
         group.bench_function(selected_sample_count.to_string(), |bencher| {
             bencher.iter(|| {
                 hint::black_box(

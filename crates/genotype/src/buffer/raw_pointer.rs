@@ -2,6 +2,41 @@ use std::ptr::NonNull;
 
 use crate::bgen::BgenError;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputBufferAddress(usize);
+
+impl OutputBufferAddress {
+    #[must_use]
+    pub const fn new(address: usize) -> Self {
+        Self(address)
+    }
+
+    #[must_use]
+    pub fn from_mut_ptr<Value>(pointer: *mut Value) -> Self {
+        Self(pointer.addr())
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputValueCount(usize);
+
+impl OutputValueCount {
+    #[must_use]
+    pub const fn new(value_count: usize) -> Self {
+        Self(value_count)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
 pub(crate) struct RowMajorDosageBuffer {
     pointer: Option<NonNull<f32>>,
     value_count: usize,
@@ -17,15 +52,17 @@ impl RowMajorDosageBuffer {
     /// The caller must guarantee exclusive access for the lifetime of slices
     /// borrowed from this helper.
     pub(crate) unsafe fn from_pointer_address(
-        output_pointer_address: usize,
-        value_count: usize,
+        output_pointer_address: OutputBufferAddress,
+        value_count: OutputValueCount,
         buffer_context: &'static str,
     ) -> Result<Self, BgenError> {
+        let value_count = value_count.get();
         if value_count == 0 {
             return Ok(Self { pointer: None, value_count });
         }
 
         let value_alignment = std::mem::align_of::<f32>();
+        let output_pointer_address = output_pointer_address.get();
         if !output_pointer_address.is_multiple_of(value_alignment) {
             return Err(BgenError::Range(format!(
                 "{buffer_context} output pointer is not aligned to {value_alignment} bytes.",
@@ -36,8 +73,11 @@ impl RowMajorDosageBuffer {
         Ok(Self { pointer: Some(pointer), value_count })
     }
 
-    pub(crate) fn pointer_address(&self) -> usize {
-        self.pointer.map_or_else(|| NonNull::<f32>::dangling().as_ptr() as usize, |pointer| pointer.as_ptr() as usize)
+    pub(crate) fn pointer_address(&self) -> OutputBufferAddress {
+        self.pointer.map_or_else(
+            || OutputBufferAddress::from_mut_ptr(NonNull::<f32>::dangling().as_ptr()),
+            |pointer| OutputBufferAddress::from_mut_ptr(pointer.as_ptr()),
+        )
     }
 
     pub(crate) fn values_mut(&mut self) -> &mut [f32] {

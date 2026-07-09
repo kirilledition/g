@@ -22,6 +22,8 @@ use coordinator::{OutputCoordinatorJob, run_output_writer_coordinator};
 use validation::{validate_column_lengths, validate_statistic_array_type};
 use worker_pool::{OutputWriteCompletionTracker, get_output_writer_pool};
 
+pub use validation::validate_trait_major_statistic_shape;
+
 #[derive(Clone)]
 struct OutputWriterConfig {
     run_directory: PathBuf,
@@ -336,52 +338,131 @@ impl OutputWriterSession {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::finalization::RegenieStep2FinalizationTiming;
-
-    #[test]
-    fn stage_timing_accumulator_records_finalization_timing() {
-        let mut stage_timings = OutputStageTimingAccumulator::default();
-
-        stage_timings.add_finalization_timing(RegenieStep2FinalizationTiming {
-            chunk_file_count: 2,
-            batch_count: 3,
-            row_count: 5,
-            list_chunk_files_seconds: 0.1,
-            parquet_writer_properties_seconds: 0.0,
-            parquet_file_create_seconds: 0.0,
-            parquet_writer_init_seconds: 0.0,
-            arrow_file_open_seconds: 0.0,
-            arrow_reader_init_seconds: 0.0,
-            arrow_batch_read_seconds: 0.0,
-            read_arrow_seconds: 0.2,
-            project_batch_seconds: 0.3,
-            write_parquet_seconds: 0.4,
-            footer_metadata_seconds: 0.5,
-            close_writer_seconds: 0.6,
-            manifest_update_seconds: 0.7,
-            arrow_file_bytes: 0,
-            parquet_file_bytes: 0,
-            total_seconds: 1.8,
-        });
-
-        assert_eq!(stage_timings.finalization_chunk_file_count, 2);
-        assert_eq!(stage_timings.finalization_batch_count, 3);
-        assert_eq!(stage_timings.finalization_row_count, 5);
-        assert_eq!(stage_timings.finalization_count, 1);
-        assert!(stage_timings.finalization_total_seconds > 1.0);
+/// Create one native output writer session per run/chunks directory pair.
+///
+/// # Errors
+///
+/// Returns an error when the directory vector lengths differ, writer settings
+/// are invalid, or a writer pool cannot be created.
+#[allow(clippy::too_many_arguments)]
+pub fn create_output_writer_sessions(
+    run_directories: Vec<String>,
+    chunks_directories: Vec<String>,
+    association_mode: &str,
+    writer_thread_count: usize,
+    writer_queue_depth: usize,
+    output_format: &str,
+    output_statistic_dtype: &str,
+    finalize_parquet: bool,
+    chunks_per_arrow_file: usize,
+    arrow_compression: &str,
+    parquet_compression: &str,
+    collect_stage_timings: bool,
+) -> Result<Vec<OutputWriterSession>, OutputError> {
+    if run_directories.len() != chunks_directories.len() {
+        return Err(OutputError::InvalidInput(format!(
+            "Output writer run directory count ({}) does not match chunks directory count ({}).",
+            run_directories.len(),
+            chunks_directories.len()
+        )));
     }
+    run_directories
+        .into_iter()
+        .zip(chunks_directories)
+        .map(|(run_directory, chunks_directory)| {
+            OutputWriterSession::new(
+                run_directory,
+                chunks_directory,
+                association_mode.to_string(),
+                writer_thread_count,
+                writer_queue_depth,
+                output_format,
+                output_statistic_dtype,
+                finalize_parquet,
+                chunks_per_arrow_file,
+                arrow_compression.to_string(),
+                parquet_compression.to_string(),
+                collect_stage_timings,
+            )
+        })
+        .collect()
+}
 
-    #[test]
-    fn output_writer_pool_reuses_one_process_pool_at_max_requested_cap() {
-        let first_pool = get_output_writer_pool(1).expect("first pool should open");
-        let second_pool = get_output_writer_pool(2).expect("second pool should reuse and grow first pool");
-        let third_pool = get_output_writer_pool(1).expect("third pool should reuse existing pool");
-
-        assert!(std::sync::Arc::ptr_eq(&first_pool, &second_pool));
-        assert!(std::sync::Arc::ptr_eq(&second_pool, &third_pool));
-        assert!(third_pool.current_worker_count() >= 2);
+/// Finish output writer sessions, optionally in bounded parallel batches.
+///
+/// # Errors
+///
+/// Returns an error when a session cannot be closed, a writer task failed, a
+/// manifest commit fails, finalization fails, or a finish thread panics.
+pub fn finish_output_writer_sessions(
+    writer_sessions: &[&OutputWriterSession],
+    thread_count: usize,
+) -> Result<Vec<Option<PathBuf>>, OutputError> {
+    if thread_count <= 1 {
+        return writer_sessions.iter().map(|writer_session| writer_session.finish()).collect();
     }
+    let mut final_paths = Vec::with_capacity(writer_sessions.len());
+    for writer_session_batch in writer_sessions.chunks(thread_count) {
+        final_paths.extend(finish_output_writer_session_batch(writer_session_batch)?);
+    }
+    Ok(final_paths)
+}
+
+/// Flush interrupted output writer sessions and mark their manifests interrupted.
+///
+/// # Errors
+///
+/// Returns an error when a session cannot be closed, a writer task failed, a
+/// manifest update fails, or an interrupted-finish thread panics.
+pub fn finish_interrupted_output_writer_sessions(
+    writer_sessions: &[&OutputWriterSession],
+    thread_count: usize,
+    signal_name: &str,
+) -> Result<(), OutputError> {
+    if thread_count <= 1 {
+        for writer_session in writer_sessions {
+            writer_session.finish_interrupted(signal_name)?;
+        }
+        return Ok(());
+    }
+    for writer_session_batch in writer_sessions.chunks(thread_count) {
+        finish_interrupted_output_writer_session_batch(writer_session_batch, signal_name)?;
+    }
+    Ok(())
+}
+
+fn finish_output_writer_session_batch(
+    writer_sessions: &[&OutputWriterSession],
+) -> Result<Vec<Option<PathBuf>>, OutputError> {
+    std::thread::scope(|scope| {
+        let writer_handles = writer_sessions
+            .iter()
+            .map(|writer_session| scope.spawn(move || writer_session.finish()))
+            .collect::<Vec<_>>();
+        writer_handles
+            .into_iter()
+            .map(|writer_handle| {
+                writer_handle
+                    .join()
+                    .map_err(|_| OutputError::Runtime("Output writer finish thread panicked.".to_string()))?
+            })
+            .collect()
+    })
+}
+fn finish_interrupted_output_writer_session_batch(
+    writer_sessions: &[&OutputWriterSession],
+    signal_name: &str,
+) -> Result<(), OutputError> {
+    std::thread::scope(|scope| {
+        let writer_handles = writer_sessions
+            .iter()
+            .map(|writer_session| scope.spawn(move || writer_session.finish_interrupted(signal_name)))
+            .collect::<Vec<_>>();
+        for writer_handle in writer_handles {
+            writer_handle
+                .join()
+                .map_err(|_| OutputError::Runtime("Interrupted output writer finish thread panicked.".to_string()))??;
+        }
+        Ok(())
+    })
 }

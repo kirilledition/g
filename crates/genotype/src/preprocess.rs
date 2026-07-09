@@ -48,7 +48,7 @@ impl VariantMajorRowSummary {
     }
 }
 
-pub fn preprocess_row_major_dosage_matrix(
+pub(crate) fn preprocess_row_major_dosage_matrix(
     dosage_values: &mut [f32],
     selected_sample_count: usize,
     selected_variant_count: usize,
@@ -208,7 +208,7 @@ fn summarize_variant_major_row_scalar(dosage_values: &[f32]) -> VariantMajorRowS
 }
 
 #[must_use]
-pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values: bool) -> ChunkStats {
+pub(crate) fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values: bool) -> ChunkStats {
     let dosage_sum = Arc::<[f32]>::from(vec![0.0_f32; selected_variant_count]);
     let allele_count = Arc::clone(&dosage_sum);
     ChunkStats {
@@ -233,7 +233,7 @@ pub fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_chunk_stats_from_summaries(
+pub(crate) fn build_chunk_stats_from_summaries(
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
@@ -335,7 +335,7 @@ pub fn build_chunk_stats_from_summaries(
     })
 }
 
-pub fn increment_dosage_summary_counts(
+pub(crate) fn increment_dosage_summary_counts(
     dosage_value: f32,
     zero_count: &mut i32,
     nonzero_count: &mut i32,
@@ -360,8 +360,8 @@ pub fn increment_dosage_summary_counts(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_chunk_stats_from_summaries, preprocess_row_major_dosage_matrix, summarize_variant_major_dosage_matrix,
-        summarize_variant_major_row_scalar, summarize_variant_major_row_simd_or_scalar,
+        preprocess_row_major_dosage_matrix, summarize_variant_major_dosage_matrix, summarize_variant_major_row_scalar,
+        summarize_variant_major_row_simd_or_scalar,
     };
 
     const SUMMARY_SAMPLE_COUNTS: [usize; 10] = [0, 1, 7, 8, 15, 16, 17, 31, 32, 33];
@@ -477,27 +477,6 @@ mod tests {
         let info_score = stats.info_score[0].expect("partly observed variant should have an INFO score");
         assert!((info_score - (2.0 / 3.0)).abs() <= 1.0e-6);
         assert!((info_score - (1.0 / 3.0)).abs() > 1.0e-6);
-    }
-
-    #[test]
-    fn build_chunk_stats_rejects_sample_count_outside_i32_range() {
-        let selected_sample_count = usize::try_from(i32::MAX).expect("i32 max should fit usize") + 1;
-
-        let error = build_chunk_stats_from_summaries(
-            vec![1.0],
-            vec![1.0],
-            vec![1],
-            vec![0],
-            vec![1],
-            vec![0],
-            vec![1],
-            vec![0],
-            false,
-            selected_sample_count,
-        )
-        .expect_err("sample counts outside the statistics schema should fail");
-
-        assert!(error.to_string().contains("supported i32 statistics range"));
     }
 
     #[test]

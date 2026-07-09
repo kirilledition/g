@@ -5,8 +5,6 @@ mod genotype_format;
 mod invocation;
 mod types;
 
-#[cfg(test)]
-pub(crate) use cleanup::build_bgen_delivery_cleanup_plan;
 pub use cleanup::plan_bgen_delivery_cleanup;
 pub use genotype_format::{
     plan_auto_gpu_genotype_format_after_trusted_validation, plan_gpu_genotype_format_auto_to_dosage,

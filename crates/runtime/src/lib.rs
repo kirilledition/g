@@ -1,10 +1,12 @@
 #![warn(clippy::pedantic)]
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("g requires a 64-bit target.");
+
 mod api;
 mod cli_runtime;
-pub mod debug;
 mod error;
-pub mod events;
+mod events;
 mod jax_runtime;
 mod logging_sink;
 mod rayon_runtime;

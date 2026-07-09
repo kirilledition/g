@@ -8,8 +8,6 @@ use arrow::datatypes::{DataType, Field, Schema, UInt8Type};
 use crate::error::OutputError;
 use crate::schema;
 
-#[cfg(test)]
-use super::RegenieStep2ChunkWriteBatch;
 use super::{OutputWriterResult, RegenieStep2ChunkJob, RegenieStep2RecordBatchBuildTiming};
 
 pub(super) const CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY: u8 = 1;
@@ -23,37 +21,6 @@ const CORRECTION_STATUS_FAILED_KEY: u8 = 1;
 pub(super) enum RegenieStep2CorrectionArrayEncoding {
     String,
     Dictionary,
-}
-
-#[cfg(test)]
-pub(super) fn build_regenie_step2_record_batches(
-    job: RegenieStep2ChunkWriteBatch,
-    chunk_schema: Arc<Schema>,
-) -> OutputWriterResult<RegenieStep2RecordBatchBuildResult> {
-    let mut timing = RegenieStep2RecordBatchBuildTiming::default();
-    let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
-    let record_batches = job
-        .chunks
-        .into_iter()
-        .map(|chunk_job| {
-            let record_batch_build_result = build_regenie_step2_record_batch(
-                chunk_job,
-                Arc::clone(&chunk_schema),
-                &mut array_cache,
-                RegenieStep2CorrectionArrayEncoding::String,
-            )?;
-            timing.add(record_batch_build_result.timing);
-            Ok(record_batch_build_result.record_batch)
-        })
-        .collect::<OutputWriterResult<Vec<_>>>()?;
-    Ok(RegenieStep2RecordBatchBuildResult { record_batches, timing })
-}
-
-#[cfg(test)]
-pub(super) struct RegenieStep2RecordBatchBuildResult {
-    pub(super) record_batches: Vec<RecordBatch>,
-    #[allow(dead_code)]
-    pub(super) timing: RegenieStep2RecordBatchBuildTiming,
 }
 
 pub(super) struct RegenieStep2SingleRecordBatchBuildResult {

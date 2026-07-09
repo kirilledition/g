@@ -45,6 +45,8 @@ nav = [
     "development/regenie-parity-suite.md",
     "development/benchmarking.md",
     "development/native-io.md",
+    "development/integer-policy.md",
+    "development/integer-type-audit.md",
     "development/compute-kernels.md",
     "development/performance-discovery.md",
     "development/simd-optimization-reference.md",

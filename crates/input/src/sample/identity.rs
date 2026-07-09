@@ -43,8 +43,7 @@ pub fn load_sample_identifier_data_from_sample_file(
                 column_names.len(),
             )));
         }
-        sample_indices
-            .push(i64::try_from(sample_count - 1).map_err(|error| SampleAlignmentError::new(error.to_string()))?);
+        sample_indices.push(sample_count - 1);
         family_identifiers.push(row_values[family_identifier_column_index].clone());
         individual_identifiers.push(row_values[individual_identifier_column_index].clone());
     }

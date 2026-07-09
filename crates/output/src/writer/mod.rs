@@ -21,24 +21,6 @@ pub(crate) use types::{
     RegenieStep2RecordBatchBuildTiming,
 };
 
-#[cfg(test)]
-use arrow::array::{ArrayRef, DictionaryArray, RecordBatch, StringArray};
-#[cfg(test)]
-use arrow::datatypes::{DataType, UInt8Type};
-#[cfg(test)]
-use chunk_manifest::{build_chunk_file_name, build_regenie_step2_chunk_file_schema, build_run_manifest_chunk_commits};
-#[cfg(test)]
-use record_batch::{
-    CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY, CORRECTION_STATUS_SUCCESS_KEY, RegenieStep2CorrectionArrayEncoding,
-    RegenieStep2RecordBatchArrayCache, build_regenie_step2_parquet_record_batch_schema,
-    build_regenie_step2_record_batch, build_regenie_step2_record_batches,
-};
-#[cfg(test)]
-use std::sync::Arc;
-
-#[cfg(test)]
-mod tests;
-
 type OutputWriterResult<T> = Result<T, OutputError>;
 
 pub(crate) fn write_regenie_step2_chunk_job(

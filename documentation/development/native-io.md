@@ -8,6 +8,9 @@ Native I/O owns the parts of the hot path that should not depend on Python
 DataFrame libraries: BGEN decode, sample/covariate/phenotype alignment, chunk
 delivery, output writing, manifest handling, and resume.
 
+Integer boundary decisions for native I/O are maintained in
+[Integer Policy](integer-policy.md) and [Integer Type Audit](integer-type-audit.md).
+
 ## Source Map
 
 | Path | Responsibility |
@@ -89,10 +92,8 @@ or output schema assumptions.
 
 Native I/O changes usually need tests in:
 
-- `tests/test_io_output.py`;
-- `tests/test_io_source.py`;
 - Rust unit tests under `crates/genotype/src/`, `crates/input/src/`, or `crates/output/src/`;
-- pipeline tests when callback delivery or writer sessions change.
+- integration or pipeline coverage in the owning Rust crate when callback delivery or writer sessions change.
 
 Output contract changes also require [Output Files](../public/output-files.md)
 and [Resume and Manifest](../public/resume-and-manifest.md) updates.

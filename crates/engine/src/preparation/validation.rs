@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use g_output::OutputResumeMode;
+use g_output::{OutputResumeMode, validate_output_run_resume_compatibility};
 
 use super::error::PipelineResumeCompatibilityError;
 
@@ -70,11 +70,12 @@ pub(super) fn validate_pipeline_resume_compatibility_after_count_check(
         let Some(existing_manifest_json) = existing_manifest_json else {
             return Err(PipelineResumeCompatibilityError::MissingManifest);
         };
-        g_output::validate_run_manifest_compatibility(&existing_manifest_json, &current_header_json)?;
-        if resume_mode == OutputResumeMode::Strict {
-            let _repaired_commits =
-                g_output::admin::repair_strict_manifest_chunk_commits(&chunks_directory, &existing_manifest_json)?;
-        }
+        validate_output_run_resume_compatibility(
+            &chunks_directory,
+            &existing_manifest_json,
+            &current_header_json,
+            resume_mode,
+        )?;
     }
     Ok(())
 }

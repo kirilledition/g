@@ -20,7 +20,7 @@ Equivalent commands without `just`:
 uv run ruff format --check .
 uv run ruff check .
 uv run ty check src tests scripts tooling
-uv run pytest tests/test_core.py tests/test_io_output.py
+uv run pytest tests/test_regenie2_linear.py tests/test_regenie2_binary.py
 uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 ```
 

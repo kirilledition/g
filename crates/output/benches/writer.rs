@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::{ArrayRef, Float32Array};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use g_output::admin::{CurrentRunManifestHeaderInput, build_current_run_manifest_header_json};
+use g_output::{CurrentRunManifestHeaderInput, build_current_run_manifest_header_json};
 use g_output::{
     NativeChunkHandle, NativeChunkStats, OutputFileFormat, OutputResumeMode, OutputWriterSession,
     VariantMetadataColumns, initialize_output_run, prepare_output_run,

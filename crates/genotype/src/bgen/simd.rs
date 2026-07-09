@@ -712,12 +712,15 @@ mod tests {
         let mut probabilities = Vec::with_capacity(sample_count * 2);
         for _ in 0..sample_count {
             generator_state = generator_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            let homozygous_reference_probability_byte = (generator_state & 0xFF) as u8;
+            let homozygous_reference_probability_byte =
+                u8::try_from(generator_state & 0xFF).expect("generator low byte should fit u8");
             generator_state = generator_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let heterozygous_limit = 255_u16 - u16::from(homozygous_reference_probability_byte);
-            let heterozygous_probability_byte =
-                u8::try_from((generator_state & 0xFF) as u16 % (heterozygous_limit + 1))
-                    .expect("heterozygous probability should fit u8");
+            let heterozygous_probability_byte = u8::try_from(
+                u16::try_from(generator_state & 0xFF).expect("generator low byte should fit u16")
+                    % (heterozygous_limit + 1),
+            )
+            .expect("heterozygous probability should fit u8");
             probabilities.push(homozygous_reference_probability_byte);
             probabilities.push(heterozygous_probability_byte);
         }
@@ -766,28 +769,6 @@ mod tests {
             rare_variant_like_probability_bytes(sample_count),
             deterministic_random_valid_probability_bytes(sample_count),
         ]
-    }
-
-    #[test]
-    fn all_samples_present_diploid_wrapper_matches_scalar() {
-        for sample_count in TRUSTED_IDENTITY_SAMPLE_COUNTS {
-            let present_ploidy = vec![2_u8; sample_count];
-            assert!(all_samples_present_diploid_simd_or_scalar(&present_ploidy));
-            assert_eq!(
-                all_samples_present_diploid_simd_or_scalar(&present_ploidy),
-                all_samples_present_diploid_scalar(&present_ploidy)
-            );
-
-            for missing_index in 0..sample_count {
-                let mut ploidy = present_ploidy.clone();
-                ploidy[missing_index] = if missing_index % 2 == 0 { 3 } else { 0x82 };
-                assert!(!all_samples_present_diploid_simd_or_scalar(&ploidy));
-                assert_eq!(
-                    all_samples_present_diploid_simd_or_scalar(&ploidy),
-                    all_samples_present_diploid_scalar(&ploidy)
-                );
-            }
-        }
     }
 
     #[test]

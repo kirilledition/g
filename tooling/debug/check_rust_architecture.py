@@ -279,6 +279,25 @@ ROOT_PYO3_FIELD_GETTER_EXPORT_PATTERN = re.compile(
     r"(?m)^\s*#\[pyo3\(get\)\]\s*\n\s*(?P<export_name>[A-Za-z0-9_]+)\s*:"
 )
 ROOT_PYO3_REMOVED_EXPORT_MESSAGE = "root PyO3 adapter must not re-export removed raw helper surface"
+PRODUCTION_BINDING_REGISTRATION_PATHS = (
+    ROOT_CRATE_PYTHON_MODULE_PATH,
+    Path("src/binding/engine/mod.rs"),
+)
+DISALLOWED_PRODUCTION_DEBUG_REGISTRATION_MARKERS = (
+    "debug::register_engine_internals",
+    "debug::register_preflight",
+    "callback_diagnostics::register_module",
+    "callback_progress::register_module",
+    "callback_queue::register_module",
+    "callback_runtime_resources::register_module",
+    "callback_summary::register_module",
+    "preflight::register_module",
+    "schedule::register_module",
+)
+BINDING_DEBUG_REGISTRATION_MESSAGE = (
+    "production binding registration must keep debug callback/schedule/preflight internals under _core.debug "
+    "or root compatibility aliases"
+)
 PYTHON_TELEMETRY_FALLBACK_METHOD_NAMES = (
     "close_with_event",
     "log_binary_correction_summary",
@@ -314,10 +333,11 @@ CRATE_ROOT_BY_PACKAGE: dict[str, Path] = {
     "g-plan": Path("crates/plan"),
     "g-runtime": Path("crates/runtime"),
 }
-ALLOWED_PUBLIC_ROOT_MODULES_BY_PACKAGE: dict[str, set[str]] = {
-    "g-engine": {"test_support"},
-}
+ALLOWED_PUBLIC_ROOT_MODULES_BY_PACKAGE: dict[str, set[str]] = {}
 CRATE_ROOT_PUBLIC_MODULE_PATTERN = re.compile(r"(?m)^\s*pub\s+mod\s+(?P<module_name>[A-Za-z0-9_]+)\s*;")
+INTEGER_CAST_ALLOWLIST_PATH = Path("tooling/debug/integer_cast_allowlist.txt")
+INTEGER_CAST_SCAN_ROOTS = (Path("crates"), ROOT_CRATE_PYTHON_SOURCE_DIRECTORY)
+INTEGER_CAST_PATTERN = re.compile(r"\bas\s+(?P<target>usize|isize|u64|i64|u32|i32|u16|i16|u8|i8)\b")
 
 
 @dataclass(frozen=True)
@@ -403,6 +423,58 @@ class RootPyO3ExportViolation:
     source_path: Path
     export_name: str
     line_number: int
+    message: str
+
+
+@dataclass(frozen=True)
+class BindingDebugRegistrationViolation:
+    """A debug PyO3 binding registered by production domain registration.
+
+    Attributes:
+        source_path: Source file containing the violation.
+        marker: Source marker that registered debug internals in production.
+        message: Human-readable violation description.
+
+    """
+
+    source_path: Path
+    marker: str
+    message: str
+
+
+@dataclass(frozen=True)
+class IntegerCastAllowlistEntry:
+    """An audited integer cast entry.
+
+    Attributes:
+        source_path: Source file containing the audited cast.
+        snippet: Source snippet that identifies the audited cast.
+        reason: Human-readable reason the cast is allowed.
+
+    """
+
+    source_path: Path
+    snippet: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class IntegerCastViolation:
+    """An unaudited integer `as` cast.
+
+    Attributes:
+        source_path: Source file containing the cast.
+        line_number: One-based source line number containing the cast.
+        target_type: Integer type targeted by the cast.
+        source_line: Source line containing the cast.
+        message: Human-readable violation description.
+
+    """
+
+    source_path: Path
+    line_number: int
+    target_type: str
+    source_line: str
     message: str
 
 
@@ -679,6 +751,105 @@ def collect_root_pyo3_export_violations(repository_root: Path) -> tuple[RootPyO3
     return tuple(sorted(violations, key=lambda violation: (violation.source_path, violation.line_number)))
 
 
+def collect_binding_debug_registration_violations(
+    repository_root: Path,
+) -> tuple[BindingDebugRegistrationViolation, ...]:
+    """Collect production binding registrations that expose debug internals directly."""
+    violations: list[BindingDebugRegistrationViolation] = []
+    for relative_source_path in PRODUCTION_BINDING_REGISTRATION_PATHS:
+        source_path = repository_root / relative_source_path
+        if not source_path.is_file():
+            continue
+        source_text = source_path.read_text(encoding="utf-8")
+        for marker in DISALLOWED_PRODUCTION_DEBUG_REGISTRATION_MARKERS:
+            if marker not in source_text:
+                continue
+            violations.append(
+                BindingDebugRegistrationViolation(
+                    source_path=relative_source_path,
+                    marker=marker,
+                    message=BINDING_DEBUG_REGISTRATION_MESSAGE,
+                )
+            )
+    return tuple(violations)
+
+
+def load_integer_cast_allowlist(repository_root: Path) -> tuple[IntegerCastAllowlistEntry, ...]:
+    """Load audited integer casts from the allowlist file."""
+    allowlist_path = repository_root / INTEGER_CAST_ALLOWLIST_PATH
+    if not allowlist_path.is_file():
+        return ()
+
+    entries: list[IntegerCastAllowlistEntry] = []
+    for raw_line in allowlist_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|", maxsplit=2)
+        if len(parts) != 3:
+            continue
+        raw_source_path, snippet, reason = parts
+        entries.append(
+            IntegerCastAllowlistEntry(
+                source_path=Path(raw_source_path.strip()),
+                snippet=snippet.strip(),
+                reason=reason.strip(),
+            )
+        )
+    return tuple(entries)
+
+
+def is_integer_cast_allowed(
+    relative_source_path: Path,
+    source_line: str,
+    allowlist_entries: tuple[IntegerCastAllowlistEntry, ...],
+) -> bool:
+    """Return whether one integer cast line is present in the audit allowlist."""
+    normalized_source_line = source_line.strip()
+    return any(
+        entry.source_path == relative_source_path and entry.snippet in normalized_source_line
+        for entry in allowlist_entries
+    )
+
+
+def rust_integer_cast_source_paths(repository_root: Path) -> tuple[Path, ...]:
+    """Return Rust source paths scanned for unaudited integer casts."""
+    source_paths: list[Path] = []
+    for scan_root in INTEGER_CAST_SCAN_ROOTS:
+        absolute_scan_root = repository_root / scan_root
+        if not absolute_scan_root.exists():
+            continue
+        source_paths.extend(
+            source_path
+            for source_path in absolute_scan_root.rglob("*.rs")
+            if source_path.name != "tests.rs"
+        )
+    return tuple(sorted(source_paths))
+
+
+def collect_integer_cast_violations(repository_root: Path) -> tuple[IntegerCastViolation, ...]:
+    """Collect unaudited integer `as` casts outside Rust test files."""
+    allowlist_entries = load_integer_cast_allowlist(repository_root)
+    violations: list[IntegerCastViolation] = []
+    for rust_source_path in rust_integer_cast_source_paths(repository_root):
+        source_text = rust_source_path.read_text(encoding="utf-8")
+        relative_source_path = rust_source_path.relative_to(repository_root)
+        for line_index, source_line in enumerate(source_text.splitlines(), start=1):
+            for cast_match in INTEGER_CAST_PATTERN.finditer(source_line):
+                if is_integer_cast_allowed(relative_source_path, source_line, allowlist_entries):
+                    continue
+                violations.append(
+                    IntegerCastViolation(
+                        source_path=relative_source_path,
+                        line_number=line_index,
+                        target_type=cast_match.group("target"),
+                        source_line=source_line.strip(),
+                        message="integer `as` casts require checked conversion or an audit allowlist entry",
+                    )
+                )
+    return tuple(violations)
+
+
 def load_cargo_metadata(repository_root: Path) -> dict[str, typing.Any]:
     """Load workspace Cargo metadata from the repository root."""
     completed_process = subprocess.run(
@@ -735,6 +906,22 @@ def format_root_pyo3_export_violations(violations: tuple[RootPyO3ExportViolation
     )
 
 
+def format_binding_debug_registration_violations(
+    violations: tuple[BindingDebugRegistrationViolation, ...],
+) -> str:
+    """Format debug binding registration violations for command-line output."""
+    return "\n".join(f"- {violation.source_path} [{violation.marker}]: {violation.message}" for violation in violations)
+
+
+def format_integer_cast_violations(violations: tuple[IntegerCastViolation, ...]) -> str:
+    """Format unaudited integer cast violations for command-line output."""
+    return "\n".join(
+        f"- {violation.source_path}:{violation.line_number} [{violation.target_type}]: "
+        f"{violation.message}: {violation.source_line}"
+        for violation in violations
+    )
+
+
 def run_tool(repository_root: Path) -> int:
     """Verify Rust workspace architecture policy."""
     try:
@@ -748,12 +935,16 @@ def run_tool(repository_root: Path) -> int:
     root_crate_violations = collect_root_crate_boundary_violations(repository_root)
     telemetry_fallback_violations = collect_python_telemetry_fallback_violations(repository_root)
     root_pyo3_export_violations = collect_root_pyo3_export_violations(repository_root)
+    binding_debug_registration_violations = collect_binding_debug_registration_violations(repository_root)
+    integer_cast_violations = collect_integer_cast_violations(repository_root)
     if (
         dependency_violations
         or crate_public_api_violations
         or root_crate_violations
         or telemetry_fallback_violations
         or root_pyo3_export_violations
+        or binding_debug_registration_violations
+        or integer_cast_violations
     ):
         print("Rust workspace architecture violations:")
         if dependency_violations:
@@ -766,6 +957,10 @@ def run_tool(repository_root: Path) -> int:
             print(format_python_telemetry_fallback_violations(telemetry_fallback_violations))
         if root_pyo3_export_violations:
             print(format_root_pyo3_export_violations(root_pyo3_export_violations))
+        if binding_debug_registration_violations:
+            print(format_binding_debug_registration_violations(binding_debug_registration_violations))
+        if integer_cast_violations:
+            print(format_integer_cast_violations(integer_cast_violations))
         return 1
 
     print("Rust workspace architecture policy passed.")

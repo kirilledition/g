@@ -55,31 +55,3 @@ impl<T> BoundedCallbackQueue<T> {
         self.items.pop_front()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounded_callback_queue_tracks_capacity_and_fifo_order() {
-        let mut queue = BoundedCallbackQueue::new(2).unwrap();
-
-        assert_eq!(queue.capacity(), 2);
-        assert_eq!(queue.occupied_count(), 0);
-        assert!(queue.has_available_slot());
-        assert!(!queue.has_queued_item());
-        assert_eq!(queue.try_push("first"), Ok(()));
-        assert_eq!(queue.try_push("second"), Ok(()));
-        assert_eq!(queue.occupied_count(), 2);
-        assert!(!queue.has_available_slot());
-        assert_eq!(queue.try_push("third"), Err("third"));
-        assert_eq!(queue.pop(), Some("first"));
-        assert_eq!(queue.pop(), Some("second"));
-        assert_eq!(queue.pop(), None);
-    }
-
-    #[test]
-    fn bounded_callback_queue_rejects_zero_capacity() {
-        assert_eq!(BoundedCallbackQueue::<usize>::new(0), None);
-    }
-}

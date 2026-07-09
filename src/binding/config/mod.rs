@@ -12,6 +12,7 @@ use g_interface::{
 use g_plan as native_plan;
 
 mod conversion;
+pub(crate) mod host_policy;
 
 use super::errors;
 use conversion::{
@@ -1165,6 +1166,12 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeBinaryCorrectionPlan>()?;
     module.add_function(wrap_pyfunction!(validate_regenie_config_for_run, module)?)?;
     module.add_function(wrap_pyfunction!(dispatch_cli, module)?)?;
+    Ok(())
+}
+
+pub(crate) fn register_domain(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_module(module)?;
+    host_policy::register_module(module)?;
     Ok(())
 }
 
