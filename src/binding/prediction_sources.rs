@@ -18,8 +18,8 @@ use super::{
 };
 
 #[pyclass]
-struct RegeniePredictionSource {
-    source: PredictionSource,
+pub(crate) struct RegeniePredictionSource {
+    pub(crate) source: PredictionSource,
 }
 
 #[pyclass]
@@ -198,4 +198,22 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<RegeniePredictionSource>()?;
     module.add_class::<MultiRegeniePredictionSource>()?;
     Ok(())
+}
+
+pub(crate) fn load_regenie_prediction_source_from_aligned_sample_data(
+    prediction_list_path: &str,
+    phenotype_name: &str,
+    aligned_sample_data: &NativeAlignedSampleData,
+    sample_key_mode: &str,
+) -> PyResult<RegeniePredictionSource> {
+    let parsed_sample_key_mode = parse_sample_key_mode(sample_key_mode)?;
+    let source = PredictionSource::load(
+        Path::new(prediction_list_path),
+        phenotype_name,
+        &aligned_sample_data.data.family_identifiers,
+        &aligned_sample_data.data.individual_identifiers,
+        parsed_sample_key_mode,
+    )
+    .map_err(|error| convert_prediction_error("load_prediction_source_from_native_pipeline_bundle", &error))?;
+    Ok(RegeniePredictionSource { source })
 }

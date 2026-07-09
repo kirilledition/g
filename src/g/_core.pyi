@@ -416,6 +416,40 @@ class NativePreparedOutputBundle:
     ) -> list[int]: ...
     def multi_trait_chunk_write_planner(self) -> NativeMultiTraitChunkWritePlanner: ...
 
+class NativeSingleTraitRunInput:
+    @property
+    def native_aligned_sample_data(self) -> NativeAlignedSampleData: ...
+    @property
+    def native_multi_aligned_sample_data(self) -> None: ...
+    @property
+    def sample_indices(self) -> npt.NDArray[np.int64]: ...
+    @property
+    def phenotype_vector(self) -> npt.NDArray[np.float32]: ...
+    @property
+    def covariate_matrix(self) -> npt.NDArray[np.float32]: ...
+    @property
+    def is_binary_trait(self) -> bool: ...
+    @property
+    def family_identifiers(self) -> list[str]: ...
+    @property
+    def individual_identifiers(self) -> list[str]: ...
+    @property
+    def covariate_names(self) -> list[str]: ...
+
+class NativeSingleTraitPipelineBundle:
+    @property
+    def run_input(self) -> NativeSingleTraitRunInput: ...
+    @property
+    def prediction_source(self) -> RegeniePredictionSource: ...
+    @property
+    def phenotype_compute_group(self) -> NativeResolvedPhenotypeComputeGroup: ...
+    @property
+    def output_bundle(self) -> NativePreparedOutputBundle: ...
+    @property
+    def writer_session(self) -> OutputWriterSession: ...
+    @property
+    def committed_chunk_identifiers(self) -> list[int]: ...
+
 class NativeRunLifecycleSession:
     def __init__(
         self,
@@ -562,6 +596,41 @@ class NativeRunEngineSession:
         firth_dtype: str,
         stage_timing_recorder: NativeStageTimingRecorder | None,
     ) -> tuple[NativePreparedOutputBundle, ...]: ...
+    def prepare_single_trait_pipeline_bundle(
+        self,
+        phenotype_name: str,
+        covariate_names: typing.Sequence[str] | None,
+        association_mode: str,
+        association_backend_kind: str,
+        jax_device: str,
+        genotype_format: str,
+        requested_gpu_genotype_format: str,
+        score_dtype: str,
+        firth_dtype: str,
+        binary_kernel_config_json: str | None,
+        sample_key_mode: str,
+        is_binary_trait: bool,
+        pipeline_label: str,
+        bgen_path: str,
+        sample_path: str | None,
+        phenotype_path: str,
+        covariate_path: str | None,
+        prediction_list_path: str,
+        chunk_size: int,
+        variant_limit: int | None,
+        effective_trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: str,
+        telemetry_session: object | None,
+        stage_timing_recorder: NativeStageTimingRecorder | None,
+    ) -> NativeSingleTraitPipelineBundle: ...
+    def run_single_trait_pipeline_bundle(
+        self,
+        bundle: NativeSingleTraitPipelineBundle,
+        callback: object,
+        stage_timing_recorder: NativeStageTimingRecorder | None,
+        variant_major_packed8_probability_pairs: bool,
+        pipeline_label: str,
+    ) -> str | None: ...
     def finalize_success(self, final_output_paths: typing.Sequence[str | None]) -> NativeRunArtifacts: ...
 
 class ChunkStatsComputeArrays(typing.TypedDict, total=False):
@@ -1768,6 +1837,24 @@ def run_cli_with_python_backend(
     arguments: list[str],
     backend: typing.Callable[[RegenieConfig, NativeCliRunContext], NativeRunArtifacts],
 ) -> NativeCliRunResult: ...
+def run_with_python_backend(
+    arguments: list[str],
+    backend: typing.Callable[[RegenieConfig, NativeCliRunContext], NativeRunArtifacts],
+) -> NativeCliRunResult: ...
+
+class _CliModule(typing.Protocol):
+    def run_with_python_backend(
+        self,
+        arguments: list[str],
+        backend: typing.Callable[[RegenieConfig, NativeCliRunContext], NativeRunArtifacts],
+    ) -> NativeCliRunResult: ...
+    def run_cli_with_python_backend(
+        self,
+        arguments: list[str],
+        backend: typing.Callable[[RegenieConfig, NativeCliRunContext], NativeRunArtifacts],
+    ) -> NativeCliRunResult: ...
+
+cli: _CliModule
 
 class NativePreflightValidator:
     def __init__(self) -> None: ...

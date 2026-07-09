@@ -328,6 +328,38 @@ impl NativeRunLifecycleSession {
         firth_dtype: String,
         stage_timing_recorder: Option<&NativeStageTimingRecorder>,
     ) -> PyResult<Bound<'py, PyTuple>> {
+        let output_bundles = self.prepare_output_bundle_objects_from_runtime_plan_internal(
+            py,
+            output_groups,
+            variant_count,
+            effective_trusted_no_missing_diploid,
+            sample_key_mode,
+            binary_kernel_config_json,
+            requested_gpu_genotype_format,
+            gpu_genotype_format,
+            score_dtype,
+            firth_dtype,
+            stage_timing_recorder,
+        )?;
+        PyTuple::new(py, &output_bundles)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn prepare_output_bundle_objects_from_runtime_plan_internal(
+        &self,
+        py: Python<'_>,
+        output_groups: Vec<NativeOutputRuntimeGroupInput>,
+        variant_count: i64,
+        effective_trusted_no_missing_diploid: bool,
+        sample_key_mode: String,
+        binary_kernel_config_json: Option<String>,
+        requested_gpu_genotype_format: String,
+        gpu_genotype_format: String,
+        score_dtype: String,
+        firth_dtype: String,
+        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
+    ) -> PyResult<Vec<Py<NativePreparedOutputBundle>>> {
         self.ensure_not_finalized()?;
         let runtime_plan = NativeOutputRuntimePlan {
             variant_count,
@@ -364,7 +396,7 @@ impl NativeRunLifecycleSession {
                 writer_preparation_start_time.elapsed().as_secs_f64(),
             )?;
         }
-        PyTuple::new(py, &output_bundles)
+        Ok(output_bundles)
     }
 
     pub(crate) fn finalize_success_artifacts(
@@ -677,6 +709,32 @@ impl NativeRunLifecycleSession {
             initialized_metadata_phenotypes.insert(phenotype_name.clone());
         }
         Ok(())
+    }
+}
+
+impl NativePreparedOutputBundle {
+    pub(crate) fn writer_session_handle(
+        &self,
+        py: Python<'_>,
+        output_index: usize,
+    ) -> PyResult<Py<output::OutputWriterSession>> {
+        self.writer_sessions
+            .get(output_index)
+            .map(|session| session.clone_ref(py))
+            .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))
+    }
+
+    pub(crate) fn committed_chunk_identifiers_usize(&self, output_index: usize) -> PyResult<Vec<usize>> {
+        self.initialization
+            .committed_chunk_identifiers(output_index)
+            .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))?
+            .iter()
+            .map(|identifier| {
+                usize::try_from(*identifier).map_err(|_| {
+                    PyValueError::new_err(format!("Committed chunk identifier {identifier} is out of range."))
+                })
+            })
+            .collect()
     }
 }
 

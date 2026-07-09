@@ -205,7 +205,25 @@ impl NativeCliRunContext {
 
 #[pyfunction]
 #[allow(clippy::needless_pass_by_value)]
+pub(crate) fn run_with_python_backend(
+    py: Python<'_>,
+    arguments: Vec<String>,
+    backend: Py<PyAny>,
+) -> PyResult<NativeCliRunResult> {
+    run_with_python_backend_impl(py, arguments, backend)
+}
+
+#[pyfunction]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn run_cli_with_python_backend(
+    py: Python<'_>,
+    arguments: Vec<String>,
+    backend: Py<PyAny>,
+) -> PyResult<NativeCliRunResult> {
+    run_with_python_backend_impl(py, arguments, backend)
+}
+
+fn run_with_python_backend_impl(
     py: Python<'_>,
     arguments: Vec<String>,
     backend: Py<PyAny>,

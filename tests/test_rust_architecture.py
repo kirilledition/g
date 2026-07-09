@@ -10,7 +10,7 @@ from tooling.debug import check_rust_architecture
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 RUST_SOURCE_DIRECTORY = REPOSITORY_ROOT / "src"
 RUST_CRATE_DIRECTORY = REPOSITORY_ROOT / "crates"
-PYTHON_BINDING_DIRECTORY = RUST_SOURCE_DIRECTORY / "python"
+PYTHON_BINDING_DIRECTORY = RUST_SOURCE_DIRECTORY / "binding"
 PYTHON_BINDING_MARKERS = (
     "pyo3",
     "numpy::",
@@ -63,13 +63,13 @@ def test_root_pyo3_removed_export_policy_allows_current_adapter() -> None:
 
 def test_root_crate_boundary_policy_rejects_public_domain_reexports(tmp_path: Path) -> None:
     root_source_directory = tmp_path / "src"
-    python_source_directory = root_source_directory / "python"
+    python_source_directory = root_source_directory / "binding"
     python_source_directory.mkdir(parents=True)
     (root_source_directory / "lib.rs").write_text(
         "\n".join(
             (
                 "pub use g_engine as engine;",
-                "pub mod python;",
+                "pub mod binding;",
                 "fn _core() {}",
             )
         ),
@@ -87,16 +87,16 @@ def test_root_crate_boundary_policy_rejects_public_domain_reexports(tmp_path: Pa
         ),
         check_rust_architecture.RootCrateBoundaryViolation(
             source_path=Path("src/lib.rs"),
-            marker="pub mod python;",
+            marker="pub mod binding;",
             message="root crate must keep its internal PyO3 adapter module private",
         ),
         check_rust_architecture.RootCrateBoundaryViolation(
             source_path=Path("src/lib.rs"),
-            marker="mod python;",
+            marker="mod binding;",
             message="root crate must declare the internal PyO3 adapter module privately",
         ),
         check_rust_architecture.RootCrateBoundaryViolation(
-            source_path=Path("src/python/mod.rs"),
+            source_path=Path("src/binding/mod.rs"),
             marker="pub(crate) fn register_module",
             message="root PyO3 adapter registration must be crate-private",
         ),
@@ -104,7 +104,7 @@ def test_root_crate_boundary_policy_rejects_public_domain_reexports(tmp_path: Pa
 
 
 def test_python_telemetry_fallback_policy_rejects_rust_to_python_dispatch(tmp_path: Path) -> None:
-    python_source_directory = tmp_path / "src" / "python"
+    python_source_directory = tmp_path / "src" / "binding"
     python_source_directory.mkdir(parents=True)
     (python_source_directory / "telemetry.rs").write_text(
         "\n".join(
@@ -121,19 +121,19 @@ def test_python_telemetry_fallback_policy_rejects_rust_to_python_dispatch(tmp_pa
 
     assert violations == (
         check_rust_architecture.PythonTelemetryFallbackViolation(
-            source_path=Path("src/python/telemetry.rs"),
+            source_path=Path("src/binding/telemetry.rs"),
             method_name="log_run_failed",
             line_number=1,
             message=check_rust_architecture.PYTHON_TELEMETRY_FALLBACK_MESSAGE,
         ),
         check_rust_architecture.PythonTelemetryFallbackViolation(
-            source_path=Path("src/python/telemetry.rs"),
+            source_path=Path("src/binding/telemetry.rs"),
             method_name="close_with_event",
             line_number=2,
             message=check_rust_architecture.PYTHON_TELEMETRY_FALLBACK_MESSAGE,
         ),
         check_rust_architecture.PythonTelemetryFallbackViolation(
-            source_path=Path("src/python/telemetry.rs"),
+            source_path=Path("src/binding/telemetry.rs"),
             method_name="log_jax_runtime_diagnostic_event",
             line_number=3,
             message=check_rust_architecture.PYTHON_TELEMETRY_FALLBACK_MESSAGE,
@@ -142,7 +142,7 @@ def test_python_telemetry_fallback_policy_rejects_rust_to_python_dispatch(tmp_pa
 
 
 def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_path: Path) -> None:
-    python_source_directory = tmp_path / "src" / "python"
+    python_source_directory = tmp_path / "src" / "binding"
     python_source_directory.mkdir(parents=True)
     (python_source_directory / "shutdown.rs").write_text(
         "\n".join(
@@ -240,409 +240,409 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
 
     assert violations == (
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_shutdown_signal_payload",
             line_number=1,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="NativeSecondSignalExceptionPlan",
             line_number=2,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="emit_diagnostic_event",
             line_number=3,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="compile_run_request_json",
             line_number=4,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="initialize_pipeline_output_runs",
             line_number=5,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="default_nvidia_driver_probe_paths_payload",
             line_number=6,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="nvidia_driver_files_are_visible_value",
             line_number=7,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_jax_runtime_policy_payload",
             line_number=8,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_logging_runtime_policy_payload",
             line_number=9,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_process_runtime_state_handle",
             line_number=10,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_runtime_policy_handle",
             line_number=11,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="default_local_cache_directory_value",
             line_number=12,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="describe_logging_runtime_policy_value",
             line_number=13,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="emit_cli_run_failed_telemetry_event",
             line_number=14,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="plan_cli_telemetry_close_failure",
             line_number=15,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="NativeCliRunFailureTelemetryPlan",
             line_number=16,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_telemetry_output_run_root_value",
             line_number=17,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_telemetry_paths_payload",
             line_number=18,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_execution_run_artifacts_payload",
             line_number=19,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="extend_run_manifest_metadata",
             line_number=20,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_phenotype_compute_group_id_value",
             line_number=21,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_phenotype_compute_groups_payload",
             line_number=22,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_phenotype_output_directory_name",
             line_number=23,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="normalize_binary_correction_payload",
             line_number=24,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="plan_association_backend_payload",
             line_number=25,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_association_mode_value",
             line_number=26,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="plan_bgen_delivery_invocation",
             line_number=27,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_manifest_gpu_genotype_format",
             line_number=28,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_preflight_report_payload",
             line_number=29,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="validate_finite_array_values",
             line_number=30,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_callback_chunk_identity",
             line_number=31,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="emit_callback_progress_update_telemetry",
             line_number=32,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_runner_run_started_telemetry_event",
             line_number=33,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_bgen_engine_opened_telemetry_event",
             line_number=34,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_run_completed_event_payload",
             line_number=35,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="render_run_failed_lines",
             line_number=36,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_native_cli_stdout_diagnostic_event",
             line_number=37,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_native_cli_completed_line_diagnostic_event",
             line_number=38,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_runner_run_started_diagnostic_event",
             line_number=39,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_runner_metadata_artifacts_finalized_diagnostic_event",
             line_number=40,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_preflight_warning_diagnostic_event",
             line_number=41,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_pipeline_bgen_engine_opened_diagnostic_event",
             line_number=42,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_callback_null_logistic_nonconvergence_warning_diagnostic_event",
             line_number=43,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_native_dispatch_delivery_started_diagnostic_event",
             line_number=44,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_jax_runtime_diagnostic_event",
             line_number=45,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="record_final_timing_outputs_write_started_diagnostic_event",
             line_number=46,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_final_timing_output_context",
             line_number=47,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_pipeline_output_preparation_batch_from_values",
             line_number=48,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="resolve_output_run_paths",
             line_number=49,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="scan_committed_chunk_identifiers",
             line_number=50,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="load_run_manifest_payload",
             line_number=51,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="write_run_manifest",
             line_number=52,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_manifest_json_sha256_from_value",
             line_number=53,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="build_prepared_run_plan_json_from_current_header",
             line_number=54,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="validate_run_manifest_compatibility_from_values",
             line_number=55,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="read_manifest_committed_chunk_identifiers_from_value",
             line_number=56,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="validate_strict_manifest_chunks_from_value",
             line_number=57,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="repair_strict_manifest_chunk_commits_from_value",
             line_number=58,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="initialize_output_run_from_values",
             line_number=59,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="prepare_output_run",
             line_number=60,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="finalize_output_run_chunks",
             line_number=61,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="finish_output_writer_session",
             line_number=62,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="finish_output_writer_session_interrupted",
             line_number=63,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="abort_output_writer_session",
             line_number=64,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="write_regenie2_multi_native_chunk",
             line_number=65,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="write_regenie2_multi_native_chunk_f64",
             line_number=66,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="global_process_runtime_state",
             line_number=67,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/shutdown.rs"),
+            source_path=Path("src/binding/shutdown.rs"),
             export_name="close_telemetry_session_with_event",
             line_number=68,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
@@ -651,7 +651,7 @@ def test_root_pyo3_removed_export_policy_rejects_detached_helper_exports(tmp_pat
 
 
 def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: Path) -> None:
-    python_source_directory = tmp_path / "src" / "python"
+    python_source_directory = tmp_path / "src" / "binding"
     python_source_directory.mkdir(parents=True)
     (python_source_directory / "output.rs").write_text(
         "\n".join(
@@ -673,19 +673,19 @@ def test_root_pyo3_removed_export_policy_rejects_class_method_exports(tmp_path: 
 
     assert violations == (
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/output.rs"),
+            source_path=Path("src/binding/output.rs"),
             export_name="existing_manifest_json",
             line_number=2,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/output.rs"),
+            source_path=Path("src/binding/output.rs"),
             export_name="build_prediction_loco_file_fingerprints_json",
             line_number=6,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,
         ),
         check_rust_architecture.RootPyO3ExportViolation(
-            source_path=Path("src/python/output.rs"),
+            source_path=Path("src/binding/output.rs"),
             export_name="build_current_run_manifest_header_json_from_input_json",
             line_number=7,
             message=check_rust_architecture.ROOT_PYO3_REMOVED_EXPORT_MESSAGE,

@@ -109,7 +109,7 @@ Priority cleanup:
 1. Split `g-engine::schedule`.
 2. Split `g-output::session`.
 3. Split `g-input::sample`.
-4. Shrink `src/python/run_engine.rs`.
+4. Shrink `src/binding/run_engine.rs`.
 5. Split/type `g-runtime::run_events`.
 6. Refine `g-genotype` facade.
 7. Narrow `g-interface::GComputeConfigData`.

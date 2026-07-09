@@ -136,7 +136,7 @@ src/g/execution_plan.py
 src/g/engine/regenie2_pipeline/
 src/g/engine/native_dispatch/
 src/g/engine/callbacks/
-src/python/
+src/binding/
 crates/engine/
 crates/input/
 crates/output/
@@ -203,7 +203,7 @@ session.abort(...)
 Tasks:
 
 1. Add `crates/engine/src/run_session.rs` or equivalent.
-2. Add PyO3 wrapper under `src/python/engine/` or current engine domain.
+2. Add PyO3 wrapper under `src/binding/engine/` or current engine domain.
 3. Register only high-level session handle.
 4. Do not call JAX yet.
 5. Delete old Python state wrappers once session owns same data.

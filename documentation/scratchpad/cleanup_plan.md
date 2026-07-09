@@ -23,14 +23,14 @@ cargo-udeps:              not installed / unavailable
 Largest files by LOC are concentrated in exactly the places we expected:
 
 ```text
-src/python/callback_runtime_resources.rs       3254
-src/python/schedule.rs                         2004
+src/binding/callback_runtime_resources.rs       3254
+src/binding/schedule.rs                         2004
 crates/engine/src/schedule.rs                  1930
-src/python/run_events.rs                       1748
+src/binding/run_events.rs                       1748
 crates/genotype/src/bgen/decode/mod.rs         1707
 src/g/compute/regenie2_binary/firth/*.py       1000+
-src/python/config/mod.rs                       1186
-src/python/run_engine.rs                       1083
+src/binding/config/mod.rs                       1186
+src/binding/run_engine.rs                       1083
 src/g/engine/callbacks/runtime.py              1044
 ```
 
@@ -345,7 +345,7 @@ manifest repair/scanning helpers used only in tests
 low-level event payload builders
 ```
 
-Current `src/python/mod.rs` still registers callback summary, progress, queue, runtime resources, diagnostics, schedule, run engine, lifecycle, and preflight all into the root `_core` module.  That should not be production surface forever.
+Current `src/binding/mod.rs` still registers callback summary, progress, queue, runtime resources, diagnostics, schedule, run engine, lifecycle, and preflight all into the root `_core` module.  That should not be production surface forever.
 
 Acceptance criteria:
 
@@ -359,7 +359,7 @@ Architecture checker rejects new production imports of debug internals.
 
 # Phase 3 — Finish `_core` submodules or keep root tiny
 
-The latest code added the Rust-owned CLI driver, but `_core` registration is still mostly flat. `src/python/mod.rs` defines many modules and registers them into the same root module; it also registers CLI driver exports directly into the runtime domain/root.
+The latest code added the Rust-owned CLI driver, but `_core` registration is still mostly flat. `src/binding/mod.rs` defines many modules and registers them into the same root module; it also registers CLI driver exports directly into the runtime domain/root.
 
 Target:
 
@@ -496,23 +496,23 @@ Python no longer calls writer_session directly for every chunk.
 
 # Phase 5 — Simplify Rust PyO3 files
 
-Audit shows `src/python` is the largest Rust bloat area:
+Audit shows `src/binding` is the largest Rust bloat area:
 
 ```text
-src/python/callback_runtime_resources.rs   3254 lines
-src/python/schedule.rs                     2004 lines
-src/python/run_events.rs                   1748 lines
-src/python/config/mod.rs                   1186 lines
-src/python/run_engine.rs                   1083 lines
-src/python/logging.rs                       853 lines
-src/python/output.rs                        834 lines
+src/binding/callback_runtime_resources.rs   3254 lines
+src/binding/schedule.rs                     2004 lines
+src/binding/run_events.rs                   1748 lines
+src/binding/config/mod.rs                   1186 lines
+src/binding/run_engine.rs                   1083 lines
+src/binding/logging.rs                       853 lines
+src/binding/output.rs                        834 lines
 ```
 
 Most of these are PyO3 wrappers around too-broad internal APIs.
 
 Cleanup order:
 
-## 5A. `src/python/schedule.rs`
+## 5A. `src/binding/schedule.rs`
 
 After `g-engine::api.rs` stops exporting scheduler internals, move this to debug/test or delete large parts.
 
@@ -526,22 +526,22 @@ plan_dosage_buffer_reuse
 ...
 ```
 
-## 5B. `src/python/callback_runtime_resources.rs`
+## 5B. `src/binding/callback_runtime_resources.rs`
 
 Do not polish this file; replace it. It exists because Python owns callback queues/resources. After Rust owns callback runtime, this file should either disappear or become debug-only.
 
-## 5C. `src/python/run_events.rs`
+## 5C. `src/binding/run_events.rs`
 
 Move many event payload builder bindings behind `_core.runtime.events` or `_core.debug.runtime.events`. The long-term runtime should emit events internally, not expose every builder to Python.
 
-## 5D. `src/python/run_engine.rs`
+## 5D. `src/binding/run_engine.rs`
 
 Once `NativeRunEngineSession` exists, this should become a high-level engine binding, not a BGEN/input/output orchestration binding.
 
 Acceptance criteria:
 
 ```text
-No src/python file over 1000 lines, except generated/config stubs if unavoidable.
+No src/binding file over 1000 lines, except generated/config stubs if unavoidable.
 PyO3 files adapt handles; they do not implement business orchestration.
 ```
 

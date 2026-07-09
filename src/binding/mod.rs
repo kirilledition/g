@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use self::cli_driver::{
     NativeCliRunContext, NativeCliRunResult, NativeCliTelemetryPaths, NativeCliTelemetrySessionView,
-    run_cli_with_python_backend,
+    run_cli_with_python_backend, run_with_python_backend,
 };
 
 mod callback_diagnostics;
@@ -167,6 +167,7 @@ fn register_cli_driver_exports(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCliTelemetryPaths>()?;
     module.add_class::<NativeCliTelemetrySessionView>()?;
     module.add_class::<NativeCliRunContext>()?;
+    module.add_function(wrap_pyfunction!(run_with_python_backend, module)?)?;
     module.add_function(wrap_pyfunction!(run_cli_with_python_backend, module)?)?;
     Ok(())
 }

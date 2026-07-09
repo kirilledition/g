@@ -12,33 +12,58 @@ use g_genotype::ChunkSpec as NativeChunkSpec;
 use g_input::{self as native_input, AlignmentInputs, MultiAlignmentInputs};
 use g_runtime::debug as native_trusted_validation;
 use g_runtime::events as native_run_events;
-use numpy::{PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3, PyUntypedArrayMethods};
+use numpy::ndarray::Array2;
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadwriteArray2, PyReadwriteArray3,
+    PyUntypedArrayMethods,
+};
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyTuple};
 
 use super::config::{NativeRunRequest, RegenieConfig};
 use super::errors::{
-    convert_bgen_error, convert_genotype_error, convert_input_error, convert_preflight_error, convert_schedule_error,
-    convert_trusted_bgen_validation_error,
+    convert_bgen_error, convert_genotype_error, convert_input_error, convert_prediction_error, convert_preflight_error,
+    convert_schedule_error, convert_trusted_bgen_validation_error,
 };
 use super::genotype::{
     ChunkStats, VariantMetadata, VariantMetadataTuple, build_committed_identifier_set,
     convert_variant_metadata_columns_to_tuple,
 };
 use super::output::{self, OutputWriterSession};
+use super::prediction_sources::{self, RegeniePredictionSource};
+use super::preflight;
 use super::profile::build_profile_snapshot_dict;
 use super::run_events::{self, NativeRunArtifacts};
-use super::run_lifecycle::{NativeOutputRuntimeGroupInput, NativeRunLifecyclePhenotypeRun, NativeRunLifecycleSession};
+use super::run_lifecycle::{
+    NativeOutputRuntimeGroupInput, NativePreparedOutputBundle, NativeRunLifecyclePhenotypeRun,
+    NativeRunLifecycleSession,
+};
 use super::runtime_state::NativeRuntimeCompatibilityToken;
 use super::sample_alignment::{
-    NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData, parse_sample_key_mode,
+    NativeAlignedSampleData, NativeGroupedAlignedSampleData, NativeMultiAlignedSampleData,
+    NativeResolvedPhenotypeComputeGroup, parse_sample_key_mode,
 };
 use super::timing::NativeStageTimingRecorder;
 
 #[pyclass]
 struct Regenie2RunEngine {
     engine: Regenie2RunEngineCore,
+}
+
+#[pyclass(name = "NativeSingleTraitRunInput", skip_from_py_object)]
+struct NativeSingleTraitRunInput {
+    data: native_input::AlignedSampleData,
+}
+
+#[pyclass(name = "NativeSingleTraitPipelineBundle", skip_from_py_object)]
+struct NativeSingleTraitPipelineBundle {
+    run_input: Py<NativeSingleTraitRunInput>,
+    prediction_source: Py<RegeniePredictionSource>,
+    phenotype_compute_group: NativeResolvedPhenotypeComputeGroup,
+    output_bundle: Py<NativePreparedOutputBundle>,
+    writer_session: Py<OutputWriterSession>,
+    committed_chunk_identifiers: Vec<usize>,
 }
 
 #[pyclass(name = "NativeRunEngineSession", skip_from_py_object)]
@@ -50,6 +75,93 @@ struct NativeRunEngineSession {
 struct BgenDeliveryCleanupExecution {
     final_parquet_paths: Vec<Option<String>>,
     callback_finished: bool,
+}
+
+#[pymethods]
+impl NativeSingleTraitRunInput {
+    #[getter]
+    fn native_aligned_sample_data(&self) -> NativeAlignedSampleData {
+        NativeAlignedSampleData::new(self.data.clone())
+    }
+
+    #[getter]
+    #[allow(clippy::unused_self)]
+    fn native_multi_aligned_sample_data(&self, py: Python<'_>) -> Py<PyAny> {
+        py.None()
+    }
+
+    #[getter]
+    fn sample_indices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i64>> {
+        self.data.sample_indices.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn phenotype_vector<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        self.data.phenotype_vector.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    fn covariate_matrix<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let covariate_matrix = Array2::from_shape_vec(
+            (self.data.covariate_row_count, self.data.covariate_column_count),
+            self.data.covariate_matrix_values.clone(),
+        )
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        Ok(covariate_matrix.into_pyarray(py))
+    }
+
+    #[getter]
+    fn is_binary_trait(&self) -> bool {
+        self.data.is_binary_trait
+    }
+
+    #[getter]
+    fn family_identifiers(&self) -> Vec<String> {
+        self.data.family_identifiers.clone()
+    }
+
+    #[getter]
+    fn individual_identifiers(&self) -> Vec<String> {
+        self.data.individual_identifiers.clone()
+    }
+
+    #[getter]
+    fn covariate_names(&self) -> Vec<String> {
+        self.data.covariate_names.clone()
+    }
+}
+
+#[pymethods]
+impl NativeSingleTraitPipelineBundle {
+    #[getter]
+    fn run_input(&self, py: Python<'_>) -> Py<NativeSingleTraitRunInput> {
+        self.run_input.clone_ref(py)
+    }
+
+    #[getter]
+    fn prediction_source(&self, py: Python<'_>) -> Py<RegeniePredictionSource> {
+        self.prediction_source.clone_ref(py)
+    }
+
+    #[getter]
+    fn phenotype_compute_group(&self) -> NativeResolvedPhenotypeComputeGroup {
+        NativeResolvedPhenotypeComputeGroup::new(self.phenotype_compute_group.data.clone())
+    }
+
+    #[getter]
+    fn output_bundle(&self, py: Python<'_>) -> Py<NativePreparedOutputBundle> {
+        self.output_bundle.clone_ref(py)
+    }
+
+    #[getter]
+    fn writer_session(&self, py: Python<'_>) -> Py<OutputWriterSession> {
+        self.writer_session.clone_ref(py)
+    }
+
+    #[getter]
+    fn committed_chunk_identifiers(&self) -> Vec<usize> {
+        self.committed_chunk_identifiers.clone()
+    }
 }
 
 #[pymethods]
@@ -131,23 +243,14 @@ impl NativeRunEngineSession {
         trusted_no_missing_diploid: bool,
         trusted_bgen_validation_mode: Option<String>,
     ) -> PyResult<bool> {
-        if self.lock_engine()?.is_some() {
-            return Ok(false);
-        }
-        let engine = open_bgen_engine_core(py, &bgen_path, chunk_size, variant_limit, trusted_no_missing_diploid)?;
-        if trusted_no_missing_diploid {
-            let validation_mode = trusted_bgen_validation_mode.ok_or_else(|| {
-                PyValueError::new_err("trusted_bgen_validation_mode is required for trusted no-missing diploid BGEN.")
-            })?;
-            validate_trusted_no_missing_diploid_with_default_cache_for_engine(
-                &engine,
-                py,
-                &bgen_path,
-                &validation_mode,
-            )?;
-        }
-        *self.lock_engine()? = Some(engine);
-        Ok(true)
+        self.open_bgen_engine_internal(
+            py,
+            &bgen_path,
+            chunk_size,
+            variant_limit,
+            trusted_no_missing_diploid,
+            trusted_bgen_validation_mode.as_deref(),
+        )
     }
 
     fn sample_identifiers(&self) -> PyResult<Vec<String>> {
@@ -358,6 +461,338 @@ impl NativeRunEngineSession {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn prepare_single_trait_pipeline_bundle<'py>(
+        &self,
+        py: Python<'py>,
+        phenotype_name: String,
+        covariate_names: Option<Vec<String>>,
+        association_mode: String,
+        association_backend_kind: String,
+        jax_device: String,
+        genotype_format: String,
+        requested_gpu_genotype_format: String,
+        score_dtype: String,
+        firth_dtype: String,
+        binary_kernel_config_json: Option<String>,
+        sample_key_mode: String,
+        is_binary_trait: bool,
+        pipeline_label: String,
+        bgen_path: String,
+        sample_path: Option<String>,
+        phenotype_path: String,
+        covariate_path: Option<String>,
+        prediction_list_path: String,
+        chunk_size: usize,
+        variant_limit: Option<usize>,
+        effective_trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: String,
+        telemetry_session: Option<&Bound<'py, PyAny>>,
+        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+    ) -> PyResult<NativeSingleTraitPipelineBundle> {
+        let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
+        run_events::record_pipeline_single_trait_started_diagnostic_event(
+            &association_mode,
+            &phenotype_name,
+            &pipeline_label,
+        )?;
+        let engine_was_open = self.lock_engine()?.is_some();
+        if engine_was_open {
+            run_events::record_pipeline_prevalidated_bgen_engine_used_diagnostic_event(
+                None,
+                Some(phenotype_name.as_str()),
+                &pipeline_label,
+            )?;
+            run_events::record_association_backend_selected_telemetry(
+                telemetry_session,
+                &association_mode,
+                &association_backend_kind,
+                &jax_device,
+                &genotype_format,
+                Some(phenotype_name.clone()),
+                None,
+            )?;
+        } else {
+            let engine_start_time = Instant::now();
+            run_events::record_pipeline_bgen_engine_open_started_diagnostic_event(
+                None,
+                Some(phenotype_name.as_str()),
+                &pipeline_label,
+                effective_trusted_no_missing_diploid,
+                option_usize_to_i64(variant_limit, "BGEN variant limit")?,
+            )?;
+            run_events::record_association_backend_selected_telemetry(
+                telemetry_session,
+                &association_mode,
+                &association_backend_kind,
+                &jax_device,
+                &genotype_format,
+                Some(phenotype_name.clone()),
+                None,
+            )?;
+            self.open_bgen_engine_internal(
+                py,
+                &bgen_path,
+                chunk_size,
+                variant_limit,
+                effective_trusted_no_missing_diploid,
+                Some(trusted_bgen_validation_mode.as_str()),
+            )?;
+            record_stage_duration(stage_timing_recorder_reference, "bgen_engine_open_index_setup", engine_start_time)?;
+        }
+
+        let (engine_sample_count, engine_variant_count) = self.with_open_engine(|engine| {
+            Ok((
+                usize_to_i64(engine.reader().sample_count(), "BGEN sample count")?,
+                usize_to_i64(engine.reader().variant_count(), "BGEN variant count")?,
+            ))
+        })?;
+        run_events::record_pipeline_bgen_engine_opened_diagnostic_event(
+            None,
+            Some(phenotype_name.as_str()),
+            &pipeline_label,
+            engine_sample_count,
+            engine_variant_count,
+        )?;
+        run_events::record_bgen_engine_opened_telemetry(
+            telemetry_session,
+            &association_mode,
+            &association_backend_kind,
+            engine_sample_count,
+            engine_variant_count,
+            Some(phenotype_name.clone()),
+            None,
+        )?;
+
+        let alignment_start_time = Instant::now();
+        run_events::record_pipeline_single_trait_input_load_started_diagnostic_event(&phenotype_name, &pipeline_label)?;
+        let aligned_sample_data = self.with_open_engine(|engine| {
+            align_sample_data_for_engine(
+                engine,
+                py,
+                sample_path,
+                phenotype_path,
+                phenotype_name.clone(),
+                covariate_path,
+                covariate_names,
+                is_binary_trait,
+                &sample_key_mode,
+            )
+        })?;
+        record_stage_duration(
+            stage_timing_recorder_reference,
+            "sample_phenotype_covariate_alignment",
+            alignment_start_time,
+        )?;
+        let sample_count = usize_to_i64(aligned_sample_data.data.sample_indices.len(), "Aligned sample count")?;
+        let covariate_count = usize_to_i64(aligned_sample_data.data.covariate_names.len(), "Covariate count")?;
+        run_events::record_pipeline_single_trait_input_aligned_diagnostic_event(
+            covariate_count,
+            &phenotype_name,
+            &pipeline_label,
+            sample_count,
+        )?;
+        run_events::record_sample_alignment_completed_telemetry(
+            telemetry_session,
+            &association_mode,
+            Some(phenotype_name.clone()),
+            None,
+            Some(sample_count),
+            Some(covariate_count),
+            None,
+        )?;
+
+        let prediction_start_time = Instant::now();
+        run_events::record_pipeline_single_trait_prediction_source_load_started_diagnostic_event(
+            &phenotype_name,
+            &pipeline_label,
+        )?;
+        let prediction_source = prediction_sources::load_regenie_prediction_source_from_aligned_sample_data(
+            &prediction_list_path,
+            &phenotype_name,
+            &aligned_sample_data,
+            &sample_key_mode,
+        )?;
+        record_stage_duration(stage_timing_recorder_reference, "prediction_source_load", prediction_start_time)?;
+        run_events::record_prediction_source_loaded_telemetry(
+            telemetry_session,
+            &association_mode,
+            Some(phenotype_name.clone()),
+            None,
+        )?;
+
+        let parsed_sample_key_mode = parse_sample_key_mode(&sample_key_mode)?;
+        let phenotype_compute_group =
+            NativeResolvedPhenotypeComputeGroup::new(native_input::resolve_single_phenotype_compute_group(
+                &aligned_sample_data.data,
+                phenotype_name.clone(),
+                Some(prediction_list_path.as_str()),
+                parsed_sample_key_mode,
+            ));
+
+        let preflight_start_time = Instant::now();
+        run_events::record_pipeline_single_trait_preflight_started_diagnostic_event(
+            &phenotype_name,
+            &pipeline_label,
+            effective_trusted_no_missing_diploid,
+            option_usize_to_i64(variant_limit, "BGEN variant limit")?,
+        )?;
+        let preflight_shape = preflight::validate_single_trait_preflight_values(
+            &aligned_sample_data.data.phenotype_vector,
+            aligned_sample_data.data.covariate_row_count,
+            aligned_sample_data.data.covariate_column_count,
+            &aligned_sample_data.data.covariate_matrix_values,
+            is_binary_trait,
+        )?;
+        let required_chromosomes = self.with_open_engine(|engine| {
+            engine.required_chromosomes(variant_limit).map_err(|error| convert_preflight_error(&error))
+        })?;
+        for chromosome in &required_chromosomes {
+            let prediction_values = prediction_source
+                .source
+                .chromosome_predictions(chromosome)
+                .map_err(|error| convert_prediction_error("chromosome_predictions", &error))?;
+            preflight::validate_single_prediction_values(chromosome, prediction_values, preflight_shape.sample_count)?;
+        }
+        let chromosome_count = usize_to_i64(required_chromosomes.len(), "Chromosome count")?;
+        let preflight_report = preflight::build_preflight_report(
+            preflight_shape.sample_count,
+            preflight_shape.covariate_count,
+            chromosome_count,
+            effective_trusted_no_missing_diploid,
+        )?;
+        run_events::record_preflight_warning_diagnostic_events(
+            preflight_report.warning_messages.clone(),
+            preflight_report.chromosome_count,
+            preflight_report.covariate_count,
+            "single_trait",
+            preflight_report.sample_count,
+            effective_trusted_no_missing_diploid,
+        )?;
+        record_stage_duration(stage_timing_recorder_reference, "preflight_validation", preflight_start_time)?;
+        run_events::record_pipeline_single_trait_preflight_completed_diagnostic_event(
+            preflight_report.chromosome_count,
+            preflight_report.covariate_count,
+            &phenotype_name,
+            &pipeline_label,
+            preflight_report.sample_count,
+        )?;
+        run_events::record_single_trait_preflight_completed_telemetry(
+            telemetry_session,
+            &association_mode,
+            &phenotype_name,
+            preflight_report.sample_count,
+            preflight_report.covariate_count,
+            preflight_report.chromosome_count,
+        )?;
+
+        let output_group = build_single_trait_output_group(
+            &phenotype_name,
+            &aligned_sample_data.data,
+            &phenotype_compute_group.data,
+            preflight_report.sample_count,
+        )?;
+        let mut output_bundles = self.lifecycle.prepare_output_bundle_objects_from_runtime_plan_internal(
+            py,
+            vec![output_group],
+            engine_variant_count,
+            effective_trusted_no_missing_diploid,
+            sample_key_mode,
+            binary_kernel_config_json,
+            requested_gpu_genotype_format,
+            genotype_format,
+            score_dtype,
+            firth_dtype,
+            stage_timing_recorder_reference,
+        )?;
+        let output_bundle = output_bundles
+            .pop()
+            .ok_or_else(|| PyRuntimeError::new_err("Single-trait output preparation returned no bundle."))?;
+        let (writer_session, committed_chunk_identifiers) = {
+            let output_bundle_reference = output_bundle.bind(py).borrow();
+            (
+                output_bundle_reference.writer_session_handle(py, 0)?,
+                output_bundle_reference.committed_chunk_identifiers_usize(0)?,
+            )
+        };
+        Ok(NativeSingleTraitPipelineBundle {
+            run_input: Py::new(py, NativeSingleTraitRunInput { data: aligned_sample_data.data })?,
+            prediction_source: Py::new(py, prediction_source)?,
+            phenotype_compute_group,
+            output_bundle,
+            writer_session,
+            committed_chunk_identifiers,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_pass_by_value)]
+    fn run_single_trait_pipeline_bundle<'py>(
+        &self,
+        py: Python<'py>,
+        bundle: PyRef<'py, NativeSingleTraitPipelineBundle>,
+        callback: &Bound<'py, PyAny>,
+        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
+        variant_major_packed8_probability_pairs: bool,
+        pipeline_label: String,
+    ) -> PyResult<Option<String>> {
+        let run_input_handle = bundle.run_input.clone_ref(py);
+        let writer_session_handle = bundle.writer_session.clone_ref(py);
+        let committed_chunk_identifiers = bundle.committed_chunk_identifiers.clone();
+        drop(bundle);
+
+        let run_input_data = run_input_handle.bind(py).borrow().data.clone();
+        let sample_indices_array = run_input_data.sample_indices.clone().into_pyarray(py);
+        let sample_indices = sample_indices_array.readonly();
+        let native_aligned_sample_data = Py::new(py, NativeAlignedSampleData::new(run_input_data))?;
+        let native_aligned_sample_data_reference = native_aligned_sample_data.bind(py).borrow();
+        let writer_session_reference = writer_session_handle.bind(py).borrow();
+        let writer_sessions = vec![writer_session_reference];
+        let stage_timing_recorder_reference = stage_timing_recorder.as_deref();
+        let engine_guard = self.lock_engine()?;
+        let engine = engine_guard
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("Native run engine session has no open BGEN engine."))?;
+        let mut callback_finished = false;
+        let delivery_result = run_bgen_delivery_attempt(
+            py,
+            engine,
+            &sample_indices,
+            Some(native_aligned_sample_data_reference),
+            None,
+            &writer_sessions,
+            callback,
+            stage_timing_recorder_reference,
+            1,
+            Some(committed_chunk_identifiers),
+            variant_major_packed8_probability_pairs,
+            &pipeline_label,
+            &mut callback_finished,
+        );
+        match delivery_result {
+            Ok(final_parquet_paths) => {
+                run_events::record_native_dispatch_pipeline_finished_diagnostic_event(
+                    usize_to_i64(final_parquet_paths.len(), "Final Parquet path count")?,
+                    &pipeline_label,
+                )?;
+                Ok(final_parquet_paths.into_iter().next().flatten())
+            }
+            Err(error) => handle_bgen_delivery_error(
+                py,
+                error,
+                callback_finished,
+                callback,
+                &writer_sessions,
+                stage_timing_recorder_reference,
+                1,
+                &pipeline_label,
+            )
+            .map(|final_parquet_paths| final_parquet_paths.into_iter().next().flatten()),
+        }
+    }
+
     #[allow(clippy::needless_pass_by_value)]
     fn finalize_success(&self, final_output_paths: Vec<Option<String>>) -> PyResult<NativeRunArtifacts> {
         self.lifecycle.finalize_success_artifacts(final_output_paths)
@@ -367,6 +802,29 @@ impl NativeRunEngineSession {
 impl NativeRunEngineSession {
     fn lock_engine(&self) -> PyResult<MutexGuard<'_, Option<Regenie2RunEngineCore>>> {
         self.engine.lock().map_err(|_| PyRuntimeError::new_err("Native BGEN engine mutex was poisoned."))
+    }
+
+    fn open_bgen_engine_internal(
+        &self,
+        py: Python<'_>,
+        bgen_path: &str,
+        chunk_size: usize,
+        variant_limit: Option<usize>,
+        trusted_no_missing_diploid: bool,
+        trusted_bgen_validation_mode: Option<&str>,
+    ) -> PyResult<bool> {
+        if self.lock_engine()?.is_some() {
+            return Ok(false);
+        }
+        let engine = open_bgen_engine_core(py, bgen_path, chunk_size, variant_limit, trusted_no_missing_diploid)?;
+        if trusted_no_missing_diploid {
+            let validation_mode = trusted_bgen_validation_mode.ok_or_else(|| {
+                PyValueError::new_err("trusted_bgen_validation_mode is required for trusted no-missing diploid BGEN.")
+            })?;
+            validate_trusted_no_missing_diploid_with_default_cache_for_engine(&engine, py, bgen_path, validation_mode)?;
+        }
+        *self.lock_engine()? = Some(engine);
+        Ok(true)
     }
 
     fn with_open_engine<T>(&self, operation: impl FnOnce(&Regenie2RunEngineCore) -> PyResult<T>) -> PyResult<T> {
@@ -994,6 +1452,37 @@ fn usize_to_i64(value: usize, value_name: &str) -> PyResult<i64> {
     i64::try_from(value).map_err(|_| PyValueError::new_err(format!("{value_name} exceeds native int64 capacity.")))
 }
 
+fn option_usize_to_i64(value: Option<usize>, value_name: &str) -> PyResult<Option<i64>> {
+    value.map(|inner_value| usize_to_i64(inner_value, value_name)).transpose()
+}
+
+fn build_single_trait_output_group(
+    phenotype_name: &str,
+    aligned_sample_data: &native_input::AlignedSampleData,
+    phenotype_compute_group: &native_input::ResolvedPhenotypeComputeGroup,
+    sample_count: i64,
+) -> PyResult<NativeOutputRuntimeGroupInput> {
+    let phenotype_indices = phenotype_compute_group
+        .phenotype_indices
+        .iter()
+        .copied()
+        .map(|index| usize_to_i64(index, "Phenotype compute group index"))
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok((
+        vec![phenotype_name.to_string()],
+        aligned_sample_data.covariate_names.clone(),
+        sample_count,
+        "single-phenotype".to_string(),
+        Some(phenotype_compute_group.group_mode.clone()),
+        Some(phenotype_indices),
+        Some(phenotype_compute_group.phenotype_names.clone()),
+        Some(phenotype_compute_group.sample_mode.clone()),
+        Some(phenotype_compute_group.sample_set_fingerprint.clone()),
+        Some(phenotype_compute_group.covariate_design_fingerprint.clone()),
+        phenotype_compute_group.prediction_alignment_fingerprint.clone(),
+    ))
+}
+
 fn flush_variant_major_dosage_batch<'py>(
     compute_dosage_chunk_batch_method: &Bound<'py, PyAny>,
     metadata_batch: &mut Vec<Py<VariantMetadata>>,
@@ -1607,6 +2096,8 @@ fn run_prepared_bgen_variant_major_packed8_probability_pair_buffered_chunks<'py>
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeRunEngineSession>()?;
+    module.add_class::<NativeSingleTraitPipelineBundle>()?;
+    module.add_class::<NativeSingleTraitRunInput>()?;
     module.add_class::<Regenie2RunEngine>()?;
     module.add_function(wrap_pyfunction!(run_bgen_delivery_with_writer_sessions, module)?)?;
     module.add_function(wrap_pyfunction!(run_bgen_session_delivery_with_writer_sessions, module)?)?;

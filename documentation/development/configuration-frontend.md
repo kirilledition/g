@@ -37,7 +37,7 @@ scattered runtime defaults directly. User-controlled behavior flows through
 | `crates/interface/src/toml.rs` | Strict TOML layer decoding and accepted section/key names. |
 | `crates/interface/src/config.default.toml` | Packaged default values for defaultable options. |
 | `crates/interface/src/defaults.rs`, `overlay.rs`, `partial.rs`, `resolved.rs`, `validation.rs`, `run_validation.rs` | Defaults, layer overlay, resolved config construction, validation, and run validation. |
-| `src/python/config/` | PyO3 conversion between Rust-owned config objects and Python classes. |
+| `src/binding/config/` | PyO3 conversion between Rust-owned config objects and Python classes. |
 | `src/g/interface/config.py` | Thin Python bridge that normalizes Python option dictionaries using Rust metadata. |
 | `src/g/execution_plan.py` | Immutable execution-plan construction from validated config. |
 | `src/g/runner/cli.py` | Thin Python console-script adapter that prints native CLI driver output chunks and calls the current Python/JAX backend callback. |
@@ -63,7 +63,7 @@ configurable defaults do not reappear as production constants.
    option is accepted in config files or affects runtime state.
 4. Add a packaged default in `crates/interface/src/config.default.toml` when the option is
    defaultable.
-5. Update `src/python/config/` and `src/g/_core.pyi` when the option is exposed
+5. Update `src/binding/config/` and `src/g/_core.pyi` when the option is exposed
    through Python config objects.
 6. Thread the field into `ExecutionPlan` or the target runtime boundary.
 7. Add validation for invalid combinations or unsupported modes.

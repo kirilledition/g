@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import subprocess
 import sys
@@ -83,6 +84,26 @@ def build_native_jax_runtime_setup_session(
         transfer_guard=transfer_guard,
     )
     return runtime_state.build_jax_runtime_setup_session(jax_policy_payload, cache_directory)
+
+
+def test_core_domain_submodules_are_importable() -> None:
+    expected_submodule_names = (
+        "g._core.cli",
+        "g._core.config",
+        "g._core.runtime",
+        "g._core.telemetry",
+        "g._core.engine",
+        "g._core.genotype",
+        "g._core.input",
+        "g._core.output",
+        "g._core.debug",
+    )
+
+    for submodule_name in expected_submodule_names:
+        importlib.import_module(submodule_name)
+
+    assert hasattr(_core.cli, "run_with_python_backend")
+    assert hasattr(_core, "run_cli_with_python_backend")
 
 
 class RecordingNativeCallbackTelemetrySession:

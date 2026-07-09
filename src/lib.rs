@@ -1,12 +1,12 @@
 #![warn(clippy::pedantic)]
 
-mod python;
+mod binding;
 
 use pyo3::prelude::*;
 
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    python::register_module(module)
+    binding::register_module(module)
 }
 
 #[cfg(test)]

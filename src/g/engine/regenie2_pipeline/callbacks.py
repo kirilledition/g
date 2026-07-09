@@ -21,7 +21,7 @@ type MultiPhenotypeGroupFanout = callback_shared.MultiPhenotypeGroupFanout
 def build_single_trait_callback(
     *,
     context: pipeline_context.Regenie2PipelineContext,
-    run_input: native_dispatch_models.NativeBgenRunInput,
+    run_input: callback_shared.NativeBgenRunInputProtocol,
     prediction_source: typing.Any,
     writer_session: typing.Any,
     staging_depth: int,

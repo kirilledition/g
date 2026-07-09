@@ -11,7 +11,7 @@ from pathlib import Path
 if typing.TYPE_CHECKING:
     import collections.abc
 
-ROOTS = [Path("src/g"), Path("src/python"), Path("crates")]
+ROOTS = [Path("src/g"), Path("src/binding"), Path("crates")]
 OUT = Path("target/audit")
 OUT.mkdir(parents=True, exist_ok=True)
 

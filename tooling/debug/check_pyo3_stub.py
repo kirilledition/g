@@ -15,37 +15,13 @@ from tooling.common import hydra_compat as tooling_hydra_compat
 if typing.TYPE_CHECKING:
     import omegaconf
 
-RUST_EXPORT_FILES = (
-    Path("src/python/callback_diagnostics.rs"),
-    Path("src/python/callback_progress.rs"),
-    Path("src/python/callback_queue.rs"),
-    Path("src/python/callback_runtime_resources.rs"),
-    Path("src/python/callback_summary.rs"),
-    Path("src/python/jax_runtime.rs"),
-    Path("src/python/logging.rs"),
-    Path("src/python/mod.rs"),
-    Path("src/python/config/mod.rs"),
-    Path("src/python/genotype.rs"),
-    Path("src/python/host_policy.rs"),
-    Path("src/python/output.rs"),
-    Path("src/python/preflight.rs"),
-    Path("src/python/prediction_sources.rs"),
-    Path("src/python/run_events.rs"),
-    Path("src/python/run_engine.rs"),
-    Path("src/python/run_lifecycle.rs"),
-    Path("src/python/runtime.rs"),
-    Path("src/python/runtime_state.rs"),
-    Path("src/python/sample_alignment.rs"),
-    Path("src/python/schedule.rs"),
-    Path("src/python/shutdown.rs"),
-    Path("src/python/telemetry_policy.rs"),
-    Path("src/python/timing.rs"),
-)
+BINDING_SOURCE_DIRECTORY = Path("src/binding")
+RUST_EXPORT_FILES = tuple(sorted(BINDING_SOURCE_DIRECTORY.rglob("*.rs")))
 STUB_FILE = Path("src/g/_core.pyi")
 
 CLASS_PATTERN = re.compile(r"add_class::<([A-Za-z_][A-Za-z0-9_]*)>")
 FUNC_PATTERN = re.compile(r"add_function\(wrap_pyfunction!\(\s*([A-Za-z_][A-Za-z0-9_]*)")
-ALLOWED_STUB_ONLY_CLASSES = {"ChunkStatsComputeArrays"}
+ALLOWED_STUB_ONLY_CLASSES = {"ChunkStatsComputeArrays", "_CliModule"}
 
 
 def read_rust_exports(paths: tuple[Path, ...]) -> tuple[set[str], set[str]]:

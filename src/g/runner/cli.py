@@ -13,7 +13,7 @@ if typing.TYPE_CHECKING:
 
 def run(arguments: typing.Sequence[str]) -> int:
     """Run CLI arguments through the native CLI driver."""
-    result = g._core.run_cli_with_python_backend(
+    result = g._core.cli.run_with_python_backend(
         list(arguments),
         run_validated_config_with_python_backend,
     )

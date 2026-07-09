@@ -760,7 +760,7 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
         [
             "tool.labels=[dev-fast,dev-opt,perf-thin-cgu1]",
             "tool.output_parent=results/perf/test-rust-build-profiles",
-            "tool.incremental_touch_paths=[src/python/mod.rs]",
+            "tool.incremental_touch_paths=[src/binding/mod.rs]",
             "tool.run_bgen_reader_smoke=true",
         ]
     )
@@ -770,7 +770,7 @@ def test_hydra_tooling_config_converts_to_tool_arguments() -> None:
         rust_build_profiles.BuildProfileLabel.PERF_THIN_CGU1,
     )
     assert rust_build_arguments.output_parent == Path("results/perf/test-rust-build-profiles")
-    assert rust_build_arguments.incremental_touch_paths == (Path("src/python/mod.rs"),)
+    assert rust_build_arguments.incremental_touch_paths == (Path("src/binding/mod.rs"),)
     assert rust_build_arguments.run_bgen_reader_smoke is True
 
     binary_hot_arguments = binary_hot_benchmark.build_arguments_from_overrides(
@@ -1468,30 +1468,30 @@ def test_pyo3_stub_checker_reads_rustfmt_wrapped_pyfunction_registration() -> No
 
 
 def test_pyo3_stub_checker_scans_delegated_registration_modules() -> None:
-    assert Path("src/python/association_backend.rs") not in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/callback_diagnostics.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/callback_progress.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/callback_queue.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/callback_runtime_resources.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/callback_summary.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/jax_runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/logging.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/genotype.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/host_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/output.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/preflight.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/preparation.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/prediction_sources.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/run_events.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/run_engine.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/run_metadata.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/runtime_state.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/sample_alignment.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/schedule.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/shutdown.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/telemetry_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
-    assert Path("src/python/timing.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/association_backend.rs") not in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/callback_diagnostics.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/callback_progress.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/callback_queue.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/callback_runtime_resources.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/callback_summary.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/config/conversion.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/config/mod.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/jax_runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/logging.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/genotype.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/host_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/output.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/preflight.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/prediction_sources.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/run_events.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/run_engine.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/runtime.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/runtime_state.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/sample_alignment.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/schedule.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/shutdown.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/telemetry_policy.rs") in check_pyo3_stub.RUST_EXPORT_FILES
+    assert Path("src/binding/timing.rs") in check_pyo3_stub.RUST_EXPORT_FILES
 
 
 def test_tooling_entrypoint_exposes_cli_surface() -> None:

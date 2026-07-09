@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::bgen::{BgenError, BgenReaderCore, ReaderProfileSnapshot};
 use crate::common::{ChunkStats, GenotypeReaderCore, VariantMetadataColumns};
-use crate::error::{GenotypeError, GenotypeResult};
+use crate::error::GenotypeResult;
 
 pub struct BgenGenotypeSource {
     reader: BgenReaderCore,
@@ -169,27 +169,27 @@ impl BgenGenotypeSource {
 
 impl GenotypeReaderCore for BgenGenotypeSource {
     fn sample_count(&self) -> usize {
-        BgenGenotypeSource::sample_count(self)
+        <BgenReaderCore as GenotypeReaderCore>::sample_count(&self.reader)
     }
 
     fn variant_count(&self) -> usize {
-        BgenGenotypeSource::variant_count(self)
+        <BgenReaderCore as GenotypeReaderCore>::variant_count(&self.reader)
     }
 
     fn sample_identifiers(&self) -> Vec<String> {
-        BgenGenotypeSource::sample_identifiers(self)
+        <BgenReaderCore as GenotypeReaderCore>::sample_identifiers(&self.reader)
     }
 
     fn chromosome_boundary_indices(&self) -> Vec<usize> {
-        BgenGenotypeSource::chromosome_boundary_indices(self)
+        <BgenReaderCore as GenotypeReaderCore>::chromosome_boundary_indices(&self.reader)
     }
 
     fn prepare_sample_selection(&self, sample_indices: &[i64]) -> GenotypeResult<()> {
-        BgenGenotypeSource::prepare_sample_selection(self, sample_indices).map_err(convert_bgen_error)
+        <BgenReaderCore as GenotypeReaderCore>::prepare_sample_selection(&self.reader, sample_indices)
     }
 
     fn clear_prepared_sample_selection(&self) -> GenotypeResult<()> {
-        BgenGenotypeSource::clear_prepared_sample_selection(self).map_err(convert_bgen_error)
+        <BgenReaderCore as GenotypeReaderCore>::clear_prepared_sample_selection(&self.reader)
     }
 
     fn variant_metadata_slice(
@@ -197,7 +197,7 @@ impl GenotypeReaderCore for BgenGenotypeSource {
         variant_start: usize,
         variant_stop: usize,
     ) -> GenotypeResult<VariantMetadataColumns> {
-        BgenGenotypeSource::variant_metadata_slice(self, variant_start, variant_stop).map_err(convert_bgen_error)
+        <BgenReaderCore as GenotypeReaderCore>::variant_metadata_slice(&self.reader, variant_start, variant_stop)
     }
 
     fn read_preprocessed_dosage_f32_into_address_prepared(
@@ -207,23 +207,12 @@ impl GenotypeReaderCore for BgenGenotypeSource {
         output_pointer_address: usize,
         output_value_count: usize,
     ) -> GenotypeResult<ChunkStats> {
-        BgenGenotypeSource::read_preprocessed_dosage_f32_into_address_prepared(
-            self,
+        <BgenReaderCore as GenotypeReaderCore>::read_preprocessed_dosage_f32_into_address_prepared(
+            &self.reader,
             variant_start,
             variant_stop,
             output_pointer_address,
             output_value_count,
         )
-        .map_err(convert_bgen_error)
     }
-}
-
-fn convert_bgen_error(error: BgenError) -> GenotypeError {
-    let message = match error {
-        BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
-            message
-        }
-        BgenError::Io(error) => format!("I/O error while reading BGEN file: {error}"),
-    };
-    GenotypeError::Reader(message)
 }

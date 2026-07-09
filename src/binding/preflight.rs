@@ -330,6 +330,58 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+pub(crate) fn validate_single_trait_preflight_values(
+    phenotype_values: &[f32],
+    covariate_row_count: usize,
+    covariate_column_count: usize,
+    covariate_values: &[f32],
+    is_binary_trait: bool,
+) -> PyResult<native_preflight::SingleTraitPreflightShapePayload> {
+    validate_finite_f32_values("Phenotype", phenotype_values)?;
+    validate_finite_f32_values("Covariate matrix", covariate_values)?;
+    let shape = native_preflight::validate_single_trait_preflight_shape_payload(
+        usize_to_i64(phenotype_values.len(), "phenotype sample count")?,
+        2,
+        usize_to_i64(covariate_row_count, "covariate sample count")?,
+        usize_to_i64(covariate_column_count, "covariate count")?,
+    )
+    .map_err(|error| convert_preflight_error(&error))?;
+    validate_covariate_matrix_rank_values(covariate_row_count, covariate_column_count, covariate_values)?;
+    if is_binary_trait {
+        validate_binary_phenotype_values(phenotype_values)?;
+    }
+    Ok(shape)
+}
+
+pub(crate) fn validate_single_prediction_values(
+    chromosome: &str,
+    prediction_values: &[f32],
+    sample_count: i64,
+) -> PyResult<()> {
+    native_preflight::validate_single_prediction_preflight_shape(
+        chromosome,
+        &[usize_to_i64(prediction_values.len(), "prediction sample count")?],
+        sample_count,
+    )
+    .map_err(|error| convert_preflight_error(&error))?;
+    validate_finite_f32_values(&format!("Prediction values for chromosome {chromosome}"), prediction_values)
+}
+
+pub(crate) fn build_preflight_report(
+    sample_count: i64,
+    covariate_count: i64,
+    chromosome_count: i64,
+    trusted_no_missing_diploid: bool,
+) -> PyResult<native_preflight::PreflightReportPayload> {
+    native_preflight::build_preflight_report_payload(
+        sample_count,
+        covariate_count,
+        chromosome_count,
+        trusted_no_missing_diploid,
+    )
+    .map_err(|error| convert_preflight_error(&error))
+}
+
 fn validate_typed_finite_array<T>(label: &str, values: &Bound<'_, PyArray<T, IxDyn>>) -> PyResult<()>
 where
     T: NativePreflightNumeric,
@@ -383,6 +435,53 @@ where
         largest_singular_value * dimension_count_as_f64(row_count.max(column_count)) * T::rank_tolerance_epsilon();
     let covariate_rank = singular_values.iter().filter(|singular_value| **singular_value > tolerance).count();
     i64::try_from(covariate_rank).map_err(|_| PyValueError::new_err("Covariate matrix rank exceeds supported count."))
+}
+
+fn validate_finite_f32_values(label: &str, values: &[f32]) -> PyResult<()> {
+    let all_values_finite = values.iter().copied().all(f32::is_finite);
+    native_preflight::validate_finite_array(label, all_values_finite).map_err(|error| convert_preflight_error(&error))
+}
+
+fn validate_binary_phenotype_values(phenotype_values: &[f32]) -> PyResult<()> {
+    let mut summary = BinaryPhenotypeSummary { is_binary_coded: true, ..BinaryPhenotypeSummary::default() };
+    for value in phenotype_values {
+        if matches!(value.classify(), std::num::FpCategory::Zero) {
+            summary.control_count += 1;
+        } else if value.to_bits() == 1.0_f32.to_bits() {
+            summary.case_count += 1;
+        } else {
+            summary.is_binary_coded = false;
+        }
+    }
+    native_preflight::validate_binary_phenotype_coding(summary.is_binary_coded)
+        .map_err(|error| convert_preflight_error(&error))?;
+    native_preflight::validate_binary_phenotype_case_control_counts(summary.case_count, summary.control_count)
+        .map_err(|error| convert_preflight_error(&error))
+}
+
+fn validate_covariate_matrix_rank_values(row_count: usize, column_count: usize, values: &[f32]) -> PyResult<()> {
+    let expected_value_count = row_count
+        .checked_mul(column_count)
+        .ok_or_else(|| PyValueError::new_err("Covariate matrix shape exceeds supported size."))?;
+    if values.len() != expected_value_count {
+        return Err(PyValueError::new_err("Covariate matrix value count does not match its shape."));
+    }
+    let rank_values = values.iter().copied().map(f64::from).collect::<Vec<_>>();
+    let rank_matrix = DMatrix::from_row_slice(row_count, column_count, &rank_values);
+    let singular_values = rank_matrix.svd(false, false).singular_values;
+    let largest_singular_value = singular_values.iter().copied().fold(0.0_f64, f64::max);
+    let tolerance =
+        largest_singular_value * dimension_count_as_f64(row_count.max(column_count)) * f64::from(f32::EPSILON);
+    let covariate_rank = singular_values.iter().filter(|singular_value| **singular_value > tolerance).count();
+    native_preflight::validate_covariate_matrix_rank(
+        usize_to_i64(covariate_rank, "covariate rank")?,
+        usize_to_i64(column_count, "covariate count")?,
+    )
+    .map_err(|error| convert_preflight_error(&error))
+}
+
+fn usize_to_i64(value: usize, value_name: &str) -> PyResult<i64> {
+    i64::try_from(value).map_err(|_| PyValueError::new_err(format!("{value_name} exceeds native int64 capacity.")))
 }
 
 #[allow(clippy::cast_precision_loss)]

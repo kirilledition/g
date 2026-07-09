@@ -15,7 +15,7 @@ delivery, output writing, manifest handling, and resume.
 | `crates/genotype/src/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
 | `crates/input/src/` | Sample, phenotype, covariate, prediction-list, and LOCO prediction alignment. |
 | `crates/output/src/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
-| `src/python/` | PyO3 bindings for native runtime, output, and logging. |
+| `src/binding/` | PyO3 bindings for native runtime, output, and logging. |
 | `src/g/io/source.py` | Python BGEN source configuration. |
 | `src/g/io/output.py` | Python output path, manifest, resume, and finalization bridge. |
 | `src/g/engine/native_dispatch/` | Runtime bridge between execution plans and native engines. |

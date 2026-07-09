@@ -52,7 +52,7 @@ crates/interface/src/            Rust CLI/config frontend, clap, toml/Serde, opt
 crates/genotype/src/             BGEN mmap/index/decode/preprocess/profile
 crates/input/src/                sample/phenotype/covariate and prediction alignment
 crates/output/src/               Arrow IPC chunks, Parquet finalization, manifests
-src/python/                      PyO3 config/plan/runtime bindings and logging bridge
+src/binding/                      PyO3 config/plan/runtime bindings and logging bridge
 ```
 
 ## Design Principles

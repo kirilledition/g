@@ -134,10 +134,10 @@ Run:
 
 ```bash
 rg "pub mod|pub use" crates/*/src/lib.rs
-rg "pub enum .*Error|pub struct .*Error|type .*Result|Result<[^>]+,\s*String>|anyhow::Result" crates src/python
-rg "serde_json::Value|PyDict|PyAny|PyObject" crates src/python
-rg "map_err\(.*PyValueError|PyValueError::new_err|PyRuntimeError::new_err" src/python
-rg "g_genotype::bgen::BgenReaderCore|g_genotype::planner" crates/engine src/python
+rg "pub enum .*Error|pub struct .*Error|type .*Result|Result<[^>]+,\s*String>|anyhow::Result" crates src/binding
+rg "serde_json::Value|PyDict|PyAny|PyObject" crates src/binding
+rg "map_err\(.*PyValueError|PyValueError::new_err|PyRuntimeError::new_err" src/binding
+rg "g_genotype::bgen::BgenReaderCore|g_genotype::planner" crates/engine src/binding
 rg "test_support|Fake|Mock" crates/*/src
 ```
 
@@ -248,7 +248,7 @@ Per crate targets:
   `RuntimeCompatibilityError` out of `runtime_state.rs`.
 - `g-engine`: move root `EngineError` from `coordinator.rs` to `error.rs`;
   wrap backend/effect/schedule errors with phase/operation context.
-- root `g`: add/keep `src/python/errors.rs`; PyO3 converts Rust errors there.
+- root `g`: add/keep `src/binding/errors.rs`; PyO3 converts Rust errors there.
 
 Done when:
 
@@ -261,7 +261,7 @@ Guards:
 ```bash
 rg "Result<[^>]+,\s*String>" crates
 rg "anyhow::Result" crates/*/src
-rg "map_err\(.*PyValueError|PyValueError::new_err|PyRuntimeError::new_err" src/python
+rg "map_err\(.*PyValueError|PyValueError::new_err|PyRuntimeError::new_err" src/binding
 ```
 
 ## Phase 3 - Low-Risk Crates
@@ -684,7 +684,7 @@ Owns: Python facade only.
 Target shape:
 
 ```text
-src/python/
+src/binding/
   mod.rs
   error.rs
 
@@ -708,9 +708,9 @@ pub fn output_error_to_pyerr(error: g_output::OutputError) -> PyErr;
 pub fn runtime_error_to_pyerr(error: g_runtime::RuntimeError) -> PyErr;
 ```
 
-2. Split `src/python/mod.rs` long flat registration into domain modules only
+2. Split `src/binding/mod.rs` long flat registration into domain modules only
    if it reduces registration complexity.
-3. Shrink `src/python/run_engine.rs`: it should wrap Rust handles and call Rust
+3. Shrink `src/binding/run_engine.rs`: it should wrap Rust handles and call Rust
    facades.
 4. Remove PyO3 logic that opens BGEN, chooses sample-source behavior, builds
    compute groups, reconstructs sample indices, prepares manifests, schedules
@@ -736,8 +736,8 @@ rg "pub mod" crates/*/src/lib.rs
 rg "Result<[^>]+,\s*String>" crates
 rg "anyhow::Result" crates/*/src
 rg "serde_json::Value|PyDict" crates/engine crates/genotype crates/input crates/output
-rg "g_genotype::bgen::BgenReaderCore|g_genotype::planner" crates/engine src/python
-rg "PyValueError::new_err|PyRuntimeError::new_err" src/python
+rg "g_genotype::bgen::BgenReaderCore|g_genotype::planner" crates/engine src/binding
+rg "PyValueError::new_err|PyRuntimeError::new_err" src/binding
 rg "Fake|Mock" crates/*/src/lib.rs crates/*/src/api.rs
 ```
 

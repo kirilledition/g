@@ -15,8 +15,8 @@ ROOT_PACKAGE_NAME = "g"
 RESTRICTED_PYTHON_NATIVE_DEPENDENCIES = {"numpy", "pyo3"}
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ROOT_CRATE_LIB_PATH = Path("src/lib.rs")
-ROOT_CRATE_PYTHON_SOURCE_DIRECTORY = Path("src/python")
-ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/python/mod.rs")
+ROOT_CRATE_PYTHON_SOURCE_DIRECTORY = Path("src/binding")
+ROOT_CRATE_PYTHON_MODULE_PATH = Path("src/binding/mod.rs")
 DISALLOWED_ROOT_PYO3_EXPORT_NAMES = frozenset(
     (
         "NativeSecondSignalExceptionPlan",
@@ -552,19 +552,19 @@ def collect_root_crate_boundary_violations(repository_root: Path) -> tuple[RootC
                 message="root crate must not re-export internal domain crates as public Rust aliases",
             )
         )
-    if "pub mod python;" in root_lib_lines:
+    if "pub mod binding;" in root_lib_lines:
         violations.append(
             RootCrateBoundaryViolation(
                 source_path=ROOT_CRATE_LIB_PATH,
-                marker="pub mod python;",
+                marker="pub mod binding;",
                 message="root crate must keep its internal PyO3 adapter module private",
             )
         )
-    if "mod python;" not in root_lib_lines:
+    if "mod binding;" not in root_lib_lines:
         violations.append(
             RootCrateBoundaryViolation(
                 source_path=ROOT_CRATE_LIB_PATH,
-                marker="mod python;",
+                marker="mod binding;",
                 message="root crate must declare the internal PyO3 adapter module privately",
             )
         )

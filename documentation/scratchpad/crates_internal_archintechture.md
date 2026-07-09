@@ -24,7 +24,7 @@ Weak internals:
 * `g-output::session`: chunk metadata, Arrow arrays, writer pool/jobs, timings, writes, finish/abort/finalization in one module.
 * `g-input::sample`: sample parse, phenotype/covariate parse, single/multi/grouped alignment, compute groups, validation, hashing in one module.
 * `g-runtime::run_events`: event names/messages/payloads/diagnostics/serialization in one file.
-* `src/python/run_engine.rs`: PyO3 binding opens BGEN, chooses sample source, builds alignment inputs, calls `g-input`, converts results, exposes engine methods.
+* `src/binding/run_engine.rs`: PyO3 binding opens BGEN, chooses sample source, builds alignment inputs, calls `g-input`, converts results, exposes engine methods.
 
 Conclusion: high-level crates good; refactor large procedural modules into domain submodules with small facades.
 
@@ -674,7 +674,7 @@ pub struct AssociationBatchResult<'a> {
 
 ---
 
-## Root PyO3 crate / `src/python`
+## Root PyO3 crate / `src/binding`
 
 ### What looks good
 
@@ -682,14 +682,14 @@ Root PyO3 module intentionally only `_core` registration.
 
 ### What is weak internally
 
-`src/python/mod.rs` registers long flat module list: callback diagnostics/progress/queue/runtime resources/summary, config, genotype, host policy, JAX runtime, JSON bridge, logging, output, prediction sources, preflight, profile, run engine, run events, run lifecycle, runtime, runtime state, sample alignment, schedule, shutdown, telemetry policy, timing.
+`src/binding/mod.rs` registers long flat module list: callback diagnostics/progress/queue/runtime resources/summary, config, genotype, host policy, JAX runtime, JSON bridge, logging, output, prediction sources, preflight, profile, run engine, run events, run lifecycle, runtime, runtime state, sample alignment, schedule, shutdown, telemetry policy, timing.
 
 `run_engine.rs` does domain orchestration: imports `g_engine`, `g_genotype`, `g_input`, `g_runtime`; opens BGEN; chooses embedded samples/sample file; builds `AlignmentInputs`/`MultiAlignmentInputs`; calls sample alignment.
 
 ### Ideal internal architecture
 
 ```text
-src/python/
+src/binding/
   mod.rs
 
   config/
@@ -941,7 +941,7 @@ src/
 1. **Split `g-engine::schedule`** into scheduler/delivery/output policy modules.
 2. **Split `g-output::session`** into chunk handle, writer pool, coordinator, timing, session.
 3. **Split `g-input::sample`** into sample keys, tabular reader, phenotype, covariate, alignment, grouping.
-4. **Simplify `src/python/run_engine.rs`** so PyO3 calls Rust engine/input facade.
+4. **Simplify `src/binding/run_engine.rs`** so PyO3 calls Rust engine/input facade.
 5. **Split `g-runtime::run_events`** into typed event families/private serialization.
 6. **Refine `g-genotype` facade** so raw pointer APIs are not general cross-crate contract.
 7. **Break up `g-interface::GComputeConfigData`** into narrower config subdomains.
@@ -962,7 +962,7 @@ Most in need of internal cleanup:
   g-output::session
   g-input::sample
   g-runtime::run_events
-  src/python/run_engine.rs
+  src/binding/run_engine.rs
 ```
 
 Guiding philosophy:
@@ -992,7 +992,7 @@ Nuance:
 crate public API returns crate-owned errors;
 internal modules may have private/domain-specific errors;
 conversion to the crate error happens at module boundaries;
-conversion to Python errors happens only in src/python.
+conversion to Python errors happens only in src/binding.
 ```
 
 Current scattering mirrors architecture issue: `g-engine` has `EngineError` in `coordinator.rs`, `BackendError` in `backend.rs`, `EngineEffectError` in `effects.rs`; `g-genotype` has `GenotypeError` in `common.rs` plus BGEN `BgenError`; `g-input` exposes `Result<..., String>`.
@@ -1409,12 +1409,12 @@ Keep `BackendError` public if backend trait public. Keep `EngineEffectError` pri
 
 ## Root PyO3 crate
 
-`src/python` defines conversion, not business errors.
+`src/binding` defines conversion, not business errors.
 
 Target:
 
 ```rust
-// src/python/errors.rs
+// src/binding/errors.rs
 
 pub fn engine_error_to_pyerr(error: g_engine::EngineError) -> PyErr;
 pub fn genotype_error_to_pyerr(error: g_genotype::GenotypeError) -> PyErr;
@@ -1576,7 +1576,7 @@ pub enum GenotypeError { ... }
 Run:
 
 ```bash
-rg "struct .*Error|enum .*Error|type .*Result|Result<.*String|thiserror|anyhow|map_err" crates src/python
+rg "struct .*Error|enum .*Error|type .*Result|Result<.*String|thiserror|anyhow|map_err" crates src/binding
 ```
 
 Create table:
@@ -1637,7 +1637,7 @@ Small, high-value cleanup.
 
 ## Phase 5 — Normalize PyO3 conversions
 
-All PyO3 bindings call `src/python/errors.rs` helpers:
+All PyO3 bindings call `src/binding/errors.rs` helpers:
 
 ```rust
 .map_err(convert_input_error)
@@ -1685,7 +1685,7 @@ Production library crates must not expose `Result<T, String>` or
 `anyhow::Error`.
 
 PyO3 bindings must convert Rust errors to Python errors only in
-`src/python/errors.rs`.
+`src/binding/errors.rs`.
 
 Error messages should include actionable context, but telemetry event names
 and user-facing rendering belong to `g-runtime`, not error variants.
@@ -1711,6 +1711,6 @@ Highest-value first moves:
 1. Move ConfigError, EngineError, GenotypeError, RuntimeCompatibilityError into crate error modules.
 2. Replace g-input Result<..., String> with InputError.
 3. Rename or wrap OutputWriterError as OutputError.
-4. Put PyO3 error conversion behind src/python/errors.rs.
+4. Put PyO3 error conversion behind src/binding/errors.rs.
 5. Add CI checks to stop new scattered public errors.
 ```

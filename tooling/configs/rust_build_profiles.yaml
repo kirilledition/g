@@ -14,7 +14,7 @@ tool:
   output_parent: results/perf/rust-build-profiles
   clean_build: true
   incremental_touch_paths:
-    - src/python/mod.rs
+    - src/binding/mod.rs
     - src/genotype/bgen/reader.rs
     - src/output/session.rs
   build_timeout_seconds: null

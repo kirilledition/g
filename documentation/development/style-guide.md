@@ -158,7 +158,8 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 
 ### **PyO3 Native Stub Maintenance**
 
-* Keep `src/g/_core.pyi` aligned with the exported Rust API in `src/python/mod.rs` and `src/python/config/mod.rs`.
+* Follow [Binding Layer Policy](binding-layer-policy.md) for all code under `src/binding`.
+* Keep `src/g/_core.pyi` aligned with the exported Rust API in `src/binding/mod.rs` and `src/binding/config/mod.rs`.
 * Update the stub whenever Rust `#[pyclass]`, `#[pyfunction]`, `add_class`, or `add_function` changes touch argument or return types used by Python callers.
 * Run `uv run python -m tooling.cli.debug tool.name=check_pyo3_stub` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
 * Treat `just check` failures from `check-core-stub` as mandatory follow-up work when modifying native API exports.
