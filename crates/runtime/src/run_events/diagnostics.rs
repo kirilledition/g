@@ -53,7 +53,6 @@ pub fn emit_run_diagnostic_event(event: &RunDiagnosticEventPayload) -> Result<()
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunDiagnosticFieldValue {
-    Boolean(bool),
     Integer(i64),
     OptionalInteger(Option<i64>),
     Text(String),
@@ -73,10 +72,6 @@ pub struct RunDiagnosticEventPayload {
     pub fields: Vec<RunDiagnosticFieldPayload>,
 }
 
-pub(super) fn boolean_diagnostic_field(name: &'static str, value: bool) -> RunDiagnosticFieldPayload {
-    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Boolean(value) }
-}
-
 pub(super) fn integer_diagnostic_field(name: &'static str, value: i64) -> RunDiagnosticFieldPayload {
     RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Integer(value) }
 }
@@ -91,7 +86,6 @@ pub(super) fn text_diagnostic_field(name: &'static str, value: &str) -> RunDiagn
 
 fn run_diagnostic_field_value_to_json_value(value: &RunDiagnosticFieldValue) -> JsonValue {
     match value {
-        RunDiagnosticFieldValue::Boolean(value) => JsonValue::Bool(*value),
         RunDiagnosticFieldValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
         RunDiagnosticFieldValue::OptionalInteger(value) => {
             value.map(JsonNumber::from).map_or(JsonValue::Null, JsonValue::Number)

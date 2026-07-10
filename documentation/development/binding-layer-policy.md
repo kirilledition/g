@@ -13,20 +13,21 @@ Python CLI return object.
 
 ```text
 crates/*    domain contracts, algorithms, scheduling, I/O, runtime, output
-src/binding native host coordination and PyO3/NumPy adaptation
+g-runner    CLI/run lifecycle coordination across domain crates
+src/binding PyO3/NumPy adaptation and Python host callbacks
 src/g       console bootstrap, JAX backend, JAX kernels
 ```
 
 ## Allowed
 
-- The high-level native CLI entrypoint and terminal result.
-- Lazy construction of the Python JAX backend after native validation/setup.
-- One call into the coarse `g-engine::execute_coordinated_run` coordinator.
+- The two registered PyO3 entrypoints and their typed result/config objects.
+- Lazy construction of the Python JAX backend after `g-runner` completed
+  native validation and runtime setup.
 - The four backend method invocations and typed NumPy exchange classes.
 - Retention of opaque Python JAX group, chromosome, and device-result handles.
-- Interruption checks and terminal adaptation that must retain a concrete
-  `PyErr`.
-- Supplying the current Python thread name to the runtime telemetry session.
+- Python signal checks, JAX configuration/device observation, and conversion
+  of a concrete `PyErr` into runner-host callbacks.
+- Supplying the current Python thread name to `g-runner` for telemetry labels.
 - Checked conversion between Python/NumPy values and crate-owned types.
 
 ## Forbidden
@@ -35,6 +36,9 @@ src/g       console bootstrap, JAX backend, JAX kernels
 - Python-owned BGEN delivery, input alignment, output, resume, or cleanup.
 - Binding-owned telemetry state, serialization, writer, counter, or close
   lifecycle.
+- Binding-owned CLI dispatch, process-global policy checks, stage timing,
+  terminal rendering, or calls that sequence `g-interface`, `g-plan`,
+  `g-runtime`, and `g-engine`.
 - JSON or dictionaries between Rust domain crates.
 - Public wrappers for crate APIs that production Python does not consume.
 - Root aliases, migration adapters, deprecated names, or test/tooling exports.
@@ -42,9 +46,9 @@ src/g       console bootstrap, JAX backend, JAX kernels
 - Direct dependencies on `g-genotype`, `g-input`, or `g-output`; those services
   are reached through `g-engine`.
 
-Preparation, execution, output completion, and run-artifact construction are
-coordinated in `g-engine` and are Python-free. The root host supplies one
-`AssociationBackend` implementation that calls:
+CLI dispatch, process policy, timing, terminal rendering, and coordinated
+engine execution are owned by `g-runner` and are Python-free. The root host
+supplies one `AssociationBackend` implementation that calls:
 
 ```text
 prepare_group

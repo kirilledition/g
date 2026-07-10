@@ -132,15 +132,14 @@ production tree.
 
 ## Binding Reduction
 
-The root crate no longer depends directly on `g-genotype`, `g-input`, or
-`g-output`. `g-engine` owns preparation, host buffers, decode, grouping,
-scheduling, result delivery, and terminal output policy. Binding code retains
-only Python attachment, opaque JAX objects, NumPy conversion, Python thread
-labels, terminal presentation, and original `PyErr` adaptation. The binding
-constructs the Python-backed association backend once and calls
-`g-engine::execute_coordinated_run`; engine preparation, execution reports,
-completed artifacts, and writer-completion telemetry are no longer assembled
-in `src/binding/cli.rs`.
+The root crate depends directly only on `g-runner` and `g-engine`, rather than
+`g-interface`, `g-plan`, or `g-runtime`. `g-runner` owns dispatch, process
+policy, timing, terminal rendering, and the coordinated engine call.
+`g-engine` owns preparation, host buffers, decode, grouping, scheduling,
+result delivery, and terminal output policy. Binding code retains only Python
+attachment, opaque JAX objects, NumPy conversion, Python thread labels, and
+original `PyErr` adaptation. The binding implements the runner's Python host
+callbacks; no lifecycle is assembled in `src/binding/cli.rs`.
 
 ## Preserved Contracts
 

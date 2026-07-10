@@ -1,14 +1,9 @@
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 
-use g_runtime as native_runtime;
+use g_runner as native_runtime;
 
 pub(crate) mod jax_runtime;
-pub(crate) mod runtime_state;
-
-pub(crate) use crate::binding::errors;
-pub(crate) use crate::binding::telemetry::{logging, run_events};
-pub(crate) use runtime_state::configure_cli_process_runtime;
 
 pyo3::create_exception!(g, NativeSigtermRequested, PyException);
 pyo3::create_exception!(g, NativeInterruptFlushed, PyException);
@@ -31,27 +26,4 @@ pub(crate) fn is_flushed_interrupt(error: &PyErr, py: Python<'_>) -> bool {
 
 pub(crate) fn flushed_interrupt_error() -> PyErr {
     NativeInterruptFlushed::new_err("SIGINT interrupted the run after resumable output was flushed.")
-}
-
-pub(crate) fn record_completed_terminal_lines(lines: &[String]) -> PyResult<()> {
-    for line in lines {
-        let payload = native_runtime::build_native_cli_completed_line_diagnostic_payload(line);
-        run_events::emit_run_diagnostic_event_payload(&payload)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn record_interrupted_terminal_lines(lines: &[String]) -> PyResult<()> {
-    for line in lines {
-        let payload = native_runtime::build_native_cli_interrupted_line_diagnostic_payload(line);
-        run_events::emit_run_diagnostic_event_payload(&payload)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn record_failed_terminal_lines(lines: &[String]) {
-    for line in lines {
-        let payload = native_runtime::build_native_cli_failed_line_diagnostic_payload(line);
-        let _ = run_events::emit_run_diagnostic_event_payload(&payload);
-    }
 }

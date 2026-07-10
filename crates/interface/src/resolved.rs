@@ -64,7 +64,7 @@ impl BinaryConfigProvenance {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct InputConfigData {
+pub(crate) struct InputConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bgen: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,20 +94,20 @@ impl InputConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct TraitConfigData {
+pub(crate) struct TraitConfigData {
     pub trait_type: plan::RegenieTraitType,
     pub bsize: NonZeroU32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct BinaryConfigData {
+pub(crate) struct BinaryConfigData {
     pub fallback_method: plan::BinaryFallbackMethod,
     pub p_threshold: plan::Probability,
     pub firth_se: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct GComputeConfigData {
+pub(crate) struct GComputeConfigData {
     pub device: plan::Device,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_threads: Option<NonZeroU32>,
@@ -148,7 +148,7 @@ pub struct GComputeConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct GOutputConfigData {
+pub(crate) struct GOutputConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub out: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -158,12 +158,12 @@ pub struct GOutputConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct GDiagnosticsConfigData {
+pub(crate) struct GDiagnosticsConfigData {
     pub telemetry: plan::TelemetryMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct RegenieConfigData {
+pub(crate) struct RegenieConfigData {
     #[serde(skip_serializing_if = "InputConfigData::is_empty")]
     pub input: InputConfigData,
     #[serde(rename = "trait")]

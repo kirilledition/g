@@ -1,0 +1,15 @@
+[package]
+name = "g-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+g-engine = { workspace = true }
+g-interface = { workspace = true }
+g-plan = { workspace = true }
+g-runtime = { workspace = true }
+
+[lints]
+workspace = true

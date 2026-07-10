@@ -4,7 +4,8 @@ use arrow::datatypes::{DataType, Field, Schema};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
 
-static REGENIE_STEP2_CHUNK_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema()));
+static REGENIE_STEP2_CHUNK_SCHEMA: LazyLock<Arc<Schema>> =
+    LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema()));
 static REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA: LazyLock<Arc<Schema>> =
     LazyLock::new(|| Arc::new(build_regenie_step2_parquet_record_batch_schema(&REGENIE_STEP2_CHUNK_SCHEMA)));
 

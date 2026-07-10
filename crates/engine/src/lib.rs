@@ -6,6 +6,7 @@ compile_error!("g requires a 64-bit target.");
 mod api;
 mod association_scheduler;
 mod backend;
+mod backend_settings;
 mod delivery;
 mod delivery_execution;
 mod genotype_buffer;

@@ -110,8 +110,3 @@ string_enum!(ResumeMode {
     Fast => "fast",
     Strict => "strict",
 });
-
-string_enum!(ParquetCompression {
-    Zstd => "zstd",
-    None => "none",
-});

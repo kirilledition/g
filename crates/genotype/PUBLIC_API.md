@@ -13,8 +13,8 @@ variant metadata columns, and explicit caller-owned output buffer wrappers.
 
 BGEN reader methods for opening files, decoding batches, binding samples, reading metadata,
 profiling, trusted-mode validation, and reader-owned chromosome-homogeneous chunk planning.
-Variant-major preprocessing summaries and the BGEN decode tile setter are root
-exports for native binding adapters. The setter is a validated
+Variant-major preprocessing summaries and the BGEN decode tile setter are used
+by `g-engine`. The setter is a validated
 process-global runtime policy: runtime applies it before decoding begins, and
 the genotype crate rejects zero-sized tiles.
 
@@ -31,4 +31,4 @@ address/count wrappers and avoid per-variant public calls or JSON conversion.
 
 ## Allowed downstream users
 
-`g-engine`, root PyO3 facade, and genotype benches through the root facade.
+`g-engine` and genotype benches through the root facade.

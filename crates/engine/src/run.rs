@@ -15,7 +15,6 @@ use crate::delivery_execution::{
     AssociationDeliveryReport, DeliveryError, run_association_delivery, run_grouped_union_association_delivery,
 };
 use crate::pipeline::BgenRunEngine;
-use crate::progress::{DeliveryProgress, RunProgressReporter};
 use crate::preflight::{
     PreflightError, validate_jax_index_capacity, validate_multi_prediction_values,
     validate_multi_trait_preflight_values,
@@ -23,6 +22,7 @@ use crate::preflight::{
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
+use crate::progress::{DeliveryProgress, RunProgressReporter};
 use crate::trusted_validation::TrustedBgenValidationError;
 
 /// Failure while converting a run plan into a fully prepared native run.
@@ -218,25 +218,6 @@ impl PreparedRun {
         self.resolved_gpu_genotype_format
     }
 
-    /// Execute every prepared group and finish its output runs.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed backend, hook, delivery, or output completion error.
-    pub fn execute<Backend, Hooks>(
-        self,
-        backend: Arc<Backend>,
-        hooks: &mut Hooks,
-    ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
-    where
-        Backend: AssociationBackend + 'static,
-        Backend::ChromosomeState: 'static,
-        Backend::DeviceResult: 'static,
-        Hooks: RunHooks,
-    {
-        self.execute_with_progress(backend, hooks, None)
-    }
-
     /// Execute every prepared group with optional throttled progress reporting.
     ///
     /// # Errors
@@ -246,7 +227,7 @@ impl PreparedRun {
         self,
         backend: Arc<Backend>,
         hooks: &mut Hooks,
-        progress_reporter: Option<Arc<RunProgressReporter>>,
+        progress_reporter: Option<&Arc<RunProgressReporter>>,
     ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
     where
         Backend: AssociationBackend + 'static,
@@ -271,9 +252,9 @@ impl PreparedRun {
             .into_iter()
             .map(|prepared_group| {
                 let group_name = prepared_group.group.phenotype_group.phenotype_names.join(",");
-                let progress = progress_reporter.as_ref().map(|reporter| {
-                    DeliveryProgress::new(Arc::clone(reporter), group_name, association_mode.clone())
-                });
+                let progress = progress_reporter
+                    .as_ref()
+                    .map(|reporter| DeliveryProgress::new(Arc::clone(reporter), group_name, association_mode.clone()));
                 AssociationDeliveryRequest {
                     group: prepared_group.group,
                     settings: AssociationDeliverySettings {
@@ -354,7 +335,8 @@ pub fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparat
     let fallback_iteration_limit = u64::from(kernels.null_firth.maximum_iterations)
         .checked_mul(u64::from(kernels.null_firth.fallback_iteration_multiplier))
         .ok_or(RunPreparationError::JaxIntegerOverflow { field_name: "null Firth fallback iteration limit" })?;
-    if fallback_iteration_limit > u64::try_from(i32::MAX).expect("i32::MAX is positive") {
+    let maximum_jax_integer = u64::from(i32::MAX.unsigned_abs());
+    if fallback_iteration_limit > maximum_jax_integer {
         return Err(RunPreparationError::JaxIntegerOverflow { field_name: "null Firth fallback iteration limit" });
     }
     Ok(())

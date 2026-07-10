@@ -148,7 +148,6 @@ def run_scalar_pseudo_logistic_iteration(
 
 def fit_scalar_pseudo_logistic_step(
     *,
-    phenotype_vector: jax.Array,
     genotype_vector: jax.Array,
     active_sample_mask: jax.Array,
     offset_vector: jax.Array,
@@ -161,7 +160,6 @@ def fit_scalar_pseudo_logistic_step(
     maximum_step_size: jax.Array,
 ) -> regenie2_binary_firth_types.ScalarPseudoLogisticState:
     """Run REGENIE's inner pseudo-response scalar logistic update."""
-    del phenotype_vector
     final_carry = jax.lax.while_loop(
         should_continue_scalar_pseudo_logistic,
         run_scalar_pseudo_logistic_iteration,
@@ -223,7 +221,6 @@ def run_scalar_pseudo_firth_iteration(
         regenie2_binary_config.BINARY_CASE_THRESHOLD - components.probability_vector
     )
     logistic_state = fit_scalar_pseudo_logistic_step(
-        phenotype_vector=carry.phenotype_vector,
         genotype_vector=carry.genotype_vector,
         active_sample_mask=carry.active_sample_mask,
         offset_vector=carry.offset_vector,
@@ -609,7 +606,7 @@ def build_single_variant_regenie_approximate_firth_result(
     """Build the public scalar approximate-Firth result from attempted stages."""
     scalar_dtype = pseudo_result.beta.dtype
     use_zero_start = run_zero_start & zero_start_result.valid
-    use_warm_start = (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid
+    use_warm_start = run_warm_start & (~pseudo_result.valid) & (~use_zero_start) & warm_start_result.valid
     selected_beta = jnp.where(
         pseudo_result.valid,
         pseudo_result.beta,

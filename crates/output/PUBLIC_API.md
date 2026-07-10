@@ -8,8 +8,8 @@ Output run preparation, manifest compatibility, resume validation, and chunked P
 
 `OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, output writer
 sessions, native chunk metadata/statistics, typed manifest preparation inputs
-and fingerprints, and `OutputError`. Resume mode, compression, and statistic
-dtype use the canonical `g-plan` types directly.
+and fingerprints, and `OutputError`. Resume mode and statistic dtype use the
+canonical `g-plan` types directly.
 
 ## Public functions
 

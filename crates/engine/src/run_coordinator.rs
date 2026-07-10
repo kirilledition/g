@@ -5,7 +5,10 @@ use std::time::Instant;
 
 use g_runtime::{PhenotypeRunArtifacts, StageTimingRecorder, TelemetryRunError, TelemetryRunSession};
 
-use crate::{AssociationBackend, RunEngine, RunExecutionError, RunHooks, RunPreparationError, RunProgressError, RunProgressReporter};
+use crate::backend::AssociationBackend;
+use crate::delivery_execution::AssociationDeliveryReport;
+use crate::progress::{RunProgressError, RunProgressReporter};
+use crate::run::{RunEngine, RunExecutionError, RunHooks, RunPreparationError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoordinatedRunError<BackendError, HookError> {
@@ -61,9 +64,8 @@ where
     let device = run_plan.compute.device;
     let single_phenotype_name =
         run_plan.phenotype_runs.first().filter(|_| phenotype_count == 1).map(|run| run.phenotype_name.clone());
-    let progress_reporter = (run_plan.diagnostics.telemetry != g_plan::TelemetryMode::Off).then(|| {
-        Arc::new(RunProgressReporter::new(telemetry_session.clone(), thread_name.to_string()))
-    });
+    let progress_reporter = (run_plan.diagnostics.telemetry != g_plan::TelemetryMode::Off)
+        .then(|| Arc::new(RunProgressReporter::new(telemetry_session.clone(), thread_name.to_string())));
 
     g_runtime::emit_run_diagnostic_event(&g_runtime::build_runner_execution_plan_build_started_diagnostic_payload())?;
     let preparation_start_time = Instant::now();
@@ -106,7 +108,7 @@ where
         association_mode.as_str(),
     ))?;
     let execution_start_time = Instant::now();
-    let execution = prepared_run.execute_with_progress(backend, hooks, progress_reporter.clone())?;
+    let execution = prepared_run.execute_with_progress(backend, hooks, progress_reporter.as_ref())?;
     record_stage_duration(stage_timing_recorder, "native_run_execution", execution_start_time);
 
     if let Some(progress_reporter) = progress_reporter {
@@ -125,7 +127,7 @@ where
 }
 
 fn record_delivery_reports<BackendError, HookError>(
-    delivery_reports: &[crate::AssociationDeliveryReport],
+    delivery_reports: &[AssociationDeliveryReport],
 ) -> Result<(), CoordinatedRunError<BackendError, HookError>> {
     for (group_index, report) in delivery_reports.iter().enumerate() {
         let processed_chunk_count = i64::try_from(report.processed_chunk_count)

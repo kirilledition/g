@@ -67,7 +67,7 @@ impl PartialConfig {
         self.binary.overlay(override_config.binary);
         self.compute.overlay(override_config.compute);
         self.output.overlay(override_config.output);
-        self.diagnostics.overlay(override_config.diagnostics);
+        self.diagnostics.overlay(&override_config.diagnostics);
         if override_config.metadata.is_some() {
             self.metadata = override_config.metadata;
         }
@@ -170,7 +170,7 @@ impl PartialOutputConfig {
 }
 
 impl PartialDiagnosticsConfig {
-    fn overlay(&mut self, override_config: Self) {
+    fn overlay(&mut self, override_config: &Self) {
         overlay_option!(self, override_config, telemetry);
     }
 }

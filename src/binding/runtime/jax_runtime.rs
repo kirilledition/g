@@ -1,31 +1,11 @@
-//! JAX process configuration performed before backend construction.
+//! Direct PyO3 calls required by the Rust-owned JAX runtime sequence.
 
-use std::path::Path;
-
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
-use g_runtime as native_jax_runtime;
+use g_runner as native_jax_runtime;
 
-pub(crate) fn configure_jax_runtime_before_backend_init(
-    py: Python<'_>,
-    setup_session: &mut native_jax_runtime::JaxRuntimeSetupSession,
-    telemetry_session: Option<&native_jax_runtime::TelemetryRunSession>,
-) -> PyResult<()> {
-    if !setup_session.should_configure() {
-        return Ok(());
-    }
-
-    setup_session.create_cache_directory_if_configured().map_err(PyOSError::new_err)?;
-    apply_jax_config_updates(py, &setup_session.config_updates())?;
-
-    let validation_result = validate_gpu_with_default_probe_paths(py, setup_session);
-    emit_native_jax_runtime_diagnostics(setup_session, telemetry_session)?;
-    validation_result
-}
-
-fn apply_jax_config_updates(
+pub(crate) fn apply_jax_config_updates(
     py: Python<'_>,
     updates: &[native_jax_runtime::JaxRuntimeConfigUpdatePayload],
 ) -> PyResult<()> {
@@ -46,71 +26,7 @@ fn apply_jax_config_updates(
     Ok(())
 }
 
-fn validate_gpu_with_default_probe_paths(
-    py: Python<'_>,
-    setup_session: &mut native_jax_runtime::JaxRuntimeSetupSession,
-) -> PyResult<()> {
-    if setup_session.setup().gpu_validation_status != "pending" {
-        return Ok(());
-    }
-    let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
-    let nvidia_driver_visible = native_jax_runtime::nvidia_driver_files_are_visible(
-        Path::new(&probe_paths.control_device_path),
-        Path::new(&probe_paths.uvm_device_path),
-        Path::new(&probe_paths.driver_directory_path),
-    );
-    if !nvidia_driver_visible {
-        return complete_gpu_validation_or_raise(setup_session, false, false, &[]);
-    }
-    let devices = match observe_jax_devices(py) {
-        Ok(devices) => devices,
-        Err(_error) => return complete_gpu_validation_or_raise(setup_session, true, true, &[]),
-    };
-    complete_gpu_validation_or_raise(setup_session, true, false, &devices)
-}
-
-fn complete_gpu_validation_or_raise(
-    setup_session: &mut native_jax_runtime::JaxRuntimeSetupSession,
-    nvidia_driver_visible: bool,
-    backend_initialization_failed: bool,
-    devices: &[native_jax_runtime::JaxDeviceObservation],
-) -> PyResult<()> {
-    let validation_plan =
-        native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, devices);
-    setup_session.complete_validation(&validation_plan.status, Some(validation_plan.message.as_str()));
-    if validation_plan.should_raise {
-        return Err(PyRuntimeError::new_err(validation_plan.message));
-    }
-    Ok(())
-}
-
-fn emit_native_jax_runtime_diagnostics(
-    setup_session: &native_jax_runtime::JaxRuntimeSetupSession,
-    telemetry_session: Option<&native_jax_runtime::TelemetryRunSession>,
-) -> PyResult<()> {
-    for event in setup_session.diagnostic_events() {
-        let record_plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&event.level);
-        let fields = native_jax_runtime::JaxRuntimeDiagnosticFields::new(&event.fields);
-        native_jax_runtime::emit_diagnostic_event(
-            &record_plan.logging_level_name.to_lowercase(),
-            &event.event_name,
-            &event.message,
-            &fields,
-        )
-        .map_err(|error| {
-            PyValueError::new_err(format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
-        })?;
-        if let Some(telemetry_session) = telemetry_session {
-            let thread_name = crate::binding::telemetry::current_python_thread_name()?;
-            telemetry_session
-                .emit_current_event(&thread_name, &event.event_name, &record_plan.telemetry_level, &fields)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        }
-    }
-    Ok(())
-}
-
-fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDeviceObservation>> {
+pub(crate) fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDeviceObservation>> {
     let devices = py.import("jax")?.call_method0("devices")?;
     let mut device_observations = Vec::new();
     for device in devices.try_iter()? {

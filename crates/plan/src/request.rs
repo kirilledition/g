@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, JaxMatmulPrecision,
-    MultiPhenotypeSampleMode, NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode,
-    RegenieTraitType, ResumeMode, SampleKeyMode, TelemetryMode, TrustedBgenValidationMode,
+    AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, JaxMatmulPrecision, MultiPhenotypeSampleMode,
+    NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode, RegenieTraitType, ResumeMode, SampleKeyMode,
+    TelemetryMode, TrustedBgenValidationMode,
 };
 use crate::numeric::{DosageThreshold, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
 

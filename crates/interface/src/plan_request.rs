@@ -27,10 +27,7 @@ pub fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPla
     Ok(plan::RunPlan {
         association_mode,
         input: build_input_plan(config)?,
-        analysis: plan::AnalysisPlan {
-            trait_type,
-            chunk_size: config.trait_config.bsize.get(),
-        },
+        analysis: plan::AnalysisPlan { trait_type, chunk_size: config.trait_config.bsize.get() },
         compute: build_compute_plan(config),
         correction: build_correction_plan(config),
         output: build_output_plan(config)?,
@@ -183,11 +180,8 @@ fn build_runtime_plan(config: &RegenieConfigData) -> plan::RuntimePlan {
 #[must_use]
 fn build_diagnostics_plan(config: &RegenieConfigData) -> plan::DiagnosticsPlan {
     let output_prefix = config.g_output.out.as_deref().expect("validated output prefix");
-    let output_run_root = config
-        .g_output
-        .output_run_directory
-        .clone()
-        .unwrap_or_else(|| default_output_run_root(output_prefix));
+    let output_run_root =
+        config.g_output.output_run_directory.clone().unwrap_or_else(|| default_output_run_root(output_prefix));
     let log_directory = Path::new(&output_run_root).join("logs").display().to_string();
     plan::DiagnosticsPlan {
         telemetry: config.g_diagnostics.telemetry,

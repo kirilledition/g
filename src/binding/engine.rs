@@ -13,15 +13,68 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use g_engine as native_engine;
-use g_plan as native_plan;
 
 /// Validated scalar policy required to construct the Python numerical configs.
 #[pyclass(name = "JaxBackendConfig", skip_from_py_object)]
 #[derive(Clone)]
 pub(crate) struct JaxBackendConfig {
-    association_mode: native_plan::AssociationMode,
-    correction: native_plan::CorrectionPlan,
-    kernels: native_plan::KernelPlan,
+    settings: native_engine::JaxBackendSettings,
+}
+
+/// Binary correction policy for the JAX backend.
+#[pyclass(name = "JaxCorrectionConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxCorrectionConfig {
+    settings: native_engine::JaxCorrectionSettings,
+}
+
+/// Linear-kernel numerical policy for the JAX backend.
+#[pyclass(name = "JaxLinearConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxLinearConfig {
+    settings: native_engine::JaxLinearSettings,
+}
+
+/// Binary-kernel numerical policy for the JAX backend.
+#[pyclass(name = "JaxBinaryConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxBinaryConfig {
+    settings: native_engine::JaxBinarySettings,
+}
+
+/// Shared binary-kernel numerical floors.
+#[pyclass(name = "JaxBinaryNumericalConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxBinaryNumericalConfig {
+    settings: native_engine::JaxBinaryNumericalSettings,
+}
+
+/// Binary null-logistic fitting policy.
+#[pyclass(name = "JaxBinaryNullLogisticConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxBinaryNullLogisticConfig {
+    settings: native_engine::JaxBinaryNullLogisticSettings,
+}
+
+/// Approximate-Firth candidate-capacity policy.
+#[pyclass(name = "JaxFirthCandidateConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxFirthCandidateConfig {
+    settings: native_engine::JaxFirthCandidateSettings,
+}
+
+/// Approximate-Firth solver policy.
+#[pyclass(name = "JaxApproximateFirthConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxApproximateFirthConfig {
+    settings: native_engine::JaxApproximateFirthSettings,
+}
+
+/// Null-Firth solver policy.
+#[pyclass(name = "JaxNullFirthConfig", skip_from_py_object)]
+#[derive(Clone)]
+pub(crate) struct JaxNullFirthConfig {
+    settings: native_engine::JaxNullFirthSettings,
 }
 
 /// Trait-major phenotypes and sample-major covariates for one compute group.
@@ -83,197 +136,245 @@ impl std::fmt::Display for PyJaxBackendError {
 impl std::error::Error for PyJaxBackendError {}
 
 impl JaxBackendConfig {
-    pub(crate) fn new(plan: &native_plan::RunPlan) -> PyResult<Self> {
-        native_engine::validate_jax_integer_domain(plan).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Self {
-            association_mode: plan.association_mode,
-            correction: plan.correction,
-            kernels: plan.compute.kernels.clone(),
-        })
+    pub(crate) fn new(settings: native_engine::JaxBackendSettings) -> Self {
+        Self { settings }
     }
 }
 
 #[pymethods]
 impl JaxBackendConfig {
     #[getter]
-    fn association_mode(&self) -> &'static str {
-        self.association_mode.as_str()
+    fn association_mode(&self) -> &str {
+        self.settings.association_mode
     }
 
     #[getter]
-    fn correction_method(&self) -> &'static str {
-        self.correction.method.as_str()
+    fn correction(&self, py: Python<'_>) -> PyResult<Py<JaxCorrectionConfig>> {
+        Py::new(py, JaxCorrectionConfig { settings: self.settings.correction })
     }
 
     #[getter]
-    fn correction_p_threshold(&self) -> f32 {
-        self.correction.p_threshold.get()
+    fn linear(&self, py: Python<'_>) -> PyResult<Py<JaxLinearConfig>> {
+        Py::new(py, JaxLinearConfig { settings: self.settings.linear })
+    }
+
+    #[getter]
+    fn binary(&self, py: Python<'_>) -> PyResult<Py<JaxBinaryConfig>> {
+        Py::new(py, JaxBinaryConfig { settings: self.settings.binary.clone() })
+    }
+}
+
+#[pymethods]
+impl JaxCorrectionConfig {
+    #[getter]
+    fn method(&self) -> &str {
+        self.settings.method
+    }
+
+    #[getter]
+    fn p_threshold(&self) -> f32 {
+        self.settings.p_threshold
     }
 
     #[getter]
     fn firth_se(&self) -> bool {
-        self.correction.firth_se
+        self.settings.firth_se
+    }
+}
+
+#[pymethods]
+impl JaxLinearConfig {
+    #[getter]
+    fn minimum_variance(&self) -> f32 {
+        self.settings.minimum_variance
     }
 
     #[getter]
-    fn linear_minimum_variance(&self) -> f32 {
-        self.kernels.linear.minimum_variance.get()
+    fn relative_variance_tolerance(&self) -> f32 {
+        self.settings.relative_variance_tolerance
+    }
+}
+
+#[pymethods]
+impl JaxBinaryConfig {
+    #[getter]
+    fn numerical(&self, py: Python<'_>) -> PyResult<Py<JaxBinaryNumericalConfig>> {
+        Py::new(py, JaxBinaryNumericalConfig { settings: self.settings.numerical })
     }
 
     #[getter]
-    fn linear_relative_variance_tolerance(&self) -> f32 {
-        self.kernels.linear.relative_variance_tolerance.get()
+    fn null_logistic(&self, py: Python<'_>) -> PyResult<Py<JaxBinaryNullLogisticConfig>> {
+        Py::new(py, JaxBinaryNullLogisticConfig { settings: self.settings.null_logistic })
     }
 
     #[getter]
-    fn binary_minimum_probability(&self) -> f32 {
-        self.kernels.binary_null.minimum_probability.get()
+    fn firth_candidate(&self, py: Python<'_>) -> PyResult<Py<JaxFirthCandidateConfig>> {
+        Py::new(py, JaxFirthCandidateConfig { settings: self.settings.firth_candidate })
     }
 
     #[getter]
-    fn binary_minimum_variance(&self) -> f32 {
-        self.kernels.binary_null.minimum_variance.get()
+    fn approximate_firth(&self, py: Python<'_>) -> PyResult<Py<JaxApproximateFirthConfig>> {
+        Py::new(py, JaxApproximateFirthConfig { settings: self.settings.approximate_firth })
     }
 
     #[getter]
-    fn binary_relative_variance_tolerance(&self) -> f32 {
-        self.kernels.binary_null.relative_variance_tolerance.get()
+    fn null_firth(&self, py: Python<'_>) -> PyResult<Py<JaxNullFirthConfig>> {
+        Py::new(py, JaxNullFirthConfig { settings: self.settings.null_firth })
+    }
+}
+
+#[pymethods]
+impl JaxBinaryNumericalConfig {
+    #[getter]
+    fn minimum_probability(&self) -> f32 {
+        self.settings.minimum_probability
     }
 
     #[getter]
-    fn binary_null_maximum_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.binary_null.maximum_iterations)
-            .expect("JaxBackendConfig validates binary null iterations")
+    fn minimum_variance(&self) -> f32 {
+        self.settings.minimum_variance
     }
 
     #[getter]
-    fn binary_null_coefficient_tolerance(&self) -> f32 {
-        self.kernels.binary_null.coefficient_tolerance.get()
+    fn relative_variance_tolerance(&self) -> f32 {
+        self.settings.relative_variance_tolerance
+    }
+}
+
+#[pymethods]
+impl JaxBinaryNullLogisticConfig {
+    #[getter]
+    fn maximum_iterations(&self) -> i32 {
+        self.settings.maximum_iterations
     }
 
     #[getter]
-    fn firth_batch_size(&self) -> i32 {
-        i32::try_from(self.kernels.firth.batch_size).expect("JaxBackendConfig validates Firth batch size")
+    fn coefficient_tolerance(&self) -> f32 {
+        self.settings.coefficient_tolerance
+    }
+}
+
+#[pymethods]
+impl JaxFirthCandidateConfig {
+    #[getter]
+    fn batch_size(&self) -> i32 {
+        self.settings.batch_size
     }
 
     #[getter]
-    fn firth_candidate_capacity(&self) -> i32 {
-        i32::try_from(self.kernels.firth.candidate_capacity)
-            .expect("JaxBackendConfig validates Firth candidate capacity")
+    fn candidate_capacity(&self) -> i32 {
+        self.settings.candidate_capacity
+    }
+}
+
+#[pymethods]
+impl JaxApproximateFirthConfig {
+    #[getter]
+    fn maximum_iterations(&self) -> i32 {
+        self.settings.maximum_iterations
     }
 
     #[getter]
-    fn firth_maximum_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.firth.maximum_iterations)
-            .expect("JaxBackendConfig validates Firth maximum iterations")
+    fn gradient_tolerance(&self) -> f64 {
+        self.settings.gradient_tolerance
     }
 
     #[getter]
-    fn firth_gradient_tolerance(&self) -> f64 {
-        self.kernels.firth.gradient_tolerance.get()
+    fn coefficient_tolerance(&self) -> f64 {
+        self.settings.coefficient_tolerance
     }
 
     #[getter]
-    fn firth_coefficient_tolerance(&self) -> f64 {
-        self.kernels.firth.coefficient_tolerance.get()
+    fn likelihood_tolerance(&self) -> f64 {
+        self.settings.likelihood_tolerance
     }
 
     #[getter]
-    fn firth_likelihood_tolerance(&self) -> f64 {
-        self.kernels.firth.likelihood_tolerance.get()
+    fn maximum_step_size(&self) -> f64 {
+        self.settings.maximum_step_size
     }
 
     #[getter]
-    fn firth_maximum_step_size(&self) -> f64 {
-        self.kernels.firth.maximum_step_size.get()
+    fn pseudo_maximum_iterations(&self) -> i32 {
+        self.settings.pseudo_maximum_iterations
     }
 
     #[getter]
-    fn firth_pseudo_maximum_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.firth.pseudo_maximum_iterations)
-            .expect("JaxBackendConfig validates Firth pseudo maximum iterations")
+    fn pseudo_inner_maximum_iterations(&self) -> i32 {
+        self.settings.pseudo_inner_maximum_iterations
     }
 
     #[getter]
-    fn firth_pseudo_inner_maximum_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.firth.pseudo_inner_maximum_iterations)
-            .expect("JaxBackendConfig validates Firth pseudo inner maximum iterations")
+    fn newton_raphson_zero_start_iterations(&self) -> i32 {
+        self.settings.newton_raphson_zero_start_iterations
     }
 
     #[getter]
-    fn firth_newton_raphson_zero_start_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.firth.newton_raphson_zero_start_iterations)
-            .expect("JaxBackendConfig validates Firth Newton-Raphson zero-start iterations")
+    fn line_search_maximum_attempts(&self) -> i32 {
+        self.settings.line_search_maximum_attempts
     }
 
     #[getter]
-    fn firth_line_search_maximum_attempts(&self) -> i32 {
-        i32::try_from(self.kernels.firth.line_search_maximum_attempts)
-            .expect("JaxBackendConfig validates Firth line-search attempts")
+    fn step_halving_maximum_attempts(&self) -> i32 {
+        self.settings.step_halving_maximum_attempts
     }
 
     #[getter]
-    fn firth_step_halving_maximum_attempts(&self) -> i32 {
-        i32::try_from(self.kernels.firth.step_halving_maximum_attempts)
-            .expect("JaxBackendConfig validates Firth step-halving attempts")
+    fn initial_response_scale(&self) -> f64 {
+        self.settings.initial_response_scale
     }
 
     #[getter]
-    fn firth_initial_response_scale(&self) -> f64 {
-        self.kernels.firth.initial_response_scale.get()
+    fn sparse_carrier_dosage_threshold(&self) -> f64 {
+        self.settings.sparse_carrier_dosage_threshold
     }
 
     #[getter]
-    fn firth_sparse_carrier_dosage_threshold(&self) -> f64 {
-        self.kernels.firth.sparse_carrier_dosage_threshold.get()
+    fn step_halving_scale(&self) -> f64 {
+        self.settings.step_halving_scale
     }
 
     #[getter]
-    fn firth_step_halving_scale(&self) -> f64 {
-        self.kernels.firth.step_halving_scale.get()
+    fn use_block_math(&self) -> bool {
+        self.settings.use_block_math
+    }
+}
+
+#[pymethods]
+impl JaxNullFirthConfig {
+    #[getter]
+    fn maximum_iterations(&self) -> i32 {
+        self.settings.maximum_iterations
     }
 
     #[getter]
-    fn use_block_firth_math(&self) -> bool {
-        self.kernels.firth.use_block_math
+    fn gradient_tolerance(&self) -> f64 {
+        self.settings.gradient_tolerance
     }
 
     #[getter]
-    fn null_firth_maximum_iterations(&self) -> i32 {
-        i32::try_from(self.kernels.null_firth.maximum_iterations)
-            .expect("JaxBackendConfig validates null Firth maximum iterations")
+    fn maximum_step_size(&self) -> f64 {
+        self.settings.maximum_step_size
     }
 
     #[getter]
-    fn null_firth_gradient_tolerance(&self) -> f64 {
-        self.kernels.null_firth.gradient_tolerance.get()
+    fn fallback_iteration_multiplier(&self) -> i32 {
+        self.settings.fallback_iteration_multiplier
     }
 
     #[getter]
-    fn null_firth_maximum_step_size(&self) -> f64 {
-        self.kernels.null_firth.maximum_step_size.get()
+    fn fallback_step_divisor(&self) -> f64 {
+        self.settings.fallback_step_divisor
     }
 
     #[getter]
-    fn null_firth_fallback_iteration_multiplier(&self) -> i32 {
-        i32::try_from(self.kernels.null_firth.fallback_iteration_multiplier)
-            .expect("JaxBackendConfig validates null Firth fallback iteration multiplier")
+    fn line_search_maximum_attempts(&self) -> i32 {
+        self.settings.line_search_maximum_attempts
     }
 
     #[getter]
-    fn null_firth_fallback_step_divisor(&self) -> f64 {
-        self.kernels.null_firth.fallback_step_divisor.get()
-    }
-
-    #[getter]
-    fn null_firth_line_search_maximum_attempts(&self) -> i32 {
-        i32::try_from(self.kernels.null_firth.line_search_maximum_attempts)
-            .expect("JaxBackendConfig validates null Firth line-search attempts")
-    }
-
-    #[getter]
-    fn null_firth_step_halving_scale(&self) -> f64 {
-        self.kernels.null_firth.step_halving_scale.get()
+    fn step_halving_scale(&self) -> f64 {
+        self.settings.step_halving_scale
     }
 }
 
@@ -559,6 +660,14 @@ impl native_engine::AssociationBackend for PyJaxBackend {
 
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<JaxBackendConfig>()?;
+    module.add_class::<JaxCorrectionConfig>()?;
+    module.add_class::<JaxLinearConfig>()?;
+    module.add_class::<JaxBinaryConfig>()?;
+    module.add_class::<JaxBinaryNumericalConfig>()?;
+    module.add_class::<JaxBinaryNullLogisticConfig>()?;
+    module.add_class::<JaxFirthCandidateConfig>()?;
+    module.add_class::<JaxApproximateFirthConfig>()?;
+    module.add_class::<JaxNullFirthConfig>()?;
     module.add_class::<JaxGroupInput>()?;
     module.add_class::<JaxGenotypeBatch>()?;
     module.add_class::<JaxMaterializationRequest>()?;

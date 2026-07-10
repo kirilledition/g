@@ -9,14 +9,15 @@ success/interruption/abort policy.
 
 ## Public types
 
-`RunEngine`, `PreparedRun`, `RunExecution`, `RunHooks`, typed run/delivery
-errors and reports, `AssociationBackend`, and the typed borrowed/owned backend
-data contracts used by the PyO3 JAX adapter.
+`RunHooks`, typed run/delivery errors, `AssociationBackend`, validated JAX
+backend settings, and the typed borrowed/owned backend data contracts used by
+the PyO3 JAX adapter. Run preparation/execution state and scheduler reports
+remain internal implementation details.
 
 ## Public functions
 
-Open and prepare a canonical run, execute it through one association backend,
-or invoke the coarse coordinated run entry point used by the binding.
+Invoke the coarse coordinated run entry point used by `g-runner`, and project a
+validated run plan into typed JAX backend settings.
 
 ## This crate must not expose
 
@@ -34,4 +35,4 @@ dispatch, hidden serialization, and clone-heavy adapters.
 
 ## Allowed downstream users
 
-Root native binding facade.
+`g-runner` and the root native JAX backend adapter.

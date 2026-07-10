@@ -33,4 +33,5 @@ Keep event construction outside inner loops. Do not add data-matrix copies, geno
 
 ## Allowed downstream users
 
-`g-engine` and root PyO3 facade.
+`g-engine` and `g-runner`; the Python host reaches required runtime types only
+through the runner facade.

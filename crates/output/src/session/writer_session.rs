@@ -410,14 +410,9 @@ pub(super) fn validate_column_lengths(
     ))
 }
 
-pub(super) fn validate_statistic_array_type(
-    column_name: &str,
-    array: &ArrayRef,
-) -> Result<(), OutputError> {
+pub(super) fn validate_statistic_array_type(column_name: &str, array: &ArrayRef) -> Result<(), OutputError> {
     if array.as_any().is::<Float32Array>() {
         return Ok(());
     }
-    Err(OutputError::InvalidInput(format!(
-        "Rust output writer column {column_name} must be float32.",
-    )))
+    Err(OutputError::InvalidInput(format!("Rust output writer column {column_name} must be float32.",)))
 }

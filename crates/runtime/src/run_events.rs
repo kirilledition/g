@@ -21,8 +21,7 @@ pub use lifecycle::{
 };
 pub use native_cli_diagnostics::{
     build_native_cli_completed_line_diagnostic_payload, build_native_cli_failed_line_diagnostic_payload,
-    build_native_cli_interrupted_line_diagnostic_payload, build_native_cli_stderr_diagnostic_payload,
-    build_native_cli_stdout_diagnostic_payload,
+    build_native_cli_interrupted_line_diagnostic_payload,
 };
 pub use native_dispatch_diagnostics::build_native_dispatch_delivery_finished_diagnostic_payload;
 pub use runner_diagnostics::{

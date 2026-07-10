@@ -8,14 +8,12 @@ supported REGENIE step 2 flags; native tuning is TOML-only.
 
 ## Public types
 
-Resolved config data and enum values, CLI outcome payloads, native CLI outcome
-payloads, and `ConfigError`/`ConfigResult`.
+CLI dispatch payloads consumed by `g-runner`.
 
 ## Public functions
 
-Dump/write resolved TOML, validate config,
-compile `g-plan` run requests, dispatch CLI parsing, and dispatch the native
-CLI frontend.
+Dispatch the native CLI frontend. TOML serialization, validation, and plan
+compilation are implementation details.
 
 ## This crate must not expose
 
@@ -27,4 +25,4 @@ Keep work at config/build time only. Do not perform data-file scans or compute-s
 
 ## Allowed downstream users
 
-Native binary entrypoint and root PyO3 facade.
+`g-runner` only.

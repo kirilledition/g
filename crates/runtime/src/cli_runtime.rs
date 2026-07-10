@@ -1,7 +1,6 @@
 //! Native CLI runtime lifecycle state.
 
 pub const CLI_RUNTIME_FAILURE_EXIT_CODE: i32 = 1;
-pub const NATIVE_CLI_OUTPUT_LOG_LIMIT: i64 = 4096;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CliTerminalResult {

@@ -3,8 +3,6 @@
 pub(crate) mod logging;
 pub(crate) mod run_events;
 
-pub(crate) use crate::binding::errors;
-
 pub(crate) fn current_python_thread_name() -> pyo3::PyResult<String> {
     pyo3::Python::attach(|py| {
         use pyo3::prelude::*;

@@ -15,7 +15,9 @@ g.cli (argument/output bootstrap only)
         |
 g._core.cli.run(arguments)
         |
-g-interface -> g-plan -> g-engine::RunEngine::prepare
+g-runner::run_cli
+        |
+g-interface -> g-plan -> g-engine::execute_coordinated_run
         |                       |
         |                       +-> g-genotype + g-input
         |                       +-> g-runtime + g-output
@@ -42,22 +44,26 @@ typed arrays to Rust.
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
 | Host buffers, BGEN delivery primitives, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
 | Logging, telemetry, timing, process policy, SIGTERM | `g-runtime` |
+| CLI lifecycle, crate-to-crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
-| PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation | root Rust extension under `src/binding` |
+| PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation, JAX process calls | root Rust extension under `src/binding` |
 | Device state and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
 
-`g-engine` is the only root dependency through which the binding reaches
-genotype, input, and output services. `RunEngine` owns the shared plan and
-output manager; `PreparedRun` owns aligned groups, BGEN state, resume state,
-bounded scheduling, reusable host buffers, delivery, interruption, abort, and
-output completion. The binding retains only calls that attach to Python, hold opaque
+`g-runner` is the root dependency through which the binding reaches CLI,
+planning, runtime, and execution services. It owns CLI dispatch,
+process-global runtime compatibility, stage timing, terminal rendering, and
+the coarse engine invocation. `RunEngine` owns the shared plan and output
+manager; `PreparedRun` owns aligned groups, BGEN state, resume state, bounded
+scheduling, reusable host buffers, delivery, interruption, abort, and output
+completion. The binding retains only calls that attach to Python, hold opaque
 JAX objects, preserve a concrete `PyErr`, or label telemetry with the current
 Python thread.
 
-`g-engine::execute_coordinated_run` is the coarse native coordinator used by
-the binding. It owns preparation, execution, delivery-report handling,
-completed-artifact construction, and writer-completion telemetry. The binding
-does not orchestrate a chain of low-level crate functions.
+`g-runner::run_cli` is the coarse native coordinator used by the binding. It
+owns the call to `g-engine::execute_coordinated_run`, which in turn owns
+preparation, execution, delivery-report handling, completed-artifact
+construction, and writer-completion telemetry. The binding does not
+orchestrate domain crate calls.
 
 ## Python Surface
 

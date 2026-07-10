@@ -145,7 +145,7 @@ impl PartialComputeConfig {
         let firth = self.resolve_firth_fields()?;
         let null_firth = self.resolve_null_firth_fields()?;
         let genotype = self.resolve_genotype_fields()?;
-        let jax = self.resolve_jax_fields()?;
+        let jax = self.resolve_jax_fields();
         Ok(GComputeConfigData {
             device: core.device,
             cpu_threads: core.cpu_threads,
@@ -278,10 +278,8 @@ impl PartialComputeConfig {
         })
     }
 
-    fn resolve_jax_fields(&self) -> ConfigResult<ResolvedJaxFields> {
-        Ok(ResolvedJaxFields {
-            cache_dir: self.jax_cache_dir.clone(),
-        })
+    fn resolve_jax_fields(&self) -> ResolvedJaxFields {
+        ResolvedJaxFields { cache_dir: self.jax_cache_dir.clone() }
     }
 }
 
@@ -363,9 +361,7 @@ pub(crate) struct PartialDiagnosticsConfig {
 
 impl PartialDiagnosticsConfig {
     fn resolve(self) -> ConfigResult<GDiagnosticsConfigData> {
-        Ok(GDiagnosticsConfigData {
-            telemetry: required("telemetry", self.telemetry)?,
-        })
+        Ok(GDiagnosticsConfigData { telemetry: required("telemetry", self.telemetry)? })
     }
 }
 

@@ -9,9 +9,6 @@ pub(crate) mod errors;
 pub(crate) mod runtime;
 pub(crate) mod telemetry;
 
-pub(crate) use runtime::runtime_state;
-pub(crate) use telemetry::run_events;
-
 #[allow(clippy::missing_errors_doc)]
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__path__", Vec::<String>::new())?;

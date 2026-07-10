@@ -153,10 +153,8 @@ fn run_output_writer_worker(receiver: Receiver<OutputWriteTask>) {
 fn run_output_write_task(output_write_task: OutputWriteTask) {
     let _completion_guard =
         OutputWriteCompletionGuard { completion_tracker: output_write_task.completion_tracker.clone() };
-    let write_result = write_regenie_step2_chunk_job(
-        &output_write_task.config.parts_directory,
-        output_write_task.write_batch,
-    );
+    let write_result =
+        write_regenie_step2_chunk_job(&output_write_task.config.parts_directory, output_write_task.write_batch);
     match write_result {
         Ok(write_result) => {
             if output_write_task.config.collect_stage_timings {

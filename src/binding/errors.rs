@@ -1,17 +1,13 @@
 use pyo3::exceptions::{PyKeyboardInterrupt, PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
+use crate::binding::engine::PyJaxBackendError;
+use crate::binding::runtime;
 use g_engine::TrustedBgenValidationError;
 use g_engine::{
     BgenError, CoordinatedRunError, DeliveryError, GenotypeError, InputError, OutputError,
     PipelineOutputPreparationError, PredictionError, RunExecutionError, RunPreparationError, SchedulerError,
 };
-use g_runtime::{
-    LoggingSinkError, LoggingSinkInitializationError, RayonRuntimeError, RayonThreadPoolConfigurationError,
-};
-
-use crate::binding::engine::PyJaxBackendError;
-use crate::binding::runtime;
 
 pub(super) fn convert_run_preparation_error(error: RunPreparationError) -> PyErr {
     match error {
@@ -114,36 +110,6 @@ pub(super) fn convert_pipeline_output_preparation_error(error: &PipelineOutputPr
             PyRuntimeError::new_err(message.clone())
         }
         _ => PyValueError::new_err(message),
-    }
-}
-
-pub(super) fn convert_rayon_thread_pool_configuration_error(error: &RayonThreadPoolConfigurationError) -> PyErr {
-    let message = error.to_string();
-    match error {
-        RayonThreadPoolConfigurationError::RuntimeConfiguration {
-            source: RayonRuntimeError::InvalidThreadCount,
-            ..
-        } => PyValueError::new_err(message),
-        RayonThreadPoolConfigurationError::RuntimeCompatibility(_)
-        | RayonThreadPoolConfigurationError::RuntimeConfiguration { .. } => PyRuntimeError::new_err(message),
-    }
-}
-
-pub(super) fn convert_logging_sink_initialization_error(error: LoggingSinkInitializationError<PyErr>) -> PyErr {
-    match error {
-        LoggingSinkInitializationError::Sink(sink_error) => convert_logging_sink_error(&sink_error),
-        LoggingSinkInitializationError::HostLogging(host_logging_error) => host_logging_error,
-    }
-}
-
-pub(super) fn convert_logging_sink_error(error: &LoggingSinkError) -> PyErr {
-    match error {
-        LoggingSinkError::InvalidLogFilter { .. } | LoggingSinkError::InvalidTraceFilter { .. } => {
-            PyValueError::new_err(error.to_string())
-        }
-        LoggingSinkError::Writer(_) | LoggingSinkError::LoggingGuardMutexPoisoned => {
-            PyRuntimeError::new_err(error.to_string())
-        }
     }
 }
 

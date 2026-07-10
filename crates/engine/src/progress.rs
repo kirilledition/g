@@ -9,6 +9,8 @@ use g_runtime::{TelemetryRunError, TelemetryRunSession};
 
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_secs(5);
 const PROGRESS_EVENT_NAME: &str = "run_progress";
+const PERCENT_SCALE_MICROUNITS: u64 = 100_000_000;
+const MICROUNITS_PER_PERCENT: f64 = 1_000_000.0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunProgressError {
@@ -28,11 +30,7 @@ pub(crate) struct DeliveryProgress {
 }
 
 impl DeliveryProgress {
-    pub(crate) fn new(
-        reporter: Arc<RunProgressReporter>,
-        group_name: String,
-        association_mode: String,
-    ) -> Self {
+    pub(crate) fn new(reporter: Arc<RunProgressReporter>, group_name: String, association_mode: String) -> Self {
         Self { reporter, group_name, association_mode }
     }
 
@@ -68,12 +66,7 @@ struct ProgressGroup {
 impl RunProgressReporter {
     #[must_use]
     pub fn new(telemetry_session: TelemetryRunSession, thread_name: String) -> Self {
-        Self {
-            telemetry_session,
-            thread_name,
-            started_at: Instant::now(),
-            groups: Mutex::new(BTreeMap::new()),
-        }
+        Self { telemetry_session, thread_name, started_at: Instant::now(), groups: Mutex::new(BTreeMap::new()) }
     }
 
     pub(crate) fn initialize_group(
@@ -85,7 +78,8 @@ impl RunProgressReporter {
     ) -> Result<(), RunProgressError> {
         let (total_chunk_count, total_variant_count) = count_chunks(all_chunk_specs)?;
         let (pending_chunk_count, pending_variant_count) = count_chunks(pending_chunk_specs)?;
-        let completed_chunk_count = total_chunk_count.checked_sub(pending_chunk_count).ok_or(RunProgressError::CounterOverflow)?;
+        let completed_chunk_count =
+            total_chunk_count.checked_sub(pending_chunk_count).ok_or(RunProgressError::CounterOverflow)?;
         let completed_variant_count =
             total_variant_count.checked_sub(pending_variant_count).ok_or(RunProgressError::CounterOverflow)?;
         let mut groups = self.groups.lock().map_err(|_| RunProgressError::CounterOverflow)?;
@@ -143,16 +137,23 @@ impl RunProgressReporter {
         force: bool,
     ) -> Result<(), RunProgressError> {
         let now = Instant::now();
-        if !force && progress_group.last_emit_at.is_some_and(|last_emit_at| now.duration_since(last_emit_at) < PROGRESS_EMIT_INTERVAL)
+        if !force
+            && progress_group
+                .last_emit_at
+                .is_some_and(|last_emit_at| now.duration_since(last_emit_at) < PROGRESS_EMIT_INTERVAL)
         {
             return Ok(());
         }
         progress_group.last_emit_at = Some(now);
         let elapsed_seconds = self.started_at.elapsed().as_secs_f32();
         let percent = if progress_group.total_chunk_count == 0 {
-            100.0_f32
+            100.0_f64
         } else {
-            (progress_group.completed_chunk_count as f32 / progress_group.total_chunk_count as f32) * 100.0_f32
+            let completed_chunk_count = progress_group.completed_chunk_count.min(progress_group.total_chunk_count);
+            let scaled_percent = u128::from(completed_chunk_count) * u128::from(PERCENT_SCALE_MICROUNITS)
+                / u128::from(progress_group.total_chunk_count);
+            f64::from(u32::try_from(scaled_percent).map_err(|_| RunProgressError::CounterOverflow)?)
+                / MICROUNITS_PER_PERCENT
         };
         let fields = serde_json::json!({
             "group": group_name,

@@ -23,4 +23,4 @@ Keep sample matrix ownership explicit. Return aligned vectors/matrices in stable
 
 ## Allowed downstream users
 
-`g-engine` and root PyO3 facade.
+`g-engine` only.

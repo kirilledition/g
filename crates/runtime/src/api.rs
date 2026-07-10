@@ -1,8 +1,6 @@
 //! Public runtime crate facade.
 
-pub use crate::cli_runtime::{
-    CLI_RUNTIME_FAILURE_EXIT_CODE, CliOutputBuffer, CliTerminalResult, NATIVE_CLI_OUTPUT_LOG_LIMIT,
-};
+pub use crate::cli_runtime::{CLI_RUNTIME_FAILURE_EXIT_CODE, CliOutputBuffer, CliTerminalResult};
 pub use crate::error::RuntimeCompatibilityError;
 pub use crate::jax_runtime::{
     JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
@@ -23,7 +21,6 @@ pub use crate::run_events::{
     PhenotypeRunArtifacts, RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue,
     RunFailedEventPayload, RunInterruptedEventPayload, build_native_cli_completed_line_diagnostic_payload,
     build_native_cli_failed_line_diagnostic_payload, build_native_cli_interrupted_line_diagnostic_payload,
-    build_native_cli_stderr_diagnostic_payload, build_native_cli_stdout_diagnostic_payload,
     build_native_dispatch_delivery_finished_diagnostic_payload,
     build_native_runtime_knobs_configured_diagnostic_payload, build_run_failed_event_payload,
     build_run_interrupted_event_payload, build_runner_execution_plan_build_started_diagnostic_payload,
@@ -38,8 +35,7 @@ pub use crate::runtime_state::{
     describe_jax_runtime_policy, resolve_jax_runtime_cache_directory,
 };
 pub use crate::shutdown::{
-    ShutdownError, ShutdownSignalPayload, SigtermShutdownScope, begin_sigterm_shutdown_scope, build_shutdown_signal,
-    sigterm_shutdown_requested,
+    ShutdownError, SigtermShutdownScope, begin_sigterm_shutdown_scope, sigterm_shutdown_requested,
 };
 pub use crate::telemetry_policy::TelemetryPathError;
 pub use crate::telemetry_session::{TelemetryRunError, TelemetryRunSession, generate_run_id};

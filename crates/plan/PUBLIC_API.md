@@ -3,7 +3,7 @@
 ## This crate owns
 
 Canonical immutable run-planning contracts and validated numeric policy shared
-by Rust crates and PyO3.
+by Rust domain crates.
 
 ## Public types
 
@@ -24,4 +24,4 @@ Keep DTO construction deterministic and allocation-visible. Do not add hot-path 
 
 ## Allowed downstream users
 
-`g-interface`, `g-output`, `g-engine`, and root PyO3 facade.
+`g-interface`, `g-output`, `g-runtime`, `g-engine`, and `g-runner`.

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::buffer::ScalarBuffer;
-use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
+use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Int32Type};
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
@@ -39,26 +39,6 @@ pub fn write_regenie2_multi_trait_chunk_f32(
     statistic_batch: Regenie2StatisticBatch<f32>,
 ) -> OutputResult<()> {
     write_regenie2_multi_trait_chunk::<f32, Float32Type>(
-        writer_sessions,
-        active_trait_indices,
-        chunk_handle,
-        statistic_batch,
-    )
-}
-
-/// Write one f64 REGENIE statistic row to each active trait writer.
-///
-/// # Errors
-///
-/// Returns an error when an active trait index is out of bounds or a writer
-/// rejects the chunk.
-pub fn write_regenie2_multi_trait_chunk_f64(
-    writer_sessions: &[Arc<OutputWriterSession>],
-    active_trait_indices: &[usize],
-    chunk_handle: &NativeChunkHandle,
-    statistic_batch: Regenie2StatisticBatch<f64>,
-) -> OutputResult<()> {
-    write_regenie2_multi_trait_chunk::<f64, Float64Type>(
         writer_sessions,
         active_trait_indices,
         chunk_handle,
