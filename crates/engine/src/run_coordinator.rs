@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use g_runtime::{PhenotypeRunArtifacts, StageTimingRecorder, TelemetryRunError, TelemetryRunSession};
 
-use crate::{AssociationBackend, RunEngine, RunExecutionError, RunHooks, RunPreparationError};
+use crate::{AssociationBackend, RunEngine, RunExecutionError, RunHooks, RunPreparationError, RunProgressError, RunProgressReporter};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoordinatedRunError<BackendError, HookError> {
@@ -15,12 +15,16 @@ pub enum CoordinatedRunError<BackendError, HookError> {
     Execution(#[from] RunExecutionError<BackendError, HookError>),
     #[error("Native run telemetry failed.")]
     Telemetry(#[from] TelemetryRunError),
+    #[error("Native run progress reporting failed.")]
+    Progress(#[from] RunProgressError),
     #[error("Native run diagnostic serialization failed.")]
     Diagnostic(#[from] serde_json::Error),
     #[error("Phenotype count exceeds native int64 telemetry capacity.")]
     PhenotypeCountOutOfRange,
     #[error("Processed chunk count exceeds native int64 telemetry capacity.")]
     ProcessedChunkCountOutOfRange,
+    #[error("Association warning count exceeds native uint64 telemetry capacity.")]
+    AssociationWarningCountOutOfRange,
     #[error("Prepared run retained unresolved GPU genotype format.")]
     UnresolvedGpuGenotypeFormat,
     #[error("Native run completed without a phenotype output.")]
@@ -57,6 +61,9 @@ where
     let device = run_plan.compute.device;
     let single_phenotype_name =
         run_plan.phenotype_runs.first().filter(|_| phenotype_count == 1).map(|run| run.phenotype_name.clone());
+    let progress_reporter = (run_plan.diagnostics.telemetry != g_plan::TelemetryMode::Off).then(|| {
+        Arc::new(RunProgressReporter::new(telemetry_session.clone(), thread_name.to_string()))
+    });
 
     g_runtime::emit_run_diagnostic_event(&g_runtime::build_runner_execution_plan_build_started_diagnostic_payload())?;
     let preparation_start_time = Instant::now();
@@ -99,8 +106,12 @@ where
         association_mode.as_str(),
     ))?;
     let execution_start_time = Instant::now();
-    let execution = prepared_run.execute(backend, hooks)?;
+    let execution = prepared_run.execute_with_progress(backend, hooks, progress_reporter.clone())?;
     record_stage_duration(stage_timing_recorder, "native_run_execution", execution_start_time);
+
+    if let Some(progress_reporter) = progress_reporter {
+        progress_reporter.finish()?;
+    }
 
     record_delivery_reports::<Backend::Error, Hooks::Error>(&execution.delivery_reports)?;
     complete_artifacts::<Backend::Error, Hooks::Error>(
@@ -124,12 +135,16 @@ fn record_delivery_reports<BackendError, HookError>(
             processed_chunk_count,
         ))?;
         for warning in &report.warnings {
+            let nonconverged_count = u64::try_from(warning.nonconverged_count)
+                .map_err(|_| CoordinatedRunError::AssociationWarningCountOutOfRange)?;
+            let total_fit_count = u64::try_from(warning.total_fit_count)
+                .map_err(|_| CoordinatedRunError::AssociationWarningCountOutOfRange)?;
             tracing::warn!(
                 target: "g.engine",
                 g_event = "association_delivery_warning",
                 chromosome = warning.chromosome,
-                nonconverged_count = warning.nonconverged_count,
-                total_fit_count = warning.total_fit_count,
+                nonconverged_count,
+                total_fit_count,
                 "{}",
                 warning.message
             );

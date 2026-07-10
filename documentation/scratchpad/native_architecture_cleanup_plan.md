@@ -125,6 +125,7 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
 - Firth solver operands are always `f64`; corrected values merge into the configured score-result dtype.
 - Epsilon and convergence operands derive from the active JAX dtype. Step-halving scales are in `(0, 1)`, probability thresholds in `(0, 1)`, and sparse dosage thresholds in `(0, 2]`.
 - Rust memory indices and shapes use `usize`; JAX indices, loop counts, and count arrays use checked `i32`; persisted counts/byte sizes use fixed-width integers. Correctness paths do not use saturation or multi-stage sign-changing conversions.
+- [x] Enforce the integer contract end to end: deny unsafe Rust integer casts; keep raw pointers behind exposed-provenance wrappers; serialize telemetry counters as fixed width; retain unsigned host configuration but validate and expose JAX loop/capacity controls as `i32`; reject out-of-domain sample, trait, chunk, flattened-lane, and padded-batch sizes before backend dispatch; and force index-producing JAX operations to `int32` under x64 mode.
 
 ## Acceptance
 

@@ -8,8 +8,6 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TryRecvError};
 use g_genotype::{ChunkStats, VariantMetadataColumns};
-use g_plan::FloatingPointDtype;
-
 use crate::backend::{
     AssociationBackend, GenotypeBatchInput, GenotypeBatchStatisticsView, GenotypeMatrixView, HostAssociationBatch,
     MaterializationInput, VariantMajorDosageMatrixView, VariantMajorPacked8MatrixView,
@@ -40,7 +38,6 @@ pub struct ScheduledAssociationBatch {
     pub statistics: ChunkStats,
     pub genotype_buffer: OwnedGenotypeBuffer,
     pub active_trait_indices: Vec<usize>,
-    pub output_statistic_dtype: FloatingPointDtype,
 }
 
 impl ScheduledAssociationBatch {
@@ -496,7 +493,6 @@ fn run_materialization_worker<Backend>(
         }
         let materialization_input = MaterializationInput {
             active_trait_indices: &device_batch.scheduled_batch.active_trait_indices,
-            output_statistic_dtype: device_batch.scheduled_batch.output_statistic_dtype,
         };
         let result = match backend.materialize_batch(device_batch.device_result, materialization_input) {
             Ok(result) => result,

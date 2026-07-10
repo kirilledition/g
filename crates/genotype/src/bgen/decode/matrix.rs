@@ -41,7 +41,7 @@ impl<Value> VariantMajorOutputMatrix<Value> {
                 "{row_context} output pointer is not aligned to {value_alignment} bytes.",
             )));
         }
-        let pointer = NonNull::new(output_pointer_address as *mut Value)
+        let pointer = NonNull::new(std::ptr::with_exposed_provenance_mut::<Value>(output_pointer_address))
             .ok_or_else(|| BgenError::Range(format!("{row_context} output pointer is null.")))?;
         Ok(Self { pointer, row_value_count, row_context })
     }

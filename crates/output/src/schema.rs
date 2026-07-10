@@ -4,35 +4,20 @@ use arrow::datatypes::{DataType, Field, Schema};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
 
-static REGENIE_STEP2_CHUNK_FLOAT32_SCHEMA: LazyLock<Arc<Schema>> =
-    LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema(g_plan::FloatingPointDtype::Float32)));
-static REGENIE_STEP2_CHUNK_FLOAT64_SCHEMA: LazyLock<Arc<Schema>> =
-    LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema(g_plan::FloatingPointDtype::Float64)));
+static REGENIE_STEP2_CHUNK_SCHEMA: LazyLock<Arc<Schema>> = LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema()));
 static REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA: LazyLock<Arc<Schema>> =
-    LazyLock::new(|| Arc::new(build_regenie_step2_parquet_record_batch_schema(&REGENIE_STEP2_CHUNK_FLOAT32_SCHEMA)));
-static REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT64_SCHEMA: LazyLock<Arc<Schema>> =
-    LazyLock::new(|| Arc::new(build_regenie_step2_parquet_record_batch_schema(&REGENIE_STEP2_CHUNK_FLOAT64_SCHEMA)));
+    LazyLock::new(|| Arc::new(build_regenie_step2_parquet_record_batch_schema(&REGENIE_STEP2_CHUNK_SCHEMA)));
 
-pub(crate) fn get_regenie_step2_chunk_schema(
-    output_statistic_dtype: g_plan::FloatingPointDtype,
-) -> &'static Arc<Schema> {
-    match output_statistic_dtype {
-        g_plan::FloatingPointDtype::Float32 => &REGENIE_STEP2_CHUNK_FLOAT32_SCHEMA,
-        g_plan::FloatingPointDtype::Float64 => &REGENIE_STEP2_CHUNK_FLOAT64_SCHEMA,
-    }
+pub(crate) fn get_regenie_step2_chunk_schema() -> &'static Arc<Schema> {
+    &REGENIE_STEP2_CHUNK_SCHEMA
 }
 
-pub(crate) fn get_regenie_step2_parquet_record_batch_schema(
-    output_statistic_dtype: g_plan::FloatingPointDtype,
-) -> &'static Arc<Schema> {
-    match output_statistic_dtype {
-        g_plan::FloatingPointDtype::Float32 => &REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA,
-        g_plan::FloatingPointDtype::Float64 => &REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT64_SCHEMA,
-    }
+pub(crate) fn get_regenie_step2_parquet_record_batch_schema() -> &'static Arc<Schema> {
+    &REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA
 }
 
-fn build_regenie_step2_chunk_schema(output_statistic_dtype: g_plan::FloatingPointDtype) -> Schema {
-    let statistic_data_type = statistic_arrow_data_type(output_statistic_dtype);
+fn build_regenie_step2_chunk_schema() -> Schema {
+    let statistic_data_type = DataType::Float32;
     Schema::new(vec![
         Field::new("CHROM", DataType::Utf8, false),
         Field::new("GENPOS", DataType::Int64, false),
@@ -66,11 +51,4 @@ fn build_regenie_step2_parquet_record_batch_schema(chunk_schema: &Schema) -> Sch
         })
         .collect::<Vec<_>>();
     Schema::new_with_metadata(fields, chunk_schema.metadata().clone())
-}
-
-fn statistic_arrow_data_type(output_statistic_dtype: g_plan::FloatingPointDtype) -> DataType {
-    match output_statistic_dtype {
-        g_plan::FloatingPointDtype::Float32 => DataType::Float32,
-        g_plan::FloatingPointDtype::Float64 => DataType::Float64,
-    }
 }

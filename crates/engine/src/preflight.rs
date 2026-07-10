@@ -32,6 +32,8 @@ pub enum PreflightError {
     BinaryPhenotypeCoding,
     #[error("Binary phenotype must contain at least one case and one control.")]
     BinaryPhenotypeMissingClass,
+    #[error("{label} exceeds the JAX int32 index domain.")]
+    JaxIndexCapacityExceeded { label: &'static str },
     #[error("Prediction matrix shape for chromosome {chromosome} exceeds native capacity.")]
     PredictionMatrixShapeOverflow { chromosome: String },
     #[error(
@@ -100,6 +102,40 @@ pub(crate) fn validate_multi_prediction_values(
         });
     }
     validate_finite_values(&format!("Prediction matrix for chromosome {chromosome}"), prediction_values)
+}
+
+pub(crate) fn validate_jax_index_capacity(
+    trait_count: usize,
+    sample_count: usize,
+    chunk_size: usize,
+    firth_candidate_capacity: usize,
+    firth_batch_size: usize,
+    is_binary_trait: bool,
+) -> Result<(), PreflightError> {
+    let maximum_index_count = usize::try_from(i32::MAX).expect("supported 64-bit targets represent i32::MAX");
+    for (label, count) in [("trait count", trait_count), ("sample count", sample_count), ("chunk size", chunk_size)] {
+        if count > maximum_index_count {
+            return Err(PreflightError::JaxIndexCapacityExceeded { label });
+        }
+    }
+    let _flattened_lane_count = trait_count
+        .checked_mul(chunk_size)
+        .filter(|count| *count <= maximum_index_count)
+        .ok_or(PreflightError::JaxIndexCapacityExceeded { label: "flattened trait-by-chunk lane count" })?;
+    if !is_binary_trait {
+        return Ok(());
+    }
+    let candidate_count = firth_candidate_capacity
+        .min(chunk_size)
+        .checked_mul(trait_count)
+        .ok_or(PreflightError::JaxIndexCapacityExceeded { label: "multi-trait Firth candidate capacity" })?;
+    candidate_count
+        .checked_add(firth_batch_size - 1)
+        .map(|count| count / firth_batch_size)
+        .and_then(|batch_count| batch_count.checked_mul(firth_batch_size))
+        .filter(|count| *count <= maximum_index_count)
+        .ok_or(PreflightError::JaxIndexCapacityExceeded { label: "padded Firth candidate capacity" })?;
+    Ok(())
 }
 
 fn validate_finite_values(label: &str, values: &[f32]) -> Result<(), PreflightError> {

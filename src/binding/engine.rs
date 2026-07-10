@@ -22,7 +22,6 @@ pub(crate) struct JaxBackendConfig {
     association_mode: native_plan::AssociationMode,
     correction: native_plan::CorrectionPlan,
     kernels: native_plan::KernelPlan,
-    score_dtype: native_plan::FloatingPointDtype,
 }
 
 /// Trait-major phenotypes and sample-major covariates for one compute group.
@@ -50,8 +49,7 @@ pub(crate) struct JaxGenotypeBatch {
 /// Trait selection and host statistic precision for device materialization.
 #[pyclass(name = "JaxMaterializationRequest")]
 pub(crate) struct JaxMaterializationRequest {
-    active_trait_indices: Vec<usize>,
-    output_statistic_dtype: native_plan::FloatingPointDtype,
+    active_trait_indices: Vec<i32>,
 }
 
 /// Opaque chromosome state paired with native null-logistic policy input.
@@ -85,13 +83,13 @@ impl std::fmt::Display for PyJaxBackendError {
 impl std::error::Error for PyJaxBackendError {}
 
 impl JaxBackendConfig {
-    pub(crate) fn new(plan: &native_plan::RunPlan) -> Self {
-        Self {
+    pub(crate) fn new(plan: &native_plan::RunPlan) -> PyResult<Self> {
+        native_engine::validate_jax_integer_domain(plan).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
             association_mode: plan.association_mode,
             correction: plan.correction,
             kernels: plan.compute.kernels.clone(),
-            score_dtype: plan.compute.score_dtype,
-        }
+        })
     }
 }
 
@@ -103,17 +101,12 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn score_dtype(&self) -> &'static str {
-        self.score_dtype.as_str()
-    }
-
-    #[getter]
     fn correction_method(&self) -> &'static str {
         self.correction.method.as_str()
     }
 
     #[getter]
-    fn correction_p_threshold(&self) -> f64 {
+    fn correction_p_threshold(&self) -> f32 {
         self.correction.p_threshold.get()
     }
 
@@ -123,53 +116,56 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn linear_minimum_variance(&self) -> f64 {
+    fn linear_minimum_variance(&self) -> f32 {
         self.kernels.linear.minimum_variance.get()
     }
 
     #[getter]
-    fn linear_relative_variance_tolerance(&self) -> f64 {
+    fn linear_relative_variance_tolerance(&self) -> f32 {
         self.kernels.linear.relative_variance_tolerance.get()
     }
 
     #[getter]
-    fn binary_minimum_probability(&self) -> f64 {
+    fn binary_minimum_probability(&self) -> f32 {
         self.kernels.binary_null.minimum_probability.get()
     }
 
     #[getter]
-    fn binary_minimum_variance(&self) -> f64 {
+    fn binary_minimum_variance(&self) -> f32 {
         self.kernels.binary_null.minimum_variance.get()
     }
 
     #[getter]
-    fn binary_relative_variance_tolerance(&self) -> f64 {
+    fn binary_relative_variance_tolerance(&self) -> f32 {
         self.kernels.binary_null.relative_variance_tolerance.get()
     }
 
     #[getter]
-    fn binary_null_maximum_iterations(&self) -> u32 {
-        self.kernels.binary_null.maximum_iterations
+    fn binary_null_maximum_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.binary_null.maximum_iterations)
+            .expect("JaxBackendConfig validates binary null iterations")
     }
 
     #[getter]
-    fn binary_null_coefficient_tolerance(&self) -> f64 {
+    fn binary_null_coefficient_tolerance(&self) -> f32 {
         self.kernels.binary_null.coefficient_tolerance.get()
     }
 
     #[getter]
-    fn firth_batch_size(&self) -> u32 {
-        self.kernels.firth.batch_size
+    fn firth_batch_size(&self) -> i32 {
+        i32::try_from(self.kernels.firth.batch_size).expect("JaxBackendConfig validates Firth batch size")
     }
 
     #[getter]
-    fn firth_candidate_capacity(&self) -> u32 {
-        self.kernels.firth.candidate_capacity
+    fn firth_candidate_capacity(&self) -> i32 {
+        i32::try_from(self.kernels.firth.candidate_capacity)
+            .expect("JaxBackendConfig validates Firth candidate capacity")
     }
 
     #[getter]
-    fn firth_maximum_iterations(&self) -> u32 {
-        self.kernels.firth.maximum_iterations
+    fn firth_maximum_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.firth.maximum_iterations)
+            .expect("JaxBackendConfig validates Firth maximum iterations")
     }
 
     #[getter]
@@ -193,28 +189,33 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn firth_pseudo_maximum_iterations(&self) -> u32 {
-        self.kernels.firth.pseudo_maximum_iterations
+    fn firth_pseudo_maximum_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.firth.pseudo_maximum_iterations)
+            .expect("JaxBackendConfig validates Firth pseudo maximum iterations")
     }
 
     #[getter]
-    fn firth_pseudo_inner_maximum_iterations(&self) -> u32 {
-        self.kernels.firth.pseudo_inner_maximum_iterations
+    fn firth_pseudo_inner_maximum_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.firth.pseudo_inner_maximum_iterations)
+            .expect("JaxBackendConfig validates Firth pseudo inner maximum iterations")
     }
 
     #[getter]
-    fn firth_newton_raphson_zero_start_iterations(&self) -> u32 {
-        self.kernels.firth.newton_raphson_zero_start_iterations
+    fn firth_newton_raphson_zero_start_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.firth.newton_raphson_zero_start_iterations)
+            .expect("JaxBackendConfig validates Firth Newton-Raphson zero-start iterations")
     }
 
     #[getter]
-    fn firth_line_search_maximum_attempts(&self) -> u32 {
-        self.kernels.firth.line_search_maximum_attempts
+    fn firth_line_search_maximum_attempts(&self) -> i32 {
+        i32::try_from(self.kernels.firth.line_search_maximum_attempts)
+            .expect("JaxBackendConfig validates Firth line-search attempts")
     }
 
     #[getter]
-    fn firth_step_halving_maximum_attempts(&self) -> u32 {
-        self.kernels.firth.step_halving_maximum_attempts
+    fn firth_step_halving_maximum_attempts(&self) -> i32 {
+        i32::try_from(self.kernels.firth.step_halving_maximum_attempts)
+            .expect("JaxBackendConfig validates Firth step-halving attempts")
     }
 
     #[getter]
@@ -238,8 +239,9 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn null_firth_maximum_iterations(&self) -> u32 {
-        self.kernels.null_firth.maximum_iterations
+    fn null_firth_maximum_iterations(&self) -> i32 {
+        i32::try_from(self.kernels.null_firth.maximum_iterations)
+            .expect("JaxBackendConfig validates null Firth maximum iterations")
     }
 
     #[getter]
@@ -253,8 +255,9 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn null_firth_fallback_iteration_multiplier(&self) -> u32 {
-        self.kernels.null_firth.fallback_iteration_multiplier
+    fn null_firth_fallback_iteration_multiplier(&self) -> i32 {
+        i32::try_from(self.kernels.null_firth.fallback_iteration_multiplier)
+            .expect("JaxBackendConfig validates null Firth fallback iteration multiplier")
     }
 
     #[getter]
@@ -263,8 +266,9 @@ impl JaxBackendConfig {
     }
 
     #[getter]
-    fn null_firth_line_search_maximum_attempts(&self) -> u32 {
-        self.kernels.null_firth.line_search_maximum_attempts
+    fn null_firth_line_search_maximum_attempts(&self) -> i32 {
+        i32::try_from(self.kernels.null_firth.line_search_maximum_attempts)
+            .expect("JaxBackendConfig validates null Firth line-search attempts")
     }
 
     #[getter]
@@ -428,24 +432,26 @@ impl JaxGenotypeBatch {
 }
 
 impl JaxMaterializationRequest {
-    fn from_native(input: native_engine::MaterializationInput<'_>) -> Self {
-        Self {
-            active_trait_indices: input.active_trait_indices.to_vec(),
-            output_statistic_dtype: input.output_statistic_dtype,
-        }
+    fn from_native(input: native_engine::MaterializationInput<'_>) -> Result<Self, PyJaxBackendError> {
+        let active_trait_indices = input
+            .active_trait_indices
+            .iter()
+            .copied()
+            .map(|index| {
+                i32::try_from(index).map_err(|_| {
+                    PyJaxBackendError::InvalidInput(format!("Active trait index {index} exceeds JAX int32 capacity."))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { active_trait_indices })
     }
 }
 
 #[pymethods]
 impl JaxMaterializationRequest {
     #[getter]
-    fn active_trait_indices(&self) -> Vec<usize> {
+    fn active_trait_indices(&self) -> Vec<i32> {
         self.active_trait_indices.clone()
-    }
-
-    #[getter]
-    fn output_statistic_dtype(&self) -> &'static str {
-        self.output_statistic_dtype.as_str()
     }
 }
 
@@ -538,7 +544,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
         result: Self::DeviceResult,
         input: native_engine::MaterializationInput<'_>,
     ) -> Result<native_engine::HostAssociationBatch, Self::Error> {
-        let bridge_input = JaxMaterializationRequest::from_native(input);
+        let bridge_input = JaxMaterializationRequest::from_native(input)?;
         Python::attach(|py| {
             let input_object = Py::new(py, bridge_input).map_err(PyJaxBackendError::Python)?;
             let materialized = self
@@ -608,10 +614,7 @@ fn parse_host_association_batch(
         chi_squared_object.cast::<PyUntypedArray>()?,
         log10_p_value_object.cast::<PyUntypedArray>()?,
     )?;
-    let (trait_count, variant_count) = match &statistics {
-        native_engine::HostAssociationStatistics::Float32(matrix) => (matrix.trait_count, matrix.variant_count),
-        native_engine::HostAssociationStatistics::Float64(matrix) => (matrix.trait_count, matrix.variant_count),
-    };
+    let (trait_count, variant_count) = (statistics.trait_count, statistics.variant_count);
     let correction_code_object = payload.getattr("correction_code")?;
     let correction_codes = if correction_code_object.is_none() {
         None
@@ -636,15 +639,10 @@ fn parse_host_statistics(
             return Err(PyValueError::new_err(format!("{label} dtype must match beta dtype.")));
         }
     }
-    if observed_dtype.is_equiv_to(&dtype::<f32>(py)) {
-        return parse_statistic_matrix::<f32>(beta, standard_error, chi_squared, log10_p_value)
-            .map(native_engine::HostAssociationStatistics::Float32);
+    if !observed_dtype.is_equiv_to(&dtype::<f32>(py)) {
+        return Err(PyValueError::new_err("Host association statistics must use float32 dtype."));
     }
-    if observed_dtype.is_equiv_to(&dtype::<f64>(py)) {
-        return parse_statistic_matrix::<f64>(beta, standard_error, chi_squared, log10_p_value)
-            .map(native_engine::HostAssociationStatistics::Float64);
-    }
-    Err(PyValueError::new_err("Host association statistics must use float32 or float64 dtype."))
+    parse_statistic_matrix::<f32>(beta, standard_error, chi_squared, log10_p_value)
 }
 
 fn parse_statistic_matrix<Statistic: numpy::Element + Copy>(

@@ -54,7 +54,7 @@ impl Error for TimingFileError {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StageTimingRecorder {
     stage_totals_seconds: BTreeMap<String, f64>,
-    stage_counts: BTreeMap<String, i64>,
+    stage_counts: BTreeMap<String, u64>,
 }
 
 #[derive(Serialize)]
@@ -62,13 +62,13 @@ struct ProfileSummaryPayload<'recorder> {
     schema_version: i64,
     run_id: Option<String>,
     stage_totals_seconds: &'recorder BTreeMap<String, f64>,
-    stage_counts: &'recorder BTreeMap<String, i64>,
+    stage_counts: &'recorder BTreeMap<String, u64>,
 }
 
 #[derive(Serialize)]
 struct StageTimingSnapshotPayload<'recorder> {
     stage_totals_seconds: &'recorder BTreeMap<String, f64>,
-    stage_counts: &'recorder BTreeMap<String, i64>,
+    stage_counts: &'recorder BTreeMap<String, u64>,
 }
 
 impl StageTimingRecorder {
@@ -79,7 +79,8 @@ impl StageTimingRecorder {
 
     pub fn add_stage_duration(&mut self, stage_name: String, duration_seconds: f64) {
         *self.stage_totals_seconds.entry(stage_name.clone()).or_insert(0.0) += duration_seconds;
-        *self.stage_counts.entry(stage_name).or_insert(0) += 1;
+        let stage_count = self.stage_counts.entry(stage_name).or_insert(0);
+        *stage_count = stage_count.saturating_add(1);
     }
 
     /// Write every configured final timing output.

@@ -109,7 +109,6 @@ impl PartialTraitConfig {
         overlay_option!(self, override_config, qt);
         overlay_option!(self, override_config, bt);
         overlay_option!(self, override_config, bsize);
-        overlay_option!(self, override_config, threads);
     }
 }
 
@@ -124,12 +123,7 @@ impl PartialBinaryConfig {
 impl PartialComputeConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, device);
-        overlay_option!(self, override_config, staging_depth);
-        overlay_option!(self, override_config, result_in_flight_limit);
-        overlay_option!(self, override_config, variant_limit);
-        overlay_option!(self, override_config, trusted_no_missing_diploid);
-        overlay_option!(self, override_config, trusted_bgen_validation_mode);
-        overlay_option!(self, override_config, sample_key_mode);
+        overlay_option!(self, override_config, cpu_threads);
         overlay_option!(self, override_config, multi_phenotype_sample_mode);
         overlay_option!(self, override_config, firth_batch_size);
         overlay_option!(self, override_config, firth_candidate_capacity);
@@ -162,16 +156,7 @@ impl PartialComputeConfig {
         overlay_option!(self, override_config, null_firth_line_search_maximum_attempts);
         overlay_option!(self, override_config, null_firth_step_halving_scale);
         overlay_option!(self, override_config, use_block_firth_math);
-        overlay_option!(self, override_config, bgen_decode_tile_variant_count);
-        overlay_option!(self, override_config, gpu_genotype_format);
-        overlay_option!(self, override_config, score_dtype);
         overlay_option!(self, override_config, jax_cache_dir);
-        overlay_option!(self, override_config, jax_matmul_precision);
-        overlay_option!(self, override_config, jax_persistent_cache);
-        overlay_option!(self, override_config, jax_persistent_cache_min_entry_size_bytes);
-        overlay_option!(self, override_config, jax_persistent_cache_min_compile_time_seconds);
-        overlay_option!(self, override_config, jax_xla_autotune_cache);
-        overlay_option!(self, override_config, jax_transfer_guard);
     }
 }
 
@@ -180,30 +165,12 @@ impl PartialOutputConfig {
         overlay_option!(self, override_config, out);
         overlay_option!(self, override_config, output_run_directory);
         overlay_option!(self, override_config, writer_threads);
-        overlay_option!(self, override_config, writer_queue_depth);
-        overlay_option!(self, override_config, chunks_per_parquet_file);
-        overlay_option!(self, override_config, parquet_compression);
-        overlay_option!(self, override_config, output_statistic_dtype);
         overlay_option!(self, override_config, resume);
-        overlay_option!(self, override_config, resume_mode);
     }
 }
 
 impl PartialDiagnosticsConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, telemetry);
-        overlay_option!(self, override_config, log_dir);
-        overlay_option!(self, override_config, stage_timings_json);
-        overlay_option!(self, override_config, log_filter);
-        overlay_option!(self, override_config, log_file);
-        overlay_option!(self, override_config, log_stderr);
-        overlay_option!(self, override_config, profile_summary_json);
-        overlay_option!(self, override_config, trace_file);
-        overlay_option!(self, override_config, trace_filter);
-        overlay_option!(self, override_config, trace_event_cap);
-        overlay_option!(self, override_config, log_queue_size);
-        overlay_option!(self, override_config, log_lossy);
-        overlay_option!(self, override_config, include_source_location);
-        overlay_option!(self, override_config, include_span_events);
     }
 }

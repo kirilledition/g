@@ -73,27 +73,7 @@ def compute_normalized_genotype_sum_squares_from_stats(
         - 2.0 * genotype_offset * imputed_dosage_sum_compute
         + sample_count_compute * genotype_offset * genotype_offset
     )
-    if score_dtype == types.FloatingPointDtype.FLOAT64:
-        return shifted_sum_squares
-
-    stable_dtype = jnp.float64
-    dosage_sum_stable = jnp.asarray(genotype_dosage_sum, dtype=stable_dtype)
-    observation_count_stable = jnp.asarray(genotype_observation_count, dtype=stable_dtype)
-    imputed_dosage_square_sum_stable = jnp.asarray(genotype_imputed_dosage_square_sum, dtype=stable_dtype)
-    sample_count_stable = jnp.asarray(sample_count, dtype=stable_dtype)
-    genotype_mean_stable = dosage_sum_stable / jnp.maximum(observation_count_stable, 1.0)
-    imputed_dosage_sum_stable = genotype_mean_stable * sample_count_stable
-    genotype_offset_stable = jnp.asarray(genotype_offset, dtype=stable_dtype)
-    stable_shifted_sum_squares = (
-        imputed_dosage_square_sum_stable
-        - 2.0 * genotype_offset_stable * imputed_dosage_sum_stable
-        + sample_count_stable * genotype_offset_stable * genotype_offset_stable
-    )
-    return jnp.where(
-        genotype_offset > 0.0,
-        jnp.asarray(stable_shifted_sum_squares, dtype=jax_dtype),
-        shifted_sum_squares,
-    )
+    return shifted_sum_squares
 
 
 @functools.partial(

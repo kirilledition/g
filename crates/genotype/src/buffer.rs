@@ -12,7 +12,7 @@ pub struct OutputBufferAddress(usize);
 impl OutputBufferAddress {
     #[must_use]
     pub fn from_mut_ptr<Value>(pointer: *mut Value) -> Self {
-        Self(pointer.addr())
+        Self(pointer.expose_provenance())
     }
 
     pub(crate) const fn get(self) -> usize {

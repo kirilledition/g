@@ -5,6 +5,12 @@ use g_plan as plan;
 use super::resolved::RegenieConfigData;
 use super::{ConfigError, ConfigResult};
 
+const FIXED_ASSOCIATION_STAGING_DEPTH: u32 = 1;
+const FIXED_BGEN_DECODE_TILE_VARIANT_COUNT: u32 = 64;
+const FIXED_OUTPUT_CHUNKS_PER_PARQUET_FILE: u32 = 16;
+const FIXED_OUTPUT_WRITER_QUEUE_DEPTH: u32 = 16;
+const FIXED_TELEMETRY_QUEUE_SIZE: u32 = 65_536;
+
 /// Compile a resolved config into a native requested-run plan.
 ///
 /// # Errors
@@ -24,7 +30,6 @@ pub fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPla
         analysis: plan::AnalysisPlan {
             trait_type,
             chunk_size: config.trait_config.bsize.get(),
-            thread_count: config.trait_config.threads.map(std::num::NonZeroU32::get),
         },
         compute: build_compute_plan(config),
         correction: build_correction_plan(config),
@@ -45,12 +50,12 @@ pub fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPla
 fn build_input_plan(config: &RegenieConfigData) -> ConfigResult<plan::InputPlan> {
     Ok(plan::InputPlan {
         bgen_path: require_config_path("--bgen", config.input.bgen.as_ref())?,
-        sample_path: config.input.sample.clone(),
+        sample_path: require_config_path("--sample", config.input.sample.as_ref())?,
         phenotype_path: require_config_path("--phenoFile", config.input.pheno_file.as_ref())?,
         prediction_list_path: require_config_path("--pred", config.input.pred.as_ref())?,
         covariate_path: config.input.covar_file.clone(),
         covariate_names: config.input.covar_columns.clone(),
-        sample_key_mode: config.g_compute.sample_key_mode,
+        sample_key_mode: plan::SampleKeyMode::FidIid,
     })
 }
 
@@ -64,15 +69,15 @@ fn require_config_path(option_name: &str, path: Option<&String>) -> ConfigResult
 fn build_compute_plan(config: &RegenieConfigData) -> plan::ComputePlan {
     plan::ComputePlan {
         device: config.g_compute.device,
-        staging_depth: config.g_compute.staging_depth.get(),
-        result_in_flight_limit: config.g_compute.result_in_flight_limit.map(std::num::NonZeroU32::get),
-        variant_limit: config.g_compute.variant_limit.map(std::num::NonZeroU32::get),
-        bgen_decode_tile_variant_count: config.g_compute.bgen_decode_tile_variant_count.get(),
-        requested_gpu_genotype_format: config.g_compute.gpu_genotype_format,
-        trusted_no_missing_diploid: config.g_compute.trusted_no_missing_diploid,
-        trusted_bgen_validation_mode: config.g_compute.trusted_bgen_validation_mode,
+        cpu_thread_count: config.g_compute.cpu_threads.map(std::num::NonZeroU32::get),
+        staging_depth: FIXED_ASSOCIATION_STAGING_DEPTH,
+        result_in_flight_limit: None,
+        variant_limit: None,
+        bgen_decode_tile_variant_count: FIXED_BGEN_DECODE_TILE_VARIANT_COUNT,
+        requested_gpu_genotype_format: plan::GpuGenotypeFormat::Auto,
+        trusted_no_missing_diploid: false,
+        trusted_bgen_validation_mode: plan::TrustedBgenValidationMode::CacheOnMiss,
         multi_phenotype_sample_mode: config.g_compute.multi_phenotype_sample_mode,
-        score_dtype: config.g_compute.score_dtype,
         kernels: plan::KernelPlan {
             linear: plan::LinearKernelPlan {
                 minimum_variance: config.g_compute.linear_minimum_variance,
@@ -145,12 +150,10 @@ fn build_output_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputPla
         output_prefix,
         output_run_root,
         resume: config.g_output.resume,
-        resume_mode: config.g_output.resume_mode,
+        resume_mode: plan::ResumeMode::Strict,
         writer_thread_count: config.g_output.writer_threads.get(),
-        writer_queue_depth: config.g_output.writer_queue_depth.get(),
-        chunks_per_parquet_file: config.g_output.chunks_per_parquet_file.get(),
-        parquet_compression: config.g_output.parquet_compression,
-        output_statistic_dtype: config.g_output.output_statistic_dtype,
+        writer_queue_depth: FIXED_OUTPUT_WRITER_QUEUE_DEPTH,
+        chunks_per_parquet_file: FIXED_OUTPUT_CHUNKS_PER_PARQUET_FILE,
     })
 }
 
@@ -166,12 +169,12 @@ fn default_output_run_root(output_prefix: &str) -> String {
 fn build_runtime_plan(config: &RegenieConfigData) -> plan::RuntimePlan {
     plan::RuntimePlan {
         jax_cache_directory: config.g_compute.jax_cache_dir.clone(),
-        jax_matmul_precision: config.g_compute.jax_matmul_precision,
-        persistent_cache_enabled: config.g_compute.jax_persistent_cache,
-        persistent_cache_min_entry_size_bytes: config.g_compute.jax_persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds: config.g_compute.jax_persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache_enabled: config.g_compute.jax_xla_autotune_cache,
-        transfer_guard_enabled: config.g_compute.jax_transfer_guard,
+        jax_matmul_precision: None,
+        persistent_cache_enabled: true,
+        persistent_cache_min_entry_size_bytes: -1,
+        persistent_cache_min_compile_time_seconds: 0,
+        xla_autotune_cache_enabled: false,
+        transfer_guard_enabled: false,
     }
 }
 
@@ -179,21 +182,28 @@ fn build_runtime_plan(config: &RegenieConfigData) -> plan::RuntimePlan {
 
 #[must_use]
 fn build_diagnostics_plan(config: &RegenieConfigData) -> plan::DiagnosticsPlan {
+    let output_prefix = config.g_output.out.as_deref().expect("validated output prefix");
+    let output_run_root = config
+        .g_output
+        .output_run_directory
+        .clone()
+        .unwrap_or_else(|| default_output_run_root(output_prefix));
+    let log_directory = Path::new(&output_run_root).join("logs").display().to_string();
     plan::DiagnosticsPlan {
         telemetry: config.g_diagnostics.telemetry,
-        log_directory: config.g_diagnostics.log_dir.clone(),
-        stage_timings_path: config.g_diagnostics.stage_timings_json.clone(),
-        log_filter: config.g_diagnostics.log_filter.clone(),
-        log_file: config.g_diagnostics.log_file.clone(),
-        log_to_stderr: config.g_diagnostics.log_stderr,
-        profile_summary_path: config.g_diagnostics.profile_summary_json.clone(),
-        trace_file: config.g_diagnostics.trace_file.clone(),
-        trace_filter: config.g_diagnostics.trace_filter.clone(),
-        trace_event_cap: config.g_diagnostics.trace_event_cap,
-        log_queue_size: config.g_diagnostics.log_queue_size.get(),
-        lossy_logging: config.g_diagnostics.log_lossy,
-        include_source_location: config.g_diagnostics.include_source_location,
-        include_span_events: config.g_diagnostics.include_span_events,
+        log_directory: Some(log_directory),
+        stage_timings_path: None,
+        log_filter: "info".to_string(),
+        log_file: None,
+        log_to_stderr: true,
+        profile_summary_path: None,
+        trace_file: None,
+        trace_filter: "info".to_string(),
+        trace_event_cap: 0,
+        log_queue_size: FIXED_TELEMETRY_QUEUE_SIZE,
+        lossy_logging: true,
+        include_source_location: false,
+        include_span_events: false,
     }
 }
 

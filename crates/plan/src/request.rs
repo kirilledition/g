@@ -3,11 +3,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    AssociationMode, BinaryFallbackMethod, Device, FloatingPointDtype, GpuGenotypeFormat, JaxMatmulPrecision,
-    MultiPhenotypeSampleMode, NullLogisticNonconvergencePolicy, ParquetCompression, PhenotypeComputeGroupMode,
+    AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, JaxMatmulPrecision,
+    MultiPhenotypeSampleMode, NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode,
     RegenieTraitType, ResumeMode, SampleKeyMode, TelemetryMode, TrustedBgenValidationMode,
 };
-use crate::numeric::{DosageThreshold, PositiveF64, Probability, ProbabilityFloor, StepScale};
+use crate::numeric::{DosageThreshold, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RunPlan {
@@ -26,7 +26,7 @@ pub struct RunPlan {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct InputPlan {
     pub bgen_path: String,
-    pub sample_path: Option<String>,
+    pub sample_path: String,
     pub phenotype_path: String,
     pub prediction_list_path: String,
     pub covariate_path: Option<String>,
@@ -38,12 +38,12 @@ pub struct InputPlan {
 pub struct AnalysisPlan {
     pub trait_type: RegenieTraitType,
     pub chunk_size: u32,
-    pub thread_count: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ComputePlan {
     pub device: Device,
+    pub cpu_thread_count: Option<u32>,
     pub staging_depth: u32,
     pub result_in_flight_limit: Option<u32>,
     pub variant_limit: Option<u32>,
@@ -52,7 +52,6 @@ pub struct ComputePlan {
     pub trusted_no_missing_diploid: bool,
     pub trusted_bgen_validation_mode: TrustedBgenValidationMode,
     pub multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
-    pub score_dtype: FloatingPointDtype,
     pub kernels: KernelPlan,
 }
 
@@ -66,18 +65,18 @@ pub struct KernelPlan {
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct LinearKernelPlan {
-    pub minimum_variance: PositiveF64,
-    pub relative_variance_tolerance: PositiveF64,
+    pub minimum_variance: PositiveF32,
+    pub relative_variance_tolerance: PositiveF32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BinaryNullKernelPlan {
     pub maximum_iterations: u32,
-    pub coefficient_tolerance: PositiveF64,
+    pub coefficient_tolerance: PositiveF32,
     pub nonconvergence_policy: NullLogisticNonconvergencePolicy,
     pub minimum_probability: ProbabilityFloor,
-    pub minimum_variance: PositiveF64,
-    pub relative_variance_tolerance: PositiveF64,
+    pub minimum_variance: PositiveF32,
+    pub relative_variance_tolerance: PositiveF32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -127,8 +126,6 @@ pub struct OutputPlan {
     pub writer_thread_count: u32,
     pub writer_queue_depth: u32,
     pub chunks_per_parquet_file: u32,
-    pub parquet_compression: ParquetCompression,
-    pub output_statistic_dtype: FloatingPointDtype,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

@@ -18,7 +18,7 @@ pub(crate) fn configure_cli_process_runtime(
     telemetry_session: Option<&native_runtime::TelemetryRunSession>,
 ) -> PyResult<()> {
     let bgen_decode_tile_variant_count = run_plan.compute.bgen_decode_tile_variant_count;
-    let rayon_thread_count = run_plan.analysis.thread_count.map(i64::from);
+    let rayon_thread_count = run_plan.compute.cpu_thread_count.map(i64::from);
     let jax_policy = native_runtime::build_jax_runtime_policy_payload(run_plan)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     let runtime_state = global_process_runtime_state();

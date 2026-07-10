@@ -23,19 +23,9 @@ impl RegenieCli {
             bgen: self.input.bgen.clone(),
             sample: self.input.sample.clone(),
             pheno_file: self.input.pheno_file.clone(),
-            pheno_columns: canonical_columns(
-                "phenoCol",
-                &self.input.pheno_col,
-                "phenoColList",
-                self.input.pheno_col_list.clone(),
-            )?,
+            pheno_columns: canonical_columns("phenoCol", &self.input.pheno_col)?,
             covar_file: self.input.covar_file.clone(),
-            covar_columns: canonical_columns(
-                "covarCol",
-                &self.input.covar_col,
-                "covarColList",
-                self.input.covar_col_list.clone(),
-            )?,
+            covar_columns: canonical_columns("covarCol", &self.input.covar_col)?,
             pred: self.input.pred.clone(),
         })
     }
@@ -46,7 +36,6 @@ impl RegenieCli {
             qt: self.trait_options.qt.then_some(true),
             bt: self.trait_options.bt.then_some(true),
             bsize: self.trait_options.bsize,
-            threads: self.trait_options.threads,
         }
     }
 
@@ -59,19 +48,9 @@ impl RegenieCli {
     }
 }
 
-fn canonical_columns(
-    repeated_option_name: &str,
-    repeated_values: &[String],
-    list_option_name: &str,
-    list_values: Option<NameList>,
-) -> ConfigResult<Option<NameList>> {
-    if !repeated_values.is_empty() && list_values.is_some() {
-        return Err(ConfigError::new(format!(
-            "--{repeated_option_name} and --{list_option_name} cannot be used together."
-        )));
-    }
+fn canonical_columns(repeated_option_name: &str, repeated_values: &[String]) -> ConfigResult<Option<NameList>> {
     if repeated_values.is_empty() {
-        return Ok(list_values);
+        return Ok(None);
     }
     NameList::from_values(repeated_values.to_vec())
         .map(Some)

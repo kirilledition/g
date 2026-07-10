@@ -18,4 +18,4 @@ pub use api::*;
 pub(crate) use error::{ConfigError, ConfigResult};
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");
-const OPTION_SCHEMA_VERSION: i64 = 4;
+const OPTION_SCHEMA_VERSION: i64 = 5;

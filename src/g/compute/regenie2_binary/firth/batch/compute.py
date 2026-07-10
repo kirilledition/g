@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
@@ -99,7 +100,10 @@ def compute_firth_multi_variantwise(
 
 def build_compact_sparse_carrier_indices_for_lane(carrier_mask: jax.Array) -> jax.Array:
     """Build fixed-capacity carrier indices for one sparse lane."""
-    return jnp.nonzero(carrier_mask, size=SPARSE_FIRTH_CARRIER_CAPACITY, fill_value=0)[0]
+    return regenie2_binary_candidate_planning.build_compact_int32_indices(
+        carrier_mask,
+        SPARSE_FIRTH_CARRIER_CAPACITY,
+    )
 
 
 def build_compact_sparse_carrier_indices(
@@ -108,6 +112,10 @@ def build_compact_sparse_carrier_indices(
     sparse_carrier_dosage_threshold: float | jax.Array,
 ) -> jax.Array:
     """Build fixed-capacity carrier sample indices for sparse Firth lanes."""
+    sample_count = raw_genotype_matrix_by_variant.shape[1]
+    if sample_count > regenie2_binary_candidate_planning.JAX_INT32_INDEX_MAXIMUM:
+        message = "Sparse Firth sample count exceeds the JAX int32 index domain."
+        raise ValueError(message)
     carrier_sample_mask = raw_genotype_matrix_by_variant > sparse_carrier_dosage_threshold
     return jax.vmap(build_compact_sparse_carrier_indices_for_lane)(carrier_sample_mask)
 
@@ -115,7 +123,13 @@ def build_compact_sparse_carrier_indices(
 def build_firth_lane_stream_plan(active_lane_mask: jax.Array) -> FirthLaneStreamPlan:
     """Pack active candidate-lane positions into a fixed-capacity stream."""
     stream_capacity = active_lane_mask.shape[0]
-    lane_indices = jnp.nonzero(active_lane_mask, size=stream_capacity, fill_value=0)[0]
+    if stream_capacity > regenie2_binary_candidate_planning.JAX_INT32_INDEX_MAXIMUM:
+        message = "Firth lane stream exceeds the JAX int32 index domain."
+        raise ValueError(message)
+    lane_indices = regenie2_binary_candidate_planning.build_compact_int32_indices(
+        active_lane_mask,
+        stream_capacity,
+    )
     active_count = jnp.sum(active_lane_mask, dtype=jnp.int32)
     active_mask = jnp.arange(stream_capacity, dtype=jnp.int32) < active_count
     return FirthLaneStreamPlan(

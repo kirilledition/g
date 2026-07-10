@@ -156,8 +156,6 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
     let write_result = write_regenie_step2_chunk_job(
         &output_write_task.config.parts_directory,
         output_write_task.write_batch,
-        output_write_task.config.output_statistic_dtype,
-        output_write_task.config.parquet_compression,
     );
     match write_result {
         Ok(write_result) => {

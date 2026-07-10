@@ -1,5 +1,6 @@
 //! Association delivery execution independent of Python.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use g_genotype::{BgenError, GenotypeError};
@@ -25,6 +26,7 @@ use crate::null_logistic_policy::{
 use crate::output_schedule::{active_trait_indices_for_chunk, intersect_committed_chunk_identifier_sets};
 use crate::output_write::write_host_association_batch;
 use crate::pipeline::BgenRunEngine;
+use crate::progress::RunProgressError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveryWarning {
@@ -58,6 +60,8 @@ pub enum DeliveryError<BackendError, InterruptionError> {
     Input(#[from] InputError),
     #[error(transparent)]
     Output(#[from] OutputError),
+    #[error(transparent)]
+    Progress(#[from] RunProgressError),
     #[error(transparent)]
     NullLogisticPolicy(#[from] NullLogisticPolicyError),
     #[error("association delivery was interrupted: {0}")]
@@ -120,6 +124,10 @@ where
     let committed_chunk_identifiers =
         intersect_committed_chunk_identifier_sets(&request.settings.committed_chunk_identifier_sets);
     let chunk_specs = engine.plan_chunks(&committed_chunk_identifiers)?;
+    if let Some(progress) = request.settings.progress.as_ref() {
+        let all_chunk_specs = engine.plan_chunks(&BTreeSet::new())?;
+        progress.initialize(&all_chunk_specs, &chunk_specs)?;
+    }
     let mut buffer_pool = GenotypeBufferPool::default();
     let mut current_chromosome = None;
     let mut pipeline: Option<AssociationBatchPipeline<Backend>> = None;
@@ -180,7 +188,6 @@ where
             statistics,
             genotype_buffer,
             active_trait_indices,
-            output_statistic_dtype: request.settings.output_statistic_dtype,
         };
         let active_pipeline = pipeline
             .as_ref()
@@ -363,6 +370,7 @@ fn write_completed_batch<BackendError, InterruptionError>(
         result,
         ..
     } = completed_batch;
+    let variant_count = metadata.variant_identifier.len();
     write_host_association_batch(
         &settings.writer_sessions,
         &active_trait_indices,
@@ -371,6 +379,9 @@ fn write_completed_batch<BackendError, InterruptionError>(
         statistics,
         result,
     )?;
+    if let Some(progress) = settings.progress.as_ref() {
+        progress.record_writer_accepted(variant_count)?;
+    }
     buffer_pool.release(genotype_buffer);
     Ok(())
 }
@@ -440,6 +451,15 @@ where
     let chunk_specs = engine.plan_chunks(&shared_committed_chunk_identifiers)?;
     let mut group_runtimes =
         prepare_grouped_union_runtimes::<Backend, InterruptionError>(backend.as_ref(), groups, &union_sample_indices)?;
+    let all_chunk_specs = engine.plan_chunks(&BTreeSet::new())?;
+    for group_runtime in &group_runtimes {
+        let committed_chunk_identifiers =
+            intersect_committed_chunk_identifier_sets(&group_runtime.request.settings.committed_chunk_identifier_sets);
+        let pending_chunk_specs = engine.plan_chunks(&committed_chunk_identifiers)?;
+        if let Some(progress) = group_runtime.request.settings.progress.as_ref() {
+            progress.initialize(&all_chunk_specs, &pending_chunk_specs)?;
+        }
+    }
     let union_sample_count = union_sample_indices.len();
     let mut union_buffer_pool = GenotypeBufferPool::default();
     let mut warnings = Vec::new();
@@ -617,7 +637,6 @@ where
             statistics,
             genotype_buffer: OwnedGenotypeBuffer::Dosage(group_dosages),
             active_trait_indices,
-            output_statistic_dtype: settings.output_statistic_dtype,
         };
         let pipeline = group_runtime
             .pipeline

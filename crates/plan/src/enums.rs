@@ -83,11 +83,6 @@ string_enum!(GpuGenotypeFormat {
     Packed8 => "packed8",
 });
 
-string_enum!(FloatingPointDtype {
-    Float32 => "float32",
-    Float64 => "float64",
-});
-
 string_enum!(JaxMatmulPrecision {
     Float32 => "float32",
     TensorFloat32 => "tensorfloat32",
@@ -109,7 +104,6 @@ string_enum!(TelemetryMode {
     Off => "off",
     Progress => "progress",
     Profile => "profile",
-    Trace => "trace",
 });
 
 string_enum!(ResumeMode {

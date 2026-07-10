@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
@@ -62,9 +62,10 @@ impl From<serde_json::Error> for TelemetryRunError {
     }
 }
 
+#[derive(Clone)]
 pub struct TelemetryRunSession {
     run_id: String,
-    writer: Option<Mutex<TelemetrySessionWriter>>,
+    writer: Option<Arc<Mutex<TelemetrySessionWriter>>>,
 }
 
 impl TelemetryRunSession {
@@ -80,19 +81,15 @@ impl TelemetryRunSession {
         stream_file: Option<PathBuf>,
         queue_size: usize,
         lossy: bool,
-        trace_event_cap: i64,
+        _trace_event_cap: i64,
         run_id: Option<String>,
     ) -> Result<Self, TelemetryRunError> {
         let writer = if telemetry_mode == g_plan::TelemetryMode::Off {
             None
         } else {
             let stream_file = stream_file.ok_or(TelemetryRunError::MissingStreamFile)?;
-            let event_cap = (telemetry_mode == g_plan::TelemetryMode::Trace && trace_event_cap > 0)
-                .then_some(trace_event_cap)
-                .map(usize::try_from)
-                .transpose()
-                .map_err(|_| TelemetryRunError::EventCapOutOfRange)?;
-            Some(Mutex::new(TelemetrySessionWriter::new(stream_file, queue_size, lossy, event_cap)?))
+            let event_cap = None;
+            Some(Arc::new(Mutex::new(TelemetrySessionWriter::new(stream_file, queue_size, lossy, event_cap)?)))
         };
         Ok(Self { run_id: run_id.unwrap_or_else(generate_run_id), writer })
     }

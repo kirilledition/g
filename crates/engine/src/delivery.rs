@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use g_input::AlignedPhenotypeGroup;
 use g_output::OutputWriterSession;
-use g_plan::{FloatingPointDtype, NullLogisticNonconvergencePolicy};
+use g_plan::NullLogisticNonconvergencePolicy;
+
+use crate::progress::DeliveryProgress;
 
 /// Runtime controls and output state for one aligned phenotype group.
 pub(crate) struct AssociationDeliverySettings {
@@ -13,7 +15,7 @@ pub(crate) struct AssociationDeliverySettings {
     pub null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicy,
     pub staging_depth: usize,
     pub result_in_flight_limit: usize,
-    pub output_statistic_dtype: FloatingPointDtype,
+    pub progress: Option<DeliveryProgress>,
     pub use_packed8: bool,
 }
 

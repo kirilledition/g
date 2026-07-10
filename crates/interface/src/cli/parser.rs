@@ -3,7 +3,6 @@ use std::num::NonZeroU32;
 use clap::{ArgAction, Args, Parser};
 use g_plan as plan;
 
-use super::super::domain::NameList;
 use super::super::overlay::ConfigLayer;
 use super::super::{ConfigError, ConfigResult};
 
@@ -46,8 +45,6 @@ pub(crate) struct TraitCli {
     pub(crate) bt: bool,
     #[arg(long = "bsize", help_heading = "Trait")]
     pub(crate) bsize: Option<NonZeroU32>,
-    #[arg(long = "threads", help_heading = "Trait")]
-    pub(crate) threads: Option<NonZeroU32>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -60,14 +57,10 @@ pub(crate) struct InputCli {
     pub(crate) pheno_file: Option<String>,
     #[arg(long = "phenoCol", action = ArgAction::Append, help_heading = "Input")]
     pub(crate) pheno_col: Vec<String>,
-    #[arg(long = "phenoColList", help_heading = "Input")]
-    pub(crate) pheno_col_list: Option<NameList>,
     #[arg(long = "covarFile", help_heading = "Input")]
     pub(crate) covar_file: Option<String>,
     #[arg(long = "covarCol", action = ArgAction::Append, help_heading = "Input")]
     pub(crate) covar_col: Vec<String>,
-    #[arg(long = "covarColList", help_heading = "Input")]
-    pub(crate) covar_col_list: Option<NameList>,
     #[arg(long = "pred", help_heading = "Input")]
     pub(crate) pred: Option<String>,
 }

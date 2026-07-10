@@ -21,18 +21,12 @@ pub(crate) fn build_logging_runtime_policy(
     telemetry_paths: &crate::telemetry_policy::TelemetryPathsPayload,
 ) -> LoggingRuntimePolicyPayload {
     let diagnostics = &run_plan.diagnostics;
-    let telemetry_mode = diagnostics.telemetry;
     let telemetry_stream_file = telemetry_paths.stream_file.clone();
     let telemetry_stream_file_is_some = telemetry_stream_file.is_some();
     let resolved_log_file = if telemetry_stream_file_is_some { None } else { diagnostics.log_file.clone() };
     let resolved_trace_file = telemetry_stream_file.or_else(|| diagnostics.trace_file.clone());
-    let resolved_trace_filter = if telemetry_stream_file_is_some && telemetry_mode != g_plan::TelemetryMode::Trace {
-        diagnostics.log_filter.clone()
-    } else {
-        diagnostics.trace_filter.clone()
-    };
-    let resolved_trace_event_cap =
-        (telemetry_mode == g_plan::TelemetryMode::Trace).then_some(i64::from(diagnostics.trace_event_cap));
+    let resolved_trace_filter = diagnostics.log_filter.clone();
+    let resolved_trace_event_cap = None;
     LoggingRuntimePolicyPayload {
         log_filter: diagnostics.log_filter.clone(),
         log_file: resolved_log_file,

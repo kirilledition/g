@@ -46,7 +46,7 @@ pub fn configure_global_rayon_thread_pool(thread_count: usize) -> Result<(), Ray
 #[must_use]
 pub fn format_global_rayon_thread_pool_configuration_error(thread_count: i64, source_error: &str) -> String {
     format!(
-        "Unable to configure Rayon global thread pool for --threads={thread_count}; \
+        "Unable to configure Rayon global thread pool for configured CPU threads={thread_count}; \
          existing Rayon settings are unknown: {source_error}"
     )
 }

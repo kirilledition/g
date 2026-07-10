@@ -28,7 +28,6 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     chunk_schema: &Arc<Schema>,
     parquet_record_batch_schema: &Arc<Schema>,
     chunk_file_path: &Path,
-    parquet_compression: g_plan::ParquetCompression,
     chunk_commits: &[manifest::RunManifestChunkCommit],
 ) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
@@ -36,7 +35,7 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
-    let writer_properties = build_regenie_step2_parquet_writer_properties(parquet_compression);
+    let writer_properties = build_regenie_step2_parquet_writer_properties();
     let mut writer = ArrowWriter::try_new(output_file, Arc::clone(chunk_schema), Some(writer_properties))
         .map_err(OutputError::runtime)?;
     writer.append_key_value_metadata(KeyValue {
@@ -75,11 +74,8 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     })
 }
 
-fn build_regenie_step2_parquet_writer_properties(parquet_compression: g_plan::ParquetCompression) -> WriterProperties {
-    let compression = match parquet_compression {
-        g_plan::ParquetCompression::Zstd => Compression::ZSTD(ZstdLevel::default()),
-        g_plan::ParquetCompression::None => Compression::UNCOMPRESSED,
-    };
+fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
+    let compression = Compression::ZSTD(ZstdLevel::default());
     WriterProperties::builder()
         .set_compression(compression)
         .set_max_row_group_row_count(Some(REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE))

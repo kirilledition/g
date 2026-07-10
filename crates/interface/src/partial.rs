@@ -70,7 +70,6 @@ pub(crate) struct PartialTraitConfig {
     pub(crate) qt: Option<bool>,
     pub(crate) bt: Option<bool>,
     pub(crate) bsize: Option<NonZeroU32>,
-    pub(crate) threads: Option<NonZeroU32>,
 }
 
 impl PartialTraitConfig {
@@ -78,7 +77,6 @@ impl PartialTraitConfig {
         Ok(TraitConfigData {
             trait_type: normalize_trait_type(self.trait_type, self.qt, self.bt)?,
             bsize: required("bsize", self.bsize)?,
-            threads: self.threads,
         })
     }
 }
@@ -105,23 +103,18 @@ impl PartialBinaryConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialComputeConfig {
     pub(crate) device: Option<plan::Device>,
-    pub(crate) staging_depth: Option<NonZeroU32>,
-    pub(crate) result_in_flight_limit: Option<NonZeroU32>,
-    pub(crate) variant_limit: Option<NonZeroU32>,
-    pub(crate) trusted_no_missing_diploid: Option<bool>,
-    pub(crate) trusted_bgen_validation_mode: Option<plan::TrustedBgenValidationMode>,
-    pub(crate) sample_key_mode: Option<plan::SampleKeyMode>,
+    pub(crate) cpu_threads: Option<NonZeroU32>,
     pub(crate) multi_phenotype_sample_mode: Option<plan::MultiPhenotypeSampleMode>,
     pub(crate) firth_batch_size: Option<NonZeroU32>,
     pub(crate) firth_candidate_capacity: Option<NonZeroU32>,
     pub(crate) binary_null_maximum_iterations: Option<NonZeroU32>,
-    pub(crate) binary_null_coefficient_tolerance: Option<plan::PositiveF64>,
+    pub(crate) binary_null_coefficient_tolerance: Option<plan::PositiveF32>,
     pub(crate) null_logistic_nonconvergence_policy: Option<plan::NullLogisticNonconvergencePolicy>,
     pub(crate) binary_minimum_probability: Option<plan::ProbabilityFloor>,
-    pub(crate) binary_minimum_variance: Option<plan::PositiveF64>,
-    pub(crate) binary_relative_variance_tolerance: Option<plan::PositiveF64>,
-    pub(crate) linear_minimum_variance: Option<plan::PositiveF64>,
-    pub(crate) linear_relative_variance_tolerance: Option<plan::PositiveF64>,
+    pub(crate) binary_minimum_variance: Option<plan::PositiveF32>,
+    pub(crate) binary_relative_variance_tolerance: Option<plan::PositiveF32>,
+    pub(crate) linear_minimum_variance: Option<plan::PositiveF32>,
+    pub(crate) linear_relative_variance_tolerance: Option<plan::PositiveF32>,
     pub(crate) firth_maximum_iterations: Option<NonZeroU32>,
     pub(crate) firth_gradient_tolerance: Option<plan::PositiveF64>,
     pub(crate) firth_coefficient_tolerance: Option<plan::PositiveF64>,
@@ -143,16 +136,7 @@ pub(crate) struct PartialComputeConfig {
     pub(crate) null_firth_line_search_maximum_attempts: Option<NonZeroU32>,
     pub(crate) null_firth_step_halving_scale: Option<plan::StepScale>,
     pub(crate) use_block_firth_math: Option<bool>,
-    pub(crate) bgen_decode_tile_variant_count: Option<NonZeroU32>,
-    pub(crate) gpu_genotype_format: Option<plan::GpuGenotypeFormat>,
-    pub(crate) score_dtype: Option<plan::FloatingPointDtype>,
     pub(crate) jax_cache_dir: Option<String>,
-    pub(crate) jax_matmul_precision: Option<plan::JaxMatmulPrecision>,
-    pub(crate) jax_persistent_cache: Option<bool>,
-    pub(crate) jax_persistent_cache_min_entry_size_bytes: Option<i64>,
-    pub(crate) jax_persistent_cache_min_compile_time_seconds: Option<u32>,
-    pub(crate) jax_xla_autotune_cache: Option<bool>,
-    pub(crate) jax_transfer_guard: Option<bool>,
 }
 
 impl PartialComputeConfig {
@@ -164,12 +148,7 @@ impl PartialComputeConfig {
         let jax = self.resolve_jax_fields()?;
         Ok(GComputeConfigData {
             device: core.device,
-            staging_depth: core.staging_depth,
-            result_in_flight_limit: core.result_in_flight_limit,
-            variant_limit: core.variant_limit,
-            trusted_no_missing_diploid: core.trusted_no_missing_diploid,
-            trusted_bgen_validation_mode: core.trusted_bgen_validation_mode,
-            sample_key_mode: core.sample_key_mode,
+            cpu_threads: core.cpu_threads,
             multi_phenotype_sample_mode: core.multi_phenotype_sample_mode,
             firth_batch_size: core.firth_batch_size,
             firth_candidate_capacity: core.firth_candidate_capacity,
@@ -202,28 +181,14 @@ impl PartialComputeConfig {
             null_firth_line_search_maximum_attempts: null_firth.line_search_maximum_attempts,
             null_firth_step_halving_scale: null_firth.step_halving_scale,
             use_block_firth_math: genotype.use_block_firth_math,
-            bgen_decode_tile_variant_count: genotype.bgen_decode_tile_variant_count,
-            gpu_genotype_format: genotype.gpu_genotype_format,
-            score_dtype: genotype.score_dtype,
             jax_cache_dir: jax.cache_dir,
-            jax_matmul_precision: jax.matmul_precision,
-            jax_persistent_cache: jax.persistent_cache,
-            jax_persistent_cache_min_entry_size_bytes: jax.persistent_cache_min_entry_size_bytes,
-            jax_persistent_cache_min_compile_time_seconds: jax.persistent_cache_min_compile_time_seconds,
-            jax_xla_autotune_cache: jax.xla_autotune_cache,
-            jax_transfer_guard: jax.transfer_guard,
         })
     }
 
     fn resolve_core_fields(&self) -> ConfigResult<ResolvedComputeCoreFields> {
         Ok(ResolvedComputeCoreFields {
             device: required("device", self.device)?,
-            staging_depth: required("staging_depth", self.staging_depth)?,
-            result_in_flight_limit: self.result_in_flight_limit,
-            variant_limit: self.variant_limit,
-            trusted_no_missing_diploid: required("trusted_no_missing_diploid", self.trusted_no_missing_diploid)?,
-            trusted_bgen_validation_mode: required("trusted_bgen_validation_mode", self.trusted_bgen_validation_mode)?,
-            sample_key_mode: required("sample_key_mode", self.sample_key_mode)?,
+            cpu_threads: self.cpu_threads,
             multi_phenotype_sample_mode: required("multi_phenotype_sample_mode", self.multi_phenotype_sample_mode)?,
             firth_batch_size: required("firth_batch_size", self.firth_batch_size)?,
             firth_candidate_capacity: required("firth_candidate_capacity", self.firth_candidate_capacity)?,
@@ -310,53 +275,30 @@ impl PartialComputeConfig {
     fn resolve_genotype_fields(&self) -> ConfigResult<ResolvedGenotypeFields> {
         Ok(ResolvedGenotypeFields {
             use_block_firth_math: required("use_block_firth_math", self.use_block_firth_math)?,
-            bgen_decode_tile_variant_count: required(
-                "bgen_decode_tile_variant_count",
-                self.bgen_decode_tile_variant_count,
-            )?,
-            gpu_genotype_format: required("gpu_genotype_format", self.gpu_genotype_format)?,
-            score_dtype: required("score_dtype", self.score_dtype)?,
         })
     }
 
     fn resolve_jax_fields(&self) -> ConfigResult<ResolvedJaxFields> {
         Ok(ResolvedJaxFields {
             cache_dir: self.jax_cache_dir.clone(),
-            matmul_precision: self.jax_matmul_precision,
-            persistent_cache: required("jax_persistent_cache", self.jax_persistent_cache)?,
-            persistent_cache_min_entry_size_bytes: required(
-                "jax_persistent_cache_min_entry_size_bytes",
-                self.jax_persistent_cache_min_entry_size_bytes,
-            )?,
-            persistent_cache_min_compile_time_seconds: required(
-                "jax_persistent_cache_min_compile_time_seconds",
-                self.jax_persistent_cache_min_compile_time_seconds,
-            )?,
-            xla_autotune_cache: required("jax_xla_autotune_cache", self.jax_xla_autotune_cache)?,
-            transfer_guard: required("jax_transfer_guard", self.jax_transfer_guard)?,
         })
     }
 }
 
 struct ResolvedComputeCoreFields {
     device: plan::Device,
-    staging_depth: NonZeroU32,
-    result_in_flight_limit: Option<NonZeroU32>,
-    variant_limit: Option<NonZeroU32>,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: plan::TrustedBgenValidationMode,
-    sample_key_mode: plan::SampleKeyMode,
+    cpu_threads: Option<NonZeroU32>,
     multi_phenotype_sample_mode: plan::MultiPhenotypeSampleMode,
     firth_batch_size: NonZeroU32,
     firth_candidate_capacity: NonZeroU32,
     binary_null_maximum_iterations: NonZeroU32,
-    binary_null_coefficient_tolerance: plan::PositiveF64,
+    binary_null_coefficient_tolerance: plan::PositiveF32,
     null_logistic_nonconvergence_policy: plan::NullLogisticNonconvergencePolicy,
     binary_minimum_probability: plan::ProbabilityFloor,
-    binary_minimum_variance: plan::PositiveF64,
-    binary_relative_variance_tolerance: plan::PositiveF64,
-    linear_minimum_variance: plan::PositiveF64,
-    linear_relative_variance_tolerance: plan::PositiveF64,
+    binary_minimum_variance: plan::PositiveF32,
+    binary_relative_variance_tolerance: plan::PositiveF32,
+    linear_minimum_variance: plan::PositiveF32,
+    linear_relative_variance_tolerance: plan::PositiveF32,
 }
 
 struct ResolvedFirthFields {
@@ -387,19 +329,10 @@ struct ResolvedNullFirthFields {
 
 struct ResolvedGenotypeFields {
     use_block_firth_math: bool,
-    bgen_decode_tile_variant_count: NonZeroU32,
-    gpu_genotype_format: plan::GpuGenotypeFormat,
-    score_dtype: plan::FloatingPointDtype,
 }
 
 struct ResolvedJaxFields {
     cache_dir: Option<String>,
-    matmul_precision: Option<plan::JaxMatmulPrecision>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: u32,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -408,12 +341,7 @@ pub(crate) struct PartialOutputConfig {
     pub(crate) out: Option<String>,
     pub(crate) output_run_directory: Option<String>,
     pub(crate) writer_threads: Option<NonZeroU32>,
-    pub(crate) writer_queue_depth: Option<NonZeroU32>,
-    pub(crate) chunks_per_parquet_file: Option<NonZeroU32>,
-    pub(crate) parquet_compression: Option<plan::ParquetCompression>,
-    pub(crate) output_statistic_dtype: Option<plan::FloatingPointDtype>,
     pub(crate) resume: Option<bool>,
-    pub(crate) resume_mode: Option<plan::ResumeMode>,
 }
 
 impl PartialOutputConfig {
@@ -422,12 +350,7 @@ impl PartialOutputConfig {
             out: self.out,
             output_run_directory: self.output_run_directory,
             writer_threads: required("writer_threads", self.writer_threads)?,
-            writer_queue_depth: required("writer_queue_depth", self.writer_queue_depth)?,
-            chunks_per_parquet_file: required("chunks_per_parquet_file", self.chunks_per_parquet_file)?,
-            parquet_compression: required("parquet_compression", self.parquet_compression)?,
-            output_statistic_dtype: required("output_statistic_dtype", self.output_statistic_dtype)?,
             resume: required("resume", self.resume)?,
-            resume_mode: required("resume_mode", self.resume_mode)?,
         })
     }
 }
@@ -436,38 +359,12 @@ impl PartialOutputConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialDiagnosticsConfig {
     pub(crate) telemetry: Option<plan::TelemetryMode>,
-    pub(crate) log_dir: Option<String>,
-    pub(crate) stage_timings_json: Option<String>,
-    pub(crate) log_filter: Option<String>,
-    pub(crate) log_file: Option<String>,
-    pub(crate) log_stderr: Option<bool>,
-    pub(crate) profile_summary_json: Option<String>,
-    pub(crate) trace_file: Option<String>,
-    pub(crate) trace_filter: Option<String>,
-    pub(crate) trace_event_cap: Option<u32>,
-    pub(crate) log_queue_size: Option<NonZeroU32>,
-    pub(crate) log_lossy: Option<bool>,
-    pub(crate) include_source_location: Option<bool>,
-    pub(crate) include_span_events: Option<bool>,
 }
 
 impl PartialDiagnosticsConfig {
     fn resolve(self) -> ConfigResult<GDiagnosticsConfigData> {
         Ok(GDiagnosticsConfigData {
             telemetry: required("telemetry", self.telemetry)?,
-            log_dir: self.log_dir,
-            stage_timings_json: self.stage_timings_json,
-            log_filter: required("log_filter", self.log_filter)?,
-            log_file: self.log_file,
-            log_stderr: required("log_stderr", self.log_stderr)?,
-            profile_summary_json: self.profile_summary_json,
-            trace_file: self.trace_file,
-            trace_filter: required("trace_filter", self.trace_filter)?,
-            trace_event_cap: required("trace_event_cap", self.trace_event_cap)?,
-            log_queue_size: required("log_queue_size", self.log_queue_size)?,
-            log_lossy: required("log_lossy", self.log_lossy)?,
-            include_source_location: required("include_source_location", self.include_source_location)?,
-            include_span_events: required("include_span_events", self.include_span_events)?,
         })
     }
 }

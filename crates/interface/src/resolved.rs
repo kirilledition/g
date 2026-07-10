@@ -97,8 +97,6 @@ impl InputConfigData {
 pub struct TraitConfigData {
     pub trait_type: plan::RegenieTraitType,
     pub bsize: NonZeroU32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub threads: Option<NonZeroU32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -109,28 +107,21 @@ pub struct BinaryConfigData {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public g-specific boolean options.")]
 pub struct GComputeConfigData {
     pub device: plan::Device,
-    pub staging_depth: NonZeroU32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result_in_flight_limit: Option<NonZeroU32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant_limit: Option<NonZeroU32>,
-    pub trusted_no_missing_diploid: bool,
-    pub trusted_bgen_validation_mode: plan::TrustedBgenValidationMode,
-    pub sample_key_mode: plan::SampleKeyMode,
+    pub cpu_threads: Option<NonZeroU32>,
     pub multi_phenotype_sample_mode: plan::MultiPhenotypeSampleMode,
     pub firth_batch_size: NonZeroU32,
     pub firth_candidate_capacity: NonZeroU32,
     pub binary_null_maximum_iterations: NonZeroU32,
-    pub binary_null_coefficient_tolerance: plan::PositiveF64,
+    pub binary_null_coefficient_tolerance: plan::PositiveF32,
     pub null_logistic_nonconvergence_policy: plan::NullLogisticNonconvergencePolicy,
     pub binary_minimum_probability: plan::ProbabilityFloor,
-    pub binary_minimum_variance: plan::PositiveF64,
-    pub binary_relative_variance_tolerance: plan::PositiveF64,
-    pub linear_minimum_variance: plan::PositiveF64,
-    pub linear_relative_variance_tolerance: plan::PositiveF64,
+    pub binary_minimum_variance: plan::PositiveF32,
+    pub binary_relative_variance_tolerance: plan::PositiveF32,
+    pub linear_minimum_variance: plan::PositiveF32,
+    pub linear_relative_variance_tolerance: plan::PositiveF32,
     pub firth_maximum_iterations: NonZeroU32,
     pub firth_gradient_tolerance: plan::PositiveF64,
     pub firth_coefficient_tolerance: plan::PositiveF64,
@@ -152,18 +143,8 @@ pub struct GComputeConfigData {
     pub null_firth_line_search_maximum_attempts: NonZeroU32,
     pub null_firth_step_halving_scale: plan::StepScale,
     pub use_block_firth_math: bool,
-    pub bgen_decode_tile_variant_count: NonZeroU32,
-    pub gpu_genotype_format: plan::GpuGenotypeFormat,
-    pub score_dtype: plan::FloatingPointDtype,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jax_cache_dir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub jax_matmul_precision: Option<plan::JaxMatmulPrecision>,
-    pub jax_persistent_cache: bool,
-    pub jax_persistent_cache_min_entry_size_bytes: i64,
-    pub jax_persistent_cache_min_compile_time_seconds: u32,
-    pub jax_xla_autotune_cache: bool,
-    pub jax_transfer_guard: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -173,36 +154,12 @@ pub struct GOutputConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_run_directory: Option<String>,
     pub writer_threads: NonZeroU32,
-    pub writer_queue_depth: NonZeroU32,
-    pub chunks_per_parquet_file: NonZeroU32,
-    pub parquet_compression: plan::ParquetCompression,
-    pub output_statistic_dtype: plan::FloatingPointDtype,
     pub resume: bool,
-    pub resume_mode: plan::ResumeMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[expect(clippy::struct_excessive_bools, reason = "Diagnostics config mirrors public g-specific boolean options.")]
 pub struct GDiagnosticsConfigData {
     pub telemetry: plan::TelemetryMode,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub log_dir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stage_timings_json: Option<String>,
-    pub log_filter: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub log_file: Option<String>,
-    pub log_stderr: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile_summary_json: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_file: Option<String>,
-    pub trace_filter: String,
-    pub trace_event_cap: u32,
-    pub log_queue_size: NonZeroU32,
-    pub log_lossy: bool,
-    pub include_source_location: bool,
-    pub include_span_events: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

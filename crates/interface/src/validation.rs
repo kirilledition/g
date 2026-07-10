@@ -21,11 +21,14 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
     if config.input.bgen.is_none() {
         return Err(ConfigError::new("Exactly one genotype source is required; currently only --bgen is supported."));
     }
+    if config.input.sample.is_none() {
+        return Err(ConfigError::new("--sample is required; BGEN inputs must be paired with an Oxford sample file."));
+    }
     if config.input.pheno_file.is_none() {
         return Err(ConfigError::new("--phenoFile is required."));
     }
     if config.input.pheno_columns.is_empty() {
-        return Err(ConfigError::new("At least one --phenoCol or --phenoColList entry is required."));
+        return Err(ConfigError::new("At least one --phenoCol entry is required."));
     }
     validate_unique_phenotype_names(&config.input.pheno_columns)?;
     if config.input.pred.is_none() {
@@ -38,18 +41,6 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
 }
 
 fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.g_compute.gpu_genotype_format == plan::GpuGenotypeFormat::Packed8
-        && config.g_compute.device != plan::Device::Gpu
-    {
-        return Err(ConfigError::new("--gpu_genotype_format=packed8 requires --device=gpu."));
-    }
-    if config.g_compute.score_dtype == plan::FloatingPointDtype::Float32
-        && config.g_output.output_statistic_dtype == plan::FloatingPointDtype::Float64
-    {
-        return Err(ConfigError::new(
-            "output_statistic_dtype cannot be wider than score_dtype; use float32 output or float64 score computation.",
-        ));
-    }
     validate_quantitative_binary_config(config)?;
     Ok(())
 }

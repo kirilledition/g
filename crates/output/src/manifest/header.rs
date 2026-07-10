@@ -45,7 +45,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     )?;
     let sample_fingerprint = build_optional_file_fingerprint_with_cache(
         fingerprint_cache,
-        run_plan.input.sample_path.as_deref().map(Path::new),
+        Some(Path::new(&run_plan.input.sample_path)),
         true,
     )?;
     let phenotype_file_fingerprint = build_required_file_fingerprint_with_cache(
@@ -103,8 +103,8 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "writer_thread_count": run_plan.output.writer_thread_count,
         "writer_queue_depth": run_plan.output.writer_queue_depth,
         "chunks_per_parquet_file": run_plan.output.chunks_per_parquet_file,
-        "parquet_compression": run_plan.output.parquet_compression.as_str(),
-        "result_statistic_dtype": run_plan.output.output_statistic_dtype.as_str(),
+        "parquet_compression": "zstd",
+        "result_statistic_dtype": "float32",
     });
     let sample_count = i64::try_from(input.sample_count)
         .map_err(|_| OutputError::InvalidInput("Sample count does not fit manifest int64.".to_string()))?;
@@ -132,7 +132,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "bgen_decode_tile_variant_count": run_plan.compute.bgen_decode_tile_variant_count,
         "jax_policy": jax_policy,
         "requested_gpu_genotype_format": run_plan.compute.requested_gpu_genotype_format.as_str(),
-        "score_dtype": run_plan.compute.score_dtype.as_str(),
+        "score_dtype": "float32",
         "multi_phenotype_sample_mode": input.output_sample_mode.as_str(),
         "phenotype_compute_group_id": input.phenotype_compute_group_id,
         "sample_set_fingerprint": input.sample_set_fingerprint,

@@ -16,8 +16,6 @@ use super::{chunk_manifest, streams};
 pub(crate) fn write_regenie_step2_chunk_job(
     parts_directory: &Path,
     job: RegenieStep2ChunkWriteBatch,
-    output_statistic_dtype: g_plan::FloatingPointDtype,
-    parquet_compression: g_plan::ParquetCompression,
 ) -> OutputResult<RegenieStep2ChunkWriteResult> {
     let total_start_time = Instant::now();
     let chunk_file_path = parts_directory.join(&job.chunk_file_name);
@@ -31,16 +29,14 @@ pub(crate) fn write_regenie_step2_chunk_job(
     })?;
     let chunk_commits = chunk_manifest::build_run_manifest_chunk_commits(&job)?;
 
-    let chunk_schema = Arc::clone(schema::get_regenie_step2_chunk_schema(output_statistic_dtype));
-    let parquet_record_batch_schema =
-        Arc::clone(schema::get_regenie_step2_parquet_record_batch_schema(output_statistic_dtype));
+    let chunk_schema = Arc::clone(schema::get_regenie_step2_chunk_schema());
+    let parquet_record_batch_schema = Arc::clone(schema::get_regenie_step2_parquet_record_batch_schema());
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
     let stream_write_result = streams::write_regenie_step2_chunks_to_parquet_file(
         job.chunks,
         &chunk_schema,
         &parquet_record_batch_schema,
         &temporary_chunk_file_path,
-        parquet_compression,
         &chunk_commits,
     )?;
     record_batch_build_timing.add(stream_write_result.record_batch_build_timing);

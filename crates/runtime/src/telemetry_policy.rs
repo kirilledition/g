@@ -70,7 +70,7 @@ pub(crate) fn resolve_telemetry_paths(run_plan: &g_plan::RunPlan) -> Result<Tele
         match (diagnostics.profile_summary_path.as_deref().map(Path::new), resolved_log_dir.as_deref(), telemetry_mode)
         {
             (Some(path), _, _) => Some(path.to_path_buf()),
-            (None, Some(directory), g_plan::TelemetryMode::Profile | g_plan::TelemetryMode::Trace) => {
+            (None, Some(directory), g_plan::TelemetryMode::Profile) => {
                 Some(directory.join(PROFILE_SUMMARY_JSON_FILE_NAME))
             }
             _ => None,

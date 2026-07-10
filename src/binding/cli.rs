@@ -111,7 +111,7 @@ fn execute_compiled_run(
         native_session.record_stage_duration("jax_runtime_configuration", runtime_start_time);
 
         let backend_start_time = Instant::now();
-        let backend_config = Py::new(py, JaxBackendConfig::new(&run_plan))?;
+        let backend_config = Py::new(py, JaxBackendConfig::new(&run_plan)?)?;
         let backend =
             PyModule::import(py, "g.jax_backend")?.getattr("JaxAssociationBackend")?.call1((backend_config,))?.unbind();
         let backend = Arc::new(PyJaxBackend::new(backend));

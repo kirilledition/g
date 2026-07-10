@@ -12,6 +12,7 @@ from g.compute.regenie2_binary import config as regenie2_binary_config
 
 TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 64
 SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 256
+JAX_INT32_INDEX_MAXIMUM = 2_147_483_647
 
 
 @jax.tree_util.register_dataclass
@@ -84,6 +85,24 @@ class FirthCandidateCapacityPlan:
     overflow_candidate_capacity: int
 
 
+def build_compact_int32_indices(active_mask: jax.Array, capacity: int) -> jax.Array:
+    """Compact true-mask positions into a fixed-capacity int32 index vector."""
+    if active_mask.ndim != 1:
+        message = "Index compaction requires a one-dimensional mask."
+        raise ValueError(message)
+    if capacity <= 0:
+        message = "Index compaction capacity must be positive."
+        raise ValueError(message)
+    if active_mask.size > JAX_INT32_INDEX_MAXIMUM or capacity > JAX_INT32_INDEX_MAXIMUM:
+        message = "Index compaction exceeds the JAX int32 index domain."
+        raise ValueError(message)
+    source_indices = jnp.arange(active_mask.size, dtype=jnp.int32)
+    compact_positions = jnp.cumsum(active_mask, dtype=jnp.int32) - 1
+    dropped_position = jnp.asarray(capacity, dtype=jnp.int32)
+    scatter_positions = jnp.where(active_mask, compact_positions, dropped_position)
+    return jnp.zeros((capacity,), dtype=jnp.int32).at[scatter_positions].set(source_indices, mode="drop")
+
+
 def build_firth_candidate_capacity_plan(
     *,
     variant_count: int,
@@ -99,6 +118,9 @@ def build_firth_candidate_capacity_plan(
         raise ValueError(message)
     if trait_count <= 0:
         message = "Trait count must be positive."
+        raise ValueError(message)
+    if variant_count > JAX_INT32_INDEX_MAXIMUM:
+        message = "Flattened Firth candidate count exceeds the JAX int32 index domain."
         raise ValueError(message)
     bounded_candidate_capacity = min(preferred_candidate_capacity, variant_count)
     small_candidate_capacity = min(SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count, bounded_candidate_capacity)
@@ -121,8 +143,15 @@ def build_multi_firth_candidate_capacity_plan(
     if trait_count <= 0:
         message = "Trait count must be positive."
         raise ValueError(message)
+    if variant_count <= 0:
+        message = "Variant count must be positive."
+        raise ValueError(message)
+    flattened_candidate_count = trait_count * variant_count
+    if flattened_candidate_count > JAX_INT32_INDEX_MAXIMUM:
+        message = "Flattened trait-variant candidate count exceeds the JAX int32 index domain."
+        raise ValueError(message)
     return build_firth_candidate_capacity_plan(
-        variant_count=trait_count * variant_count,
+        variant_count=flattened_candidate_count,
         preferred_candidate_capacity=preferred_candidate_capacity * trait_count,
         trait_count=trait_count,
     )
@@ -174,9 +203,21 @@ def build_device_firth_batch_plan(
     firth_batch_size: int,
 ) -> FirthBatchPlan:
     """Build fixed-shape Firth index batches on device."""
+    if candidate_capacity <= 0:
+        message = "Firth candidate capacity must be positive."
+        raise ValueError(message)
+    if firth_batch_size <= 0:
+        message = "Firth batch size must be positive."
+        raise ValueError(message)
+    if fallback_mask.size > JAX_INT32_INDEX_MAXIMUM:
+        message = "Firth fallback mask exceeds the JAX int32 index domain."
+        raise ValueError(message)
     max_batch_count = (candidate_capacity + firth_batch_size - 1) // firth_batch_size
     padded_variant_count = max_batch_count * firth_batch_size
-    fallback_index_vector = jnp.nonzero(fallback_mask, size=candidate_capacity, fill_value=0)[0]
+    if padded_variant_count > JAX_INT32_INDEX_MAXIMUM:
+        message = "Padded Firth candidate count exceeds the JAX int32 index domain."
+        raise ValueError(message)
+    fallback_index_vector = build_compact_int32_indices(fallback_mask, candidate_capacity)
     fallback_count = jnp.sum(fallback_mask, dtype=jnp.int32)
     padded_index_vector = jnp.pad(
         fallback_index_vector,
@@ -184,11 +225,7 @@ def build_device_firth_batch_plan(
         constant_values=0,
     )
     active_mask_vector = jnp.arange(padded_variant_count, dtype=jnp.int32) < fallback_count
-    active_flat_position_vector = jnp.nonzero(
-        active_mask_vector,
-        size=candidate_capacity,
-        fill_value=0,
-    )[0]
+    active_flat_position_vector = build_compact_int32_indices(active_mask_vector, candidate_capacity)
     return FirthBatchPlan(
         fallback_index_matrix=padded_index_vector.reshape((max_batch_count, firth_batch_size)),
         fallback_active_mask_matrix=active_mask_vector.reshape((max_batch_count, firth_batch_size)),
@@ -203,12 +240,15 @@ def build_firth_candidate_bucket_order(
 ) -> jax.Array:
     """Build a stable regular, heuristic, inactive lane order without a full sort."""
     candidate_count = flat_active_mask.shape[0]
+    if candidate_count > JAX_INT32_INDEX_MAXIMUM:
+        message = "Firth candidate bucket exceeds the JAX int32 index domain."
+        raise ValueError(message)
     regular_active_mask = flat_active_mask & (~heuristic_firth_mask)
     heuristic_active_mask = flat_active_mask & heuristic_firth_mask
     inactive_mask = ~flat_active_mask
-    regular_indices = jnp.nonzero(regular_active_mask, size=candidate_count, fill_value=0)[0]
-    heuristic_indices = jnp.nonzero(heuristic_active_mask, size=candidate_count, fill_value=0)[0]
-    inactive_indices = jnp.nonzero(inactive_mask, size=candidate_count, fill_value=0)[0]
+    regular_indices = build_compact_int32_indices(regular_active_mask, candidate_count)
+    heuristic_indices = build_compact_int32_indices(heuristic_active_mask, candidate_count)
+    inactive_indices = build_compact_int32_indices(inactive_mask, candidate_count)
     regular_count = jnp.sum(regular_active_mask, dtype=jnp.int32)
     heuristic_count = jnp.sum(heuristic_active_mask, dtype=jnp.int32)
     output_positions = jnp.arange(candidate_count, dtype=jnp.int32)

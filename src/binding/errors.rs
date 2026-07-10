@@ -48,9 +48,11 @@ pub(super) fn convert_coordinated_run_error(error: CoordinatedRunError<PyJaxBack
         CoordinatedRunError::Preparation(error) => convert_run_preparation_error(error),
         CoordinatedRunError::Execution(error) => convert_run_execution_error(error),
         CoordinatedRunError::Telemetry(error) => PyRuntimeError::new_err(error.to_string()),
+        CoordinatedRunError::Progress(error) => PyRuntimeError::new_err(error.to_string()),
         CoordinatedRunError::Diagnostic(error) => PyRuntimeError::new_err(error.to_string()),
         CoordinatedRunError::PhenotypeCountOutOfRange
         | CoordinatedRunError::ProcessedChunkCountOutOfRange
+        | CoordinatedRunError::AssociationWarningCountOutOfRange
         | CoordinatedRunError::UnresolvedGpuGenotypeFormat
         | CoordinatedRunError::MissingPhenotypeOutput => PyValueError::new_err(error.to_string()),
     }
@@ -80,6 +82,7 @@ pub(super) fn convert_delivery_error(error: DeliveryError<PyJaxBackendError, PyE
         DeliveryError::Prediction(error) => convert_prediction_error("association_delivery", &error),
         DeliveryError::Input(error) => convert_input_error("association_delivery", error),
         DeliveryError::Output(error) => convert_output_error("association_delivery", error),
+        DeliveryError::Progress(error) => PyRuntimeError::new_err(error.to_string()),
         DeliveryError::NullLogisticPolicy(error) => PyValueError::new_err(error.to_string()),
         DeliveryError::Interrupted(error) => error,
         DeliveryError::Scheduler(error) => convert_scheduler_error("association_delivery", error),

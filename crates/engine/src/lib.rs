@@ -16,6 +16,7 @@ mod output_write;
 mod pipeline;
 mod preflight;
 mod preparation;
+mod progress;
 mod run;
 mod run_coordinator;
 mod trusted_validation;

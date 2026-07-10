@@ -22,14 +22,14 @@ pub struct TelemetryEventCapState {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TelemetryWriterCounterSnapshot {
-    pub accepted_event_count: usize,
-    pub written_event_count: usize,
-    pub dropped_event_count: usize,
-    pub cap_dropped_event_count: usize,
-    pub queue_dropped_event_count: usize,
+    pub accepted_event_count: u64,
+    pub written_event_count: u64,
+    pub dropped_event_count: u64,
+    pub cap_dropped_event_count: u64,
+    pub queue_dropped_event_count: u64,
     pub event_cap_exceeded: bool,
     pub lossy: bool,
-    pub event_cap: Option<usize>,
+    pub event_cap: Option<u64>,
 }
 
 impl TelemetryEventCapState {
@@ -52,7 +52,7 @@ impl TelemetryEventCapState {
 
     pub fn record_uncapped_event_count(&self, event_count: usize) {
         if event_count > 0 {
-            self.written_event_count.fetch_add(event_count, Ordering::Relaxed);
+            saturating_atomic_add(&self.written_event_count, event_count);
         }
     }
 
@@ -64,7 +64,7 @@ impl TelemetryEventCapState {
     /// its configured event limit.
     pub fn reserve_event(&self) -> io::Result<TelemetryCapAction> {
         let Some(event_cap) = self.event_cap else {
-            self.written_event_count.fetch_add(1, Ordering::Relaxed);
+            saturating_atomic_add(&self.written_event_count, 1);
             return Ok(TelemetryCapAction::Write);
         };
 
@@ -73,7 +73,7 @@ impl TelemetryEventCapState {
             if written_event_count >= event_cap {
                 self.mark_exceeded();
                 if self.lossy {
-                    self.dropped_event_count.fetch_add(1, Ordering::Relaxed);
+                    saturating_atomic_add(&self.dropped_event_count, 1);
                     return Ok(TelemetryCapAction::Drop);
                 }
                 return Err(io::Error::other(self.cap_exceeded_error_message()));
@@ -103,14 +103,16 @@ impl TelemetryEventCapState {
         let accepted_event_count = self.written_event_count.load(Ordering::Acquire);
         let cap_dropped_event_count = self.dropped_event_count.load(Ordering::Acquire);
         TelemetryWriterCounterSnapshot {
-            accepted_event_count,
-            written_event_count: accepted_event_count.saturating_sub(queue_dropped_event_count),
-            dropped_event_count: cap_dropped_event_count.saturating_add(queue_dropped_event_count),
-            cap_dropped_event_count,
-            queue_dropped_event_count,
+            accepted_event_count: supported_usize_to_u64(accepted_event_count),
+            written_event_count: supported_usize_to_u64(accepted_event_count.saturating_sub(queue_dropped_event_count)),
+            dropped_event_count: supported_usize_to_u64(
+                cap_dropped_event_count.saturating_add(queue_dropped_event_count),
+            ),
+            cap_dropped_event_count: supported_usize_to_u64(cap_dropped_event_count),
+            queue_dropped_event_count: supported_usize_to_u64(queue_dropped_event_count),
             event_cap_exceeded: self.exceeded.load(Ordering::Acquire),
             lossy: self.lossy,
-            event_cap: self.event_cap,
+            event_cap: self.event_cap.map(supported_usize_to_u64),
         }
     }
 
@@ -136,10 +138,11 @@ impl TelemetryEventCapState {
 
     fn mark_exceeded(&self) {
         if !self.exceeded.swap(true, Ordering::AcqRel) && self.lossy {
+            let event_cap = supported_usize_to_u64(self.event_cap.unwrap_or(0));
             tracing::warn!(
                 target: "g.logging",
                 g_event = "native_telemetry_event_cap_exceeded",
-                event_cap = self.event_cap.unwrap_or(0),
+                event_cap,
                 lossy = self.lossy,
                 path = %self.path.display(),
                 message = %self.cap_exceeded_drop_message(),
@@ -147,6 +150,15 @@ impl TelemetryEventCapState {
             );
         }
     }
+}
+
+fn saturating_atomic_add(counter: &AtomicUsize, increment: usize) {
+    let _result =
+        counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| Some(value.saturating_add(increment)));
+}
+
+fn supported_usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).expect("usize must fit u64 on supported 64-bit targets")
 }
 
 impl TelemetryWriterCounterSnapshot {

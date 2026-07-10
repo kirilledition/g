@@ -43,7 +43,7 @@ pub(super) unsafe fn summarize_variant_major_row_avx2(dosage_values: &[f32]) -> 
         let observed_count = i32::try_from(_mm256_movemask_ps(observed_mask).count_ones())
             .expect("AVX2 observed lane count should fit i32");
         row_summary.observation_count += observed_count;
-        row_summary.has_missing_values |= observed_count != i32::try_from(AVX2_DOSAGE_LANE_COUNT).unwrap_or(i32::MAX);
+        row_summary.has_missing_values |= observed_count != 8;
 
         let nonzero_mask = _mm256_and_ps(observed_mask, _mm256_cmp_ps(dosage_vector, nonzero_threshold, _CMP_GT_OQ));
         let nonzero_count = i32::try_from(_mm256_movemask_ps(nonzero_mask).count_ones())

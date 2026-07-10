@@ -21,7 +21,7 @@ from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
 type HostIntegerArray = npt.NDArray[np.int32]
-type HostStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
+type HostStatisticArray = npt.NDArray[np.float32]
 type BinaryDeviceResult = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
 type GroupState = regenie2_linear_state.Regenie2MultiLinearState | regenie2_binary_state.Regenie2MultiBinaryState
 type ChromosomeState = (
@@ -62,7 +62,7 @@ class JaxAssociationBackend:
 
         """
         self.association_mode = types.AssociationMode(config.association_mode)
-        self.score_dtype = types.FloatingPointDtype(config.score_dtype)
+        self.score_dtype = types.FloatingPointDtype.FLOAT32
         self.linear_config = regenie2_linear_config.LinearNumericalConfig(
             minimum_variance=config.linear_minimum_variance,
             relative_variance_tolerance=config.linear_relative_variance_tolerance,
@@ -370,13 +370,11 @@ class JaxAssociationBackend:
                 else jnp.take(device_result.correction_code, active_trait_index_array, axis=0)
             )
 
-        output_statistic_dtype = types.FloatingPointDtype(request.output_statistic_dtype)
-        statistic_jax_dtype = jnp.float32 if output_statistic_dtype == types.FloatingPointDtype.FLOAT32 else jnp.float64
         transfer_payload: dict[str, object] = {
-            "beta": jnp.asarray(beta, dtype=statistic_jax_dtype),
-            "standard_error": jnp.asarray(standard_error, dtype=statistic_jax_dtype),
-            "chi_squared": jnp.asarray(chi_squared, dtype=statistic_jax_dtype),
-            "log10_p_value": jnp.asarray(log10_p_value, dtype=statistic_jax_dtype),
+            "beta": jnp.asarray(beta, dtype=jnp.float32),
+            "standard_error": jnp.asarray(standard_error, dtype=jnp.float32),
+            "chi_squared": jnp.asarray(chi_squared, dtype=jnp.float32),
+            "log10_p_value": jnp.asarray(log10_p_value, dtype=jnp.float32),
             "correction_code": (None if correction_code is None else jnp.asarray(correction_code, dtype=jnp.int32)),
         }
         host_payload = typing.cast("dict[str, object]", jax.device_get(transfer_payload))

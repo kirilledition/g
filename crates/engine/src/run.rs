@@ -15,7 +15,11 @@ use crate::delivery_execution::{
     AssociationDeliveryReport, DeliveryError, run_association_delivery, run_grouped_union_association_delivery,
 };
 use crate::pipeline::BgenRunEngine;
-use crate::preflight::{PreflightError, validate_multi_prediction_values, validate_multi_trait_preflight_values};
+use crate::progress::{DeliveryProgress, RunProgressReporter};
+use crate::preflight::{
+    PreflightError, validate_jax_index_capacity, validate_multi_prediction_values,
+    validate_multi_trait_preflight_values,
+};
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
@@ -42,8 +46,6 @@ pub enum RunPreparationError {
     TrustedValidationCacheDirectory(#[from] g_runtime::TrustedBgenValidationCacheDirectoryError),
     #[error("The run plan contains no phenotype outputs.")]
     EmptyPhenotypePlan,
-    #[error("The BGEN input has no embedded sample identifiers and no sample file was configured.")]
-    MissingSampleIdentifiers,
     #[error("Aligned input produced no phenotype groups.")]
     EmptyPhenotypeGroups,
     #[error("BGEN chromosome boundary metadata contained no chromosome label.")]
@@ -54,6 +56,8 @@ pub enum RunPreparationError {
     NonPositiveCapacity { field_name: &'static str },
     #[error("{field_name} overflowed the native usize representation.")]
     CapacityOverflow { field_name: &'static str },
+    #[error("{field_name} exceeds the JAX int32 domain.")]
+    JaxIntegerOverflow { field_name: &'static str },
 }
 
 /// Binding-owned hooks used at the native run boundary.
@@ -116,6 +120,7 @@ impl RunEngine {
         if run_plan.phenotype_runs.is_empty() {
             return Err(RunPreparationError::EmptyPhenotypePlan);
         }
+        validate_jax_integer_domain(&run_plan)?;
         let decode_tile_variant_count = usize::try_from(run_plan.compute.bgen_decode_tile_variant_count)
             .map_err(|_| RunPreparationError::CapacityOverflow { field_name: "BGEN decode tile variant count" })?;
         g_genotype::set_bgen_decode_tile_variant_count(decode_tile_variant_count)?;
@@ -229,6 +234,26 @@ impl PreparedRun {
         Backend::DeviceResult: 'static,
         Hooks: RunHooks,
     {
+        self.execute_with_progress(backend, hooks, None)
+    }
+
+    /// Execute every prepared group with optional throttled progress reporting.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed backend, hook, delivery, or output completion error.
+    pub fn execute_with_progress<Backend, Hooks>(
+        self,
+        backend: Arc<Backend>,
+        hooks: &mut Hooks,
+        progress_reporter: Option<Arc<RunProgressReporter>>,
+    ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
+    where
+        Backend: AssociationBackend + 'static,
+        Backend::ChromosomeState: 'static,
+        Backend::DeviceResult: 'static,
+        Hooks: RunHooks,
+    {
         let PreparedRun {
             run_plan,
             resolved_gpu_genotype_format,
@@ -241,19 +266,26 @@ impl PreparedRun {
         } = self;
         let grouped_union_sample_indices =
             grouped_union_sample_indices(&groups, resolved_gpu_genotype_format, effective_trusted_no_missing_diploid);
+        let association_mode = run_plan.association_mode.as_str().to_string();
         let requests = groups
             .into_iter()
-            .map(|prepared_group| AssociationDeliveryRequest {
-                group: prepared_group.group,
-                settings: AssociationDeliverySettings {
-                    writer_sessions: prepared_group.output.writer_sessions,
-                    committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
-                    null_logistic_nonconvergence_policy: run_plan.compute.kernels.binary_null.nonconvergence_policy,
-                    staging_depth,
-                    result_in_flight_limit,
-                    output_statistic_dtype: run_plan.output.output_statistic_dtype,
-                    use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
-                },
+            .map(|prepared_group| {
+                let group_name = prepared_group.group.phenotype_group.phenotype_names.join(",");
+                let progress = progress_reporter.as_ref().map(|reporter| {
+                    DeliveryProgress::new(Arc::clone(reporter), group_name, association_mode.clone())
+                });
+                AssociationDeliveryRequest {
+                    group: prepared_group.group,
+                    settings: AssociationDeliverySettings {
+                        writer_sessions: prepared_group.output.writer_sessions,
+                        committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
+                        null_logistic_nonconvergence_policy: run_plan.compute.kernels.binary_null.nonconvergence_policy,
+                        staging_depth,
+                        result_in_flight_limit,
+                        progress,
+                        use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
+                    },
+                }
             })
             .collect::<Vec<_>>();
         let delivery_result = if let Some(union_sample_indices) = grouped_union_sample_indices {
@@ -288,6 +320,44 @@ fn positive_u32_as_usize(value: u32, field_name: &'static str) -> Result<usize, 
         return Err(RunPreparationError::NonPositiveCapacity { field_name });
     }
     usize::try_from(value).map_err(|_| RunPreparationError::CapacityOverflow { field_name })
+}
+
+/// Validate every host-plan integer consumed by JAX.
+///
+/// # Errors
+///
+/// Returns an error when a required count is zero or exceeds the signed int32
+/// domain used by JAX indices, reductions, and loop state.
+pub fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparationError> {
+    let kernels = &run_plan.compute.kernels;
+    let positive_values = [
+        ("analysis chunk size", run_plan.analysis.chunk_size),
+        ("binary null maximum iterations", kernels.binary_null.maximum_iterations),
+        ("Firth batch size", kernels.firth.batch_size),
+        ("Firth candidate capacity", kernels.firth.candidate_capacity),
+        ("Firth maximum iterations", kernels.firth.maximum_iterations),
+        ("Firth pseudo maximum iterations", kernels.firth.pseudo_maximum_iterations),
+        ("Firth pseudo inner maximum iterations", kernels.firth.pseudo_inner_maximum_iterations),
+        ("Firth Newton-Raphson zero-start iterations", kernels.firth.newton_raphson_zero_start_iterations),
+        ("Firth line-search maximum attempts", kernels.firth.line_search_maximum_attempts),
+        ("Firth step-halving maximum attempts", kernels.firth.step_halving_maximum_attempts),
+        ("null Firth maximum iterations", kernels.null_firth.maximum_iterations),
+        ("null Firth fallback iteration multiplier", kernels.null_firth.fallback_iteration_multiplier),
+        ("null Firth line-search maximum attempts", kernels.null_firth.line_search_maximum_attempts),
+    ];
+    for (field_name, value) in positive_values {
+        if value == 0 {
+            return Err(RunPreparationError::NonPositiveCapacity { field_name });
+        }
+        i32::try_from(value).map_err(|_| RunPreparationError::JaxIntegerOverflow { field_name })?;
+    }
+    let fallback_iteration_limit = u64::from(kernels.null_firth.maximum_iterations)
+        .checked_mul(u64::from(kernels.null_firth.fallback_iteration_multiplier))
+        .ok_or(RunPreparationError::JaxIntegerOverflow { field_name: "null Firth fallback iteration limit" })?;
+    if fallback_iteration_limit > u64::try_from(i32::MAX).expect("i32::MAX is positive") {
+        return Err(RunPreparationError::JaxIntegerOverflow { field_name: "null Firth fallback iteration limit" });
+    }
+    Ok(())
 }
 
 fn open_bgen_engine(
@@ -413,21 +483,10 @@ fn load_sample_identifiers(
     run_plan: &RunPlan,
     bgen_engine: &BgenRunEngine,
 ) -> Result<SampleIdentifierData, RunPreparationError> {
-    if let Some(sample_path) = &run_plan.input.sample_path {
-        return Ok(g_input::load_sample_identifier_data_from_sample_file(
-            Path::new(sample_path),
-            bgen_engine.reader.sample_count(),
-        )?);
-    }
-    if !bgen_engine.reader.contains_embedded_samples() {
-        return Err(RunPreparationError::MissingSampleIdentifiers);
-    }
-    let individual_identifiers = bgen_engine.reader.sample_identifiers().to_vec();
-    Ok(SampleIdentifierData {
-        sample_indices: (0..individual_identifiers.len()).collect(),
-        family_identifiers: individual_identifiers.clone(),
-        individual_identifiers,
-    })
+    Ok(g_input::load_sample_identifier_data_from_sample_file(
+        Path::new(&run_plan.input.sample_path),
+        bgen_engine.reader.sample_count(),
+    )?)
 }
 
 fn validate_groups(
@@ -436,9 +495,21 @@ fn validate_groups(
     required_chromosomes: &[String],
 ) -> Result<(), RunPreparationError> {
     let is_binary_trait = run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary;
+    let chunk_size = positive_u32_as_usize(run_plan.analysis.chunk_size, "analysis chunk size")?;
+    let firth_candidate_capacity =
+        positive_u32_as_usize(run_plan.compute.kernels.firth.candidate_capacity, "Firth candidate capacity")?;
+    let firth_batch_size = positive_u32_as_usize(run_plan.compute.kernels.firth.batch_size, "Firth batch size")?;
     for group in groups {
         let trait_count = group.phenotype_group.phenotype_names.len();
         let sample_count = group.sample_indices.len();
+        validate_jax_index_capacity(
+            trait_count,
+            sample_count,
+            chunk_size,
+            firth_candidate_capacity,
+            firth_batch_size,
+            is_binary_trait,
+        )?;
         validate_multi_trait_preflight_values(
             trait_count,
             sample_count,
@@ -488,7 +559,7 @@ fn prepare_output_groups(
     }
     let collect_stage_timings = run_plan.diagnostics.stage_timings_path.is_some()
         || run_plan.diagnostics.profile_summary_path.is_some()
-        || matches!(run_plan.diagnostics.telemetry, g_plan::TelemetryMode::Profile | g_plan::TelemetryMode::Trace);
+        || matches!(run_plan.diagnostics.telemetry, g_plan::TelemetryMode::Profile);
     output_manager.initialize(run_initializations, collect_stage_timings)?;
     groups
         .into_iter()

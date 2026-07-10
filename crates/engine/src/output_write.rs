@@ -5,7 +5,7 @@ use std::sync::Arc;
 use g_genotype::{ChunkStats, VariantMetadataColumns};
 use g_output::{NativeChunkHandle, OutputError, OutputWriterSession, Regenie2StatisticBatch};
 
-use crate::backend::{HostAssociationBatch, HostAssociationStatistics};
+use crate::backend::HostAssociationBatch;
 
 /// Write one completed trait-major association batch.
 ///
@@ -34,48 +34,25 @@ pub fn write_host_association_batch(
             "Materialized correction-code shape does not match active traits and variant metadata.".to_string(),
         ));
     }
-    match result.statistics {
-        HostAssociationStatistics::Float32(statistics) => {
-            validate_host_statistic_shape(
-                statistics.trait_count,
-                statistics.variant_count,
-                expected_trait_count,
-                expected_variant_count,
-            )?;
-            g_output::write_regenie2_multi_trait_chunk_f32(
-                writer_sessions,
-                active_trait_indices,
-                &chunk_handle,
-                Regenie2StatisticBatch {
-                    beta: statistics.beta,
-                    standard_error: statistics.standard_error,
-                    chi_squared: statistics.chi_squared,
-                    log10_p_value: statistics.log10_p_value,
-                    correction_code: result.correction_codes.map(|matrix| matrix.values),
-                },
-            )
-        }
-        HostAssociationStatistics::Float64(statistics) => {
-            validate_host_statistic_shape(
-                statistics.trait_count,
-                statistics.variant_count,
-                expected_trait_count,
-                expected_variant_count,
-            )?;
-            g_output::write_regenie2_multi_trait_chunk_f64(
-                writer_sessions,
-                active_trait_indices,
-                &chunk_handle,
-                Regenie2StatisticBatch {
-                    beta: statistics.beta,
-                    standard_error: statistics.standard_error,
-                    chi_squared: statistics.chi_squared,
-                    log10_p_value: statistics.log10_p_value,
-                    correction_code: result.correction_codes.map(|matrix| matrix.values),
-                },
-            )
-        }
-    }
+    let statistics = result.statistics;
+    validate_host_statistic_shape(
+        statistics.trait_count,
+        statistics.variant_count,
+        expected_trait_count,
+        expected_variant_count,
+    )?;
+    g_output::write_regenie2_multi_trait_chunk_f32(
+        writer_sessions,
+        active_trait_indices,
+        &chunk_handle,
+        Regenie2StatisticBatch {
+            beta: statistics.beta,
+            standard_error: statistics.standard_error,
+            chi_squared: statistics.chi_squared,
+            log10_p_value: statistics.log10_p_value,
+            correction_code: result.correction_codes.map(|matrix| matrix.values),
+        },
+    )
 }
 
 fn validate_host_statistic_shape(

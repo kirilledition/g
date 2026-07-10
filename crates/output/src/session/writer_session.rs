@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array, Float64Array};
+use arrow::array::{ArrayRef, Float32Array};
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::OutputError;
@@ -15,9 +15,7 @@ use super::worker_pool::{OutputWriteCompletionTracker, OutputWriterPool};
 pub(super) struct OutputWriterConfig {
     pub(super) run_directory: PathBuf,
     pub(super) parts_directory: PathBuf,
-    pub(super) output_statistic_dtype: g_plan::FloatingPointDtype,
     pub(super) chunks_per_parquet_file: usize,
-    pub(super) parquet_compression: g_plan::ParquetCompression,
     pub(super) collect_stage_timings: bool,
 }
 
@@ -31,10 +29,8 @@ impl OutputWriterConfig {
         Ok(Self {
             run_directory,
             parts_directory,
-            output_statistic_dtype: output_plan.output_statistic_dtype,
             chunks_per_parquet_file: usize::try_from(output_plan.chunks_per_parquet_file)
                 .map_err(OutputError::runtime)?,
-            parquet_compression: output_plan.parquet_compression,
             collect_stage_timings,
         })
     }
@@ -135,10 +131,10 @@ impl OutputWriterSession {
             row_count,
             &[beta.len(), standard_error.len(), chi_squared.len(), log10_p_value.len()],
         )?;
-        validate_statistic_array_type("BETA", &beta, self.config.output_statistic_dtype)?;
-        validate_statistic_array_type("SE", &standard_error, self.config.output_statistic_dtype)?;
-        validate_statistic_array_type("CHISQ", &chi_squared, self.config.output_statistic_dtype)?;
-        validate_statistic_array_type("LOG10P", &log10_p_value, self.config.output_statistic_dtype)?;
+        validate_statistic_array_type("BETA", &beta)?;
+        validate_statistic_array_type("SE", &standard_error)?;
+        validate_statistic_array_type("CHISQ", &chi_squared)?;
+        validate_statistic_array_type("LOG10P", &log10_p_value)?;
         if let Some(correction_code_values) = correction_code.as_ref() {
             validate_column_lengths(row_count, &[correction_code_values.len()])?;
         }
@@ -417,17 +413,11 @@ pub(super) fn validate_column_lengths(
 pub(super) fn validate_statistic_array_type(
     column_name: &str,
     array: &ArrayRef,
-    output_statistic_dtype: g_plan::FloatingPointDtype,
 ) -> Result<(), OutputError> {
-    let type_matches = match output_statistic_dtype {
-        g_plan::FloatingPointDtype::Float32 => array.as_any().is::<Float32Array>(),
-        g_plan::FloatingPointDtype::Float64 => array.as_any().is::<Float64Array>(),
-    };
-    if type_matches {
+    if array.as_any().is::<Float32Array>() {
         return Ok(());
     }
     Err(OutputError::InvalidInput(format!(
-        "Rust output writer column {column_name} must be {} for the configured output statistic dtype.",
-        output_statistic_dtype.as_str(),
+        "Rust output writer column {column_name} must be float32.",
     )))
 }

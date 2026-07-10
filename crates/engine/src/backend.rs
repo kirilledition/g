@@ -1,7 +1,5 @@
 //! Python-free association backend contract.
 
-use g_plan::FloatingPointDtype;
-
 /// Borrowed trait-major phenotype values with shape `traits x samples`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TraitMajorPhenotypeMatrixView<'view> {
@@ -87,7 +85,6 @@ pub struct GenotypeBatchInput<'view> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MaterializationInput<'view> {
     pub active_trait_indices: &'view [usize],
-    pub output_statistic_dtype: FloatingPointDtype,
 }
 
 /// Trait-major association statistic matrices with shape `traits x variants`.
@@ -101,12 +98,8 @@ pub struct HostAssociationStatisticMatrix<Statistic> {
     pub log10_p_value: Vec<Statistic>,
 }
 
-/// Host statistic precision selected during device materialization.
-#[derive(Clone, Debug, PartialEq)]
-pub enum HostAssociationStatistics {
-    Float32(HostAssociationStatisticMatrix<f32>),
-    Float64(HostAssociationStatisticMatrix<f64>),
-}
+/// Float32 association statistics materialized from the device.
+pub type HostAssociationStatistics = HostAssociationStatisticMatrix<f32>;
 
 /// Trait-major binary correction codes with shape `traits x variants`.
 #[derive(Clone, Debug, Eq, PartialEq)]
