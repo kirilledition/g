@@ -10,8 +10,9 @@ trusted-validation cache policy.
 
 Typed runtime compatibility and subsystem errors, runtime state/policy DTOs,
 `TelemetryRunSession`, telemetry path errors, logging config, JAX setup reports,
-shutdown signal/session/install/restore plans and errors, the stage timing recorder, and active typed lifecycle/diagnostic payloads.
-Telemetry mode is re-exported from canonical `g-plan`.
+shutdown session/install/restore plans and errors, the stage timing recorder,
+and active typed lifecycle/diagnostic payloads. Planning enums remain owned by
+and imported directly from `g-plan`.
 
 ## Public functions
 
@@ -33,5 +34,4 @@ Keep event construction outside inner loops. Do not add data-matrix copies, geno
 
 ## Allowed downstream users
 
-`g-engine` and `g-runner`; the Python host reaches required runtime types only
-through the runner facade.
+`g-engine` and `g-runner` only.

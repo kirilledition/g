@@ -4,12 +4,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
-use g_engine::{AssociationBackend, CoordinatedRunError, JaxBackendSettings, RunHooks};
+use g_engine::{AssociationBackend, JaxBackendSettings, RunHooks};
 use g_interface::CliDispatch;
 use g_runtime::{
-    CLI_RUNTIME_FAILURE_EXIT_CODE, CliOutputBuffer, CliTerminalResult, JaxDeviceObservation,
-    JaxRuntimeConfigUpdatePayload, JaxRuntimeDiagnosticFields, JaxRuntimeSetupSession, LoggingRuntimePolicyPayload,
-    NativeRunSession, ProcessRuntimeState, RunFailedEventPayload, TelemetryRunSession,
+    CLI_RUNTIME_FAILURE_EXIT_CODE, CliOutputBuffer, CliTerminalResult, JaxRuntimeDiagnosticFields,
+    JaxRuntimeSetupSession, LoggingRuntimePolicyPayload, NativeRunSession, ProcessRuntimeState, TelemetryRunSession,
 };
 
 static GLOBAL_PROCESS_RUNTIME_STATE: OnceLock<Mutex<ProcessRuntimeState>> = OnceLock::new();
@@ -48,6 +47,35 @@ pub enum NativeRunInterruption {
     FlushedSigint,
 }
 
+/// JAX runtime value applied through the Python host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JaxRuntimeConfigValue {
+    Boolean(bool),
+    Integer(i64),
+    Text(String),
+}
+
+/// One JAX runtime setting applied through the Python host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxRuntimeConfigUpdate {
+    pub setting_name: String,
+    pub value: JaxRuntimeConfigValue,
+}
+
+/// JAX device information observed by the Python host.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JaxDevice {
+    pub platform: String,
+    pub description: String,
+}
+
+/// Python-host error details rendered by the Rust terminal lifecycle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRunFailure {
+    pub error_type: String,
+    pub error_message: String,
+}
+
 /// Operations the Python host must perform while Rust owns the run lifecycle.
 pub trait NativeRunHost: Send {
     /// Concrete association backend retaining opaque Python state.
@@ -59,16 +87,22 @@ pub trait NativeRunHost: Send {
     fn install_python_logging(&mut self) -> Result<(), Self::Error>;
 
     /// Apply validated JAX configuration updates through the Python runtime.
-    fn apply_jax_config_updates(&mut self, updates: &[JaxRuntimeConfigUpdatePayload]) -> Result<(), Self::Error>;
+    fn apply_jax_config_updates(&mut self, updates: &[JaxRuntimeConfigUpdate]) -> Result<(), Self::Error>;
 
     /// Return Python-owned JAX device observations for GPU validation.
-    fn observe_jax_devices(&mut self) -> Result<Vec<JaxDeviceObservation>, Self::Error>;
+    fn observe_jax_devices(&mut self) -> Result<Vec<JaxDevice>, Self::Error>;
 
     /// Construct the opaque JAX association backend from validated scalar settings.
     fn create_backend(&mut self, settings: JaxBackendSettings) -> Result<Arc<Self::Backend>, Self::Error>;
 
-    /// Check Python signals and the native SIGTERM watcher.
+    /// Check Python signals.
     fn check_interruption(&mut self) -> Result<(), Self::Error>;
+
+    /// Construct the Python-host interruption used for a native SIGTERM request.
+    fn sigterm_interruption_error(&mut self) -> Self::Error;
+
+    /// Mark an interrupted run whose resumable output was successfully flushed.
+    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error;
 
     /// Name the signal associated with an engine interruption, when known.
     fn interruption_signal_name(error: &Self::Error) -> Option<&str>;
@@ -77,16 +111,13 @@ pub trait NativeRunHost: Send {
     fn interruption_kind(&mut self, error: &Self::Error) -> Option<NativeRunInterruption>;
 
     /// Convert a Python-free engine failure into the host error type.
-    fn convert_engine_error(
-        &mut self,
-        error: CoordinatedRunError<<Self::Backend as AssociationBackend>::Error, Self::Error>,
-    ) -> Self::Error;
+    fn engine_error(&mut self, message: String) -> Self::Error;
 
     /// Construct a host error for a native lifecycle failure.
     fn native_runtime_error(&mut self, message: String) -> Self::Error;
 
     /// Convert a host error into the terminal telemetry payload.
-    fn failed_event(&mut self, error: &Self::Error) -> RunFailedEventPayload;
+    fn failed_event(&mut self, error: &Self::Error) -> NativeRunFailure;
 
     /// Read the current Python thread name for telemetry labels.
     fn current_thread_name(&mut self) -> Result<String, Self::Error>;
@@ -109,7 +140,7 @@ where
     type Error = Host::Error;
 
     fn check_interruption(&mut self) -> Result<(), Self::Error> {
-        self.host.check_interruption()
+        check_interruption(self.host)
     }
 
     fn interruption_signal_name(error: &Self::Error) -> Option<&str> {
@@ -197,10 +228,13 @@ where
                 stage_timing_recorder,
             )
         });
-        execution_result.map_err(|error| host.convert_engine_error(error))
+        execution_result.map_err(|error| match error {
+            g_engine::EngineRunError::Interrupted(error) => host.flushed_interruption_error(error),
+            g_engine::EngineRunError::Failure { message } => host.engine_error(message),
+        })
     })();
     if execution_result.is_ok()
-        && let Err(error) = host.check_interruption()
+        && let Err(error) = check_interruption(host)
     {
         execution_result = Err(error);
     }
@@ -211,7 +245,7 @@ where
         execution_result = Err(error);
     }
     if execution_result.is_ok()
-        && let Err(error) = host.check_interruption()
+        && let Err(error) = check_interruption(host)
     {
         execution_result = Err(error);
     }
@@ -221,7 +255,7 @@ where
     };
     let mut close_result =
         finish_telemetry_result(&native_session.telemetry_session, &thread_name, terminal_result.exit_code);
-    if let Err(error) = host.check_interruption() {
+    if let Err(error) = check_interruption(host) {
         terminal_result = terminal_result_from_error(host, None, &thread_name, &error);
         close_result = CliTerminalResult {
             exit_code: terminal_result.exit_code,
@@ -232,6 +266,17 @@ where
     let _ = output.append_terminal_result(terminal_result);
     let exit_code = output.append_terminal_result(close_result);
     Ok(CliRunResult { exit_code, stdout_chunks: output.stdout_chunks, stderr_chunks: output.stderr_chunks })
+}
+
+fn check_interruption<Host>(host: &mut Host) -> Result<(), Host::Error>
+where
+    Host: NativeRunHost,
+{
+    host.check_interruption()?;
+    if g_runtime::sigterm_shutdown_requested() {
+        return Err(host.sigterm_interruption_error());
+    }
+    Ok(())
 }
 
 fn cli_result_from_output(exit_code: i32, stdout: &str, stderr: &str) -> CliRunResult {
@@ -339,7 +384,19 @@ where
     setup_session
         .create_cache_directory_if_configured()
         .map_err(|error| host.native_runtime_error(error.to_string()))?;
-    host.apply_jax_config_updates(&setup_session.config_updates())?;
+    let config_updates = setup_session
+        .config_updates()
+        .into_iter()
+        .map(|update| JaxRuntimeConfigUpdate {
+            setting_name: update.setting_name,
+            value: match update.value {
+                g_runtime::JaxRuntimeConfigValue::Boolean(value) => JaxRuntimeConfigValue::Boolean(value),
+                g_runtime::JaxRuntimeConfigValue::Integer(value) => JaxRuntimeConfigValue::Integer(value),
+                g_runtime::JaxRuntimeConfigValue::Text(value) => JaxRuntimeConfigValue::Text(value),
+            },
+        })
+        .collect::<Vec<_>>();
+    host.apply_jax_config_updates(&config_updates)?;
     if setup_session.setup().gpu_validation_status == "pending" {
         let probe_paths = g_runtime::default_nvidia_driver_probe_paths();
         let nvidia_driver_visible = g_runtime::nvidia_driver_files_are_visible(
@@ -355,8 +412,15 @@ where
         } else {
             (false, Vec::new())
         };
+        let runtime_devices = devices
+            .iter()
+            .map(|device| g_runtime::JaxDeviceObservation {
+                platform: device.platform.clone(),
+                description: device.description.clone(),
+            })
+            .collect::<Vec<_>>();
         let validation_plan =
-            g_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &devices);
+            g_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &runtime_devices);
         setup_session.complete_validation(&validation_plan.status, Some(validation_plan.message.as_str()));
         if validation_plan.should_raise {
             return Err(host.native_runtime_error(validation_plan.message));
@@ -476,7 +540,8 @@ fn failed_terminal_result<Host>(
 where
     Host: NativeRunHost,
 {
-    let failed_event = host.failed_event(error);
+    let failure = host.failed_event(error);
+    let failed_event = g_runtime::build_run_failed_event_payload(&failure.error_type, &failure.error_message);
     if let Some(telemetry_session) = telemetry_session
         && let Some(thread_name) = thread_name
     {

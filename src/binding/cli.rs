@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyTuple};
 
 use crate::binding::engine::{JaxBackendConfig, PyJaxBackend};
-use crate::binding::{errors, runtime, telemetry};
+use crate::binding::{runtime, telemetry};
 
 #[pyclass]
 pub(crate) struct NativeCliRunResult {
@@ -28,11 +28,11 @@ impl native_runner::NativeRunHost for PythonRunHost {
         Python::attach(telemetry::logging::install_python_logging)
     }
 
-    fn apply_jax_config_updates(&mut self, updates: &[native_runner::JaxRuntimeConfigUpdatePayload]) -> PyResult<()> {
+    fn apply_jax_config_updates(&mut self, updates: &[native_runner::JaxRuntimeConfigUpdate]) -> PyResult<()> {
         Python::attach(|py| runtime::jax_runtime::apply_jax_config_updates(py, updates))
     }
 
-    fn observe_jax_devices(&mut self) -> PyResult<Vec<native_runner::JaxDeviceObservation>> {
+    fn observe_jax_devices(&mut self) -> PyResult<Vec<native_runner::JaxDevice>> {
         Python::attach(runtime::jax_runtime::observe_jax_devices)
     }
 
@@ -49,6 +49,16 @@ impl native_runner::NativeRunHost for PythonRunHost {
 
     fn check_interruption(&mut self) -> PyResult<()> {
         Python::attach(runtime::check_process_signals)
+    }
+
+    fn sigterm_interruption_error(&mut self) -> Self::Error {
+        runtime::sigterm_interrupt_error()
+    }
+
+    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error {
+        Python::attach(|py| {
+            if error.is_instance_of::<PyKeyboardInterrupt>(py) { runtime::flushed_interrupt_error() } else { error }
+        })
     }
 
     fn interruption_signal_name(error: &Self::Error) -> Option<&str> {
@@ -77,24 +87,21 @@ impl native_runner::NativeRunHost for PythonRunHost {
         })
     }
 
-    fn convert_engine_error(
-        &mut self,
-        error: native_engine::CoordinatedRunError<
-            <Self::Backend as native_engine::AssociationBackend>::Error,
-            Self::Error,
-        >,
-    ) -> Self::Error {
-        errors::convert_coordinated_run_error(error)
+    fn engine_error(&mut self, message: String) -> Self::Error {
+        PyRuntimeError::new_err(message)
     }
 
     fn native_runtime_error(&mut self, message: String) -> Self::Error {
         PyRuntimeError::new_err(message)
     }
 
-    fn failed_event(&mut self, error: &Self::Error) -> native_runner::RunFailedEventPayload {
+    fn failed_event(&mut self, error: &Self::Error) -> native_runner::NativeRunFailure {
         Python::attach(|py| {
             telemetry::run_events::run_failed_event_payload_from_error(error.value(py)).unwrap_or_else(|event_error| {
-                native_runner::build_run_failed_event_payload("PythonError", &event_error.to_string())
+                native_runner::NativeRunFailure {
+                    error_type: "PythonError".to_string(),
+                    error_message: event_error.to_string(),
+                }
             })
         })
     }

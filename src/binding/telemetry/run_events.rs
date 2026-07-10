@@ -7,8 +7,8 @@ use g_runner as native_run_events;
 
 pub(crate) fn run_failed_event_payload_from_error(
     error: &Bound<'_, PyAny>,
-) -> PyResult<native_run_events::RunFailedEventPayload> {
+) -> PyResult<native_run_events::NativeRunFailure> {
     let error_type = error.get_type().name()?.to_string_lossy().into_owned();
     let error_message = error.str()?.to_string_lossy().into_owned();
-    Ok(native_run_events::build_run_failed_event_payload(&error_type, &error_message))
+    Ok(native_run_events::NativeRunFailure { error_type, error_message })
 }

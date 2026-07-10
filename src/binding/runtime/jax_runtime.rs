@@ -7,7 +7,7 @@ use g_runner as native_jax_runtime;
 
 pub(crate) fn apply_jax_config_updates(
     py: Python<'_>,
-    updates: &[native_jax_runtime::JaxRuntimeConfigUpdatePayload],
+    updates: &[native_jax_runtime::JaxRuntimeConfigUpdate],
 ) -> PyResult<()> {
     let update_function = py.import("jax")?.getattr("config")?.getattr("update")?;
     for update in updates {
@@ -26,12 +26,12 @@ pub(crate) fn apply_jax_config_updates(
     Ok(())
 }
 
-pub(crate) fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDeviceObservation>> {
+pub(crate) fn observe_jax_devices(py: Python<'_>) -> PyResult<Vec<native_jax_runtime::JaxDevice>> {
     let devices = py.import("jax")?.call_method0("devices")?;
     let mut device_observations = Vec::new();
     for device in devices.try_iter()? {
         let device = device?;
-        device_observations.push(native_jax_runtime::JaxDeviceObservation {
+        device_observations.push(native_jax_runtime::JaxDevice {
             platform: python_attribute_to_string(&device, "platform")?,
             description: device.str()?.to_string_lossy().into_owned(),
         });

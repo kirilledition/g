@@ -7,9 +7,8 @@ engine crates.
 
 ## Public types
 
-`NativeRunHost`, `NativeRunInterruption`, and `CliRunResult`.
-The facade also re-exports only the runtime contracts the PyO3 host must name
-to implement `NativeRunHost`.
+`NativeRunHost`, `NativeRunInterruption`, `NativeRunFailure`, `CliRunResult`,
+and runner-owned JAX host DTOs. The Python host names no `g-runtime` type.
 
 ## Public functions
 

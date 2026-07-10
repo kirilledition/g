@@ -52,4 +52,3 @@ pub use crate::trusted_validation::{
     require_cache_backed_trusted_bgen_validation_mode, serialize_trusted_bgen_validation_cache_payload,
     write_trusted_bgen_validation_cache_payload, write_trusted_bgen_validation_cache_payload_to_path,
 };
-pub use g_plan::TelemetryMode;

@@ -4,7 +4,7 @@ use arrow::array::{ArrayRef, Float32Array, Int32Array, Int64Array, StringArray};
 
 use crate::error::OutputError;
 
-pub use g_genotype::{ChunkStats, VariantMetadataColumns};
+use g_genotype::{ChunkStats, VariantMetadataColumns};
 
 pub(crate) struct NativeChunkWriterArrays {
     pub(crate) chromosome: ArrayRef,

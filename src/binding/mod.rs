@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 
 pub(crate) mod cli;
 pub(crate) mod engine;
-pub(crate) mod errors;
 pub(crate) mod runtime;
 pub(crate) mod telemetry;
 

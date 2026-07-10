@@ -9,10 +9,10 @@ success/interruption/abort policy.
 
 ## Public types
 
-`RunHooks`, typed run/delivery errors, `AssociationBackend`, validated JAX
-backend settings, and the typed borrowed/owned backend data contracts used by
-the PyO3 JAX adapter. Run preparation/execution state and scheduler reports
-remain internal implementation details.
+`RunHooks`, `EngineRunError`, `AssociationBackend`, validated JAX backend
+settings, and the typed borrowed/owned backend data contracts used by the PyO3
+JAX adapter. Run preparation/execution state, upstream error types, and
+scheduler reports remain internal implementation details.
 
 ## Public functions
 

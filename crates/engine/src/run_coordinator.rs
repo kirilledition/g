@@ -11,7 +11,7 @@ use crate::progress::{RunProgressError, RunProgressReporter};
 use crate::run::{RunEngine, RunExecutionError, RunHooks, RunPreparationError};
 
 #[derive(Debug, thiserror::Error)]
-pub enum CoordinatedRunError<BackendError, HookError> {
+pub(crate) enum CoordinatedRunDetailError<BackendError, HookError> {
     #[error("Native run preparation failed.")]
     Preparation(#[from] RunPreparationError),
     #[error("Native run execution failed.")]
@@ -34,6 +34,15 @@ pub enum CoordinatedRunError<BackendError, HookError> {
     MissingPhenotypeOutput,
 }
 
+/// Failure reported by the coarse engine entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum EngineRunError<HookError> {
+    #[error("{message}")]
+    Failure { message: String },
+    #[error("Native run was interrupted.")]
+    Interrupted(HookError),
+}
+
 /// Prepare, execute, observe, and describe one native association run.
 ///
 /// # Errors
@@ -47,16 +56,55 @@ pub fn execute_coordinated_run<Backend, Hooks>(
     hooks: &mut Hooks,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
-    mut stage_timing_recorder: Option<&mut StageTimingRecorder>,
-) -> Result<Vec<PhenotypeRunArtifacts>, CoordinatedRunError<Backend::Error, Hooks::Error>>
+    stage_timing_recorder: Option<&mut StageTimingRecorder>,
+) -> Result<Vec<PhenotypeRunArtifacts>, EngineRunError<Hooks::Error>>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
     Hooks: RunHooks,
 {
-    let phenotype_count =
-        i64::try_from(run_plan.phenotype_runs.len()).map_err(|_| CoordinatedRunError::PhenotypeCountOutOfRange)?;
+    execute_coordinated_run_detail(
+        run_plan,
+        effective_config_toml,
+        backend,
+        hooks,
+        telemetry_session,
+        thread_name,
+        stage_timing_recorder,
+    )
+    .map_err(engine_run_error_from_detail)
+}
+
+fn engine_run_error_from_detail<BackendError, HookError>(
+    error: CoordinatedRunDetailError<BackendError, HookError>,
+) -> EngineRunError<HookError> {
+    match error {
+        CoordinatedRunDetailError::Execution(RunExecutionError::Interrupted(error)) => {
+            EngineRunError::Interrupted(error)
+        }
+        error => EngineRunError::Failure { message: error.to_string() },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_coordinated_run_detail<Backend, Hooks>(
+    run_plan: g_plan::RunPlan,
+    effective_config_toml: String,
+    backend: Arc<Backend>,
+    hooks: &mut Hooks,
+    telemetry_session: &TelemetryRunSession,
+    thread_name: &str,
+    mut stage_timing_recorder: Option<&mut StageTimingRecorder>,
+) -> Result<Vec<PhenotypeRunArtifacts>, CoordinatedRunDetailError<Backend::Error, Hooks::Error>>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    Hooks: RunHooks,
+{
+    let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())
+        .map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;
     let association_mode = run_plan.association_mode;
     let trait_type = run_plan.analysis.trait_type;
     let chunk_size = run_plan.analysis.chunk_size;
@@ -74,7 +122,7 @@ where
     let association_backend_kind = match resolved_gpu_genotype_format {
         g_plan::GpuGenotypeFormat::Dosage => "jax_dosage",
         g_plan::GpuGenotypeFormat::Packed8 => "jax_packed8",
-        g_plan::GpuGenotypeFormat::Auto => return Err(CoordinatedRunError::UnresolvedGpuGenotypeFormat),
+        g_plan::GpuGenotypeFormat::Auto => return Err(CoordinatedRunDetailError::UnresolvedGpuGenotypeFormat),
     };
     telemetry_session.emit_execution_plan_prepared_event(
         thread_name,
@@ -128,19 +176,19 @@ where
 
 fn record_delivery_reports<BackendError, HookError>(
     delivery_reports: &[AssociationDeliveryReport],
-) -> Result<(), CoordinatedRunError<BackendError, HookError>> {
+) -> Result<(), CoordinatedRunDetailError<BackendError, HookError>> {
     for (group_index, report) in delivery_reports.iter().enumerate() {
         let processed_chunk_count = i64::try_from(report.processed_chunk_count)
-            .map_err(|_| CoordinatedRunError::ProcessedChunkCountOutOfRange)?;
+            .map_err(|_| CoordinatedRunDetailError::ProcessedChunkCountOutOfRange)?;
         g_runtime::emit_run_diagnostic_event(&g_runtime::build_native_dispatch_delivery_finished_diagnostic_payload(
             &format!("association_group_{group_index}"),
             processed_chunk_count,
         ))?;
         for warning in &report.warnings {
             let nonconverged_count = u64::try_from(warning.nonconverged_count)
-                .map_err(|_| CoordinatedRunError::AssociationWarningCountOutOfRange)?;
+                .map_err(|_| CoordinatedRunDetailError::AssociationWarningCountOutOfRange)?;
             let total_fit_count = u64::try_from(warning.total_fit_count)
-                .map_err(|_| CoordinatedRunError::AssociationWarningCountOutOfRange)?;
+                .map_err(|_| CoordinatedRunDetailError::AssociationWarningCountOutOfRange)?;
             tracing::warn!(
                 target: "g.engine",
                 g_event = "association_delivery_warning",
@@ -162,7 +210,7 @@ fn complete_artifacts<BackendError, HookError>(
     association_mode: g_plan::AssociationMode,
     phenotype_count: i64,
     single_phenotype_name: Option<&str>,
-) -> Result<Vec<PhenotypeRunArtifacts>, CoordinatedRunError<BackendError, HookError>> {
+) -> Result<Vec<PhenotypeRunArtifacts>, CoordinatedRunDetailError<BackendError, HookError>> {
     let artifacts = completed_outputs
         .into_iter()
         .map(|run| PhenotypeRunArtifacts {
@@ -173,8 +221,8 @@ fn complete_artifacts<BackendError, HookError>(
     let parquet_dataset_paths =
         artifacts.iter().map(|artifact| artifact.parquet_dataset_directory.as_str()).collect::<Vec<_>>();
     if phenotype_count == 1 {
-        let phenotype_name = single_phenotype_name.ok_or(CoordinatedRunError::MissingPhenotypeOutput)?;
-        let artifact = artifacts.first().ok_or(CoordinatedRunError::MissingPhenotypeOutput)?;
+        let phenotype_name = single_phenotype_name.ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
+        let artifact = artifacts.first().ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
         telemetry_session.emit_phenotype_writer_finished_event(
             thread_name,
             association_mode.as_str(),
