@@ -63,12 +63,6 @@ pub struct CurrentRunManifestHeaderInput {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn build_current_run_manifest_header_json(input: CurrentRunManifestHeaderInput) -> Result<String, OutputError> {
-    let mut fingerprint_cache = ManifestFileFingerprintCache::new();
-    build_current_run_manifest_header_json_with_cache(input, &mut fingerprint_cache)
-}
-
-#[allow(clippy::too_many_lines)]
 pub fn build_current_run_manifest_header_json_with_cache(
     input: CurrentRunManifestHeaderInput,
     fingerprint_cache: &mut ManifestFileFingerprintCache,

@@ -6,7 +6,7 @@ Sample, phenotype, covariate, prediction, and phenotype-group alignment.
 
 ## Public types
 
-`InputError`/`InputResult`, alignment input/result DTOs, grouped/multi-trait aligned data, sample-key mode and its string-value contract, sample alignment
+`InputError`/`InputResult`, alignment input/result DTOs, aligned phenotype groups and multi-trait aligned data, sample-key mode and its string-value contract, sample alignment
 errors, prediction sources, chromosome prediction matrix payloads, and prediction errors.
 
 ## Public functions

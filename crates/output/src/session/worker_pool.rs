@@ -7,11 +7,7 @@ use crate::manifest;
 use crate::timing::OutputStageTimingAccumulator;
 use crate::writer::{RegenieStep2ChunkWriteBatch, write_regenie_step2_chunk_job};
 
-use super::OutputWriterConfig;
-
-enum OutputWriteJob {
-    RegenieStep2(Box<OutputWriteTask>),
-}
+use super::writer_session::OutputWriterConfig;
 
 struct OutputWriteTask {
     write_batch: RegenieStep2ChunkWriteBatch,
@@ -23,8 +19,8 @@ struct OutputWriteTask {
 }
 
 pub(super) struct OutputWriterPool {
-    sender: Sender<OutputWriteJob>,
-    receiver: Receiver<OutputWriteJob>,
+    sender: Sender<Box<OutputWriteTask>>,
+    receiver: Receiver<Box<OutputWriteTask>>,
     worker_count: Mutex<usize>,
 }
 
@@ -76,7 +72,7 @@ impl OutputWriterPool {
             stage_timings: Arc::clone(stage_timings),
             completion_tracker: completion_tracker.clone(),
         };
-        self.sender.send(OutputWriteJob::RegenieStep2(Box::new(write_task))).map_err(|error| {
+        self.sender.send(Box::new(write_task)).map_err(|error| {
             completion_tracker.decrement();
             push_worker_error(worker_errors, error.to_string());
         })
@@ -93,7 +89,9 @@ impl OutputWriteCompletionTracker {
         let mut pending_write_count = pending_write_count_lock
             .lock()
             .map_err(|_| OutputError::Runtime("Rust output writer completion lock was poisoned.".to_string()))?;
-        *pending_write_count += 1;
+        *pending_write_count = pending_write_count.checked_add(1).ok_or_else(|| {
+            OutputError::Runtime("Rust output writer pending-write count overflowed platform capacity.".to_string())
+        })?;
         Ok(())
     }
 
@@ -148,11 +146,9 @@ fn output_writer_pool() -> Arc<OutputWriterPool> {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn run_output_writer_worker(receiver: Receiver<OutputWriteJob>) {
-    while let Ok(job) = receiver.recv() {
-        match job {
-            OutputWriteJob::RegenieStep2(output_write_task) => run_output_write_task(*output_write_task),
-        }
+fn run_output_writer_worker(receiver: Receiver<Box<OutputWriteTask>>) {
+    while let Ok(output_write_task) = receiver.recv() {
+        run_output_write_task(*output_write_task);
     }
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import jax
@@ -146,21 +147,6 @@ class Regenie2MultiBinaryChromosomeState:
     null_firth_convergence_reason_code: jax.Array
     null_logistic_iteration_count: jax.Array
     null_logistic_converged: jax.Array
-
-
-def build_binary_state(
-    covariate_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    score_dtype: g_types.FloatingPointDtype,
-) -> Regenie2BinaryState:
-    """Build reusable binary step 2 state."""
-    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
-    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jax_dtype)
-    phenotype_vector_compute = jnp.asarray(phenotype_vector, dtype=jax_dtype)
-    return Regenie2BinaryState(
-        covariate_matrix=covariate_matrix_compute,
-        phenotype_vector=phenotype_vector_compute,
-    )
 
 
 def build_multi_binary_state(
@@ -329,6 +315,7 @@ def build_binary_chromosome_state(
     )
 
 
+@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "score_dtype"))
 def build_multi_binary_chromosome_state(
     state: Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
@@ -375,32 +362,4 @@ def build_multi_binary_chromosome_state(
         null_firth_convergence_reason_code=chromosome_states.null_firth_convergence_reason_code,
         null_logistic_iteration_count=chromosome_states.null_logistic_iteration_count,
         null_logistic_converged=chromosome_states.null_logistic_converged,
-    )
-
-
-def build_multi_binary_chromosome_state_from_single(
-    chromosome_state: Regenie2BinaryChromosomeState,
-) -> Regenie2MultiBinaryChromosomeState:
-    """Build a one-trait binary chromosome state view from a single-trait state."""
-    return Regenie2MultiBinaryChromosomeState(
-        covariate_matrix=chromosome_state.covariate_matrix,
-        phenotype_matrix=chromosome_state.phenotype_vector[None, :],
-        null_logistic_coefficients=chromosome_state.null_logistic_coefficients[None, :],
-        null_firth_offset_matrix=chromosome_state.null_firth_offset[None, :],
-        score_residual=chromosome_state.score_residual[None, :],
-        loco_offset_matrix=chromosome_state.loco_offset[None, :],
-        square_root_weight=chromosome_state.square_root_weight[None, :],
-        bernoulli_weight=chromosome_state.bernoulli_weight[None, :],
-        weighted_genotype_projection_matrix=chromosome_state.weighted_genotype_projection_matrix[None, :, :],
-        score_projection_matrix=chromosome_state.score_projection_matrix[None, :, :],
-        score_right_hand_matrix=chromosome_state.score_right_hand_matrix,
-        score_residual_sum=chromosome_state.score_residual_sum[None],
-        bernoulli_weight_sum=chromosome_state.bernoulli_weight_sum[None],
-        score_projection_sum=chromosome_state.score_projection_sum[None, :],
-        full_null_deviance=chromosome_state.full_null_deviance[None],
-        null_firth_penalized_log_likelihood=chromosome_state.null_firth_penalized_log_likelihood[None],
-        null_firth_iteration_count=chromosome_state.null_firth_iteration_count[None],
-        null_firth_convergence_reason_code=chromosome_state.null_firth_convergence_reason_code[None],
-        null_logistic_iteration_count=chromosome_state.null_logistic_iteration_count[None],
-        null_logistic_converged=chromosome_state.null_logistic_converged[None],
     )

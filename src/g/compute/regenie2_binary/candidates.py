@@ -225,19 +225,6 @@ def build_device_firth_batch_plan(
     )
 
 
-def build_device_multi_firth_batch_plan(
-    fallback_mask: jax.Array,
-    candidate_capacity: int,
-    firth_batch_size: int,
-) -> FirthBatchPlan:
-    """Build fixed-shape flattened trait-variant lane batches on device."""
-    return build_device_firth_batch_plan(
-        fallback_mask.reshape((-1,)),
-        candidate_capacity=candidate_capacity,
-        firth_batch_size=firth_batch_size,
-    )
-
-
 def build_firth_candidate_bucket_order(
     *,
     flat_active_mask: jax.Array,

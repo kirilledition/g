@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 project direction | Development maintainers |
+| Pre-release draft | project direction as of 2026-07-10 | Development maintainers |
 
 ## Product Goal
 
@@ -17,9 +17,9 @@ Arrow/Parquet output.
 - Binary `--firth --approx` through scalar approximate Firth, with parity work
   still treated as active engineering surface.
 - BGEN 1.2 input with Oxford `.sample` metadata.
-- TOML, CLI, and Python entry points normalized into `RegenieConfig`.
+- Native TOML/CLI input compiled into one Rust run request.
 - Arrow chunk output and final Parquet materialization.
-- REGENIE-compatible Step 2 text output through `--format regenie`.
+- REGENIE-compatible Step 2 text output through `[output].format = "regenie"`.
 - Runtime telemetry, progress logging, profile summaries, and trace mode.
 
 ## Not Yet Supported
@@ -55,18 +55,26 @@ diagnostics. See
 
 ## Architecture Direction
 
-- Route CLI, TOML, and Python through:
+- Route CLI and TOML through one Rust-owned production path:
 
 ```text
-RegenieConfig -> ExecutionPlan -> runner -> pipeline
+g-interface -> g-plan -> g-engine::RunEngine
+                              |
+                         Python/JAX backend
 ```
 
 - Keep runtime core code free of DataFrame dependencies.
+- Reduce Python to the console bootstrap, JAX setup, JAX backend, and JAX
+  kernels. Rust owns all surrounding orchestration and I/O.
+- Use only the coarse `prepare_group`, `prepare_chromosome`, `compute_batch`,
+  and `materialize_batch` Python boundary.
 - Keep JAX imports behind explicit runtime boundaries where they are needed to
   preserve process-global runtime policy.
-- Treat execution-plan hashes and manifest metadata as the source of resume
+- Treat prepared-run hashes and manifest metadata as the source of resume
   compatibility.
 - Keep production telemetry low overhead and free of accidental JAX
   synchronization.
 - Keep profile and trace modes explicitly diagnostic because they may perturb
   performance.
+- Follow [Architecture Cleanup](architecture-cleanup.md) for the ordered
+  migration and Rust cleanup program.

@@ -6,14 +6,12 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::{Map, Value, json};
 
-use crate::error::OutputError;
+use crate::error::{OutputError, OutputResult};
 use crate::resume;
 use crate::writer::OutputFileFormat;
 
 use super::chunks::{RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit};
 use super::{RUN_MANIFEST_FILE_NAME, chunks, validation};
-
-type ManifestResult<T> = Result<T, OutputError>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputRunPaths {
@@ -25,11 +23,6 @@ pub struct OutputRunPaths {
 pub struct PreparedOutputRun {
     pub output_run_paths: OutputRunPaths,
     pub existing_manifest_json: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InitializedOutputRun {
-    pub committed_chunk_identifiers: Vec<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,7 +44,7 @@ impl OutputResumeMode {
 }
 
 #[must_use]
-pub fn resolve_output_run_paths(
+fn resolve_output_run_paths(
     output_root: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
@@ -78,7 +71,7 @@ pub fn prepare_output_run(
     let output_run_paths = resolve_output_run_paths(output_root, association_mode, output_format);
     if !resume && directory_exists_and_is_non_empty(&output_run_paths.run_directory)? {
         return Err(OutputError::InvalidInput(format!(
-            "Output run directory '{}' already exists and is not empty. Use --resume or choose a new output path.",
+            "Output run directory '{}' already exists and is not empty. Enable [output].resume or choose a new output path.",
             output_run_paths.run_directory.display()
         )));
     }
@@ -90,7 +83,7 @@ pub fn prepare_output_run(
     Ok(PreparedOutputRun { output_run_paths, existing_manifest_json })
 }
 
-pub fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputError> {
+pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputError> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     if !manifest_path.exists() {
         return Ok(None);
@@ -98,11 +91,6 @@ pub fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, Ou
     let manifest_json = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
     parse_run_manifest_text(&manifest_json, Some(&manifest_path))?;
     Ok(Some(manifest_json))
-}
-
-pub fn write_run_manifest_json(run_directory: &Path, manifest_json: &str) -> Result<(), OutputError> {
-    let manifest = parse_run_manifest_text(manifest_json, None)?;
-    write_run_manifest_value(run_directory, &manifest)
 }
 
 pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtime: Value) -> Result<(), OutputError> {
@@ -116,7 +104,7 @@ pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtim
     })
 }
 
-pub fn validate_run_manifest_compatibility(manifest_json: &str, current_header_json: &str) -> Result<(), OutputError> {
+fn validate_run_manifest_compatibility(manifest_json: &str, current_header_json: &str) -> Result<(), OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     let current_header = parse_current_header_text(current_header_json)?;
     validation::validate_manifest_compatibility_values(&manifest, &current_header)
@@ -135,11 +123,6 @@ pub fn validate_output_run_resume_compatibility(
     Ok(())
 }
 
-pub fn read_run_manifest_committed_chunk_identifiers_from_text(manifest_json: &str) -> Result<Vec<i64>, OutputError> {
-    let manifest = parse_run_manifest_text(manifest_json, None)?;
-    read_run_manifest_committed_chunk_identifiers(&manifest)
-}
-
 pub fn initialize_output_run(
     run_directory: &Path,
     chunks_directory: &Path,
@@ -147,7 +130,7 @@ pub fn initialize_output_run(
     current_header_json: &str,
     resume: bool,
     resume_mode: OutputResumeMode,
-) -> Result<InitializedOutputRun, OutputError> {
+) -> Result<Vec<i64>, OutputError> {
     let current_header = parse_current_header_text(current_header_json)?;
     let (mut manifest, committed_chunks, committed_chunk_identifiers) = if let Some(existing_manifest_text) =
         existing_manifest_json
@@ -189,10 +172,10 @@ pub fn initialize_output_run(
     manifest_object.insert("committed_chunks".to_string(), Value::Array(committed_chunks));
     manifest_object.entry("finalized".to_string()).or_insert(Value::Bool(false));
     write_run_manifest_value(run_directory, &manifest)?;
-    Ok(InitializedOutputRun { committed_chunk_identifiers })
+    Ok(committed_chunk_identifiers)
 }
 
-pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> ManifestResult<Vec<RunManifestChunkCommit>> {
+pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> OutputResult<Vec<RunManifestChunkCommit>> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
     read_run_manifest_chunk_commits_from_text(&manifest_text)
@@ -200,7 +183,7 @@ pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> ManifestR
 
 pub(crate) fn read_run_manifest_chunk_commits_from_text(
     manifest_json: &str,
-) -> ManifestResult<Vec<RunManifestChunkCommit>> {
+) -> OutputResult<Vec<RunManifestChunkCommit>> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     let committed_chunks = manifest
         .get("committed_chunks")
@@ -219,7 +202,7 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
 pub(crate) fn record_run_manifest_chunk_commits(
     run_directory: &Path,
     chunk_commits: Vec<RunManifestChunkCommit>,
-) -> ManifestResult<()> {
+) -> OutputResult<()> {
     if chunk_commits.is_empty() {
         return Ok(());
     }
@@ -247,20 +230,17 @@ pub(crate) fn record_run_manifest_chunk_commits(
     })
 }
 
-pub(crate) fn mark_run_manifest_finalized(
-    final_parquet_path: &Path,
-    row_count: usize,
-    chunk_file_count: usize,
-) -> ManifestResult<()> {
-    mark_run_manifest_finalized_output(final_parquet_path, row_count, chunk_file_count, "parquet")
-}
-
 pub(crate) fn mark_run_manifest_finalized_output(
     final_output_path: &Path,
-    row_count: usize,
-    chunk_file_count: usize,
+    row_count: i64,
+    chunk_file_count: i64,
     output_format: &str,
-) -> ManifestResult<()> {
+) -> OutputResult<()> {
+    if row_count < 0 || chunk_file_count < 0 {
+        return Err(OutputError::InvalidInput(
+            "Final output row and chunk-file counts must be non-negative.".to_string(),
+        ));
+    }
     let Some(run_directory) = final_output_path.parent() else {
         return Ok(());
     };
@@ -295,7 +275,7 @@ pub(crate) fn mark_run_manifest_finalized_output(
     })
 }
 
-pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> ManifestResult<()> {
+pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> OutputResult<()> {
     update_run_manifest(run_directory, |manifest| {
         let manifest_object = manifest
             .as_object_mut()
@@ -396,7 +376,7 @@ fn merge_manifest_header(manifest: &mut Value, current_header: &Value) -> Result
     Ok(())
 }
 
-fn write_run_manifest_value(run_directory: &Path, manifest: &Value) -> ManifestResult<()> {
+fn write_run_manifest_value(run_directory: &Path, manifest: &Value) -> OutputResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_lock = get_run_manifest_update_lock();
     let _manifest_guard =
@@ -406,8 +386,8 @@ fn write_run_manifest_value(run_directory: &Path, manifest: &Value) -> ManifestR
 
 fn update_run_manifest(
     run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> ManifestResult<()>,
-) -> ManifestResult<()> {
+    update_manifest: impl FnOnce(&mut Value) -> OutputResult<()>,
+) -> OutputResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     if !manifest_path.exists() {
         return Ok(());
@@ -423,8 +403,8 @@ fn update_run_manifest(
 
 fn upsert_run_manifest(
     run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> ManifestResult<()>,
-) -> ManifestResult<()> {
+    update_manifest: impl FnOnce(&mut Value) -> OutputResult<()>,
+) -> OutputResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_lock = get_run_manifest_update_lock();
     let _manifest_guard =
@@ -439,7 +419,7 @@ fn upsert_run_manifest(
     write_run_manifest_value_atomic(&manifest_path, &manifest)
 }
 
-fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> ManifestResult<()> {
+fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> OutputResult<()> {
     let temporary_manifest_path = manifest_path.with_extension("json.tmp");
     let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(OutputError::runtime)?;
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(OutputError::runtime)?;

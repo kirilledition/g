@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use arrow::array::{Array, ArrayRef, DictionaryArray, Int32Array, RecordBatch, StringArray, UInt8Array};
+use arrow::array::{
+    Array, ArrayRef, DictionaryArray, Int32Array, RecordBatch, StringArray, UInt8Array, new_null_array,
+};
 use arrow::datatypes::{DataType, Field, Schema, UInt8Type};
 
 use crate::error::OutputError;
 use crate::schema;
 
-use super::{OutputWriterResult, RegenieStep2ChunkJob, RegenieStep2RecordBatchBuildTiming};
+use super::{OutputResult, RegenieStep2ChunkJob, RegenieStep2RecordBatchBuildTiming};
 
 pub(super) const CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY: u8 = 1;
 pub(super) const CORRECTION_STATUS_SUCCESS_KEY: u8 = 0;
@@ -53,7 +55,7 @@ impl RegenieStep2RecordBatchArrayCache {
         Arc::clone(
             self.null_extra_arrays_by_row_count
                 .entry(row_count)
-                .or_insert_with(|| schema::build_null_extra_string_array(row_count)),
+                .or_insert_with(|| new_null_array(&DataType::Utf8, row_count)),
         )
     }
 
@@ -69,7 +71,7 @@ impl RegenieStep2RecordBatchArrayCache {
         &mut self,
         cache_key: CorrectionDictionaryArrayCacheKey,
         dictionary_values: ArrayRef,
-    ) -> OutputWriterResult<ArrayRef> {
+    ) -> OutputResult<ArrayRef> {
         if let Some(cached_array) = self.constant_correction_dictionary_arrays.get(&cache_key) {
             return Ok(Arc::clone(cached_array));
         }
@@ -102,7 +104,7 @@ pub(super) fn build_regenie_step2_record_batch(
     chunk_schema: Arc<Schema>,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
     correction_array_encoding: RegenieStep2CorrectionArrayEncoding,
-) -> OutputWriterResult<RegenieStep2SingleRecordBatchBuildResult> {
+) -> OutputResult<RegenieStep2SingleRecordBatchBuildResult> {
     let row_count = chunk_job.chunk_handle.row_count();
     let metadata_array_build_start_time = Instant::now();
     let cached_writer_arrays = chunk_job.chunk_handle.writer_arrays();
@@ -195,7 +197,7 @@ fn build_correction_method_dictionary_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> OutputWriterResult<ArrayRef> {
+) -> OutputResult<ArrayRef> {
     build_correction_dictionary_array(
         extra_code,
         row_count,
@@ -216,7 +218,7 @@ fn build_correction_status_dictionary_array(
     extra_code: Option<ArrayRef>,
     row_count: usize,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> OutputWriterResult<ArrayRef> {
+) -> OutputResult<ArrayRef> {
     build_correction_dictionary_array(
         extra_code,
         row_count,
@@ -240,7 +242,7 @@ fn build_correction_dictionary_array(
     dictionary_values: ArrayRef,
     label_kind: &str,
     key_for_code: impl Fn(i32) -> Option<u8>,
-) -> OutputWriterResult<ArrayRef> {
+) -> OutputResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
         return array_cache.constant_correction_dictionary_array(
             CorrectionDictionaryArrayCacheKey { row_count, dictionary_kind, dictionary_key: 0 },
@@ -297,7 +299,7 @@ fn build_correction_status_dictionary_values() -> ArrayRef {
     Arc::new(StringArray::from_iter_values(["success", "failed"]))
 }
 
-fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> OutputWriterResult<ArrayRef> {
+fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> OutputResult<ArrayRef> {
     let key_array = UInt8Array::from(dictionary_keys);
     DictionaryArray::<UInt8Type>::try_new(key_array, dictionary_values)
         .map(|dictionary_array| Arc::new(dictionary_array) as ArrayRef)

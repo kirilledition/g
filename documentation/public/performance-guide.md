@@ -56,29 +56,24 @@ Use the current packaged defaults first. Override only with measurements.
 | --- | --- |
 | `--bsize` | Variants per chunk; affects memory, JAX shapes, compilation, and per-chunk overhead. |
 | `--threads` | Native Rayon thread request for Rust-owned work. |
-| `--device` | JAX execution target, `cpu` or `gpu`. |
-| `--staging_depth` | Native callback staging depth. |
-| `--native_callback_batch_size` | Optional native-to-Python dosage callback handoff batch size; default is `1`. |
-| `--result_in_flight_limit` | Optional cap for result chunks awaiting materialization. |
-| `--dosage_buffer_limit` | Optional cap for reusable native dosage decode buffers. |
-| `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
-| `--gpu_genotype_format` | Host-to-device genotype representation for GPU-compatible paths; default `auto` upgrades eligible single-trait binary GPU BGEN runs to packed8. |
-| `--format` | Arrow, Parquet, or REGENIE text materialization. |
-| `--writer_threads` | Output writer worker count. |
-| `--writer_queue_depth` | Output writer queue depth. |
-| `--chunks_per_arrow_file` | Number of engine chunks grouped into each Arrow/Parquet/text part. |
-| `--firth_batch_size` | Approximate-Firth candidate batch size. |
-| `--firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
-| `--jax_persistent_cache` and `--jax_cache_dir` | JAX compilation cache behavior. |
-| `--telemetry` | Progress, profile, and trace modes. Profile/trace can perturb timing. |
+| `[compute] device` | JAX execution target, `cpu` or `gpu`. |
+| `[compute] staging_depth` | Decoded batches allowed ahead of device compute. |
+| `[compute] result_in_flight_limit` | Device results allowed ahead of host materialization. |
+| `[compute] bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
+| `[compute] gpu_genotype_format` | Host-to-device representation; `auto` upgrades eligible single-trait binary GPU runs to packed8. |
+| `[output] format` | Arrow, Parquet, or REGENIE text materialization. |
+| `[output] writer_threads` | Output writer worker count. |
+| `[output] writer_queue_depth` | Output writer queue depth. |
+| `[output] chunks_per_arrow_file` | Engine chunks grouped into each output part. |
+| `[compute] firth_batch_size` | Approximate-Firth candidate batch size. |
+| `[compute] firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
+| `[compute] jax_persistent_cache`, `jax_cache_dir` | JAX compilation cache behavior. |
+| `[diagnostics] telemetry` | Progress, profile, and trace modes; profile/trace can perturb timing. |
 
-`--gpu_genotype_format auto` resolves to packed8 only for single-trait binary
+`gpu_genotype_format = "auto"` resolves to packed8 only for single-trait binary
 GPU REGENIE Step 2 runs when trusted no-missing diploid BGEN validation passes.
 It falls back to dosage for CPU, linear, grouped, multi-phenotype, and
 incompatible BGEN cases. Explicit `packed8` keeps fail-fast validation behavior.
-
-`--native_callback_batch_size` currently applies to variant-major dosage BGEN
-delivery. Packed8 and grouped union delivery reject values above `1`.
 
 Current default values are in `crates/interface/src/config.default.toml`.
 
@@ -104,8 +99,7 @@ uv run --no-sync g regenie \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_cpu_regenie2 \
-  --threads "${SLURM_CPUS_PER_TASK:-16}" \
-  --device cpu
+  --threads "${SLURM_CPUS_PER_TASK:-16}"
 ```
 
 ## GPU Runs
@@ -118,7 +112,7 @@ Useful GPU checks:
 
 ```bash
 uv run python -c "import jax; print(jax.devices())"
-uv run --no-sync g regenie --device gpu ...
+uv run --no-sync g regenie --config gpu.toml ...
 ```
 
 Multi-phenotype quantitative runs can amortize BGEN decode and process startup
@@ -145,29 +139,34 @@ before changing production scripts.
 | `regenie` | You need REGENIE Step 2-style text compatibility. |
 
 Finalizing a single `final.parquet` adds work after chunk output. Keep
-`--finalize_parquet` off when the parts dataset is sufficient.
+`[output] finalize_parquet = false` when the parts dataset is sufficient.
 
 ## Measuring
 
 Production mode:
 
-```bash
---telemetry progress
+```toml
+[diagnostics]
+telemetry = "progress"
 ```
 
 Profile mode:
 
-```bash
---telemetry profile
---log_dir /path/to/logs
+```toml
+[diagnostics]
+telemetry = "profile"
+log_dir = "/path/to/logs"
 ```
 
 Trace mode is for small or capped runs:
 
-```bash
---telemetry trace
---variant_limit 1000
---trace_event_cap 1000000
+```toml
+[compute]
+variant_limit = 1000
+
+[diagnostics]
+telemetry = "trace"
+trace_event_cap = 1000000
 ```
 
 Trace can perturb performance and generate high-volume logs. Use it to diagnose

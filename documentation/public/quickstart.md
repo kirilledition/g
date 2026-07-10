@@ -43,9 +43,7 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_quantitative_regenie2 \
-  --device cpu \
-  --format parquet
+  --out /path/to/output/g_quantitative_regenie2
 ```
 
 ## Binary Score Test
@@ -61,9 +59,7 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
-  --out /path/to/output/g_binary_score_regenie2 \
-  --device cpu \
-  --format parquet
+  --out /path/to/output/g_binary_score_regenie2
 ```
 
 ## Binary Approximate Firth Fallback
@@ -82,9 +78,7 @@ uv run g regenie \
   --firth \
   --approx \
   --pThresh 0.01 \
-  --out /path/to/output/g_binary_firth_regenie2 \
-  --device cpu \
-  --format parquet
+  --out /path/to/output/g_binary_firth_regenie2
 ```
 
 Approximate Firth is implemented but numerically sensitive. Use equivalent statistical modes when comparing results against upstream REGENIE.
@@ -108,20 +102,24 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex,pc1,pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_multi_per_phenotype \
-  --device cpu \
-  --format parquet \
-  --multi_phenotype_sample_mode per-phenotype
+  --out /path/to/output/g_multi_per_phenotype
 ```
 
 That command is equivalent to running two separate commands with the same flags
 except one `--phenoCol` at a time (subject to random differences in I/O timing
 and scheduling).
 
-Use shared-sample mode when you explicitly want all traits on the same intersection:
+Use shared-sample mode when you explicitly want all traits on the same
+intersection. Put the mode in `complete-case.toml`:
+
+```toml
+[compute]
+multi_phenotype_sample_mode = "complete-case"
+```
 
 ```bash
 uv run g regenie \
+  --config complete-case.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -132,10 +130,7 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex,pc1,pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_multi_complete_case \
-  --device cpu \
-  --format parquet \
-  --multi_phenotype_sample_mode complete-case
+  --out /path/to/output/g_multi_complete_case
 ```
 
 To see runtime knobs for this setting in config, use
@@ -147,10 +142,16 @@ the output `run_manifest.json` files alongside statistical results.
 
 ## GPU Execution
 
-Install the GPU dependency group first, then change the device:
+Install the GPU dependency group first, then create `gpu.toml`:
+
+```toml
+[compute]
+device = "gpu"
+```
 
 ```bash
 uv run g regenie \
+  --config gpu.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -158,8 +159,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_gpu_regenie2 \
-  --device gpu
+  --out /path/to/output/g_gpu_regenie2
 ```
 
 Submit GPU commands on a GPU node or through your scheduler. See [GPU and Clusters](gpu-and-clusters.md)
@@ -167,11 +167,17 @@ for cluster notes.
 
 ## REGENIE Text Output
 
-Use `--format regenie` to write a REGENIE Step 2-compatible
-tab-separated `final.regenie` file for workflow compatibility:
+Set `[output] format = "regenie"` in `regenie-output.toml` to write a
+REGENIE Step 2-compatible tab-separated `final.regenie` file:
+
+```toml
+[output]
+format = "regenie"
+```
 
 ```bash
 uv run g regenie \
+  --config regenie-output.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -179,8 +185,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_regenie_text \
-  --format regenie
+  --out /path/to/output/g_regenie_text
 ```
 
 ## Repository Fixture Data

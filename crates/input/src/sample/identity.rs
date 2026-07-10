@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use crate::error::InputResult;
+
 use super::types::{SampleAlignmentError, SampleIdentifierData};
 
 struct SampleFileReader<R: BufRead> {
@@ -13,7 +15,7 @@ struct SampleFileReader<R: BufRead> {
 pub fn load_sample_identifier_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,
-) -> Result<SampleIdentifierData, SampleAlignmentError> {
+) -> InputResult<SampleIdentifierData> {
     let mut reader = open_sample_file_reader(sample_path)?;
     let column_names = reader.read_required_fields(format!(
         "Sample file '{}' must contain at least two header lines.",
@@ -41,7 +43,8 @@ pub fn load_sample_identifier_data_from_sample_file(
                 sample_count + 2,
                 row_values.len(),
                 column_names.len(),
-            )));
+            ))
+            .into());
         }
         sample_indices.push(sample_count - 1);
         family_identifiers.push(row_values[family_identifier_column_index].clone());
@@ -51,7 +54,8 @@ pub fn load_sample_identifier_data_from_sample_file(
         return Err(SampleAlignmentError::new(format!(
             "Expect number of samples in file to match BGEN sample count. Sample file '{}' contains {sample_count} rows, but the BGEN contains {expected_sample_count} samples.",
             sample_path.display()
-        )));
+        ))
+        .into());
     }
     Ok(SampleIdentifierData { sample_indices, family_identifiers, individual_identifiers })
 }

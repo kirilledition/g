@@ -8,26 +8,7 @@ use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
-use crate::schema::OutputStatisticDtype;
 use crate::session::{OutputWriterSession, finish_interrupted_output_writer_sessions, finish_output_writer_sessions};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SingleTraitOutputWritePlan {
-    pub uses_float64_native_writer: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MultiTraitOutputWritePlan {
-    pub active_trait_count: usize,
-    pub use_native_multi_writer: bool,
-    pub uses_float64_native_writer: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WriterFinishExecutionPlan {
-    pub writer_session_count: usize,
-    pub thread_count: usize,
-}
 
 pub struct Regenie2StatisticSliceBundle<'a, T> {
     pub beta: &'a [T],
@@ -37,79 +18,7 @@ pub struct Regenie2StatisticSliceBundle<'a, T> {
     pub extra_code: Option<&'a [i32]>,
 }
 
-impl WriterFinishExecutionPlan {
-    #[must_use]
-    pub const fn has_writer_sessions(&self) -> bool {
-        self.writer_session_count > 0
-    }
-
-    #[must_use]
-    pub const fn uses_parallel_finish(&self) -> bool {
-        self.thread_count > 1
-    }
-}
-
-/// Plan the native writer array type for one single-trait output write.
-///
-/// # Errors
-///
-/// Returns an error when the output statistic dtype is unsupported.
-pub fn plan_single_trait_output_write(output_statistic_dtype: &str) -> OutputResult<SingleTraitOutputWritePlan> {
-    let output_statistic_dtype = OutputStatisticDtype::parse(output_statistic_dtype)?;
-    Ok(SingleTraitOutputWritePlan {
-        uses_float64_native_writer: output_statistic_dtype == OutputStatisticDtype::Float64,
-    })
-}
-
-/// Plan the native bulk writer path for one multi-trait output write.
-///
-/// # Errors
-///
-/// Returns an error when the output statistic dtype is unsupported.
-pub fn plan_multi_trait_output_write(
-    active_trait_count: usize,
-    output_statistic_dtype: &str,
-) -> OutputResult<MultiTraitOutputWritePlan> {
-    let output_statistic_dtype = OutputStatisticDtype::parse(output_statistic_dtype)?;
-    let use_native_multi_writer = active_trait_count > 0;
-    Ok(MultiTraitOutputWritePlan {
-        active_trait_count,
-        use_native_multi_writer,
-        uses_float64_native_writer: use_native_multi_writer && output_statistic_dtype == OutputStatisticDtype::Float64,
-    })
-}
-
-/// Plan how writer sessions should be finished.
-///
-/// # Errors
-///
-/// Returns an error when at least one writer must finish and the requested
-/// thread count is non-positive or cannot fit in `usize`.
-pub fn plan_writer_finish_execution(
-    writer_session_count: i64,
-    requested_thread_count: i64,
-) -> OutputResult<WriterFinishExecutionPlan> {
-    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
-    let writer_session_count = if writer_session_count <= 0 {
-        0
-    } else {
-        usize::try_from(writer_session_count).map_err(|_| {
-            OutputError::InvalidInput(format!("Writer session count exceeds platform capacity: {writer_session_count}"))
-        })?
-    };
-    Ok(WriterFinishExecutionPlan { writer_session_count, thread_count })
-}
-
-/// Resolve the thread count used to finish output writer sessions.
-///
-/// # Errors
-///
-/// Returns an error when at least one writer must finish and the requested
-/// thread count is non-positive or cannot fit in `usize`.
-pub fn resolve_writer_finish_thread_count(
-    writer_session_count: i64,
-    requested_thread_count: i64,
-) -> OutputResult<usize> {
+fn resolve_writer_finish_thread_count(writer_session_count: i64, requested_thread_count: i64) -> OutputResult<usize> {
     if writer_session_count <= 0 {
         return Ok(0);
     }
@@ -137,8 +46,8 @@ pub fn finish_output_writer_sessions_with_requested_threads(
     requested_thread_count: i64,
 ) -> OutputResult<Vec<Option<PathBuf>>> {
     let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
-    let finish_plan = plan_writer_finish_execution(writer_session_count, requested_thread_count)?;
-    finish_output_writer_sessions(writer_sessions, finish_plan.thread_count)
+    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
+    finish_output_writer_sessions(writer_sessions, thread_count)
 }
 
 /// Flush interrupted writer sessions after resolving the requested parallelism.
@@ -152,8 +61,8 @@ pub fn finish_interrupted_output_writer_sessions_with_requested_threads(
     signal_name: &str,
 ) -> OutputResult<()> {
     let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
-    let finish_plan = plan_writer_finish_execution(writer_session_count, requested_thread_count)?;
-    finish_interrupted_output_writer_sessions(writer_sessions, finish_plan.thread_count, signal_name)
+    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
+    finish_interrupted_output_writer_sessions(writer_sessions, thread_count, signal_name)
 }
 
 /// Write one f32 REGENIE statistic row to each active trait writer.

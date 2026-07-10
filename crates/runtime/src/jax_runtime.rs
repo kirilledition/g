@@ -117,6 +117,17 @@ pub struct JaxRuntimeDiagnosticFieldPayload {
     pub value: JaxRuntimeDiagnosticValue,
 }
 
+pub struct JaxRuntimeDiagnosticFields<'fields> {
+    fields: &'fields [JaxRuntimeDiagnosticFieldPayload],
+}
+
+impl<'fields> JaxRuntimeDiagnosticFields<'fields> {
+    #[must_use]
+    pub const fn new(fields: &'fields [JaxRuntimeDiagnosticFieldPayload]) -> Self {
+        Self { fields }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimeDiagnosticEventPayload {
     pub event_name: String,

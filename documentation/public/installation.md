@@ -102,13 +102,14 @@ the expected GPU, compare the installed extra with the current [JAX installation
 matrix](https://docs.jax.dev/en/latest/installation.html), then adjust the environment before
 measuring performance.
 
-Run `g` with:
+Select GPU execution in a config file:
 
-```bash
---device gpu
+```toml
+[compute]
+device = "gpu"
 ```
 
-Use `--device cpu` for CPU execution. CPU mode is installed by the base runtime dependencies.
+Use `device = "cpu"` for CPU execution. CPU mode is installed by the base runtime dependencies.
 
 ## Run Your GWAS
 
@@ -119,6 +120,7 @@ Minimal CPU shape:
 
 ```bash
 uv run g regenie \
+  --config cpu.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -128,13 +130,11 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
-  --out /path/to/output/g_regenie2 \
-  --device cpu \
-  --format parquet
+  --out /path/to/output/g_regenie2
 ```
 
-For a GPU run, use the same command with `--device gpu` and submit it on a GPU node rather than a
-login node.
+Here `cpu.toml` contains `[compute] device = "cpu"` and `[output] format = "parquet"`.
+For a GPU run, use a config with `[compute] device = "gpu"` and submit it on a GPU node rather than a login node.
 
 See [Quickstart](quickstart.md) for quantitative and binary command examples, [CLI](cli.md) for
 supported flags, [Input Files](input-files.md) for input contracts, and
@@ -178,6 +178,7 @@ export UV_CACHE_DIR="${SCRATCH:-$HOME}/.cache/uv"
 export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
+  --config /path/to/gpu.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -185,8 +186,7 @@ uv run --no-sync g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_name \
   --pred /path/to/regenie_step1_pred.list \
-  --out /path/to/output/g_regenie2 \
-  --device gpu
+  --out /path/to/output/g_regenie2
 ```
 
 Adjust scheduler options for your cluster. Do not run GPU scans or large CPU scans on a login node.

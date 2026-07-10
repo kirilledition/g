@@ -11,11 +11,6 @@ impl ConfigError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self { message: message.into() }
     }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl fmt::Display for ConfigError {

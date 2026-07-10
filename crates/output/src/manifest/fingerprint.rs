@@ -63,7 +63,7 @@ impl ManifestFileFingerprintCache {
     }
 }
 
-pub fn build_manifest_file_fingerprint(
+fn build_manifest_file_fingerprint(
     file_path: &Path,
     include_content_hash: bool,
 ) -> Result<ManifestFileFingerprint, OutputError> {
@@ -92,7 +92,7 @@ pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFile
     })
 }
 
-pub fn build_file_content_sha256(path: &Path) -> Result<String, OutputError> {
+fn build_file_content_sha256(path: &Path) -> Result<String, OutputError> {
     let mut file = File::open(path).map_err(OutputError::runtime)?;
     let mut digest = Sha256::new();
     let mut buffer = vec![0_u8; 1024 * 1024];
@@ -104,13 +104,6 @@ pub fn build_file_content_sha256(path: &Path) -> Result<String, OutputError> {
         digest.update(&buffer[..bytes_read]);
     }
     Ok(encode_sha256_hex(digest))
-}
-
-#[must_use]
-pub fn build_manifest_json_sha256(manifest_json: &str) -> String {
-    let mut digest = Sha256::new();
-    digest.update(manifest_json.as_bytes());
-    encode_sha256_hex(digest)
 }
 
 pub(crate) fn build_manifest_value_sha256(value: &Value) -> Result<String, OutputError> {

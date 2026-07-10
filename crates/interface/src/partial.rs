@@ -30,7 +30,7 @@ pub(crate) struct PartialConfig {
 impl PartialConfig {
     pub(crate) fn resolve(self, provenance: ConfigProvenance) -> ConfigResult<RegenieConfigData> {
         Ok(RegenieConfigData {
-            input: self.input.resolve()?,
+            input: self.input.resolve(),
             trait_config: self.trait_config.resolve()?,
             binary: self.binary.resolve()?,
             g_compute: self.compute.resolve()?,
@@ -47,48 +47,24 @@ impl PartialConfig {
 pub(crate) struct PartialInputConfig {
     pub(crate) bgen: Option<String>,
     pub(crate) sample: Option<String>,
-    #[serde(alias = "phenoFile")]
     pub(crate) pheno_file: Option<String>,
     pub(crate) pheno_columns: Option<NameList>,
-    #[serde(alias = "phenoCol")]
-    pub(crate) pheno_col: Option<NameList>,
-    #[serde(alias = "phenoColList")]
-    pub(crate) pheno_col_list: Option<NameList>,
-    #[serde(alias = "covarFile")]
     pub(crate) covar_file: Option<String>,
     pub(crate) covar_columns: Option<NameList>,
-    #[serde(alias = "covarCol")]
-    pub(crate) covar_col: Option<NameList>,
-    #[serde(alias = "covarColList")]
-    pub(crate) covar_col_list: Option<NameList>,
     pub(crate) pred: Option<String>,
 }
 
 impl PartialInputConfig {
-    fn resolve(self) -> ConfigResult<InputConfigData> {
-        Ok(InputConfigData {
+    fn resolve(self) -> InputConfigData {
+        InputConfigData {
             bgen: self.bgen,
             sample: self.sample,
             pheno_file: self.pheno_file,
-            pheno_columns: resolve_column_options(
-                self.pheno_columns,
-                self.pheno_col,
-                self.pheno_col_list,
-                "pheno_columns",
-                "pheno_col",
-                "pheno_col_list",
-            )?,
+            pheno_columns: self.pheno_columns.map(NameList::into_vec).unwrap_or_default(),
             covar_file: self.covar_file,
-            covar_columns: resolve_column_options(
-                self.covar_columns,
-                self.covar_col,
-                self.covar_col_list,
-                "covar_columns",
-                "covar_col",
-                "covar_col_list",
-            )?,
+            covar_columns: self.covar_columns.map(NameList::into_vec).unwrap_or_default(),
             pred: self.pred,
-        })
+        }
     }
 }
 
@@ -119,9 +95,7 @@ impl PartialTraitConfig {
 pub(crate) struct PartialBinaryConfig {
     pub(crate) firth: Option<bool>,
     pub(crate) approx: Option<bool>,
-    #[serde(alias = "pThresh")]
     pub(crate) p_threshold: Option<Probability>,
-    #[serde(alias = "firth-se")]
     pub(crate) firth_se: Option<bool>,
 }
 
@@ -142,9 +116,7 @@ impl PartialBinaryConfig {
 pub(crate) struct PartialComputeConfig {
     pub(crate) device: Option<DeviceValue>,
     pub(crate) staging_depth: Option<NonZeroU32>,
-    pub(crate) native_callback_batch_size: Option<NonZeroU32>,
     pub(crate) result_in_flight_limit: Option<NonZeroU32>,
-    pub(crate) dosage_buffer_limit: Option<NonZeroU32>,
     pub(crate) variant_limit: Option<NonZeroU32>,
     pub(crate) trusted_no_missing_diploid: Option<bool>,
     pub(crate) trusted_bgen_validation_mode: Option<TrustedBgenValidationModeValue>,
@@ -204,9 +176,7 @@ impl PartialComputeConfig {
         Ok(GComputeConfigData {
             device: core.device,
             staging_depth: core.staging_depth,
-            native_callback_batch_size: core.native_callback_batch_size,
             result_in_flight_limit: core.result_in_flight_limit,
-            dosage_buffer_limit: core.dosage_buffer_limit,
             variant_limit: core.variant_limit,
             trusted_no_missing_diploid: core.trusted_no_missing_diploid,
             trusted_bgen_validation_mode: core.trusted_bgen_validation_mode,
@@ -261,9 +231,7 @@ impl PartialComputeConfig {
         Ok(ResolvedComputeCoreFields {
             device: required("device", self.device)?,
             staging_depth: required("staging_depth", self.staging_depth)?,
-            native_callback_batch_size: required("native_callback_batch_size", self.native_callback_batch_size)?,
             result_in_flight_limit: self.result_in_flight_limit,
-            dosage_buffer_limit: self.dosage_buffer_limit,
             variant_limit: self.variant_limit,
             trusted_no_missing_diploid: required("trusted_no_missing_diploid", self.trusted_no_missing_diploid)?,
             trusted_bgen_validation_mode: required("trusted_bgen_validation_mode", self.trusted_bgen_validation_mode)?,
@@ -391,9 +359,7 @@ impl PartialComputeConfig {
 struct ResolvedComputeCoreFields {
     device: DeviceValue,
     staging_depth: NonZeroU32,
-    native_callback_batch_size: NonZeroU32,
     result_in_flight_limit: Option<NonZeroU32>,
-    dosage_buffer_limit: Option<NonZeroU32>,
     variant_limit: Option<NonZeroU32>,
     trusted_no_missing_diploid: bool,
     trusted_bgen_validation_mode: TrustedBgenValidationModeValue,
@@ -537,34 +503,6 @@ impl PartialDiagnosticsConfig {
 
 fn required<ValueType>(option_name: &str, value: Option<ValueType>) -> ConfigResult<ValueType> {
     value.ok_or_else(|| ConfigError::new(format!("Default config is missing required default option {option_name:?}.")))
-}
-
-fn resolve_column_options(
-    canonical_columns: Option<NameList>,
-    repeated_columns: Option<NameList>,
-    list_columns: Option<NameList>,
-    canonical_option_name: &str,
-    repeated_option_name: &str,
-    list_option_name: &str,
-) -> ConfigResult<Vec<String>> {
-    let canonical_values = canonical_columns.map(NameList::into_vec).unwrap_or_default();
-    let repeated_values = repeated_columns.map(NameList::into_vec).unwrap_or_default();
-    let list_values = list_columns.map(NameList::into_vec).unwrap_or_default();
-    let provided_option_count = usize::from(!canonical_values.is_empty())
-        + usize::from(!repeated_values.is_empty())
-        + usize::from(!list_values.is_empty());
-    if provided_option_count > 1 {
-        return Err(ConfigError::new(format!(
-            "Use only one of {canonical_option_name}, {repeated_option_name}, or {list_option_name}."
-        )));
-    }
-    if !canonical_values.is_empty() {
-        return Ok(canonical_values);
-    }
-    if !repeated_values.is_empty() {
-        return Ok(repeated_values);
-    }
-    Ok(list_values)
 }
 
 pub(crate) fn normalize_trait_type(

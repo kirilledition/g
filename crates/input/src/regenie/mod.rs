@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::error::InputResult;
+
 mod alignment;
 mod cache;
 mod chromosome;
@@ -24,7 +26,7 @@ pub struct PredictionLocoPath {
 pub fn resolve_prediction_loco_paths(
     prediction_list_path: &Path,
     phenotype_names: &[String],
-) -> Result<Vec<PredictionLocoPath>, PredictionError> {
+) -> InputResult<Vec<PredictionLocoPath>> {
     let entries = parse_prediction_list_file(prediction_list_path)?;
     phenotype_names
         .iter()
@@ -35,5 +37,6 @@ pub fn resolve_prediction_loco_paths(
                 loco_file_path: entry.loco_file_path.clone(),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, PredictionError>>()
+        .map_err(Into::into)
 }

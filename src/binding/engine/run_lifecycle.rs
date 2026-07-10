@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use g_interface as interface;
@@ -13,46 +13,17 @@ use g_output::OutputFileFormat;
 use g_runtime as native_run_metadata;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyModule, PyTuple};
 
-use super::config::{NativeRunRequest, RegenieConfig};
 use super::errors;
-use super::json_bridge;
 use super::output;
-use crate::binding::telemetry::run_events::{self, NativeRunArtifacts};
-use super::runtime_state::NativeRuntimeCompatibilityToken;
-use super::schedule::NativeMultiTraitChunkWritePlanner;
 use super::timing::NativeStageTimingRecorder;
-
-pub(crate) type NativeOutputRuntimeGroupInput = (
-    Vec<String>,
-    Vec<String>,
-    i64,
-    String,
-    Option<String>,
-    Option<Vec<i64>>,
-    Option<Vec<String>>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
+use crate::binding::telemetry::run_events::{self, NativeRunArtifacts};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeRunLifecyclePhase {
     OutputsPrepared,
     Dispatching,
     Finalized,
-}
-
-impl NativeRunLifecyclePhase {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::OutputsPrepared => "outputs_prepared",
-            Self::Dispatching => "dispatching",
-            Self::Finalized => "finalized",
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,7 +35,6 @@ struct PreparedPhenotypeRunState {
     effective_config_path: PathBuf,
 }
 
-#[pyclass(name = "NativeRunLifecycleSession", skip_from_py_object)]
 pub(crate) struct NativeRunLifecycleSession {
     config: interface::RegenieConfigData,
     run_request: g_plan::RunRequest,
@@ -75,118 +45,18 @@ pub(crate) struct NativeRunLifecycleSession {
     manifest_fingerprint_cache: Mutex<ManifestFileFingerprintCache>,
 }
 
-#[pyclass(name = "NativeRunLifecyclePhenotypeRun", skip_from_py_object)]
-#[derive(Clone)]
-pub(crate) struct NativeRunLifecyclePhenotypeRun {
-    phenotype_name: String,
-    run_directory: String,
-    chunks_directory: String,
-    existing_manifest_json: Option<String>,
-    effective_config_path: String,
-}
-
-#[pyclass(name = "NativePreparedOutputBundle", skip_from_py_object)]
 pub(crate) struct NativePreparedOutputBundle {
     initialization: g_engine::PipelineOutputInitialization,
-    writer_sessions: Vec<Py<output::OutputWriterSession>>,
-}
-
-impl NativeRunLifecyclePhenotypeRun {
-    fn from_state(state: &PreparedPhenotypeRunState) -> Self {
-        Self {
-            phenotype_name: state.phenotype_name.clone(),
-            run_directory: state.run_directory.display().to_string(),
-            chunks_directory: state.chunks_directory.display().to_string(),
-            existing_manifest_json: state.existing_manifest_json.clone(),
-            effective_config_path: state.effective_config_path.display().to_string(),
-        }
-    }
-}
-
-#[pymethods]
-impl NativeRunLifecycleSession {
-    #[new]
-    fn new(
-        py: Python<'_>,
-        config: &RegenieConfig,
-        runtime_compatibility_token: PyRef<'_, NativeRuntimeCompatibilityToken>,
-    ) -> PyResult<Self> {
-        Self::from_config(py, config, &runtime_compatibility_token)
-    }
-
-    #[getter]
-    fn phase(&self) -> PyResult<&'static str> {
-        self.phase_label()
-    }
-
-    #[getter]
-    fn output_resume(&self) -> bool {
-        self.output_resume_value()
-    }
-
-    #[getter]
-    fn run_request(&self) -> NativeRunRequest {
-        self.run_request_handle()
-    }
-
-    fn prepared_phenotype_runs<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        self.prepared_phenotype_runs_tuple(py)
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn prepared_phenotype_run(&self, phenotype_name: String) -> PyResult<NativeRunLifecyclePhenotypeRun> {
-        self.prepared_phenotype_run_handle(phenotype_name)
-    }
-
-    fn mark_dispatch_started(&self) -> PyResult<()> {
-        self.mark_dispatch_started_internal()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
-    fn prepare_output_bundles_from_runtime_plan<'py>(
-        &self,
-        py: Python<'py>,
-        output_groups: Vec<NativeOutputRuntimeGroupInput>,
-        variant_count: i64,
-        effective_trusted_no_missing_diploid: bool,
-        sample_key_mode: String,
-        binary_kernel_config_json: Option<String>,
-        requested_gpu_genotype_format: String,
-        gpu_genotype_format: String,
-        score_dtype: String,
-        firth_dtype: String,
-        stage_timing_recorder: Option<PyRef<'py, NativeStageTimingRecorder>>,
-    ) -> PyResult<Bound<'py, PyTuple>> {
-        self.prepare_output_bundles_from_runtime_plan_internal(
-            py,
-            output_groups,
-            variant_count,
-            effective_trusted_no_missing_diploid,
-            sample_key_mode,
-            binary_kernel_config_json,
-            requested_gpu_genotype_format,
-            gpu_genotype_format,
-            score_dtype,
-            firth_dtype,
-            stage_timing_recorder.as_deref(),
-        )
-    }
-
-    #[allow(clippy::needless_pass_by_value)]
-    fn finalize_success(&self, final_output_paths: Vec<Option<String>>) -> PyResult<NativeRunArtifacts> {
-        self.finalize_success_artifacts(final_output_paths)
-    }
+    writer_sessions: Vec<Arc<output::OutputWriterSession>>,
 }
 
 impl NativeRunLifecycleSession {
-    pub(crate) fn from_config(
-        py: Python<'_>,
-        config: &RegenieConfig,
-        runtime_compatibility_token: &NativeRuntimeCompatibilityToken,
-    ) -> PyResult<Self> {
-        let _runtime_compatibility_token = runtime_compatibility_token.native_token();
-        let run_request = interface::compile_run_request(config.data())
+    pub(crate) fn config_data(&self) -> &interface::RegenieConfigData {
+        &self.config
+    }
+
+    pub(crate) fn from_config(py: Python<'_>, config: &interface::RegenieConfigData) -> PyResult<Self> {
+        let run_request = interface::compile_run_request(config)
             .map_err(|error| errors::convert_config_error("compile_run_request", &error))?;
         let prepared_runs = py.detach(|| prepare_phenotype_runs(&run_request))?;
         let prepared_run_indices_by_name = prepared_runs
@@ -195,7 +65,7 @@ impl NativeRunLifecycleSession {
             .map(|(index, prepared_run)| (prepared_run.phenotype_name.clone(), index))
             .collect::<BTreeMap<_, _>>();
         Ok(Self {
-            config: config.data().clone(),
+            config: config.clone(),
             run_request,
             prepared_runs,
             prepared_run_indices_by_name,
@@ -205,16 +75,8 @@ impl NativeRunLifecycleSession {
         })
     }
 
-    pub(crate) fn phase_label(&self) -> PyResult<&'static str> {
-        Ok(lock_phase(&self.phase)?.as_str())
-    }
-
     pub(crate) fn output_resume_value(&self) -> bool {
         self.run_request.output.resume
-    }
-
-    pub(crate) fn run_request_handle(&self) -> NativeRunRequest {
-        NativeRunRequest::new(self.run_request.clone())
     }
 
     pub(crate) fn run_request_data(&self) -> &g_plan::RunRequest {
@@ -223,22 +85,6 @@ impl NativeRunLifecycleSession {
 
     pub(crate) fn prepared_run_existing_manifest_json(&self, phenotype_name: &str) -> PyResult<Option<String>> {
         Ok(self.prepared_run_state(phenotype_name)?.existing_manifest_json.clone())
-    }
-
-    pub(crate) fn prepared_phenotype_runs_tuple<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        let prepared_runs = self
-            .prepared_runs
-            .iter()
-            .map(|prepared_run| Py::new(py, NativeRunLifecyclePhenotypeRun::from_state(prepared_run)))
-            .collect::<PyResult<Vec<_>>>()?;
-        PyTuple::new(py, &prepared_runs)
-    }
-
-    pub(crate) fn prepared_phenotype_run_handle(
-        &self,
-        phenotype_name: String,
-    ) -> PyResult<NativeRunLifecyclePhenotypeRun> {
-        Ok(NativeRunLifecyclePhenotypeRun::from_state(self.prepared_run_state(&phenotype_name)?))
     }
 
     pub(crate) fn mark_dispatch_started_internal(&self) -> PyResult<()> {
@@ -256,43 +102,10 @@ impl NativeRunLifecycleSession {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn prepare_output_bundles_from_runtime_plan_internal<'py>(
-        &self,
-        py: Python<'py>,
-        output_groups: Vec<NativeOutputRuntimeGroupInput>,
-        variant_count: i64,
-        effective_trusted_no_missing_diploid: bool,
-        sample_key_mode: String,
-        binary_kernel_config_json: Option<String>,
-        requested_gpu_genotype_format: String,
-        gpu_genotype_format: String,
-        score_dtype: String,
-        firth_dtype: String,
-        stage_timing_recorder: Option<&NativeStageTimingRecorder>,
-    ) -> PyResult<Bound<'py, PyTuple>> {
-        let output_bundles = self.prepare_output_bundle_objects_from_runtime_plan_internal(
-            py,
-            output_groups,
-            variant_count,
-            effective_trusted_no_missing_diploid,
-            sample_key_mode,
-            binary_kernel_config_json,
-            requested_gpu_genotype_format,
-            gpu_genotype_format,
-            score_dtype,
-            firth_dtype,
-            stage_timing_recorder,
-        )?;
-        PyTuple::new(py, &output_bundles)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn prepare_output_bundle_objects_from_runtime_plan_internal(
+    pub(crate) fn prepare_output_bundles_from_runtime_plan_internal(
         &self,
         py: Python<'_>,
-        output_groups: Vec<NativeOutputRuntimeGroupInput>,
+        output_groups: Vec<g_engine::RuntimeOutputGroupInput>,
         variant_count: i64,
         effective_trusted_no_missing_diploid: bool,
         sample_key_mode: String,
@@ -302,7 +115,7 @@ impl NativeRunLifecycleSession {
         score_dtype: String,
         firth_dtype: String,
         stage_timing_recorder: Option<&NativeStageTimingRecorder>,
-    ) -> PyResult<Vec<Py<NativePreparedOutputBundle>>> {
+    ) -> PyResult<Vec<NativePreparedOutputBundle>> {
         self.ensure_not_finalized()?;
         let runtime_plan = g_engine::RuntimeOutputPlan {
             variant_count,
@@ -328,7 +141,10 @@ impl NativeRunLifecycleSession {
             let mut fingerprint_cache = lock_manifest_fingerprint_cache(&self.manifest_fingerprint_cache)?;
             output_groups
                 .into_iter()
-                .map(runtime_output_group_from_input)
+                .map(|input| {
+                    g_engine::RuntimeOutputGroup::from_input(input)
+                        .map_err(|error| errors::convert_pipeline_output_preparation_error(&error))
+                })
                 .map(|output_group| {
                     output_group.and_then(|group| {
                         g_engine::build_runtime_output_preparation_group(
@@ -400,7 +216,7 @@ impl NativeRunLifecycleSession {
         )
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
         *lock_phase(&self.phase)? = NativeRunLifecyclePhase::Finalized;
-        Ok(NativeRunArtifacts::new(artifacts))
+        Ok(artifacts)
     }
 
     fn ensure_not_finalized(&self) -> PyResult<()> {
@@ -424,7 +240,7 @@ impl NativeRunLifecycleSession {
         py: Python<'_>,
         output_preparation_group: g_engine::RuntimeOutputPreparationGroup,
         collect_stage_timings: bool,
-    ) -> PyResult<Py<NativePreparedOutputBundle>> {
+    ) -> PyResult<NativePreparedOutputBundle> {
         let initialization = py
             .detach(|| output_preparation_group.preparation_batch.initialize())
             .map_err(|error| errors::convert_pipeline_resume_compatibility_error(&error))?;
@@ -437,22 +253,20 @@ impl NativeRunLifecycleSession {
             }
         }
         let writer_sessions =
-            self.create_output_writer_sessions(py, &output_preparation_group.phenotype_names, collect_stage_timings)?;
-        Py::new(py, NativePreparedOutputBundle { initialization, writer_sessions })
+            self.create_output_writer_sessions(&output_preparation_group.phenotype_names, collect_stage_timings)?;
+        Ok(NativePreparedOutputBundle { initialization, writer_sessions })
     }
 
     fn create_output_writer_sessions(
         &self,
-        py: Python<'_>,
         phenotype_names: &[String],
         collect_stage_timings: bool,
-    ) -> PyResult<Vec<Py<output::OutputWriterSession>>> {
+    ) -> PyResult<Vec<Arc<output::OutputWriterSession>>> {
         let prepared_runs = phenotype_names
             .iter()
             .map(|phenotype_name| self.prepared_run_state(phenotype_name))
             .collect::<PyResult<Vec<_>>>()?;
         output::create_output_writer_session_batch(
-            py,
             prepared_runs.iter().map(|prepared_run| prepared_run.run_directory.display().to_string()).collect(),
             prepared_runs.iter().map(|prepared_run| prepared_run.chunks_directory.display().to_string()).collect(),
             self.run_request.association_mode.as_str(),
@@ -485,14 +299,10 @@ impl NativeRunLifecycleSession {
 }
 
 impl NativePreparedOutputBundle {
-    pub(crate) fn writer_session_handle(
-        &self,
-        py: Python<'_>,
-        output_index: usize,
-    ) -> PyResult<Py<output::OutputWriterSession>> {
+    pub(crate) fn writer_session_handle(&self, output_index: usize) -> PyResult<Arc<output::OutputWriterSession>> {
         self.writer_sessions
             .get(output_index)
-            .map(|session| session.clone_ref(py))
+            .map(Arc::clone)
             .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))
     }
 
@@ -509,127 +319,9 @@ impl NativePreparedOutputBundle {
             .collect()
     }
 
-    pub(crate) fn writer_session_handles(&self, py: Python<'_>) -> Vec<Py<output::OutputWriterSession>> {
-        self.writer_sessions.iter().map(|session| session.clone_ref(py)).collect()
+    pub(crate) fn writer_session_handles(&self) -> Vec<Arc<output::OutputWriterSession>> {
+        self.writer_sessions.iter().map(Arc::clone).collect()
     }
-
-    pub(crate) fn shared_committed_chunk_identifiers_usize(&self) -> PyResult<Vec<usize>> {
-        self.initialization
-            .shared_committed_chunk_identifiers()
-            .iter()
-            .map(|identifier| {
-                usize::try_from(*identifier).map_err(|_| {
-                    PyValueError::new_err(format!("Committed chunk identifier {identifier} is out of range."))
-                })
-            })
-            .collect()
-    }
-
-    pub(crate) fn multi_trait_chunk_write_planner_handle(&self) -> PyResult<NativeMultiTraitChunkWritePlanner> {
-        NativeMultiTraitChunkWritePlanner::from_i64_committed_chunk_identifier_sets(
-            self.writer_sessions.len(),
-            self.initialization.committed_chunk_identifier_sets(),
-        )
-    }
-
-    pub(crate) fn shared_committed_chunk_identifiers_across_bundles_usize(
-        bundles: &[PyRef<'_, NativePreparedOutputBundle>],
-    ) -> PyResult<Vec<usize>> {
-        let initializations = bundles.iter().map(|bundle| &bundle.initialization).collect::<Vec<_>>();
-        g_engine::PipelineOutputInitialization::shared_committed_chunk_identifiers_across(initializations)
-            .iter()
-            .map(|identifier| {
-                usize::try_from(*identifier).map_err(|_| {
-                    PyValueError::new_err(format!("Committed chunk identifier {identifier} is out of range."))
-                })
-            })
-            .collect()
-    }
-}
-
-#[pymethods]
-impl NativeRunLifecyclePhenotypeRun {
-    #[getter]
-    fn phenotype_name(&self) -> &str {
-        &self.phenotype_name
-    }
-
-    #[getter]
-    fn run_directory(&self) -> &str {
-        &self.run_directory
-    }
-
-    #[getter]
-    fn chunks_directory(&self) -> &str {
-        &self.chunks_directory
-    }
-
-    #[getter]
-    fn effective_config_path(&self) -> &str {
-        &self.effective_config_path
-    }
-
-    fn existing_manifest_payload(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        match self.existing_manifest_json.as_deref() {
-            Some(existing_manifest_json) => {
-                json_bridge::json_text_to_py_object(py, existing_manifest_json, "existing run manifest")
-            }
-            None => Ok(py.None()),
-        }
-    }
-}
-
-#[pymethods]
-impl NativePreparedOutputBundle {
-    #[getter]
-    fn writer_sessions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, &self.writer_sessions)
-    }
-
-    #[getter]
-    fn output_count(&self) -> usize {
-        self.initialization.output_count()
-    }
-
-    fn committed_chunk_counts(&self) -> Vec<usize> {
-        self.initialization.committed_chunk_counts()
-    }
-
-    fn committed_chunk_identifiers(&self, output_index: usize) -> PyResult<Vec<i64>> {
-        self.initialization
-            .committed_chunk_identifiers(output_index)
-            .map(<[i64]>::to_vec)
-            .ok_or_else(|| PyValueError::new_err(format!("Output index {output_index} is out of range.")))
-    }
-
-    fn shared_committed_chunk_identifiers(&self) -> Vec<i64> {
-        self.initialization.shared_committed_chunk_identifiers()
-    }
-
-    fn shared_committed_chunk_identifiers_with(
-        &self,
-        other_bundles: Vec<PyRef<'_, NativePreparedOutputBundle>>,
-    ) -> Vec<i64> {
-        let mut initializations = Vec::with_capacity(other_bundles.len() + 1);
-        initializations.push(&self.initialization);
-        for other_bundle in &other_bundles {
-            initializations.push(&other_bundle.initialization);
-        }
-        g_engine::PipelineOutputInitialization::shared_committed_chunk_identifiers_across(initializations)
-    }
-
-    fn multi_trait_chunk_write_planner(&self) -> PyResult<NativeMultiTraitChunkWritePlanner> {
-        NativeMultiTraitChunkWritePlanner::from_i64_committed_chunk_identifier_sets(
-            self.writer_sessions.len(),
-            self.initialization.committed_chunk_identifier_sets(),
-        )
-    }
-}
-
-pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Lifecycle types are binding-internal pyclasses; not registered on g._core.
-    let _ = module;
-    Ok(())
 }
 
 fn prepare_phenotype_runs(run_request: &g_plan::RunRequest) -> PyResult<Vec<PreparedPhenotypeRunState>> {
@@ -668,7 +360,6 @@ fn extend_run_manifest_metadata(
         output_format: run_request.output.output_format.as_str().to_string(),
         device: run_request.compute.device.as_str().to_string(),
         staging_depth: i64::from(run_request.compute.staging_depth),
-        native_callback_batch_size: i64::from(run_request.compute.native_callback_batch_size),
         threads: run_request.trait_request.thread_count.map(i64::from),
         writer_threads: i64::from(run_request.output.writer_thread_count),
         writer_queue_depth: i64::from(run_request.output.writer_queue_depth),
@@ -688,36 +379,6 @@ fn extend_run_manifest_metadata(
 
 fn lock_phase(phase: &Mutex<NativeRunLifecyclePhase>) -> PyResult<MutexGuard<'_, NativeRunLifecyclePhase>> {
     phase.lock().map_err(|_| PyRuntimeError::new_err("Run lifecycle phase mutex was poisoned."))
-}
-
-fn runtime_output_group_from_input(input: NativeOutputRuntimeGroupInput) -> PyResult<g_engine::RuntimeOutputGroup> {
-    let (
-        phenotype_names,
-        covariate_names,
-        sample_count,
-        output_sample_mode,
-        phenotype_compute_group_mode,
-        phenotype_compute_group_indices,
-        phenotype_compute_group_names,
-        phenotype_compute_group_sample_mode,
-        sample_set_fingerprint,
-        covariate_design_fingerprint,
-        prediction_alignment_fingerprint,
-    ) = input;
-    g_engine::RuntimeOutputGroup::from_input(g_engine::RuntimeOutputGroupInput {
-        phenotype_names,
-        covariate_names,
-        sample_count,
-        output_sample_mode,
-        phenotype_compute_group_mode,
-        phenotype_compute_group_indices,
-        phenotype_compute_group_names,
-        phenotype_compute_group_sample_mode,
-        sample_set_fingerprint,
-        covariate_design_fingerprint,
-        prediction_alignment_fingerprint,
-    })
-    .map_err(|error| errors::convert_pipeline_output_preparation_error(&error))
 }
 
 fn lock_manifest_fingerprint_cache(

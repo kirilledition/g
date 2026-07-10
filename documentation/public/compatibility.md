@@ -62,7 +62,7 @@ Important migration limits:
   not be compared to upstream REGENIE output that used approximate Firth.
 - Treat `--bt --firth --approx` as experimental until the pre-release parity
   suite includes an upstream golden approximate-Firth fixture.
-- REGENIE text output is selected with `--format regenie`; Arrow and
+- REGENIE text output is selected with `[output] format = "regenie"`; Arrow and
   Parquet are the performance-oriented defaults for this engine.
 
 ## Versioning Expectations

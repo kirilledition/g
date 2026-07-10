@@ -1,8 +1,10 @@
 mod kind;
 
+use serde::Serialize;
+
 pub use kind::RunTelemetryEventKind;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunStartedTelemetryFields {
     pub association_mode: String,
     pub trait_type: String,
@@ -10,7 +12,7 @@ pub struct RunStartedTelemetryFields {
     pub output_run_root: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ExecutionPlanPreparedTelemetryFields {
     pub association_mode: String,
     pub trait_type: String,
@@ -20,7 +22,7 @@ pub struct ExecutionPlanPreparedTelemetryFields {
     pub device: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct EffectiveConfigWrittenTelemetryFields {
     pub association_mode: String,
     pub phenotype: String,
@@ -28,21 +30,21 @@ pub struct EffectiveConfigWrittenTelemetryFields {
     pub output_run_directory: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PhenotypeWriterFinishedTelemetryFields {
     pub association_mode: String,
     pub phenotype: String,
     pub final_output_path: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MultiPhenotypeWriterFinishedTelemetryFields {
     pub association_mode: String,
     pub phenotype_count: i64,
     pub final_output_paths: Vec<Option<String>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SingleTraitPreflightCompletedTelemetryFields {
     pub association_mode: String,
     pub phenotype: String,
@@ -51,31 +53,38 @@ pub struct SingleTraitPreflightCompletedTelemetryFields {
     pub chromosome_count: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MultiPhenotypePreflightCompletedTelemetryFields {
     pub association_mode: String,
     pub phenotype_count: i64,
     pub sample_count: i64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SampleAlignmentCompletedTelemetryFields {
     pub association_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub covariate_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype_group_count: Option<i64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PredictionSourceLoadedTelemetryFields {
     pub association_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype_count: Option<i64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MultiPhenotypeSampleSummaryTelemetryFields {
     pub association_mode: String,
     pub multi_phenotype_sample_mode: String,
@@ -86,31 +95,36 @@ pub struct MultiPhenotypeSampleSummaryTelemetryFields {
     pub shared_sample_set: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct GpuGenotypeFormatResolvedTelemetryFields {
     pub requested_gpu_genotype_format: String,
     pub resolved_gpu_genotype_format: String,
     pub resolution_reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_error: Option<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AssociationBackendSelectedTelemetryFields {
     pub association_mode: String,
     pub association_backend_kind: String,
     pub device: String,
     pub genotype_format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype_count: Option<i64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BgenEngineOpenedTelemetryFields {
     pub association_mode: String,
     pub association_backend_kind: String,
     pub sample_count: i64,
     pub variant_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub phenotype_count: Option<i64>,
 }
 

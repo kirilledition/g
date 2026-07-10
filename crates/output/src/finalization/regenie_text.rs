@@ -43,8 +43,10 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
     output_writer.write_all(writer::REGENIE_STEP2_TEXT_HEADER.as_bytes()).map_err(OutputError::runtime)?;
     let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
 
-    let chunk_file_count = chunk_file_paths.len();
-    let mut output_row_count = 0usize;
+    let chunk_file_count = i64::try_from(chunk_file_paths.len()).map_err(|_| {
+        OutputError::InvalidInput("Final output chunk-file count exceeds the signed manifest count range.".to_string())
+    })?;
+    let mut output_row_count = 0_i64;
     let mut batch_count = 0u64;
     let mut arrow_file_open_seconds = 0.0;
     let mut arrow_batch_read_seconds = 0.0;
@@ -62,8 +64,12 @@ pub(crate) fn write_final_regenie_from_chunk_files_with_timing(
             &mut read_arrow_seconds,
             &mut write_parquet_seconds,
         )?;
-        output_row_count += append_result;
-        batch_count += 1;
+        output_row_count = output_row_count.checked_add(append_result).ok_or_else(|| {
+            OutputError::InvalidInput("Final output row count exceeds the signed manifest count range.".to_string())
+        })?;
+        batch_count = batch_count
+            .checked_add(1)
+            .ok_or_else(|| OutputError::Runtime("Final output batch count overflowed uint64.".to_string()))?;
     }
 
     let close_writer_start_time = Instant::now();
@@ -112,7 +118,7 @@ fn append_regenie_text_part_rows(
     arrow_batch_read_seconds: &mut f64,
     read_arrow_seconds: &mut f64,
     write_parquet_seconds: &mut f64,
-) -> Result<usize, OutputError> {
+) -> Result<i64, OutputError> {
     let arrow_file_open_start_time = Instant::now();
     let input_file = File::open(chunk_file_path).map_err(OutputError::runtime)?;
     let current_arrow_file_open_seconds = arrow_file_open_start_time.elapsed().as_secs_f64();
@@ -128,7 +134,7 @@ fn append_regenie_text_part_rows(
     *read_arrow_seconds += header_read_seconds;
     validate_regenie_text_header(&header_line, chunk_file_path)?;
 
-    let mut row_count = 0usize;
+    let mut row_count = 0_i64;
     let mut row_line = String::new();
     loop {
         row_line.clear();
@@ -147,7 +153,9 @@ fn append_regenie_text_part_rows(
             output_writer.write_all(b"\n").map_err(OutputError::runtime)?;
         }
         *write_parquet_seconds += write_start_time.elapsed().as_secs_f64();
-        row_count += 1;
+        row_count = row_count.checked_add(1).ok_or_else(|| {
+            OutputError::InvalidInput("Final REGENIE row count exceeds the signed manifest count range.".to_string())
+        })?;
     }
     Ok(row_count)
 }

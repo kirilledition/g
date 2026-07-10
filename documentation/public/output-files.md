@@ -29,28 +29,27 @@ Each phenotype then gets a deterministic directory:
 Binary runs use `.regenie2_binary.run`. Unsafe characters in phenotype names are
 replaced with underscores and long names are truncated in directory slugs.
 
-`--output_run_directory PATH` overrides the default `<out>.g` run root.
+`[output].output_run_directory` overrides the default `<out>.g` run root.
 
 ## Format-Specific Chunk Directories
 
-| `--format` | Chunk directory | Chunk files | Final artifact behavior |
+| `[output].format` | Chunk directory | Chunk files | Final artifact behavior |
 | --- | --- | --- | --- |
 | `parquet` | `parts/` | `part_<first>[_<last>].parquet` | Part dataset is the primary output. `final.parquet` is written only with finalization. |
 | `arrow` | `chunks/` | `chunk_<first>[_<last>].arrow` | Arrow IPC chunks are primary. `final.parquet` is written only with finalization. |
 | `regenie` | `regenie/` | `part_<first>[_<last>].regenie` plus `.regenie.json` sidecars | `final.regenie` is written at successful finish. |
 
 The `first` and `last` identifiers are zero-padded chunk identifiers. Files can
-group multiple engine chunks when `--chunks_per_arrow_file` is greater
+group multiple engine chunks when `[output].chunks_per_arrow_file` is greater
 than one.
 
 ## Typical Parquet Layout
 
-Given:
+Given `--out results/example --phenoCol phenotype_continuous` and:
 
-```bash
---out results/example
---phenoCol phenotype_continuous
---format parquet
+```toml
+[output]
+format = "parquet"
 ```
 
 a typical completed run writes:
@@ -67,7 +66,7 @@ results/example.g/
     run_manifest.json
 ```
 
-If `--finalize_parquet` is enabled, the run directory also contains:
+If `[output].finalize_parquet` is enabled, the run directory also contains:
 
 ```text
 final.parquet
@@ -77,8 +76,9 @@ final.parquet
 
 With:
 
-```bash
---format regenie
+```toml
+[output]
+format = "regenie"
 ```
 
 the run directory contains:
@@ -176,8 +176,8 @@ Common files:
 | `stage-timings.json` | Profile/trace or explicit path | Stage timing snapshots. |
 | `profile.summary.json` | Profile/trace or explicit path | Aggregate profile summary. |
 
-Use `--log_dir`, `--log_file`, `--stage_timings_json`, and
-`--profile_summary_json` to route diagnostics explicitly.
+Use `[diagnostics].log_dir`, `log_file`, `stage_timings_json`, and
+`profile_summary_json` to route diagnostics explicitly.
 
 For multi-phenotype runs, telemetry includes a
 `multi_phenotype_sample_summary` event with the selected sample mode,

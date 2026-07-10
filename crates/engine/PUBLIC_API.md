@@ -2,30 +2,39 @@
 
 ## This crate owns
 
-Cross-domain orchestration: genotype/input/output/runtime coordination, backend execution, run phases, pipeline output preparation, and pipeline entrypoints.
+Python-free GWAS orchestration: association backend execution, bounded batch
+scheduling, BGEN-backed run access, preflight validation, output preparation
+and resume policy, trusted-input validation, and the small host policies needed
+to select GPU genotype representation and active output traits.
 
 ## Public types
 
-Engine coordinator/report DTOs, `EngineError`/`EngineResult`, backend trait/result/view types, `RunPhase`,
-runtime output-preparation DTOs, output initialization state, `Regenie2RunEngineCore`,
-and transitional scheduler/callback/preflight DTOs required by native bindings.
+`AssociationBackend` and its typed borrowed/owned data contracts;
+`AssociationBatchPipeline` and its scheduled/completed batch types;
+`Regenie2RunEngineCore`; preflight and output-preparation DTOs; null-logistic
+nonconvergence policy types; GPU genotype-format resolution; and multi-trait
+chunk-write planning.
 
 ## Public functions
 
-Run engine coordinator batches, prepare runtime output groups, build typed output
-manifest headers, build output-resume diagnostic payloads, open BGEN-backed
-pipeline entrypoints, plan reader-owned chunks, schedule callback/output work,
-run preflight validation, and validate trusted BGEN assumptions.
+Prepare output groups and resume state, run preflight checks, validate trusted
+BGEN assumptions, resolve GPU genotype format, enforce null-model policy,
+intersect committed chunk identifiers, and select active multi-trait writers.
 
 ## This crate must not expose
 
-Fake/test-only engines in production API, raw implementation modules, public
-debug submodules, PyO3 classes, or direct JAX device-transfer logic.
+Callback queues, callback workers, dosage/result work items, callback progress
+or observation DTOs, BGEN callback invocation/cleanup plans, synthetic engines,
+injected effects, PyO3 classes, Python objects, or JSON compute payloads.
 
 ## Performance constraints
 
-Keep public compute boundaries chunk/batch-oriented. No per-variant dynamic dispatch, hidden JSON, or clone-heavy facade adapters.
+Compute boundaries remain chunk-oriented. Matrices have explicit layouts,
+decoded and device-result queues are bounded, active traits and output
+precision are applied before device-to-host transfer, and completed batches
+return genotype allocations for caller-managed reuse. Avoid per-variant dynamic
+dispatch, hidden serialization, and clone-heavy adapters.
 
 ## Allowed downstream users
 
-Root PyO3 facade.
+Root native binding facade.

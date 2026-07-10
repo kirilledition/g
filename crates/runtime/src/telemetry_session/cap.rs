@@ -2,6 +2,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use serde::Serialize;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TelemetryCapAction {
     Write,
@@ -18,7 +20,7 @@ pub struct TelemetryEventCapState {
     exceeded: AtomicBool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TelemetryWriterCounterSnapshot {
     pub accepted_event_count: usize,
     pub written_event_count: usize,
@@ -123,8 +125,8 @@ impl TelemetryEventCapState {
         let event_cap = self.event_cap.unwrap_or(0);
         format!(
             "Trace telemetry event cap exceeded at {event_cap} events for {}. \
-             Increase --trace_event_cap or set --trace_event_cap 0 to disable the cap for intentional deep traces. \
-             Use --log_lossy to drop events after the cap instead of failing.",
+             Increase [diagnostics].trace_event_cap or set it to 0 to disable the cap for intentional deep traces. \
+             Set [diagnostics].log_lossy = true to drop events after the cap instead of failing.",
             self.path.display()
         )
     }

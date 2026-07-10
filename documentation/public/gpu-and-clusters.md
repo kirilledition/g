@@ -4,11 +4,11 @@
 | --- | --- | --- |
 | Pre-release draft | main branch as of 2026-06-30 GPU and cluster operation | Public user docs |
 
-`g` executes statistical kernels through JAX. Choose the target device with:
+`g` executes statistical kernels through JAX. Choose the target device in TOML:
 
-```bash
---device cpu
---device gpu
+```toml
+[compute]
+device = "gpu" # or "cpu"
 ```
 
 CPU support is installed by the base runtime dependencies. GPU support requires the
@@ -30,7 +30,8 @@ policy can be faster. Treat these as different measurements:
 | Warm cache | Reused compilation artifacts when the persistent cache is configured and valid. |
 | Steady state | Chunk decode, transfer, compute, and writer throughput after startup effects. |
 
-Use `--jax_persistent_cache` and `--jax_cache_dir /path/to/cache` when you want
+Use `[compute].jax_persistent_cache = true` and
+`jax_cache_dir = "/path/to/cache"` when you want
 compatible runs to reuse JAX compilation artifacts. Put the cache on local or
 fast user-writable storage, and do not share CPU cache artifacts across nodes
 with different CPU features.
@@ -94,6 +95,7 @@ export UV_CACHE_DIR="${SCRATCH:-$HOME}/.cache/uv"
 export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
+  --config /path/to/gpu.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -101,8 +103,7 @@ uv run --no-sync g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_gpu_regenie2 \
-  --device gpu
+  --out /path/to/output/g_gpu_regenie2
 ```
 
 Adjust `#SBATCH` options for your site's partitions, accounts, GPU resource syntax, and memory
@@ -126,6 +127,7 @@ export UV_CACHE_DIR="${SCRATCH:-$HOME}/.cache/uv"
 export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
+  --config /path/to/cpu.toml \
   --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
@@ -134,8 +136,7 @@ uv run --no-sync g regenie \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_cpu_regenie2 \
-  --threads "${SLURM_CPUS_PER_TASK:-16}" \
-  --device cpu
+  --threads "${SLURM_CPUS_PER_TASK:-16}"
 ```
 
 ## Cluster Notes
@@ -153,20 +154,20 @@ The gauss development-server recipes and benchmark wrappers are documented in
 
 Important runtime knobs include:
 
-| Option | Purpose |
+| Setting | Purpose |
 | --- | --- |
-| `--bsize` | Variants per chunk. |
-| `--device` | JAX execution target. |
-| `--staging_depth` | Native callback staging depth. |
-| `--trusted_no_missing_diploid` | Enables trusted BGEN fast path after validation policy. |
-| `--bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
-| `--writer_threads` | Output writer worker count. |
-| `--writer_queue_depth` | Output writer queue depth. |
-| `--firth_batch_size` | Binary approximate-Firth batch size. |
-| `--jax_persistent_cache` | Enable JAX persistent compilation cache. |
-| `--jax_cache_dir` | Persistent JAX compilation cache directory. |
-| `--jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches when the persistent cache is enabled. Prefer a local `--jax_cache_dir` for this cache. |
-| `--jax_transfer_guard` | Enable JAX transfer guard diagnostics. |
+| `--bsize` / `[trait].bsize` | Variants per chunk. |
+| `[compute].device` | JAX execution target. |
+| `[compute].staging_depth` | Native scheduler pipeline depth. |
+| `[compute].trusted_no_missing_diploid` | Enables trusted BGEN fast path after validation policy. |
+| `[compute].bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
+| `[output].writer_threads` | Output writer worker count. |
+| `[output].writer_queue_depth` | Output writer queue depth. |
+| `[compute].firth_batch_size` | Binary approximate-Firth batch size. |
+| `[compute].jax_persistent_cache` | Enable JAX persistent compilation cache. |
+| `[compute].jax_cache_dir` | Persistent JAX compilation cache directory. |
+| `[compute].jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches. Prefer a node-local JAX cache. |
+| `[compute].jax_transfer_guard` | Enable JAX transfer guard diagnostics. |
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

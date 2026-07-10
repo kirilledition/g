@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development contract | main branch as of 2026-06-30 JAX association kernels | Compute maintainers |
+| Pre-release draft; development contract | JAX association kernels and target bridge as of 2026-07-10 | Compute maintainers |
 
 JAX kernels own statistical computation after native I/O has aligned samples and
 decoded genotype chunks. Public mathematical behavior is documented in
@@ -15,9 +15,8 @@ decoded genotype chunks. Public mathematical behavior is documented in
 | `src/g/compute/common/` | Shared dtype, genotype, linear algebra, and p-value helpers. |
 | `src/g/compute/regenie2_linear/` | Quantitative Step 2 state preparation and score/statistic kernels. |
 | `src/g/compute/regenie2_binary/` | Binary null model, score test, candidate selection, correction, diagnostics, and Firth paths. |
-| `src/g/engine/callbacks/` | Device result materialization, callback lifecycle, and writer callback timing. |
-| `src/g/engine/regenie2_pipeline/` | Pipeline wrappers that build kernel contexts and dispatch native chunks to JAX callbacks. |
-| `src/g/execution_plan.py` | Public config to immutable kernel/runtime settings. |
+| `src/g/jax_backend.py` | Coarse group/chromosome/compute/materialize adapter called by Rust. |
+| `crates/engine/src/` | Rust owner of aligned inputs, batching, scheduling, and host-result writing. |
 
 ## Kernel Boundary
 
@@ -26,7 +25,7 @@ Kernels should receive:
 - aligned phenotype/covariate/prediction state;
 - variant-major genotype dosage chunks or packed GPU-compatible genotype data;
 - immutable numerical configuration;
-- explicit dtype and device policy from `RegenieConfig`/`ExecutionPlan`.
+- explicit dtype and device policy from the typed JAX backend config.
 
 Kernels should not:
 
@@ -64,9 +63,9 @@ user-visible statistics or tuning semantics change.
 
 ## Numerical Configuration
 
-Numerical settings are public CLI options and must be threaded from
-`crates/interface/src/config.default.toml` through `RegenieConfig`, `ExecutionPlan`, and kernel
-config dataclasses.
+Numerical settings are canonical TOML options and must be threaded from
+`crates/interface/src/config.default.toml` through the Rust run request and
+typed JAX backend config into kernel config dataclasses.
 
 Examples:
 

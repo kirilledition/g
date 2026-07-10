@@ -1,17 +1,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::telemetry_policy;
+use serde::Serialize;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TelemetryEventEnvelope {
     pub schema_version: i64,
     pub run_id: String,
+    #[serde(rename = "ts")]
     pub timestamp: String,
     pub level: String,
     pub source: &'static str,
     pub target: &'static str,
     pub event: String,
+    #[serde(rename = "pid")]
     pub process_identifier: u32,
     pub thread_name: String,
 }

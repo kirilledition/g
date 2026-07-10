@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development contract | main branch as of 2026-06-30 Rust I/O and output runtime | Native runtime maintainers |
+| Pre-release draft; development contract | Rust I/O and output runtime as of 2026-07-10 | Native runtime maintainers |
 
 Native I/O owns the parts of the hot path that should not depend on Python
 DataFrame libraries: BGEN decode, sample/covariate/phenotype alignment, chunk
@@ -18,10 +18,8 @@ Integer boundary decisions for native I/O are maintained in
 | `crates/genotype/src/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
 | `crates/input/src/` | Sample, phenotype, covariate, prediction-list, and LOCO prediction alignment. |
 | `crates/output/src/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
-| `src/binding/` | PyO3 bindings for native runtime, output, and logging. |
-| `src/g/io/source.py` | Python BGEN source configuration. |
-| `src/g/io/output.py` | Python output path, manifest, resume, and finalization bridge. |
-| `src/g/engine/native_dispatch/` | Runtime bridge between execution plans and native engines. |
+| `crates/engine/src/` | Production coordination of input, genotype delivery, output, and cleanup. |
+| `src/binding/` | NumPy/Python adaptation at the JAX backend boundary; no I/O policy. |
 
 ## BGEN Contract
 
@@ -68,11 +66,11 @@ format and options.
 
 ## Manifest And Resume Contract
 
-`run_manifest.json` is the resume authority. It records execution-plan fields,
+`run_manifest.json` is the resume authority. It records prepared-run fields,
 input fingerprints, output writer settings, committed chunks, schema versions,
 and finalization metadata.
 
-The immutable execution plan includes `association_backend.kind` so resume and
+The immutable prepared run plan includes `association_backend.kind` so resume and
 review tooling can distinguish `jax_dosage` and `jax_packed8` execution without
 inferring from lower-level genotype or device fields.
 
@@ -93,7 +91,7 @@ or output schema assumptions.
 Native I/O changes usually need tests in:
 
 - Rust unit tests under `crates/genotype/src/`, `crates/input/src/`, or `crates/output/src/`;
-- integration or pipeline coverage in the owning Rust crate when callback delivery or writer sessions change.
+- integration or pipeline coverage in the owning Rust crate when backend delivery or writer sessions change.
 
 Output contract changes also require [Output Files](../public/output-files.md)
 and [Resume and Manifest](../public/resume-and-manifest.md) updates.

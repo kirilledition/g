@@ -23,8 +23,7 @@ pub struct NativeCliOutcome {
 }
 
 impl NativeCliOutcome {
-    #[must_use]
-    pub fn new(exit_code: i32, stdout: String, stderr: String, validated_run_config: bool) -> Self {
+    fn new(exit_code: i32, stdout: String, stderr: String, validated_run_config: bool) -> Self {
         Self { exit_code, stdout, stderr, validated_run_config }
     }
 }

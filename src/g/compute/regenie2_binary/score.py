@@ -41,43 +41,6 @@ def compute_positive_variance_mask(
     return variance > variance_floor
 
 
-def compute_binary_score_test_chunk_variant_major(
-    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-    score_dtype: types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2BinaryScoreChunkResult:
-    """Compute the binary score test from canonical variant-major genotypes.
-
-    Args:
-        chromosome_state: Chromosome-specific null model state.
-        genotype_matrix_by_variant: Variant-major dosage matrix.
-        correction_plan: Binary fallback/correction policy.
-        kernel_config: Binary-kernel numerical policy.
-        dosage_sum: Optional native per-variant dosage sum.
-        observation_count: Optional native per-variant observed genotype count.
-        score_dtype: Floating-point dtype for score-test computation.
-
-    Returns:
-        Uncorrected score-test result for the chunk.
-
-    """
-    multi_chromosome_state = regenie2_binary_state.build_multi_binary_chromosome_state_from_single(chromosome_state)
-    multi_result = compute_multi_binary_score_test_chunk_variant_major(
-        chromosome_state=multi_chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        correction_plan=correction_plan,
-        kernel_config=kernel_config,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        score_dtype=score_dtype,
-    )
-    return regenie2_binary_result.squeeze_single_binary_score_result(multi_result)
-
-
 def compute_multi_binary_score_test_chunk_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,

@@ -1,0 +1,64 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+
+use signal_hook::consts::signal::SIGTERM;
+
+use super::error::ShutdownError;
+
+static SIGTERM_FLAG: OnceLock<Result<Arc<AtomicBool>, ShutdownError>> = OnceLock::new();
+static SIGTERM_SCOPE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Active CLI scope for graceful first-SIGTERM handling.
+pub struct SigtermShutdownScope {
+    requested: Arc<AtomicBool>,
+}
+
+impl Drop for SigtermShutdownScope {
+    fn drop(&mut self) {
+        self.requested.store(true, Ordering::SeqCst);
+        SIGTERM_SCOPE_ACTIVE.store(false, Ordering::Release);
+    }
+}
+
+/// Install process SIGTERM actions and arm graceful handling for one CLI run.
+///
+/// The first SIGTERM sets the request flag. A second SIGTERM executes the
+/// signal's default action immediately.
+///
+/// # Errors
+///
+/// Returns an error if signal handlers cannot be installed or another CLI run
+/// already owns the process signal scope.
+pub fn begin_sigterm_shutdown_scope() -> Result<SigtermShutdownScope, ShutdownError> {
+    if SIGTERM_SCOPE_ACTIVE.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return Err(ShutdownError::new("A SIGTERM shutdown scope is already active."));
+    }
+
+    let requested_result = SIGTERM_FLAG.get_or_init(|| {
+        let requested = Arc::new(AtomicBool::new(true));
+        signal_hook::flag::register_conditional_default(SIGTERM, Arc::clone(&requested))
+            .map_err(|error| ShutdownError::new(format!("Could not install the SIGTERM default action: {error}")))?;
+        signal_hook::flag::register(SIGTERM, Arc::clone(&requested))
+            .map_err(|error| ShutdownError::new(format!("Could not install the SIGTERM request action: {error}")))?;
+        Ok(requested)
+    });
+    let requested = match requested_result {
+        Ok(requested) => Arc::clone(requested),
+        Err(error) => {
+            SIGTERM_SCOPE_ACTIVE.store(false, Ordering::Release);
+            return Err(error.clone());
+        }
+    };
+    requested.store(false, Ordering::SeqCst);
+    Ok(SigtermShutdownScope { requested })
+}
+
+/// Return whether SIGTERM requested shutdown for the active CLI run.
+#[must_use]
+pub fn sigterm_shutdown_requested() -> bool {
+    SIGTERM_SCOPE_ACTIVE.load(Ordering::Acquire)
+        && SIGTERM_FLAG
+            .get()
+            .and_then(|result| result.as_ref().ok())
+            .is_some_and(|requested| requested.load(Ordering::SeqCst))
+}

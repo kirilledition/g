@@ -41,7 +41,7 @@ docs = [
 cpu = ["jax[cpu]>=0.10.1"]
 
 [project.scripts]
-g = "g.runner.cli:main"
+g = "g.cli:main"
 
 [build-system]
 requires = ["maturin>=1.13.3,<2.0"]

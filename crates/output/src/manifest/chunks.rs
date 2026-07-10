@@ -2,25 +2,23 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use crate::error::OutputError;
-
-type ManifestResult<T> = Result<T, OutputError>;
+use crate::error::{OutputError, OutputResult};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunManifestChunkCommit {
+pub(crate) struct RunManifestChunkCommit {
     pub chunk_identifier: i64,
     pub output_format: String,
     pub compression: String,
     pub variant_start_index: i64,
     pub variant_stop_index: i64,
-    pub row_count: usize,
+    pub row_count: i64,
     pub chunk_file_name: String,
 }
 
 pub(super) fn insert_or_validate_chunk_commit(
     committed_chunks_by_identifier: &mut BTreeMap<i64, RunManifestChunkCommit>,
     chunk_commit: RunManifestChunkCommit,
-) -> ManifestResult<()> {
+) -> OutputResult<()> {
     match committed_chunks_by_identifier.get(&chunk_commit.chunk_identifier) {
         Some(existing_commit) if existing_commit != &chunk_commit => Err(OutputError::InvalidInput(format!(
             "Run manifest has conflicting commit metadata for chunk {}.",
@@ -46,7 +44,7 @@ pub(super) fn chunk_commit_to_value(chunk_commit: &RunManifestChunkCommit) -> Va
     })
 }
 
-pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> ManifestResult<RunManifestChunkCommit> {
+pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> OutputResult<RunManifestChunkCommit> {
     let chunk_file_name = committed_chunk.get("chunk_file_name").and_then(Value::as_str).ok_or_else(|| {
         OutputError::InvalidInput("Run manifest committed chunk entry is missing chunk_file_name.".to_string())
     })?;
@@ -58,7 +56,7 @@ pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> Manifes
             .unwrap_or_else(|| "none".to_string()),
         variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
         variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
-        row_count: read_manifest_usize(committed_chunk, "row_count")?,
+        row_count: read_manifest_non_negative_integer(committed_chunk, "row_count")?,
         chunk_file_name: chunk_file_name.to_string(),
     })
 }
@@ -77,15 +75,18 @@ fn infer_output_format_from_file_name(chunk_file_name: &str) -> &'static str {
     "arrow"
 }
 
-fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> ManifestResult<i64> {
+fn read_manifest_integer(committed_chunk: &Value, field_name: &str) -> OutputResult<i64> {
     committed_chunk.get(field_name).and_then(Value::as_i64).ok_or_else(|| {
         OutputError::InvalidInput(format!("Run manifest committed chunk entry is missing {field_name}."))
     })
 }
 
-fn read_manifest_usize(committed_chunk: &Value, field_name: &str) -> ManifestResult<usize> {
+fn read_manifest_non_negative_integer(committed_chunk: &Value, field_name: &str) -> OutputResult<i64> {
     let value = read_manifest_integer(committed_chunk, field_name)?;
-    usize::try_from(value).map_err(|_| {
-        OutputError::InvalidInput(format!("Run manifest committed chunk entry {field_name} must be non-negative."))
-    })
+    if value < 0 {
+        return Err(OutputError::InvalidInput(format!(
+            "Run manifest committed chunk entry {field_name} must be non-negative."
+        )));
+    }
+    Ok(value)
 }

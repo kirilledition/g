@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use super::tables::{CovariateTable, MultiPhenotypeTable, SinglePhenotypeTable, is_complete_multi_phenotype_sample};
 use super::types::{
-    AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, GroupedAlignedSampleData, MultiAlignedSampleData,
-    MultiAlignmentInputs, SampleAlignmentError,
+    AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, MultiAlignedSampleData, MultiAlignmentInputs,
+    SampleAlignmentError,
 };
 
 type SampleAlignmentResult<T> = Result<T, SampleAlignmentError>;
@@ -105,7 +105,7 @@ pub(super) fn build_grouped_aligned_sample_data(
     inputs: &MultiAlignmentInputs,
     phenotype_table: &MultiPhenotypeTable,
     covariate_table: &CovariateTable,
-) -> SampleAlignmentResult<GroupedAlignedSampleData> {
+) -> SampleAlignmentResult<Vec<AlignedPhenotypeGroup>> {
     let mut group_indices_by_sample_indices: HashMap<Vec<usize>, usize> = HashMap::new();
     let mut group_sample_array_indices: Vec<Vec<usize>> = Vec::new();
     let mut phenotype_indices_by_group: Vec<Vec<usize>> = Vec::new();
@@ -141,7 +141,7 @@ pub(super) fn build_grouped_aligned_sample_data(
         phenotype_indices_by_group[group_index].push(phenotype_index);
     }
 
-    let groups = phenotype_indices_by_group
+    Ok(phenotype_indices_by_group
         .into_iter()
         .zip(group_sample_array_indices)
         .map(|(phenotype_indices, complete_sample_array_indices)| {
@@ -153,8 +153,7 @@ pub(super) fn build_grouped_aligned_sample_data(
                 &complete_sample_array_indices,
             )
         })
-        .collect::<Vec<_>>();
-    Ok(GroupedAlignedSampleData { groups })
+        .collect())
 }
 
 fn build_aligned_phenotype_group(

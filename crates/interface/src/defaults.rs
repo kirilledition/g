@@ -3,9 +3,7 @@ use std::sync::OnceLock;
 
 use sha2::{Digest, Sha256};
 
-use super::overlay::resolve_partial_config;
 use super::partial::PartialConfig;
-use super::resolved::{ConfigProvenance, RegenieConfigData};
 use super::toml::partial_config_from_toml_text;
 use super::{ConfigError, ConfigResult, DEFAULT_CONFIG_TOML};
 
@@ -26,15 +24,6 @@ pub(crate) fn load_default_config_data() -> ConfigResult<&'static DefaultConfigD
         })
         .as_ref()
         .map_err(Clone::clone)
-}
-
-/// Load packaged defaults as an unvalidated runtime config object.
-///
-/// # Errors
-///
-/// Returns an error when the packaged default TOML cannot be decoded.
-pub fn load_packaged_config_data() -> ConfigResult<RegenieConfigData> {
-    resolve_partial_config(load_default_config_data()?.partial_config.clone(), ConfigProvenance::default(), false)
 }
 
 fn build_default_config_hash(default_toml_text: &str) -> String {

@@ -6,13 +6,8 @@ pub struct SampleAlignmentError {
 }
 
 impl SampleAlignmentError {
-    pub fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self { message: message.into() }
-    }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
     }
 }
 
@@ -23,12 +18,6 @@ impl fmt::Display for SampleAlignmentError {
 }
 
 impl std::error::Error for SampleAlignmentError {}
-
-impl From<String> for SampleAlignmentError {
-    fn from(message: String) -> Self {
-        Self::new(message)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SampleKeyMode {
@@ -94,11 +83,6 @@ pub struct MultiAlignedSampleData {
 pub struct AlignedPhenotypeGroup {
     pub phenotype_indices: Vec<usize>,
     pub aligned_sample_data: MultiAlignedSampleData,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct GroupedAlignedSampleData {
-    pub groups: Vec<AlignedPhenotypeGroup>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

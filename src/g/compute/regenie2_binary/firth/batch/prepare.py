@@ -201,100 +201,6 @@ def prepare_firth_candidate_batch_from_candidate_genotypes(
     )
 
 
-def prepare_firth_candidate_batch(
-    *,
-    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    candidate_mask: jax.Array,
-    score_beta: jax.Array,
-    sparse_candidate_mask: jax.Array | None,
-    candidate_capacity: int,
-    firth_batch_size: int,
-    order_candidates: bool,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-) -> models.PreparedFirthCandidateBatch:
-    """Prepare ordered fixed-capacity candidate lanes for Firth correction."""
-    genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
-    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
-        candidate_mask,
-        candidate_capacity,
-        firth_batch_size,
-    )
-    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
-    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
-    candidate_genotype_matrix_by_variant = jnp.take(
-        genotype_matrix_by_variant_float32,
-        flat_fallback_indices,
-        axis=0,
-    )
-    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_fallback_indices)
-    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_fallback_indices)
-    return prepare_firth_candidate_batch_from_candidate_genotypes(
-        chromosome_state=chromosome_state,
-        batch_plan=batch_plan,
-        flat_fallback_indices=flat_fallback_indices,
-        flat_active_mask=flat_active_mask,
-        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
-        score_beta=score_beta,
-        sparse_candidate_mask=sparse_candidate_mask,
-        order_candidates=order_candidates,
-        kernel_config=kernel_config,
-        candidate_dosage_sum=candidate_dosage_sum,
-        candidate_observation_count=candidate_observation_count,
-    )
-
-
-def prepare_firth_candidate_batch_from_packed8(
-    *,
-    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    packed_probability_pairs_by_variant: jax.Array,
-    candidate_mask: jax.Array,
-    score_beta: jax.Array,
-    sparse_candidate_mask: jax.Array | None,
-    candidate_capacity: int,
-    firth_batch_size: int,
-    order_candidates: bool,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-    score_dtype: g_types.FloatingPointDtype,
-) -> models.PreparedFirthCandidateBatch:
-    """Prepare Firth candidate lanes by decoding only selected packed8 rows."""
-    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
-        candidate_mask,
-        candidate_capacity,
-        firth_batch_size,
-    )
-    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
-    flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
-    packed_candidate_probability_pairs_by_variant = jnp.take(
-        packed_probability_pairs_by_variant,
-        flat_fallback_indices,
-        axis=0,
-    )
-    candidate_genotype_matrix_by_variant = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
-        packed_candidate_probability_pairs_by_variant,
-        score_dtype,
-    )
-    candidate_dosage_sum = take_candidate_stat_vector(dosage_sum, flat_fallback_indices)
-    candidate_observation_count = take_candidate_stat_vector(observation_count, flat_fallback_indices)
-    return prepare_firth_candidate_batch_from_candidate_genotypes(
-        chromosome_state=chromosome_state,
-        batch_plan=batch_plan,
-        flat_fallback_indices=flat_fallback_indices,
-        flat_active_mask=flat_active_mask,
-        candidate_genotype_matrix_by_variant=candidate_genotype_matrix_by_variant,
-        score_beta=score_beta,
-        sparse_candidate_mask=sparse_candidate_mask,
-        order_candidates=order_candidates,
-        kernel_config=kernel_config,
-        candidate_dosage_sum=candidate_dosage_sum,
-        candidate_observation_count=candidate_observation_count,
-    )
-
-
 def prepare_multi_firth_candidate_batch_from_candidate_genotypes(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
@@ -417,10 +323,10 @@ def prepare_multi_firth_candidate_batch(
     """Prepare ordered fixed-capacity multi-trait candidate lanes for Firth correction."""
     genotype_matrix_by_variant_float32 = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     variant_count = genotype_matrix_by_variant.shape[0]
-    batch_plan = regenie2_binary_candidate_planning.build_device_multi_firth_batch_plan(
-        candidate_mask,
-        candidate_capacity,
-        firth_batch_size,
+    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
+        candidate_mask.reshape((-1,)),
+        candidate_capacity=candidate_capacity,
+        firth_batch_size=firth_batch_size,
     )
     flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
     flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))
@@ -467,10 +373,10 @@ def prepare_multi_firth_candidate_batch_from_packed8(
 ) -> models.PreparedMultiFirthCandidateBatch:
     """Prepare multi-trait Firth candidate lanes by decoding only selected packed8 rows."""
     variant_count = packed_probability_pairs_by_variant.shape[0]
-    batch_plan = regenie2_binary_candidate_planning.build_device_multi_firth_batch_plan(
-        candidate_mask,
-        candidate_capacity,
-        firth_batch_size,
+    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
+        candidate_mask.reshape((-1,)),
+        candidate_capacity=candidate_capacity,
+        firth_batch_size=firth_batch_size,
     )
     flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
     flat_active_mask = batch_plan.fallback_active_mask_matrix.reshape((-1,))

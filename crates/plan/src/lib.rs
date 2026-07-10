@@ -5,7 +5,6 @@ compile_error!("g requires a 64-bit target.");
 
 mod api;
 mod enums;
-mod error;
 mod host_policy;
 mod prepared;
 mod request;

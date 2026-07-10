@@ -306,7 +306,7 @@ def compute_scalar_variant_firth_fixed_batch(
 
 
 def fit_compact_sparse_firth_lane(
-    shared_operands: regenie2_binary_firth_types.CompactSparseFirthLaneSharedOperands,
+    solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
     phenotype_vector: jax.Array,
     genotype_vector: jax.Array,
     offset_vector: jax.Array,
@@ -325,7 +325,7 @@ def fit_compact_sparse_firth_lane(
         warm_start_beta=jnp.asarray(0.0, dtype=offset_vector.dtype),
         skip_firth=skip_firth,
         null_failed=null_failed,
-        solver_parameters=shared_operands.solver_parameters,
+        solver_parameters=solver_parameters,
     )
 
 
@@ -339,7 +339,7 @@ def compute_active_compact_sparse_firth_fixed_batch(
         fit_compact_sparse_firth_lane,
         in_axes=(None, 0, 0, 0, 0, 0, 0, 0),
     )(
-        carry.shared_operands,
+        carry.solver_parameters,
         carry.phenotype_batches[batch_index],
         carry.genotype_batches[batch_index],
         carry.offset_batches[batch_index],
@@ -436,9 +436,7 @@ def compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameter
     null_failed_mask_batches = null_failed_mask_vector.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
     scan_carry = regenie2_binary_firth_types.CompactSparseFirthFixedBatchScanCarry(
-        shared_operands=regenie2_binary_firth_types.CompactSparseFirthLaneSharedOperands(
-            solver_parameters=solver_parameters
-        ),
+        solver_parameters=solver_parameters,
         phenotype_batches=phenotype_batches,
         genotype_batches=genotype_batches,
         offset_batches=offset_batches,
@@ -873,72 +871,6 @@ def compute_scalar_firth_with_sparse_compaction(
         compute_scalar_firth_sparse_split_path,
         compute_scalar_firth_without_sparse_compaction_from_split_operands,
         split_operands,
-    )
-
-
-def compute_firth_variantwise_fixed_batches(
-    *,
-    covariate_matrix: jax.Array,
-    null_logistic_coefficients: jax.Array,
-    null_firth_offset: jax.Array,
-    phenotype_vector: jax.Array,
-    genotype_matrix_by_variant: jax.Array,
-    raw_genotype_matrix_by_variant: jax.Array,
-    loco_offset: jax.Array,
-    initial_coefficients: jax.Array,
-    active_mask: jax.Array,
-    sparse_correction_mask: jax.Array,
-    fallback_count: jax.Array,
-    firth_batch_size: int,
-    null_penalized_log_likelihood: jax.Array,
-    full_null_deviance: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Compute single-trait Firth fits with compact sparse lanes when eligible."""
-    if kernel_config.approximate_firth.use_block_math:
-        return compute_firth_variantwise_fixed_batches_without_sparse_compaction(
-            covariate_matrix=covariate_matrix,
-            null_logistic_coefficients=null_logistic_coefficients,
-            null_firth_offset=null_firth_offset,
-            phenotype_vector=phenotype_vector,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
-            loco_offset=loco_offset,
-            initial_coefficients=initial_coefficients,
-            active_mask=active_mask,
-            sparse_correction_mask=sparse_correction_mask,
-            fallback_count=fallback_count,
-            firth_batch_size=firth_batch_size,
-            null_penalized_log_likelihood=null_penalized_log_likelihood,
-            kernel_config=kernel_config,
-        )
-
-    sparse_carrier_dosage_threshold = jnp.asarray(
-        kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-        dtype=jnp.float64,
-    )
-    compaction_operands = regenie2_binary_firth_types.ScalarFirthSparseCompactionOperands(
-        null_firth_offset=null_firth_offset,
-        phenotype_vector=phenotype_vector,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
-        active_mask=active_mask,
-        sparse_correction_mask=sparse_correction_mask,
-        fallback_count=fallback_count,
-        firth_batch_size=firth_batch_size,
-        null_penalized_log_likelihood=null_penalized_log_likelihood,
-        full_null_deviance=full_null_deviance,
-        sparse_carrier_dosage_threshold=sparse_carrier_dosage_threshold,
-        solver_parameters=regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
-            kernel_config,
-            jnp.float64,
-        ),
-    )
-    return jax.lax.cond(
-        jnp.any(active_mask & sparse_correction_mask),
-        compute_scalar_firth_with_sparse_compaction,
-        compute_scalar_firth_without_sparse_compaction_from_operands,
-        compaction_operands,
     )
 
 

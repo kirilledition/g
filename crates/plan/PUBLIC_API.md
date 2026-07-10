@@ -6,7 +6,9 @@ Stable, serializable run-planning contracts shared by Rust crates and PyO3.
 
 ## Public types
 
-Run request/config DTOs, `PlanError`/`PlanResult`, host-policy plans, prepared-run plans, manifest fingerprints, association/backend enums and their string-value contracts, runtime/output plan DTOs.
+Run request/config DTOs, host-policy and prepared-plan errors, prepared-run
+plans, manifest fingerprints, association/backend enums and their string-value
+contracts, runtime/output plan DTOs.
 
 ## Public functions
 

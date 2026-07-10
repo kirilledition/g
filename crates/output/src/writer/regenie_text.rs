@@ -15,7 +15,7 @@ use super::record_batch::{
     RegenieStep2CorrectionArrayEncoding, RegenieStep2RecordBatchArrayCache, build_regenie_step2_record_batch,
 };
 use super::{
-    OutputWriterResult, RegenieStep2ArrowFileWriteTiming, RegenieStep2ChunkJob, RegenieStep2ChunkStreamWriteResult,
+    OutputResult, RegenieStep2ArrowFileWriteTiming, RegenieStep2ChunkJob, RegenieStep2ChunkStreamWriteResult,
     RegenieStep2RecordBatchBuildTiming,
 };
 
@@ -24,9 +24,9 @@ const REGENIE_STEP2_TEXT_MISSING_VALUE: &str = "NA";
 
 pub(super) fn write_regenie_step2_chunks_to_regenie_text_file(
     chunks: Vec<RegenieStep2ChunkJob>,
-    chunk_schema: Arc<Schema>,
+    chunk_schema: &Arc<Schema>,
     chunk_file_path: &Path,
-) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
+) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
     let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
@@ -44,7 +44,7 @@ pub(super) fn write_regenie_step2_chunks_to_regenie_text_file(
         let record_batch_build_start_time = Instant::now();
         let record_batch_build_result = build_regenie_step2_record_batch(
             chunk_job,
-            Arc::clone(&chunk_schema),
+            Arc::clone(chunk_schema),
             &mut array_cache,
             RegenieStep2CorrectionArrayEncoding::String,
         )?;
@@ -73,7 +73,7 @@ pub(super) fn write_regenie_step2_chunks_to_regenie_text_file(
 pub(super) fn write_regenie_text_metadata_sidecar(
     chunk_file_path: &Path,
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     let sidecar_path = build_regenie_text_metadata_sidecar_path(chunk_file_path);
     let temporary_sidecar_path = sidecar_path.with_extension("json.tmp");
     let metadata_text = build_chunk_commit_metadata_text(chunk_commits)?;
@@ -84,7 +84,7 @@ pub(super) fn write_regenie_text_metadata_sidecar(
 fn write_regenie_step2_text_record_batch(
     output_writer: &mut BufWriter<File>,
     record_batch: &RecordBatch,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     let chromosome_array = required_string_column(record_batch, "CHROM")?;
     let position_array = required_int64_column(record_batch, "GENPOS")?;
     let variant_identifier_array = required_string_column(record_batch, "ID")?;
@@ -138,7 +138,7 @@ fn write_regenie_step2_text_record_batch(
     Ok(())
 }
 
-fn required_string_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a StringArray> {
+fn required_string_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputResult<&'a StringArray> {
     record_batch
         .column_by_name(column_name)
         .and_then(|column| column.as_any().downcast_ref::<StringArray>())
@@ -147,10 +147,7 @@ fn required_string_column<'a>(record_batch: &'a RecordBatch, column_name: &str) 
         })
 }
 
-fn required_float32_column<'a>(
-    record_batch: &'a RecordBatch,
-    column_name: &str,
-) -> OutputWriterResult<&'a Float32Array> {
+fn required_float32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputResult<&'a Float32Array> {
     record_batch
         .column_by_name(column_name)
         .and_then(|column| column.as_any().downcast_ref::<Float32Array>())
@@ -168,7 +165,7 @@ enum StatisticColumnRef<'a> {
 fn required_statistic_column<'a>(
     record_batch: &'a RecordBatch,
     column_name: &str,
-) -> OutputWriterResult<StatisticColumnRef<'a>> {
+) -> OutputResult<StatisticColumnRef<'a>> {
     let Some(column) = record_batch.column_by_name(column_name) else {
         return Err(OutputError::InvalidInput(format!(
             "REGENIE text writer could not read statistic column {column_name}."
@@ -185,13 +182,13 @@ fn required_statistic_column<'a>(
     )))
 }
 
-fn required_int32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a Int32Array> {
+fn required_int32_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputResult<&'a Int32Array> {
     record_batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int32Array>()).ok_or_else(
         || OutputError::InvalidInput(format!("REGENIE text writer could not read int32 column {column_name}.")),
     )
 }
 
-fn required_int64_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputWriterResult<&'a Int64Array> {
+fn required_int64_column<'a>(record_batch: &'a RecordBatch, column_name: &str) -> OutputResult<&'a Int64Array> {
     record_batch.column_by_name(column_name).and_then(|column| column.as_any().downcast_ref::<Int64Array>()).ok_or_else(
         || OutputError::InvalidInput(format!("REGENIE text writer could not read int64 column {column_name}.")),
     )
@@ -202,7 +199,7 @@ fn write_regenie_text_string_value(
     array: &StringArray,
     row_index: usize,
     column_name: &str,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     if array.is_null(row_index) {
         return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
@@ -219,7 +216,7 @@ fn write_regenie_text_float32_value(
     output_writer: &mut BufWriter<File>,
     array: &Float32Array,
     row_index: usize,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     if array.is_null(row_index) {
         return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
@@ -234,7 +231,7 @@ fn write_regenie_text_statistic_value(
     output_writer: &mut BufWriter<File>,
     array: StatisticColumnRef<'_>,
     row_index: usize,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     match array {
         StatisticColumnRef::Float32(float32_array) => {
             write_regenie_text_float32_value(output_writer, float32_array, row_index)
@@ -249,7 +246,7 @@ fn write_regenie_text_float64_value(
     output_writer: &mut BufWriter<File>,
     array: &Float64Array,
     row_index: usize,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     if array.is_null(row_index) {
         return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
@@ -264,7 +261,7 @@ fn write_regenie_text_int32_value(
     output_writer: &mut BufWriter<File>,
     array: &Int32Array,
     row_index: usize,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     if array.is_null(row_index) {
         return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }
@@ -275,7 +272,7 @@ fn write_regenie_text_int64_value(
     output_writer: &mut BufWriter<File>,
     array: &Int64Array,
     row_index: usize,
-) -> OutputWriterResult<()> {
+) -> OutputResult<()> {
     if array.is_null(row_index) {
         return output_writer.write_all(REGENIE_STEP2_TEXT_MISSING_VALUE.as_bytes()).map_err(OutputError::runtime);
     }

@@ -2,9 +2,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::telemetry_session::{
-    TelemetryCloseMetadataPayload, TelemetryWriterCounterSnapshot, build_telemetry_close_metadata,
-};
+use crate::telemetry_session::TelemetryWriterCounterSnapshot;
 
 use super::file::{build_telemetry_file_writer, normalize_event_cap};
 use super::shared::{clear_shared_telemetry_writer, replace_shared_telemetry_writer};
@@ -52,11 +50,6 @@ impl TelemetrySessionWriter {
         self.last_counter_snapshot.clone().unwrap_or_else(TelemetryWriterCounterSnapshot::empty)
     }
 
-    #[must_use]
-    pub fn close_metadata(&self) -> Option<TelemetryCloseMetadataPayload> {
-        self.last_counter_snapshot.clone().map(build_telemetry_close_metadata)
-    }
-
     /// Close the writer, flush buffered telemetry, and return final counters.
     ///
     /// # Errors
@@ -78,14 +71,5 @@ impl TelemetrySessionWriter {
         self.last_counter_snapshot = Some(counter_snapshot.clone());
         writer.fail_if_lossless_cap_exceeded()?;
         Ok(counter_snapshot)
-    }
-
-    /// Close the writer and return telemetry close metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns an I/O error when writer finalization fails.
-    pub fn finish_close_metadata(&mut self) -> io::Result<TelemetryCloseMetadataPayload> {
-        self.finish_counter_snapshot().map(build_telemetry_close_metadata)
     }
 }

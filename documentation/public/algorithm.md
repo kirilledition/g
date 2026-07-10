@@ -82,7 +82,10 @@ For each requested phenotype, `g` builds the analysis sample set by matching row
 - optional covariate table;
 - Step 1 LOCO predictions.
 
-The matching key is controlled by `--sample_key_mode`: either `IID` or `(FID, IID)`. Rows with missing selected phenotype or covariate values are excluded for that phenotype. Binary phenotypes use REGENIE coding in the input file (`1 = control`, `2 = case`) and are recoded internally to `0/1`.
+The matching key is controlled by `[compute] sample_key_mode`: either `IID` or
+`(FID, IID)`. Rows with missing selected phenotype or covariate values are
+excluded for that phenotype. Binary phenotypes use REGENIE coding in the input
+file (`1 = control`, `2 = case`) and are recoded internally to `0/1`.
 
 This sample set is part of the scientific analysis. Changing it changes `N`, covariate adjustment, LOCO alignment, and all downstream statistics.
 
@@ -273,9 +276,9 @@ Missing genotype dosages are represented as `NaN` during decode. Before the stat
 
 Multiple phenotypes can be requested with repeated `--phenoCol` or with `--phenoColList`.
 
-`--multi_phenotype_sample_mode per-phenotype` is the default. Each phenotype keeps its own complete-case sample set. This matches separate single-phenotype runs, aside from execution optimizations.
+`[compute] multi_phenotype_sample_mode = "per-phenotype"` is the default. Each phenotype keeps its own complete-case sample set. This matches separate single-phenotype runs, aside from execution optimizations.
 
-`--multi_phenotype_sample_mode complete-case` builds one shared sample-set intersection across all requested phenotypes. This can reuse more work, but it is a different statistical analysis when missingness differs across phenotypes. It changes the sample count, covariate projection, LOCO alignment, and statistics.
+`[compute] multi_phenotype_sample_mode = "complete-case"` builds one shared sample-set intersection across all requested phenotypes. This can reuse more work, but it is a different statistical analysis when missingness differs across phenotypes. It changes the sample count, covariate projection, LOCO alignment, and statistics.
 
 ## Parameters that can change results
 
@@ -285,14 +288,17 @@ Multiple phenotypes can be requested with repeated `--phenoCol` or with `--pheno
 | `--phenoCol`, `--phenoColList` | Selects the analyzed trait or traits. |
 | `--covarCol`, `--covarColList` | Changes covariate adjustment and degrees of freedom. |
 | `--pred` | Supplies chromosome-specific Step 1 predictions or offsets. |
-| `--sample`, `--sample_key_mode` | Changes sample identity resolution and alignment. |
-| `--multi_phenotype_sample_mode` | Changes whether phenotypes use independent or shared complete-case samples. |
+| `--sample`, `[compute] sample_key_mode` | Changes sample identity resolution and alignment. |
+| `[compute] multi_phenotype_sample_mode` | Changes whether phenotypes use independent or shared complete-case samples. |
 | `--firth --approx` | Replaces selected binary score rows with approximate Firth rows. |
 | `--pThresh` | Changes which score-test rows become Firth candidates. |
 | `--firth-se` | Changes reported `SE` for successful Firth rows only. |
-| `--score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `--output_statistic_dtype`. |
+| `[compute] score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `[output] output_statistic_dtype`. |
 
-Runtime options such as `--bsize`, `--threads`, `--device`, `--format`, `--resume`, and telemetry/logging settings should not intentionally change scientific conclusions. If they change results beyond normal floating-point tolerance, treat that as a reproducibility bug.
+Runtime options such as `--bsize`, `--threads`, `[compute] device`, `[output]
+format`, resume, and telemetry/logging settings should not intentionally change
+scientific conclusions. If they change results beyond normal floating-point
+tolerance, treat that as a reproducibility bug.
 
 ## Trust And Parity Status
 

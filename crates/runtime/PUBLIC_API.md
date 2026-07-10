@@ -14,13 +14,15 @@ Trusted-validation cache DTOs are root exports.
 
 Build/apply runtime policy plans, initialize/shutdown logging, build telemetry and diagnostic payloads, configure Rayon policy,
 resolve runtime paths, write timing artifacts, plan trusted-validation cache
-access, and build null-logistic timing diagnostics.
+access, and build null-logistic timing diagnostics. Telemetry events are serialized
+from typed Rust field payloads through the shared envelope serializer.
 
 ## This crate must not expose
 
 Phenotype/sample domain logic, BGEN reader internals, output writer internals,
 engine scheduler state, PyO3 classes, public debug/event/trusted-validation
-submodules, or diagnostic event-name/message constants as public API.
+submodules, callback-era execution APIs, duplicate event facades, or diagnostic
+event-name/message constants as public API.
 
 ## Performance constraints
 

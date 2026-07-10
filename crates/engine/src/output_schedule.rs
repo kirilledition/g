@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::schedule::ScheduleError;
+use crate::schedule_error::ScheduleError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiTraitChunkWritePlan {

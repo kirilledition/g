@@ -2,74 +2,85 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; durable implementation map | main branch as of 2026-07-09 runtime architecture | Development maintainers |
+| Active production architecture | Production code as of 2026-07-10 | Development maintainers |
 
-`g` separates the user interface, immutable run contracts, native I/O, JAX kernels, and output writer so performance-sensitive behavior is explicit.
+`g` is a Rust host application with a Python/JAX numerical backend. Rust owns
+configuration, planning, input, scheduling, lifecycle, telemetry, shutdown,
+resume, and output. Python owns JAX arrays and statistical kernels.
 
-## High-level Flow
-
-```text
-CLI / TOML
-        |
-g-interface (RegenieConfig)
-        |
-NativeRunEngineSession (g-engine orchestration)
-        |
-Rust BGEN decode + sample alignment + output writer
-        |
-Python JAX callbacks (compute + materialize)
-        |
-Arrow chunks + optional finalized Parquet
-```
-
-## Python Runtime
+## Production Flow
 
 ```text
-src/g/
-  runner/                        CLI shell, JAX setup wiring, telemetry session, run entry
-  engine/
-    callbacks/                   JAX compute callbacks, thin glue over native runtime resources
-      factory.py                 callback factory for native-owned runs
-      base.py                    local state + write/compute side effects
-      linear.py / binary.py      association callbacks
-    timing.py                    stage timing recorder bridge
-  compute/
-    regenie2_linear/             quantitative state and score kernels
-    regenie2_binary/             binary score, candidates, Firth, diagnostics
-  jax_runtime.py                 JAX runtime policy, resolution, diagnostics, setup
-  types.py                       shared Python enums/types
+g.cli (argument/output bootstrap only)
+        |
+g._core.cli.run(arguments)
+        |
+g-interface -> g-plan -> native Rust host session
+        |                       |
+        |                       +-> g-genotype + g-input
+        |                       +-> g-runtime + g-output
+        v
+g-engine::AssociationBatchPipeline<AssociationBackend>
+        |
+four-operation PyO3 adapter
+        |
+g.jax_backend -> JAX kernels
 ```
 
-## Native Runtime
+The backend operations are `prepare_group`, `prepare_chromosome`,
+`compute_batch`, and `materialize_batch`. The first three may retain opaque JAX
+state. Materialization performs one batched device-to-host transfer and returns
+typed arrays to Rust.
+
+## Ownership
+
+| Area | Owner |
+| --- | --- |
+| CLI parsing, TOML, defaults, validation | `g-interface` |
+| Immutable run contracts and host policy | `g-plan` |
+| BGEN mmap/index/decode and genotype preprocessing | `g-genotype` |
+| Sample, phenotype, covariate, and prediction alignment | `g-input` |
+| Backend trait, bounded compute/materialize pipeline | `g-engine` |
+| Logging, telemetry, timing, process policy, SIGTERM | `g-runtime` |
+| Writers, manifests, resume, finalization | `g-output` |
+| Native host coordination and PyErr adaptation | root Rust extension under `src/binding` |
+| Device state and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
+
+The host coordinator remains in the root Rust extension because it directly
+coordinates opaque Python backend handles and `PyErr` terminal behavior. Moving
+it into `g-engine` would require PyO3 in a domain crate or a second generic
+adapter/error hierarchy. `g-engine` instead owns the performance-sensitive,
+Python-free scheduler and backend contract.
+
+## Python Surface
+
+Production Python outside the kernels is limited to:
 
 ```text
-crates/plan/src/                 immutable run/config/prepared-plan contracts
-crates/interface/src/            CLI/config frontend, clap, toml/Serde
-crates/genotype/src/             BGEN mmap/index/decode/preprocess
-crates/input/src/                sample/phenotype/covariate and prediction alignment
-crates/output/src/               Arrow IPC chunks, Parquet finalization, manifests
-crates/runtime/src/              logging, telemetry, timing, shutdown, Rayon/JAX policy
-crates/engine/src/               orchestration, preflight, schedule plans, delivery policy
-src/binding/engine/              PyO3 adaptation including callback runtime resources
+src/g/cli.py          console bootstrap and output forwarding
+src/g/jax_backend.py  typed four-operation JAX backend
+src/g/compute/        JAX kernel state and mathematics
 ```
 
-## Design Principles
+Python does not parse files, align samples, schedule workers, write results,
+manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
 
-- No Python DataFrame library in the core execution path.
-- No hidden runtime constants inside JAX kernels when they affect compiled shapes.
-- Unsupported REGENIE flags should stay out of the CLI/config schema until implemented.
-- Run manifests protect resume correctness.
-- Profiling should be structured and reproducible.
-- Performance work should be benchmarked end to end.
-- Python does not own domain orchestration; `NativeRunEngineSession` owns the run.
-- Callback queues, workers, slots, and buffer pools are native-owned.
+## Invariants
 
-More detailed internal notes:
+- Domain crates remain free of PyO3.
+- The JAX boundary is batch-oriented; there are no per-variant Python calls.
+- Rust owns all bounded queues, worker joins, host buffers, and output order.
+- CLI validation and help complete before importing JAX-heavy modules.
+- First SIGINT/SIGTERM preserves resumable output; a second SIGTERM uses the
+  operating system default action.
+- Unsupported REGENIE options are rejected, not silently adapted.
+- Production exports are limited to `g._core.cli` and `g._core.engine`.
+
+Detailed contracts:
 
 - [Architecture Cleanup](architecture-cleanup.md)
+- [Binding Layer Policy](binding-layer-policy.md)
+- [Rust Crate Boundaries](rust-crate-boundaries.md)
 - [Configuration Frontend](configuration-frontend.md)
 - [Native I/O](native-io.md)
 - [Compute Kernels](compute-kernels.md)
-- [Testing and Parity](testing-and-parity.md)
-- [Benchmarking](benchmarking.md)
-- [SIMD Optimization Reference](simd-optimization-reference.md)

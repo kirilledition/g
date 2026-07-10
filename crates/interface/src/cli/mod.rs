@@ -35,7 +35,7 @@ impl CliOutcomeData {
 pub fn dispatch_cli(args: &[String]) -> CliOutcomeData {
     match dispatch_cli_result(args) {
         Ok(outcome) => outcome,
-        Err(error) => CliOutcomeData::output(1, String::new(), format!("Error: {}\n", error.message())),
+        Err(error) => CliOutcomeData::output(1, String::new(), format!("Error: {error}\n")),
     }
 }
 

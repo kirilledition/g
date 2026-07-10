@@ -61,8 +61,10 @@ Runtime failures are reported as a concise stderr line and exit code `1`, not a
 Python traceback. Re-run with telemetry or logging enabled when you need the
 structured failure event and detailed diagnostics:
 
-```bash
-uv run g regenie ... --telemetry profile --log_dir /path/to/logs
+```toml
+[diagnostics]
+telemetry = "profile"
+log_dir = "/path/to/logs"
 ```
 
 ## Missing Step 1 Predictions
@@ -103,18 +105,20 @@ See [Input Files](input-files.md#sample-identity).
 
 Start with the default validation mode:
 
-```bash
---trusted_bgen_validation_mode cache_on_miss
+```toml
+[compute]
+trusted_bgen_validation_mode = "cache_on_miss"
 ```
 
 Use `force_validate` when validating a file or cache state. Use
 `assume_validated` only for expert workflows where the exact input has already
 been checked.
 
-If trusted mode fails, rerun without:
+If trusted mode fails, rerun with:
 
-```bash
---trusted_no_missing_diploid
+```toml
+[compute]
+trusted_no_missing_diploid = false
 ```
 
 and compare whether the failure is specific to the optimized path.
@@ -133,7 +137,7 @@ Common causes:
 - GPU dependency group was not installed;
 - NVIDIA driver and installed JAX CUDA extra are incompatible;
 - scheduler job did not request or receive a GPU;
-- command passed `--device cpu` through CLI or config.
+- `[compute].device` resolved to `"cpu"` in the effective config.
 
 If the accelerator is visible but performance does not improve, check whether
 BGEN decode, transfer, or output dominate. See [GPU and Clusters](gpu-and-clusters.md)
@@ -143,15 +147,21 @@ and [Performance Guide](performance-guide.md).
 
 Reduce the largest shape-driving knobs first:
 
-```bash
---bsize 4096
---firth_batch_size 256
---writer_queue_depth 1
+```toml
+[trait]
+bsize = 4096
+
+[compute]
+firth_batch_size = 256
+
+[output]
+writer_queue_depth = 1
 ```
 
 For GPU runs, also check whether the command is repeatedly recompiling with
-different shapes or keeping too many results in flight. Use `--telemetry
-profile` on a representative bounded run before changing production settings.
+different shapes or keeping too many results in flight. Use
+`[diagnostics].telemetry = "profile"` on a representative bounded run before
+changing production settings.
 
 ## Resume Does Not Reuse Existing Output
 
@@ -160,8 +170,10 @@ Resume only when the manifest and execution-plan-affecting inputs still match.
 
 Use strict validation when in doubt:
 
-```bash
---resume --resume_mode strict
+```toml
+[output]
+resume = true
+resume_mode = "strict"
 ```
 
 Common causes:
@@ -198,8 +210,10 @@ Chunked output is the resumable authority. If `final.parquet` or
 `final.regenie` is missing after an interruption or storage failure, rerun the
 same command with:
 
-```bash
---resume --resume_mode strict
+```toml
+[output]
+resume = true
+resume_mode = "strict"
 ```
 
 If finalization continues to fail, inspect free space and permissions for the

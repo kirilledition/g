@@ -5,14 +5,10 @@ use serde::Serialize;
 use toml::{Table, Value};
 
 use super::defaults::load_default_config_data;
-use super::options::{ConfigOptionMetadata, ConfigOptionValueKind, config_option_metadata};
-use super::overlay::{ConfigLayer, resolve_config_layers};
+use super::overlay::ConfigLayer;
 use super::partial::PartialConfig;
 use super::resolved::{ConfigProvenance, RegenieConfigData};
 use super::{ConfigError, ConfigResult, OPTION_SCHEMA_VERSION};
-
-const NATIVE_CONFIG_SECTION_NAMES: &[&str] =
-    &["input", "trait", "binary", "compute", "output", "diagnostics", "metadata"];
 
 pub(crate) fn partial_config_from_toml_text(toml_text: &str, source: &str) -> ConfigResult<PartialConfig> {
     ::toml::from_str::<PartialConfig>(toml_text)
@@ -69,121 +65,6 @@ fn clear_effective_default_binary_provenance(
         provenance.binary.firth_se = false;
     }
     Ok(())
-}
-
-/// Resolve a config from a TOML path.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read, decoded, or semantically validated.
-pub fn from_toml_path(path: &Path) -> ConfigResult<RegenieConfigData> {
-    resolve_config_layers([decode_toml_file_layer(Some(path))?])
-}
-
-/// Resolve a config from Python-provided options.
-///
-/// # Errors
-///
-/// Returns an error when option names, values, or the resolved runtime config are invalid.
-pub fn from_options(raw_options: &Table) -> ConfigResult<RegenieConfigData> {
-    let option_table = normalize_python_option_table(raw_options)?;
-    let partial_config = option_table
-        .clone()
-        .try_into::<PartialConfig>()
-        .map_err(|error| ConfigError::new(format!("Invalid TOML config Python options: {error}")))?;
-    resolve_config_layers([config_layer_from_toml_partial_config(partial_config)?])
-}
-
-fn normalize_python_option_table(raw_options: &Table) -> ConfigResult<Table> {
-    let mut option_table = Table::new();
-    for (option_name, option_value) in raw_options {
-        normalize_python_option(&mut option_table, option_name, option_value)?;
-    }
-    Ok(option_table)
-}
-
-fn normalize_python_option(option_table: &mut Table, option_name: &str, option_value: &Value) -> ConfigResult<()> {
-    let Some(option_metadata) = metadata_for_flat_python_name(option_name) else {
-        normalize_native_or_unknown_option(option_table, option_name, option_value)?;
-        return Ok(());
-    };
-    let normalized_value = normalize_python_option_value(option_metadata.value_kind, option_value)?;
-    let section_value =
-        option_table.entry(option_metadata.section.to_string()).or_insert_with(|| Value::Table(Table::new()));
-    let Value::Table(section_table) = section_value else {
-        option_table.insert(option_name.to_string(), normalized_value);
-        return Ok(());
-    };
-    section_table.insert(option_metadata.toml_name.to_string(), normalized_value);
-    Ok(())
-}
-
-fn normalize_native_or_unknown_option(
-    option_table: &mut Table,
-    option_name: &str,
-    option_value: &Value,
-) -> ConfigResult<()> {
-    if NATIVE_CONFIG_SECTION_NAMES.contains(&option_name) {
-        if let Value::Table(section_updates) = option_value {
-            match option_table.get_mut(option_name) {
-                Some(Value::Table(section_table)) => {
-                    section_table.extend(section_updates.clone());
-                }
-                Some(section_value) => {
-                    *section_value = Value::Table(section_updates.clone());
-                }
-                None => {
-                    option_table.insert(option_name.to_string(), Value::Table(section_updates.clone()));
-                }
-            }
-        } else {
-            option_table.insert(option_name.to_string(), option_value.clone());
-        }
-        return Ok(());
-    }
-    if matches!(option_value, Value::Table(_)) {
-        return Err(ConfigError::new(format!(
-            "Unknown g regenie option: {}",
-            flatten_unknown_option_name(option_name, option_value)
-        )));
-    }
-    Err(ConfigError::new(format!("Unknown g regenie option: {option_name}")))
-}
-
-fn metadata_for_flat_python_name(option_name: &str) -> Option<&'static ConfigOptionMetadata> {
-    config_option_metadata().iter().find(|metadata| metadata.flat_python_names.contains(&option_name))
-}
-
-fn normalize_python_option_value(value_kind: ConfigOptionValueKind, option_value: &Value) -> ConfigResult<Value> {
-    if value_kind != ConfigOptionValueKind::Boolean {
-        return Ok(option_value.clone());
-    }
-    if let Value::Boolean(boolean_value) = option_value {
-        return Ok(Value::Boolean(*boolean_value));
-    }
-    if let Value::String(option_text) = option_value {
-        let normalized_value = option_text.trim().to_lowercase();
-        if matches!(normalized_value.as_str(), "1" | "true" | "yes" | "on") {
-            return Ok(Value::Boolean(true));
-        }
-        if matches!(normalized_value.as_str(), "0" | "false" | "no" | "off") {
-            return Ok(Value::Boolean(false));
-        }
-    }
-    Err(ConfigError::new("Boolean option value must be a bool or one of true/false/on/off/yes/no/1/0."))
-}
-
-fn flatten_unknown_option_name(option_name: &str, option_value: &Value) -> String {
-    let Value::Table(option_table) = option_value else {
-        return option_name.to_string();
-    };
-    let Some((nested_key, nested_value)) = option_table.iter().next() else {
-        return option_name.to_string();
-    };
-    if matches!(nested_value, Value::Table(_)) {
-        return format!("{option_name}.{}", flatten_unknown_option_name(nested_key, nested_value));
-    }
-    format!("{option_name}.{nested_key}")
 }
 
 /// Write deterministic effective TOML for a resolved config.

@@ -6,8 +6,8 @@ use crate::manifest;
 use crate::timing::{OutputStageTimingAccumulator, start_optional_timing};
 use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_output_file_name};
 
-use super::OutputWriterConfig;
 use super::worker_pool::{OutputWriteCompletionTracker, OutputWriterPool, push_worker_error};
+use super::writer_session::OutputWriterConfig;
 
 pub(super) enum OutputCoordinatorJob {
     RegenieStep2(Box<RegenieStep2ChunkJob>),
@@ -93,7 +93,7 @@ fn flush_pending_regenie_step2_chunks(
             push_worker_error(worker_errors, "Rust output writer stage timing lock was poisoned.".to_string());
         })?;
         stage_timings_guard.coordinator_flush_seconds += start_time.elapsed().as_secs_f64();
-        stage_timings_guard.coordinator_flush_count += 1;
+        stage_timings_guard.coordinator_flush_count = stage_timings_guard.coordinator_flush_count.saturating_add(1);
     }
     Ok(())
 }

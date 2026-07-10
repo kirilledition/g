@@ -38,7 +38,6 @@ pub struct RunManifestExtensionInput {
     pub output_format: String,
     pub device: String,
     pub staging_depth: i64,
-    pub native_callback_batch_size: i64,
     pub threads: Option<i64>,
     pub writer_threads: i64,
     pub writer_queue_depth: i64,
@@ -63,7 +62,6 @@ pub struct RunManifestCommandPayload {
 pub struct RunManifestRuntimePayload {
     pub device: String,
     pub staging_depth: i64,
-    pub native_callback_batch_size: i64,
     pub threads: Option<i64>,
     pub writer_threads: i64,
     pub writer_queue_depth: i64,

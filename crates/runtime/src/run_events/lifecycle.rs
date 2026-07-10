@@ -51,21 +51,16 @@ pub struct RunTelemetryStringField {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunArtifactTelemetryFields {
-    pub fields: Vec<RunTelemetryStringField>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunCompletedTelemetryFields {
     pub artifact_count: usize,
-    pub phenotype_artifacts: Vec<RunArtifactTelemetryFields>,
+    pub phenotype_artifacts: Vec<Vec<RunTelemetryStringField>>,
     pub run_id: Option<String>,
     pub association_mode: Option<String>,
     pub phenotype_count: Option<i64>,
-    pub single_artifact: Option<RunArtifactTelemetryFields>,
+    pub single_artifact: Option<Vec<RunTelemetryStringField>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunInterruptedTelemetryFields {
     pub failure_kind: &'static str,
     pub signal_number: i64,
@@ -74,7 +69,7 @@ pub struct RunInterruptedTelemetryFields {
     pub flushed_for_resume: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RunFailedTelemetryFields {
     pub failure_kind: &'static str,
     pub error_type: String,
@@ -91,33 +86,6 @@ pub fn build_run_completed_event_from_artifacts(artifacts: &RunArtifactsPayload)
         association_mode: artifacts.association_mode.clone(),
         phenotype_count: artifacts.phenotype_count.or(inferred_phenotype_count),
         artifacts: artifact_payloads,
-    }
-}
-
-#[must_use]
-pub fn attach_run_metadata_to_artifacts(
-    artifacts: &RunArtifactsPayload,
-    run_id: Option<&str>,
-    association_mode: &str,
-    phenotype_count: i64,
-) -> RunArtifactsPayload {
-    RunArtifactsPayload {
-        output_run_directory: artifacts.output_run_directory.clone(),
-        final_dataset: artifacts.final_dataset.clone(),
-        final_parquet: artifacts.final_parquet.clone(),
-        final_regenie: artifacts.final_regenie.clone(),
-        effective_config: artifacts.effective_config.clone(),
-        phenotype_artifacts: artifacts
-            .phenotype_artifacts
-            .iter()
-            .map(|phenotype_artifact| {
-                attach_run_metadata_to_artifacts(phenotype_artifact, run_id, association_mode, phenotype_count)
-            })
-            .collect(),
-        phenotype_name: artifacts.phenotype_name.clone(),
-        association_mode: Some(association_mode.to_string()),
-        phenotype_count: Some(phenotype_count),
-        run_id: run_id.map(str::to_string),
     }
 }
 
@@ -199,10 +167,7 @@ pub fn render_run_completed_lines(event: &RunCompletedEventPayload) -> Vec<Strin
 
 #[must_use]
 pub fn render_run_interrupted_lines(event: &RunInterruptedEventPayload) -> Vec<String> {
-    vec![format!(
-        "Interrupted by {}. Flushed queued chunks and saved committed output for --resume.",
-        event.signal_name
-    )]
+    vec![format!("Interrupted by {}. Flushed queued chunks and saved committed output for resume.", event.signal_name)]
 }
 
 #[must_use]
@@ -214,7 +179,7 @@ pub fn render_run_failed_lines(event: &RunFailedEventPayload) -> Vec<String> {
 }
 
 #[must_use]
-pub fn build_artifact_telemetry_fields(artifact: &RunArtifactPayload) -> RunArtifactTelemetryFields {
+pub fn build_artifact_telemetry_fields(artifact: &RunArtifactPayload) -> Vec<RunTelemetryStringField> {
     let mut fields = Vec::new();
     push_optional_field(&mut fields, "phenotype", artifact.phenotype_name.as_ref());
     push_optional_field(&mut fields, "output_run_directory", artifact.output_run_directory.as_ref());
@@ -222,7 +187,7 @@ pub fn build_artifact_telemetry_fields(artifact: &RunArtifactPayload) -> RunArti
     push_optional_field(&mut fields, "final_parquet", artifact.final_parquet.as_ref());
     push_optional_field(&mut fields, "final_regenie", artifact.final_regenie.as_ref());
     push_optional_field(&mut fields, "effective_config", artifact.effective_config.as_ref());
-    RunArtifactTelemetryFields { fields }
+    fields
 }
 
 #[must_use]
@@ -250,3 +215,66 @@ fn push_optional_field(fields: &mut Vec<RunTelemetryStringField>, key: &'static 
         fields.push(RunTelemetryStringField { key, value: value.clone() });
     }
 }
+
+impl Serialize for RunCompletedTelemetryFields {
+    fn serialize<SerializerType>(&self, serializer: SerializerType) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        let mut field_count = 2 + self.single_artifact.as_ref().map_or(0, Vec::len);
+        field_count += usize::from(self.run_id.is_some());
+        field_count += usize::from(self.association_mode.is_some());
+        field_count += usize::from(self.phenotype_count.is_some());
+        let mut payload = serializer.serialize_map(Some(field_count))?;
+        payload.serialize_entry("artifact_count", &self.artifact_count)?;
+        payload
+            .serialize_entry("phenotype_artifacts", &RunArtifactTelemetryFieldSequence(&self.phenotype_artifacts))?;
+        if let Some(run_id) = self.run_id.as_ref() {
+            payload.serialize_entry("run_id", run_id)?;
+        }
+        if let Some(association_mode) = self.association_mode.as_ref() {
+            payload.serialize_entry("association_mode", association_mode)?;
+        }
+        if let Some(phenotype_count) = self.phenotype_count {
+            payload.serialize_entry("phenotype_count", &phenotype_count)?;
+        }
+        if let Some(single_artifact) = self.single_artifact.as_ref() {
+            for field in single_artifact {
+                payload.serialize_entry(field.key, &field.value)?;
+            }
+        }
+        payload.end()
+    }
+}
+
+struct RunArtifactTelemetryFields<'fields>(&'fields [RunTelemetryStringField]);
+
+impl Serialize for RunArtifactTelemetryFields<'_> {
+    fn serialize<SerializerType>(&self, serializer: SerializerType) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        let mut payload = serializer.serialize_map(Some(self.0.len()))?;
+        for field in self.0 {
+            payload.serialize_entry(field.key, &field.value)?;
+        }
+        payload.end()
+    }
+}
+
+struct RunArtifactTelemetryFieldSequence<'fields>(&'fields [Vec<RunTelemetryStringField>]);
+
+impl Serialize for RunArtifactTelemetryFieldSequence<'_> {
+    fn serialize<SerializerType>(&self, serializer: SerializerType) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for artifact in self.0 {
+            sequence.serialize_element(&RunArtifactTelemetryFields(artifact))?;
+        }
+        sequence.end()
+    }
+}
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};

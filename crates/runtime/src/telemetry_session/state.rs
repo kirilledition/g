@@ -111,12 +111,7 @@ impl TelemetryRunSessionState {
 
     #[must_use]
     pub fn plan_event_emission(&self, has_native_telemetry_session: bool) -> TelemetryEventEmissionPlan {
-        plan_telemetry_event_emission(self.policy.enabled, has_native_telemetry_session)
-    }
-
-    #[must_use]
-    pub fn should_emit_progress_at(&mut self, processed_chunk_count: i64, current_time_seconds: f64) -> bool {
-        self.progress_throttle.should_emit_progress_at(processed_chunk_count, current_time_seconds)
+        TelemetryEventEmissionPlan { should_emit: self.policy.enabled && has_native_telemetry_session }
     }
 
     #[must_use]
@@ -130,14 +125,6 @@ impl TelemetryRunSessionState {
             && self.progress_throttle.should_emit_progress_at(processed_chunk_count, current_time_seconds);
         plan_telemetry_progress_emission(self.policy.enabled, has_native_telemetry_session, should_emit_progress)
     }
-}
-
-#[must_use]
-pub const fn plan_telemetry_event_emission(
-    telemetry_enabled: bool,
-    has_native_telemetry_session: bool,
-) -> TelemetryEventEmissionPlan {
-    TelemetryEventEmissionPlan { should_emit: telemetry_enabled && has_native_telemetry_session }
 }
 
 #[must_use]

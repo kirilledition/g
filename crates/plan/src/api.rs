@@ -5,7 +5,6 @@ pub use crate::enums::{
     JaxMatmulPrecision, MultiPhenotypeSampleMode, OutputFormat, ParquetCompression, PhenotypeComputeGroupMode,
     RegenieTraitType, ResumeMode, SampleKeyMode, TrustedBgenValidationMode,
 };
-pub use crate::error::{PlanError, PlanResult};
 pub use crate::host_policy::{
     HostPolicyError, build_phenotype_compute_group_id, build_phenotype_compute_groups,
     build_phenotype_output_directory_name, normalize_binary_correction,

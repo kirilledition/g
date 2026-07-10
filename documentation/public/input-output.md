@@ -2,16 +2,15 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Compatibility bridge | main branch as of 2026-06-30 old public links | Public user docs |
+| Topic index | current input/output contract | Public user docs |
 
-This page is kept as a compatibility bridge for older links. The canonical
-public pages are now split by topic:
+The canonical public pages are split by topic:
 
 - [Input Files](input-files.md) documents genotype, sample, phenotype,
   covariate, and Step 1 prediction requirements.
 - [Output Files](output-files.md) documents run directories, chunk formats,
   final artifacts, telemetry files, and result schema.
 - [Resume and Manifest](resume-and-manifest.md) documents
-  `effective_config.toml`, `run_manifest.json`, `--resume`, and resume modes.
+  `effective_config.toml`, `run_manifest.json`, and TOML resume modes.
 
 For statistical interpretation of output fields, see [Algorithm](algorithm.md).

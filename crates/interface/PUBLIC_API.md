@@ -2,17 +2,18 @@
 
 ## This crate owns
 
-Frontend configuration normalization for CLI, TOML, and Python options, plus
-the native `g` CLI binary shell.
+Frontend configuration normalization for canonical TOML plus the native `g`
+CLI binary shell. The CLI accepts `--config` and the
+supported REGENIE step 2 flags; native tuning is TOML-only.
 
 ## Public types
 
-Resolved config data, resolved config enum values, config metadata, CLI outcome
-payloads, native CLI outcome payloads, and `ConfigError`/`ConfigResult`.
+Resolved config data and enum values, CLI outcome payloads, native CLI outcome
+payloads, and `ConfigError`/`ConfigResult`.
 
 ## Public functions
 
-Load packaged config, parse options/TOML, dump/write TOML, validate config,
+Dump/write resolved TOML, validate config,
 compile `g-plan` run requests, dispatch CLI parsing, and dispatch the native
 CLI frontend.
 

@@ -4,7 +4,7 @@ pub(super) const VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES: usize = 2;
 pub(super) const ALLELE_LENGTH_SIZE_IN_BYTES: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CompressionType {
+pub(super) enum CompressionType {
     None,
     Zlib,
 }

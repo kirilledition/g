@@ -4,10 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::payloads::{ProfileSummaryPayload, StageTimingSnapshotPayload};
-
-pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL: &str = "debug";
-pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME: &str = "runner_final_timing_outputs_write_started";
+const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL: &str = "debug";
+const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME: &str = "runner_final_timing_outputs_write_started";
 pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE: &str = "Writing final timing outputs.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,29 +144,6 @@ pub fn resolve_final_timing_output_context(
         run_id: None,
         force_stage_timing_recorder: false,
     }
-}
-
-/// Write a stage timing snapshot payload as pretty JSON.
-///
-/// # Errors
-///
-/// Returns an error when the parent directory cannot be created, the payload
-/// cannot be serialized, or the file cannot be written.
-pub fn write_stage_timing_snapshot_payload(
-    path: &Path,
-    payload: &StageTimingSnapshotPayload,
-) -> Result<(), TimingFileError> {
-    write_pretty_json_payload(path, payload)
-}
-
-/// Write a profile summary payload as pretty JSON.
-///
-/// # Errors
-///
-/// Returns an error when the parent directory cannot be created, the payload
-/// cannot be serialized, or the file cannot be written.
-pub fn write_profile_summary_payload(path: &Path, payload: &ProfileSummaryPayload) -> Result<(), TimingFileError> {
-    write_pretty_json_payload(path, payload)
 }
 
 pub(super) fn write_pretty_json_payload<T>(path: &Path, payload: &T) -> Result<(), TimingFileError>

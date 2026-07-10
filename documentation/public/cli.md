@@ -23,7 +23,7 @@ and merge behavior, see [Configuration](configuration.md).
 
 ```text
 g [OPTIONS] COMMAND [ARGS]...
-g regenie [--config PATH] [REGENIE-style options] [g runtime options]
+g regenie [--config PATH] [supported REGENIE-style options]
 ```
 
 ## Commands
@@ -53,8 +53,8 @@ requires these run-specific inputs:
 | Option | TOML section | Meaning |
 | --- | --- | --- |
 | `--step` | `[trait]` | REGENIE analysis step. Only `2` is executable. |
-| `--qt` / hidden `--no-qt` | `[trait]` | Quantitative trait mode. |
-| `--bt` / hidden `--no-bt` | `[trait]` | Binary trait mode. |
+| `--qt` | `[trait]` | Quantitative trait mode. |
+| `--bt` | `[trait]` | Binary trait mode. |
 | `--bgen` | `[input]` | BGEN genotype file. |
 | `--sample` | `[input]` | Optional BGEN sample file. If omitted, embedded BGEN sample IDs are used. |
 | `--phenoFile` | `[input]` | Phenotype table. |
@@ -67,11 +67,10 @@ requires these run-specific inputs:
 | `--bsize` | `[trait]` | Variants per processing block. |
 | `--threads` | `[trait]` | Requested native CPU thread count. |
 | `--out` | `[output]` | Output prefix. |
-| `--output_statistic_dtype` | `[output]` | Public statistic column dtype (`float32` default, `float64` optional). |
-| `--firth` / hidden `--no-firth` | `[binary]` | Binary Firth fallback switch. |
-| `--approx` / hidden `--no-approx` | `[binary]` | Approximate Firth fallback switch. |
+| `--firth` | `[binary]` | Binary Firth fallback switch. |
+| `--approx` | `[binary]` | Approximate Firth fallback switch. |
 | `--pThresh` | `[binary]` | Score-test p-value threshold for binary fallback candidates. |
-| `--firth-se` / hidden `--no-firth-se` | `[binary]` | Firth-derived standard error reporting for corrected rows. |
+| `--firth-se` | `[binary]` | Firth-derived standard error reporting for corrected rows. |
 
 ## Supported Modes
 
@@ -128,21 +127,20 @@ uv run g regenie \
 
 ## Boolean Override Semantics
 
-Boolean CLI options use explicit paired flags. The positive forms are shown in
-help; negative forms are hidden but accepted:
+Boolean CLI options use positive REGENIE-compatible flags:
 
 ```text
---qt / --no-qt
---bt / --no-bt
---firth / --no-firth
---approx / --no-approx
---resume / --no-resume
+--qt
+--bt
+--firth
+--approx
+--firth-se
 ```
 
 Only flags explicitly present on the command line override the TOML config.
 Omitting a boolean flag leaves the value from `--config` or packaged defaults
-unchanged. To override a TOML `true` value to `false`, pass the negative form,
-for example `--no-resume`.
+unchanged. Set canonical TOML fields to `false` when disabling a shared or
+packaged setting.
 
 Trait flags have additional rules:
 
@@ -157,19 +155,11 @@ for quantitative runs. `--approx` requires `--firth`. Exact `--firth` without
 
 ## Runtime Options
 
-Non-REGENIE `g` runtime options intentionally use snake_case long flags on this
-branch.
-
-| Group | Examples | Purpose |
-| --- | --- | --- |
-| Device and staging | `--device`, `--staging_depth`, `--native_callback_batch_size`, `--variant_limit` | JAX target, pipeline staging, callback handoff batching, and debug caps. |
-| BGEN and sample policy | `--trusted_no_missing_diploid`, `--trusted_bgen_validation_mode`, `--sample_key_mode`, `--multi_phenotype_sample_mode` | Input validation, sample identity, and multi-trait sample semantics. |
-| Numeric policy | `--linear_minimum_variance`, `--binary_minimum_probability`, `--score_dtype`, `--firth_dtype` | Numerical floors, dtype choices, and binary null behavior. |
-| Approximate Firth tuning | `--firth_batch_size`, `--firth_maximum_iterations`, `--null_firth_maximum_iterations` | Candidate batching and solver limits. |
-| JAX runtime | `--jax_cache_dir`, `--jax_persistent_cache`, `--jax_matmul_precision`, `--jax_transfer_guard` | Compilation cache and runtime diagnostics. |
-| Output writer | `--format`, `--writer_threads`, `--chunks_per_arrow_file`, `--finalize_parquet` | Arrow, Parquet, REGENIE text, writer, and finalization controls. |
-| Resume | `--resume`, `--resume_mode` | Manifest-backed restart behavior. |
-| Diagnostics | `--telemetry`, `--log_dir`, `--log_file`, `--trace_event_cap`, `--log_lossy` | Progress, profile, trace, and logging controls. |
+The command line intentionally exposes only `--config` and supported REGENIE
+Step 2 flags. Native device, scheduling, BGEN policy, numerical, JAX, writer,
+resume, and diagnostics settings use canonical snake_case TOML fields. This
+keeps a REGENIE-compatible CLI without duplicating the full native config
+surface as command-line aliases.
 
 Logging sinks, `--threads`, and JAX runtime settings are process-global inside
 one Python process. Single CLI invocations are isolated by their process. Python
@@ -196,7 +186,7 @@ For the supported compatibility surface, see [Compatibility](compatibility.md).
 | Successful `g regenie` run | Exit `0` and print generated artifact paths. |
 | Runtime failure during `g regenie` | Exit `1` and print a concise `Error: ...` line without a Python traceback. Configured logs and telemetry contain structured failure details. |
 | First SIGINT or SIGTERM during `g regenie` | Flush queued chunks for resume, print an interruption message, and exit with `128 + signal_number` such as `130` for SIGINT. |
-| Second shutdown signal during graceful drain | Abort through the normal signal-derived interrupt path. |
+| Second SIGTERM during graceful drain | Terminate immediately with the operating system's default SIGTERM action. |
 
 Run outputs and resume metadata are documented in [Output Files](output-files.md)
 and [Resume and Manifest](resume-and-manifest.md).

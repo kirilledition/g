@@ -1,10 +1,38 @@
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 
 use super::{
     JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR, JAX_RUNTIME_DIAGNOSTIC_LEVEL_INFO, JaxRuntimeDiagnosticEventPayload,
-    JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan, JaxRuntimeDiagnosticValue,
-    JaxRuntimeSetupPayload, PYTHON_LOGGING_LEVEL_ERROR, PYTHON_LOGGING_LEVEL_INFO, XLA_AUXILIARY_CACHE_DISABLED,
+    JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticFields, JaxRuntimeDiagnosticRecordPlan,
+    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, PYTHON_LOGGING_LEVEL_ERROR, PYTHON_LOGGING_LEVEL_INFO,
+    XLA_AUXILIARY_CACHE_DISABLED,
 };
+
+impl Serialize for JaxRuntimeDiagnosticValue {
+    fn serialize<SerializerType>(&self, serializer: SerializerType) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        match self {
+            Self::Boolean(value) => serializer.serialize_bool(*value),
+            Self::Integer(value) => serializer.serialize_i64(*value),
+            Self::Text(value) => serializer.serialize_str(value),
+        }
+    }
+}
+
+impl Serialize for JaxRuntimeDiagnosticFields<'_> {
+    fn serialize<SerializerType>(&self, serializer: SerializerType) -> Result<SerializerType::Ok, SerializerType::Error>
+    where
+        SerializerType: Serializer,
+    {
+        let mut fields = serializer.serialize_map(Some(self.fields.len()))?;
+        for field in self.fields {
+            fields.serialize_entry(&field.name, &field.value)?;
+        }
+        fields.end()
+    }
+}
 
 /// Serialize JAX runtime diagnostic fields for native diagnostic emission.
 ///
@@ -18,19 +46,7 @@ use super::{
 pub fn serialize_jax_runtime_diagnostic_fields_json(
     fields: &[JaxRuntimeDiagnosticFieldPayload],
 ) -> Result<String, serde_json::Error> {
-    let mut payload = JsonMap::new();
-    for field in fields {
-        payload.insert(field.name.clone(), jax_runtime_diagnostic_value_to_json_value(&field.value));
-    }
-    serde_json::to_string(&JsonValue::Object(payload))
-}
-
-fn jax_runtime_diagnostic_value_to_json_value(value: &JaxRuntimeDiagnosticValue) -> JsonValue {
-    match value {
-        JaxRuntimeDiagnosticValue::Boolean(value) => JsonValue::Bool(*value),
-        JaxRuntimeDiagnosticValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
-        JaxRuntimeDiagnosticValue::Text(value) => JsonValue::String(value.clone()),
-    }
+    serde_json::to_string(&JaxRuntimeDiagnosticFields::new(fields))
 }
 
 #[must_use]

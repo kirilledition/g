@@ -33,23 +33,6 @@ class RegenieGenotypeFlipResult:
     flip_mask: jax.Array
 
 
-def convert_sample_major_to_variant_major(
-    genotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype,
-) -> jax.Array:
-    """Convert sample-major dosages to the canonical variant-major compute layout.
-
-    Args:
-        genotype_matrix: Sample-major dosage matrix.
-        score_dtype: Floating-point dtype for score-test computation.
-
-    Returns:
-        Variant-major dosage matrix.
-
-    """
-    return jnp.asarray(genotype_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype)).T
-
-
 def decode_packed8_probability_pairs_to_variant_major_dosage(
     packed_probability_pairs_by_variant: jax.Array,
     score_dtype: types.FloatingPointDtype,

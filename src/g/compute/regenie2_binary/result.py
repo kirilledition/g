@@ -141,16 +141,6 @@ type Regenie2AnyBinaryChunkResult = (
 type Regenie2BinaryDiagnosticChunkResult = Regenie2BinaryChunkResult | Regenie2MultiBinaryChunkResult
 
 
-def build_empty_firth_integer_array(extra_code: jax.Array) -> jax.Array:
-    """Build an integer Firth diagnostic array for score-test-only results."""
-    return jnp.zeros_like(extra_code, dtype=jnp.int32)
-
-
-def build_empty_firth_boolean_array(extra_code: jax.Array) -> jax.Array:
-    """Build a boolean Firth diagnostic array for score-test-only results."""
-    return jnp.zeros_like(extra_code, dtype=jnp.bool_)
-
-
 def expand_score_result_with_empty_firth_diagnostics(
     result: Regenie2BinaryScoreChunkResult,
 ) -> Regenie2BinaryChunkResult:
@@ -162,14 +152,14 @@ def expand_score_result_with_empty_firth_diagnostics(
         log10_p_value=result.log10_p_value,
         extra_code=result.extra_code,
         valid_mask=result.valid_mask,
-        firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        firth_failure_code=build_empty_firth_integer_array(result.extra_code),
-        firth_convergence_reason_code=build_empty_firth_integer_array(result.extra_code),
-        firth_correction_code=build_empty_firth_integer_array(result.extra_code),
-        firth_sparse_correction_mask=build_empty_firth_boolean_array(result.extra_code),
-        pseudo_firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        firth_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_failure_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_correction_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros_like(result.extra_code, dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
     )
 
 
@@ -184,14 +174,14 @@ def expand_multi_score_result_with_empty_firth_diagnostics(
         log10_p_value=result.log10_p_value,
         extra_code=result.extra_code,
         valid_mask=result.valid_mask,
-        firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        firth_failure_code=build_empty_firth_integer_array(result.extra_code),
-        firth_convergence_reason_code=build_empty_firth_integer_array(result.extra_code),
-        firth_correction_code=build_empty_firth_integer_array(result.extra_code),
-        firth_sparse_correction_mask=build_empty_firth_boolean_array(result.extra_code),
-        pseudo_firth_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_zero_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
-        nr_warm_start_iteration_count=build_empty_firth_integer_array(result.extra_code),
+        firth_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_failure_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_convergence_reason_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_correction_code=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        firth_sparse_correction_mask=jnp.zeros_like(result.extra_code, dtype=jnp.bool_),
+        pseudo_firth_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        nr_zero_start_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
+        nr_warm_start_iteration_count=jnp.zeros_like(result.extra_code, dtype=jnp.int32),
     )
 
 
@@ -204,17 +194,3 @@ def expand_binary_result_with_empty_firth_diagnostics(
     if isinstance(result, Regenie2MultiBinaryScoreChunkResult):
         return expand_multi_score_result_with_empty_firth_diagnostics(result)
     return result
-
-
-def squeeze_single_binary_score_result(
-    result: Regenie2MultiBinaryScoreChunkResult,
-) -> Regenie2BinaryScoreChunkResult:
-    """Remove the trait axis from a single-trait binary score result."""
-    return Regenie2BinaryScoreChunkResult(
-        beta=result.beta[0],
-        standard_error=result.standard_error[0],
-        chi_squared=result.chi_squared[0],
-        log10_p_value=result.log10_p_value[0],
-        extra_code=result.extra_code[0],
-        valid_mask=result.valid_mask[0],
-    )

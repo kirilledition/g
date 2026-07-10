@@ -63,52 +63,6 @@ class BinaryChunkDiagnostics:
     dense_correction_count: jax.Array
 
 
-@dataclass(frozen=True)
-class BinaryCorrectionSummaryCounts:
-    """Host integer counters needed by aggregate binary correction telemetry.
-
-    Attributes:
-        chunk_count: Chunks included in these aggregate counters.
-        score_only_count: Variants that retained score-test statistics without correction.
-        score_test_candidate_count: Variants selected for any score-test fallback label.
-        firth_candidate_count: Variants with a nonzero Firth iteration count.
-        firth_converged_count: Variants that completed Firth correction successfully.
-        firth_failed_count: Variants labelled as failed candidate tests.
-        firth_numerical_failure_count: Firth candidates that failed numerically.
-        firth_max_iteration_failure_count: Firth candidates that hit the iteration limit.
-        firth_invalid_statistic_failure_count: Firth candidates with invalid final statistics.
-        firth_step_halving_failure_count: Firth candidates that exhausted step-halving attempts.
-        pseudo_firth_attempt_count: Candidates that attempted scalar pseudo-Firth.
-        pseudo_firth_success_count: Candidates that finished through scalar pseudo-Firth.
-        nr_zero_start_attempt_count: Candidates that attempted zero-start Newton-Raphson fallback.
-        nr_zero_start_success_count: Candidates that finished through zero-start Newton-Raphson fallback.
-        nr_warm_start_attempt_count: Candidates that attempted warm-start Newton-Raphson fallback.
-        nr_warm_start_success_count: Candidates that finished through warm-start Newton-Raphson fallback.
-        sparse_correction_count: Candidates corrected through carrier-only sparse inputs.
-        dense_correction_count: Candidates corrected through dense inputs.
-
-    """
-
-    chunk_count: int
-    score_only_count: int
-    score_test_candidate_count: int
-    firth_candidate_count: int
-    firth_converged_count: int
-    firth_failed_count: int
-    firth_numerical_failure_count: int
-    firth_max_iteration_failure_count: int
-    firth_invalid_statistic_failure_count: int
-    firth_step_halving_failure_count: int
-    pseudo_firth_attempt_count: int
-    pseudo_firth_success_count: int
-    nr_zero_start_attempt_count: int
-    nr_zero_start_success_count: int
-    nr_warm_start_attempt_count: int
-    nr_warm_start_success_count: int
-    sparse_correction_count: int
-    dense_correction_count: int
-
-
 def count_binary_chunk_diagnostics(
     result: regenie2_binary_result.Regenie2AnyBinaryChunkResult,
 ) -> BinaryChunkDiagnostics:

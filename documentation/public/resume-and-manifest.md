@@ -53,21 +53,21 @@ that metadata-only policy explicitly.
 
 ## Starting A New Run
 
-Without `--resume`, `g` refuses to reuse a non-empty output run directory:
+Without `[output].resume = true`, `g` refuses to reuse a non-empty output run directory:
 
 ```text
-Output run directory '<path>' already exists and is not empty. Use --resume or choose a new output path.
+Output run directory '<path>' already exists and is not empty. Enable [output].resume or choose a new output path.
 ```
 
 Choose a new `--out` prefix, delete stale local output intentionally, or run
-with `--resume` when the existing manifest belongs to the same planned run.
+with `[output].resume = true` when the existing manifest belongs to the same planned run.
 
 ## Resume Controls
 
-```bash
---resume
---resume_mode fast
---resume_mode strict
+```toml
+[output]
+resume = true
+resume_mode = "fast" # or "strict"
 ```
 
 | Mode | Behavior |
@@ -119,10 +119,12 @@ engine flushes queued chunks, saves committed output for resume, prints an
 interruption message, and exits with `128 + signal_number` such as `130` for
 SIGINT.
 
-After that, rerun the same command with:
+After that, rerun the same command with a config containing:
 
-```bash
---resume --resume_mode strict
+```toml
+[output]
+resume = true
+resume_mode = "strict"
 ```
 
 or use `fast` when the previous interruption was clean and storage is trusted.

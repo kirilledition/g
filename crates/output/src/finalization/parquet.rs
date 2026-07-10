@@ -12,7 +12,6 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
-use serde_json::Value;
 
 use crate::error::OutputError;
 use crate::manifest;
@@ -44,43 +43,12 @@ pub(crate) struct RegenieStep2FinalizationTiming {
     pub(crate) total_seconds: f64,
 }
 
-pub(crate) fn write_final_parquet_from_chunk_files_with_timing(
-    chunks_directory: &Path,
-    final_parquet_path: &Path,
-    association_mode: &str,
-    output_format: OutputFileFormat,
-) -> Result<RegenieStep2FinalizationTiming, OutputError> {
-    write_final_parquet_from_chunk_files_with_optional_dtype(
-        chunks_directory,
-        final_parquet_path,
-        association_mode,
-        output_format,
-        None,
-    )
-}
-
 pub(crate) fn write_final_parquet_from_chunk_files_with_timing_for_dtype(
     chunks_directory: &Path,
     final_parquet_path: &Path,
     association_mode: &str,
     output_format: OutputFileFormat,
     output_statistic_dtype: schema::OutputStatisticDtype,
-) -> Result<RegenieStep2FinalizationTiming, OutputError> {
-    write_final_parquet_from_chunk_files_with_optional_dtype(
-        chunks_directory,
-        final_parquet_path,
-        association_mode,
-        output_format,
-        Some(output_statistic_dtype),
-    )
-}
-
-fn write_final_parquet_from_chunk_files_with_optional_dtype(
-    chunks_directory: &Path,
-    final_parquet_path: &Path,
-    association_mode: &str,
-    output_format: OutputFileFormat,
-    output_statistic_dtype_override: Option<schema::OutputStatisticDtype>,
 ) -> Result<RegenieStep2FinalizationTiming, OutputError> {
     let total_start_time = Instant::now();
     if association_mode != "regenie2_linear" && association_mode != "regenie2_binary" {
@@ -105,18 +73,16 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let output_file = File::create(final_parquet_path).map_err(OutputError::runtime)?;
     let parquet_file_create_seconds = parquet_file_create_start_time.elapsed().as_secs_f64();
 
-    let output_statistic_dtype = match output_statistic_dtype_override {
-        Some(output_statistic_dtype) => output_statistic_dtype,
-        None => read_output_statistic_dtype_from_manifest(run_directory)?,
-    };
     let final_schema = Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype));
     let parquet_writer_init_start_time = Instant::now();
     let mut parquet_writer =
         ArrowWriter::try_new(output_file, final_schema, Some(writer_properties)).map_err(OutputError::runtime)?;
     let parquet_writer_init_seconds = parquet_writer_init_start_time.elapsed().as_secs_f64();
 
-    let chunk_file_count = chunk_file_paths.len();
-    let mut output_row_count = 0usize;
+    let chunk_file_count = i64::try_from(chunk_file_paths.len()).map_err(|_| {
+        OutputError::InvalidInput("Final output chunk-file count exceeds the signed manifest count range.".to_string())
+    })?;
+    let mut output_row_count = 0_i64;
     let mut batch_count = 0u64;
     let mut arrow_file_open_seconds = 0.0;
     let mut arrow_reader_init_seconds = 0.0;
@@ -144,12 +110,14 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
             let project_batch_start_time = Instant::now();
             let projected_batch = prepare_chunk_batch_for_final_writer(batch)?;
             project_batch_seconds += project_batch_start_time.elapsed().as_secs_f64();
-            output_row_count += projected_batch.num_rows();
+            output_row_count = checked_final_output_row_count(output_row_count, projected_batch.num_rows())?;
 
             let write_parquet_start_time = Instant::now();
             parquet_writer.write(&projected_batch).map_err(OutputError::runtime)?;
             write_parquet_seconds += write_parquet_start_time.elapsed().as_secs_f64();
-            batch_count += 1;
+            batch_count = batch_count
+                .checked_add(1)
+                .ok_or_else(|| OutputError::Runtime("Final output batch count overflowed uint64.".to_string()))?;
         }
     }
 
@@ -163,7 +131,7 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
     let parquet_file_bytes = std::fs::metadata(final_parquet_path).map_err(OutputError::runtime)?.len();
 
     let manifest_update_start_time = Instant::now();
-    manifest::mark_run_manifest_finalized(final_parquet_path, output_row_count, chunk_file_count)?;
+    manifest::mark_run_manifest_finalized_output(final_parquet_path, output_row_count, chunk_file_count, "parquet")?;
     let manifest_update_seconds = manifest_update_start_time.elapsed().as_secs_f64();
 
     Ok(RegenieStep2FinalizationTiming {
@@ -186,6 +154,15 @@ fn write_final_parquet_from_chunk_files_with_optional_dtype(
         arrow_file_bytes,
         parquet_file_bytes,
         total_seconds: total_start_time.elapsed().as_secs_f64(),
+    })
+}
+
+fn checked_final_output_row_count(current_row_count: i64, batch_row_count: usize) -> Result<i64, OutputError> {
+    let signed_batch_row_count = i64::try_from(batch_row_count).map_err(|_| {
+        OutputError::InvalidInput("Final output batch row count exceeds the signed manifest count range.".to_string())
+    })?;
+    current_row_count.checked_add(signed_batch_row_count).ok_or_else(|| {
+        OutputError::InvalidInput("Final output row count exceeds the signed manifest count range.".to_string())
     })
 }
 
@@ -340,8 +317,8 @@ fn get_regenie_step2_parquet_writer_properties() -> &'static WriterProperties {
 fn append_output_footer_metadata(
     parquet_writer: &mut ArrowWriter<File>,
     association_mode: &str,
-    chunk_file_count: usize,
-    row_count: usize,
+    chunk_file_count: i64,
+    row_count: i64,
 ) {
     let metadata_values = [
         ("g.output.schema_version", schema::OUTPUT_SCHEMA_VERSION.to_string()),
@@ -395,19 +372,4 @@ pub(crate) fn project_chunk_batch_to_final_batch(
         })?;
     RecordBatch::try_new(Arc::clone(schema::get_regenie_step2_final_schema(output_statistic_dtype)), projected_columns)
         .map_err(OutputError::runtime)
-}
-
-fn read_output_statistic_dtype_from_manifest(
-    run_directory: &Path,
-) -> Result<schema::OutputStatisticDtype, OutputError> {
-    let Some(manifest_json) = manifest::load_run_manifest_json(run_directory)? else {
-        return Ok(schema::OutputStatisticDtype::default());
-    };
-    let manifest_value = serde_json::from_str::<Value>(&manifest_json).map_err(OutputError::runtime)?;
-    let output_statistic_dtype_text = manifest_value
-        .pointer("/output_writer/result_statistic_dtype")
-        .or_else(|| manifest_value.pointer("/execution_plan/output_writer/result_statistic_dtype"))
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| schema::OutputStatisticDtype::default().as_str());
-    schema::OutputStatisticDtype::parse(output_statistic_dtype_text)
 }

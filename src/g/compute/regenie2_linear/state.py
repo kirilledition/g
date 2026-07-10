@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import typing
 from dataclasses import dataclass
 
@@ -13,46 +14,6 @@ from g.compute.common import linalg
 
 if typing.TYPE_CHECKING:
     from g import types
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Regenie2LinearState:
-    """Precomputed state for REGENIE step 2 linear association.
-
-    Attributes:
-        whitened_covariate_transpose: Cholesky-whitened covariate transpose.
-        phenotype_residual: Phenotype residualized against covariates.
-        degrees_of_freedom: Null-model residual degrees of freedom.
-
-    """
-
-    whitened_covariate_transpose: jax.Array
-    phenotype_residual: jax.Array
-    degrees_of_freedom: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Regenie2LinearChromosomeState:
-    """Chromosome-specific REGENIE step 2 linear state.
-
-    Attributes:
-        whitened_covariate_transpose: Cholesky-whitened covariate transpose.
-        adjusted_residual: Phenotype residual after covariate residualization and LOCO subtraction.
-        adjusted_residual_projection_coordinates: Projection of adjusted residual onto whitened covariates.
-        score_left_hand_matrix: Stacked left-hand matrix multiplied by genotype chunks.
-        adjusted_residual_sum_squares: Sum of squares after removing the covariate projection.
-        degrees_of_freedom: Null-model residual degrees of freedom.
-
-    """
-
-    whitened_covariate_transpose: jax.Array
-    adjusted_residual: jax.Array
-    adjusted_residual_projection_coordinates: jax.Array
-    score_left_hand_matrix: jax.Array
-    adjusted_residual_sum_squares: jax.Array
-    degrees_of_freedom: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -131,50 +92,7 @@ def build_multi_linear_state(
     )
 
 
-def build_single_linear_state_from_multi(
-    state: Regenie2MultiLinearState,
-) -> Regenie2LinearState:
-    """Build a single-trait linear state view from a trait-major state."""
-    return Regenie2LinearState(
-        whitened_covariate_transpose=state.whitened_covariate_transpose,
-        phenotype_residual=state.phenotype_residual_matrix[0],
-        degrees_of_freedom=state.degrees_of_freedom,
-    )
-
-
-def build_multi_linear_state_from_single(
-    state: Regenie2LinearState,
-) -> Regenie2MultiLinearState:
-    """Build a trait-major linear state view from a single-trait state."""
-    return Regenie2MultiLinearState(
-        whitened_covariate_transpose=state.whitened_covariate_transpose,
-        phenotype_residual_matrix=state.phenotype_residual[None, :],
-        degrees_of_freedom=state.degrees_of_freedom,
-    )
-
-
-def build_single_linear_chromosome_state_from_multi(
-    chromosome_state: Regenie2MultiLinearChromosomeState,
-) -> Regenie2LinearChromosomeState:
-    """Build a single-trait chromosome state view from a trait-major state."""
-    adjusted_residual = chromosome_state.adjusted_residual_matrix[0]
-    adjusted_residual_projection_coordinates = chromosome_state.adjusted_residual_projection_coordinate_matrix[0]
-    return Regenie2LinearChromosomeState(
-        whitened_covariate_transpose=chromosome_state.whitened_covariate_transpose,
-        adjusted_residual=adjusted_residual,
-        adjusted_residual_projection_coordinates=adjusted_residual_projection_coordinates,
-        score_left_hand_matrix=jnp.concatenate(
-            [
-                chromosome_state.whitened_covariate_transpose,
-                adjusted_residual[None, :],
-            ],
-            axis=0,
-        ),
-        adjusted_residual_sum_squares=chromosome_state.adjusted_residual_sum_squares[0],
-        degrees_of_freedom=chromosome_state.degrees_of_freedom,
-    )
-
-
+@functools.partial(jax.jit, static_argnames=("score_dtype",))
 def build_multi_linear_chromosome_state(
     state: Regenie2MultiLinearState,
     loco_prediction_matrix: jax.Array,

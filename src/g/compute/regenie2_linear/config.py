@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-DEFAULT_LINEAR_MINIMUM_VARIANCE = 1.0e-8
-DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE = 1.0e-6
-
 
 @dataclass(frozen=True)
 class LinearNumericalConfig:
@@ -29,9 +26,3 @@ class LinearNumericalConfig:
         if self.relative_variance_tolerance <= 0.0:
             message = "Relative variance tolerance must be positive."
             raise ValueError(message)
-
-
-DEFAULT_LINEAR_NUMERICAL_CONFIG = LinearNumericalConfig(
-    minimum_variance=DEFAULT_LINEAR_MINIMUM_VARIANCE,
-    relative_variance_tolerance=DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
-)

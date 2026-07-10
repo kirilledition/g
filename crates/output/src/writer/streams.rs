@@ -22,7 +22,7 @@ use super::record_batch::{
     build_regenie_step2_parquet_record_batch_schema, build_regenie_step2_record_batch,
 };
 use super::{
-    OutputWriterResult, RegenieStep2ArrowFileWriteTiming, RegenieStep2ChunkJob, RegenieStep2ChunkStreamWriteResult,
+    OutputResult, RegenieStep2ArrowFileWriteTiming, RegenieStep2ChunkJob, RegenieStep2ChunkStreamWriteResult,
     RegenieStep2RecordBatchBuildTiming,
 };
 
@@ -30,10 +30,10 @@ const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
 
 pub(super) fn write_regenie_step2_chunks_to_arrow_file(
     chunks: Vec<RegenieStep2ChunkJob>,
-    chunk_schema: Arc<Schema>,
+    chunk_schema: &Arc<Schema>,
     chunk_file_path: &Path,
     arrow_compression: &str,
-) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
+) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
     let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
@@ -41,7 +41,7 @@ pub(super) fn write_regenie_step2_chunks_to_arrow_file(
     let writer_init_start_time = Instant::now();
     let write_options = build_regenie_step2_ipc_write_options(arrow_compression)?;
     let mut writer =
-        FileWriter::try_new_with_options(output_file, &chunk_schema, write_options).map_err(OutputError::runtime)?;
+        FileWriter::try_new_with_options(output_file, chunk_schema, write_options).map_err(OutputError::runtime)?;
     let writer_init = writer_init_start_time.elapsed().as_secs_f64();
 
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
@@ -52,7 +52,7 @@ pub(super) fn write_regenie_step2_chunks_to_arrow_file(
         let record_batch_build_start_time = Instant::now();
         let record_batch_build_result = build_regenie_step2_record_batch(
             chunk_job,
-            Arc::clone(&chunk_schema),
+            Arc::clone(chunk_schema),
             &mut array_cache,
             RegenieStep2CorrectionArrayEncoding::String,
         )?;
@@ -80,18 +80,18 @@ pub(super) fn write_regenie_step2_chunks_to_arrow_file(
 
 pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     chunks: Vec<RegenieStep2ChunkJob>,
-    chunk_schema: Arc<Schema>,
+    chunk_schema: &Arc<Schema>,
     chunk_file_path: &Path,
     parquet_compression: &str,
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> OutputWriterResult<RegenieStep2ChunkStreamWriteResult> {
+) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = Instant::now();
     let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
     let file_create = file_create_start_time.elapsed().as_secs_f64();
 
     let writer_init_start_time = Instant::now();
     let writer_properties = build_regenie_step2_parquet_writer_properties(parquet_compression)?;
-    let mut writer = ArrowWriter::try_new(output_file, Arc::clone(&chunk_schema), Some(writer_properties))
+    let mut writer = ArrowWriter::try_new(output_file, Arc::clone(chunk_schema), Some(writer_properties))
         .map_err(OutputError::runtime)?;
     writer.append_key_value_metadata(KeyValue {
         key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
@@ -102,7 +102,7 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
     let mut record_batch_build_seconds = 0.0;
     let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
-    let parquet_record_batch_schema = build_regenie_step2_parquet_record_batch_schema(&chunk_schema);
+    let parquet_record_batch_schema = build_regenie_step2_parquet_record_batch_schema(chunk_schema);
     let mut batch_write = 0.0;
     for chunk_job in chunks {
         let record_batch_build_start_time = Instant::now();
@@ -134,7 +134,7 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     })
 }
 
-fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> OutputWriterResult<IpcWriteOptions> {
+fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> OutputResult<IpcWriteOptions> {
     match arrow_compression.to_ascii_lowercase().as_str() {
         "zstd" => {
             IpcWriteOptions::default().try_with_compression(Some(CompressionType::ZSTD)).map_err(OutputError::runtime)
@@ -146,7 +146,7 @@ fn build_regenie_step2_ipc_write_options(arrow_compression: &str) -> OutputWrite
     }
 }
 
-fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> OutputWriterResult<WriterProperties> {
+fn build_regenie_step2_parquet_writer_properties(parquet_compression: &str) -> OutputResult<WriterProperties> {
     let compression = match parquet_compression.to_ascii_lowercase().as_str() {
         "zstd" => Compression::ZSTD(ZstdLevel::default()),
         "none" => Compression::UNCOMPRESSED,

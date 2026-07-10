@@ -2,91 +2,67 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active | Native `_core` bindings under `src/binding` | Development maintainers |
+| Active contract | Native `_core` code under `src/binding` | Development maintainers |
 
 ## Purpose
 
-`src/binding` is the PyO3 adaptation layer for `g._core`. It converts between Python-facing objects and Rust crate APIs. It must not own GWAS execution policy, scheduling policy, output planning, telemetry policy, or domain validation logic when that logic can be expressed with pure Rust crate types.
-
-The ownership boundary is:
-
-```text
-crates/*    = Rust application and domain logic
-src/binding = PyO3 adaptation only
-src/g       = public Python API and JAX backend/kernels
-```
-
-## Rule
-
-If a function can be written using only Rust crate types, it belongs in a crate. If a function needs Python, PyO3, `PyAny`, `PyErr`, `PyModule`, NumPy/Python buffers, or direct Python callback invocation, it may live in `src/binding`.
-
-## Allowed In `src/binding`
-
-- `#[pyclass]` wrappers and `#[pymethods]` accessors.
-- `#[pyfunction]` wrappers.
-- Python module and submodule registration.
-- Python callback invocation and callback-object extraction.
-- NumPy/Python buffer adapters.
-- Python-to-Rust data extraction and Rust-to-Python object construction.
-- `PyErr` conversion through binding error helpers.
-- Temporary compatibility aliases during staged migrations.
-
-## Forbidden In `src/binding`
-
-- Scheduling policy.
-- Callback worker lifecycle policy.
-- BGEN delivery cleanup policy.
-- Manifest/header construction policy.
-- Output resume or repair planning.
-- Preflight validation policy beyond converting Python arrays and calling crate validation.
-- Run-event or diagnostic payload construction policy.
-- Telemetry rendering policy.
-- Genotype preprocessing policy.
-- Sample alignment policy.
-- Domain-level config validation.
-
-## Python Namespace Policy
-
-Production exports should live under domain submodules:
+The root Rust extension is the native host for the Python/JAX boundary. Domain
+logic belongs in workspace crates. Boundary code owns only the coordination
+that necessarily touches opaque Python handles, NumPy objects, `PyErr`, or the
+Python CLI return object.
 
 ```text
-g._core.cli
-g._core.config
-g._core.runtime
-g._core.telemetry
-g._core.engine
-g._core.genotype
-g._core.input
-g._core.output
+crates/*    domain contracts, algorithms, scheduling, I/O, runtime, output
+src/binding native host coordination and PyO3/NumPy adaptation
+src/g       console bootstrap, JAX backend, JAX kernels
 ```
 
-Debug and migration-only internals must live under:
+## Allowed
+
+- The high-level native CLI entrypoint and terminal result.
+- Lazy construction of the Python JAX backend after native validation/setup.
+- The four backend method invocations and typed NumPy exchange classes.
+- Retention of opaque Python JAX group, chromosome, and device-result handles.
+- Native host coordination whose error/interrupt lifecycle directly owns
+  `PyErr` and writer flushing.
+- Checked conversion between Python/NumPy values and crate-owned types.
+
+## Forbidden
+
+- A second scheduler, queue protocol, or callback worker hierarchy.
+- Python-owned BGEN delivery, input alignment, output, resume, or cleanup.
+- JSON or dictionaries between Rust domain crates.
+- Public wrappers for crate APIs that production Python does not consume.
+- Root aliases, migration adapters, deprecated names, or test/tooling exports.
+- Per-variant Python calls.
+
+The performance-sensitive backend scheduler is implemented in `g-engine` and
+is Python-free. The root host supplies one `AssociationBackend` implementation
+that calls:
 
 ```text
-g._core.debug
+prepare_group
+prepare_chromosome
+compute_batch
+materialize_batch
 ```
 
-Root `g._core` symbols are compatibility aliases only. New Python callers must use a domain submodule.
+## Namespace Policy
 
-## Module Header Convention
+The complete production namespace is:
 
-New binding modules must describe the Python namespace they adapt and the crate/domain APIs they wrap:
-
-```rust
-//! PyO3 bindings for `_core.engine`.
-//!
-//! Adapts:
-//! - g-engine high-level session/backend APIs
-//!
-//! Allowed:
-//! - PyO3 wrappers
-//! - Python callback bridge
-//! - error conversion
-//!
-//! Forbidden:
-//! - scheduling policy
-//! - output manifest construction
-//! - BGEN delivery cleanup
+```text
+g._core.cli       run, NativeCliRunResult
+g._core.engine    JAX backend config and typed exchange classes
 ```
 
-Keep the header short, but make the boundary explicit.
+Every registered item must appear in `src/g/_core.pyi`, and every stub item must
+be registered. Unregistered Rust structs are implementation details, not a
+compatibility surface.
+
+## Placement Test
+
+Move code to a domain crate when it can use crate-owned Rust types and errors.
+Keep code in the root host when moving it would require PyO3 in a domain crate
+or would create a generic mirror solely to transport opaque Python state or
+`PyErr`. Prefer deletion over a forwarding adapter.

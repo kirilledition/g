@@ -9,24 +9,29 @@ use crate::manifest;
 use crate::schema;
 use crate::schema::OutputStatisticDtype;
 
-use super::{OutputFileFormat, OutputWriterResult, RegenieStep2ChunkWriteBatch};
+use super::{OutputFileFormat, OutputResult, RegenieStep2ChunkWriteBatch};
 
 pub(super) fn build_run_manifest_chunk_commits(
     job: &RegenieStep2ChunkWriteBatch,
     output_format: OutputFileFormat,
     compression: &str,
-) -> OutputWriterResult<Vec<manifest::RunManifestChunkCommit>> {
+) -> OutputResult<Vec<manifest::RunManifestChunkCommit>> {
     job.chunks
         .iter()
         .map(|chunk_job| {
             let variant_stop_index = chunk_job.chunk_handle.variant_stop_index()?;
+            let row_count = i64::try_from(chunk_job.chunk_handle.row_count()).map_err(|_| {
+                crate::error::OutputError::InvalidInput(
+                    "Output chunk row count exceeds the signed manifest count range.".to_string(),
+                )
+            })?;
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
                 output_format: output_format.value().to_string(),
                 compression: compression.to_string(),
                 variant_start_index: chunk_job.chunk_handle.variant_start_index(),
                 variant_stop_index,
-                row_count: chunk_job.chunk_handle.row_count(),
+                row_count,
                 chunk_file_name: job.chunk_file_name.clone(),
             })
         })
@@ -36,7 +41,7 @@ pub(super) fn build_run_manifest_chunk_commits(
 pub(super) fn build_regenie_step2_chunk_file_schema(
     chunk_commits: &[manifest::RunManifestChunkCommit],
     output_statistic_dtype: OutputStatisticDtype,
-) -> OutputWriterResult<Arc<Schema>> {
+) -> OutputResult<Arc<Schema>> {
     let mut metadata = HashMap::new();
     metadata.insert(schema::CHUNK_COMMITS_METADATA_KEY.to_string(), build_chunk_commit_metadata_text(chunk_commits)?);
     Ok(Arc::new(
@@ -46,7 +51,7 @@ pub(super) fn build_regenie_step2_chunk_file_schema(
 
 pub(super) fn build_chunk_commit_metadata_text(
     chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> OutputWriterResult<String> {
+) -> OutputResult<String> {
     let chunk_commit_values = chunk_commits
         .iter()
         .map(|chunk_commit| {

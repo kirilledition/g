@@ -45,9 +45,10 @@ Recognized but not implemented:
 
 The trusted BGEN fast path is controlled by:
 
-```bash
---trusted_no_missing_diploid
---trusted_bgen_validation_mode cache_on_miss
+```toml
+[compute]
+trusted_no_missing_diploid = true
+trusted_bgen_validation_mode = "cache_on_miss"
 ```
 
 Validation modes:
@@ -77,7 +78,7 @@ covariate rows, and prediction rows.
 
 Phenotype and covariate tables are parsed by the native Rust path. Tables are
 expected to include `IID`; `FID` is also required when
-`--sample_key_mode fid_iid` is used.
+`[compute] sample_key_mode = "fid_iid"` is used.
 
 Column selection rules:
 
@@ -95,7 +96,7 @@ Binary phenotypes use REGENIE-style coding:
 
 Missing tokens include empty string, `NA`, `NaN`, `nan`, and `-9`.
 Rows must still physically contain each selected field: `IID`, `FID` when
-`--sample_key_mode fid_iid` is used, selected phenotype columns, and selected
+`[compute] sample_key_mode = "fid_iid"` is used, selected phenotype columns, and selected
 covariate columns. A structurally short row that ends before one of those
 columns fails instead of being treated as missing. Use an explicit empty field
 with the delimiter present, such as a trailing tab for the final selected
@@ -121,7 +122,7 @@ results even when the tested BGEN file is unchanged.
 
 ## Multi-Phenotype Sample Semantics
 
-`--multi_phenotype_sample_mode` controls how `g` aligns rows for multiple
+`[compute] multi_phenotype_sample_mode` controls how `g` aligns rows for multiple
 requested phenotypes:
 
 - `per-phenotype` (default): each phenotype uses its own complete-case sample set.

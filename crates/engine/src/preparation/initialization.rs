@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use crate::schedule;
+use crate::output_schedule::intersect_committed_chunk_identifier_sets;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PipelineOutputInitialization {
@@ -52,6 +52,6 @@ impl PipelineOutputInitialization {
                     .map(|chunk_identifiers| chunk_identifiers.iter().copied().collect::<BTreeSet<_>>())
             })
             .collect::<Vec<_>>();
-        schedule::intersect_committed_chunk_identifier_sets(&committed_chunk_identifier_sets).into_iter().collect()
+        intersect_committed_chunk_identifier_sets(&committed_chunk_identifier_sets).into_iter().collect()
     }
 }

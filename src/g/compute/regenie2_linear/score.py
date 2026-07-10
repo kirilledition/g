@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import typing
 from dataclasses import dataclass
 
 import jax
@@ -11,26 +13,8 @@ from g import types
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
 
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Regenie2LinearChunkResult:
-    """Association outputs for a REGENIE step 2 linear chunk.
-
-    Attributes:
-        beta: Estimated effect sizes.
-        standard_error: Standard errors of estimates.
-        chi_squared: Chi-squared statistics.
-        log10_p_value: Negative log10 p-values.
-        valid_mask: Boolean mask for valid statistics.
-
-    """
-
-    beta: jax.Array
-    standard_error: jax.Array
-    chi_squared: jax.Array
-    log10_p_value: jax.Array
-    valid_mask: jax.Array
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_linear import state as regenie2_linear_state
 
 
 @jax.tree_util.register_dataclass
@@ -52,19 +36,6 @@ class Regenie2MultiLinearChunkResult:
     chi_squared: jax.Array
     log10_p_value: jax.Array
     valid_mask: jax.Array
-
-
-def squeeze_single_trait_linear_result(
-    result: Regenie2MultiLinearChunkResult,
-) -> Regenie2LinearChunkResult:
-    """Remove the trait axis from a single-trait linear result."""
-    return Regenie2LinearChunkResult(
-        beta=result.beta[0],
-        standard_error=result.standard_error[0],
-        chi_squared=result.chi_squared[0],
-        log10_p_value=result.log10_p_value[0],
-        valid_mask=result.valid_mask[0],
-    )
 
 
 def compute_positive_residual_variance_mask(
@@ -127,18 +98,17 @@ def compute_normalized_genotype_sum_squares_from_stats(
     )
 
 
+@functools.partial(
+    jax.jit,
+    static_argnames=("score_dtype", "linear_minimum_variance", "linear_relative_variance_tolerance"),
+)
 def compute_regenie2_linear_chunk_trait_major_variant_major(
     *,
-    whitened_covariate_transpose: jax.Array,
-    adjusted_residual_matrix: jax.Array,
-    adjusted_residual_projection_coordinate_matrix: jax.Array,
-    adjusted_residual_sum_squares: jax.Array,
-    degrees_of_freedom: jax.Array,
+    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     genotype_dosage_sum: jax.Array | None,
     genotype_observation_count: jax.Array | None,
     genotype_imputed_dosage_square_sum: jax.Array | None,
-    score_left_hand_matrix: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
@@ -172,20 +142,12 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
             sample_count=genotype_matrix_by_variant.shape[1],
             score_dtype=score_dtype,
         )
-    covariate_count = whitened_covariate_transpose.shape[0]
-    stacked_left_hand_matrix = (
-        jnp.concatenate(
-            [whitened_covariate_transpose, adjusted_residual_matrix],
-            axis=0,
-        )
-        if score_left_hand_matrix is None
-        else score_left_hand_matrix
-    )
-    stacked_projection_product = stacked_left_hand_matrix @ normalized_genotype_matrix_by_variant.T
+    covariate_count = chromosome_state.whitened_covariate_transpose.shape[0]
+    stacked_projection_product = chromosome_state.score_left_hand_matrix @ normalized_genotype_matrix_by_variant.T
     covariate_projection_coordinates = stacked_projection_product[:covariate_count, :]
     raw_covariance_with_phenotype = stacked_projection_product[covariate_count:, :]
     covariance_with_phenotype = raw_covariance_with_phenotype - (
-        adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
+        chromosome_state.adjusted_residual_projection_coordinate_matrix @ covariate_projection_coordinates
     )
 
     projection_sum_squares = jnp.einsum(
@@ -211,7 +173,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         covariance_with_phenotype * genotype_residual_sum_squares_inverse[None, :],
         jnp.nan,
     )
-    null_mean_squared_error = adjusted_residual_sum_squares / degrees_of_freedom
+    null_mean_squared_error = chromosome_state.adjusted_residual_sum_squares / chromosome_state.degrees_of_freedom
     positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
     standard_error = jnp.where(
         positive_genotype_residual_mask[None, :] & positive_null_mean_squared_error_mask[:, None],

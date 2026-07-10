@@ -125,7 +125,7 @@ fn inspect_metadata_chunk_file_commits(
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
+            row_count: chunk_commit.row_count,
             chunk_file_name: chunk_file_name.to_string(),
         });
     }
@@ -177,7 +177,7 @@ fn inspect_parquet_chunk_file_commits(chunk_file_path: &Path) -> Result<ChunkFil
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
+            row_count: chunk_commit.row_count,
             chunk_file_name: chunk_file_name.clone(),
         });
     }
@@ -223,7 +223,7 @@ fn inspect_regenie_text_chunk_file_commits(chunk_file_path: &Path) -> Result<Chu
             compression: chunk_commit.compression,
             variant_start_index: chunk_commit.variant_start_index,
             variant_stop_index: chunk_commit.variant_stop_index,
-            row_count: usize::try_from(chunk_commit.row_count).map_err(OutputError::runtime)?,
+            row_count: chunk_commit.row_count,
             chunk_file_name: chunk_file_name.clone(),
         });
     }

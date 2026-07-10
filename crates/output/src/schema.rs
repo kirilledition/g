@@ -3,12 +3,10 @@ use std::sync::{Arc, OnceLock};
 use arrow::array::{Array, ArrayRef, Int32Array, StringArray, StringBuilder, new_null_array};
 use arrow::datatypes::{DataType, Field, Schema};
 
-use crate::error::OutputError;
+use crate::error::{OutputError, OutputResult};
 
 pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
 pub(crate) const OUTPUT_SCHEMA_VERSION: &str = "2";
-
-type OutputSchemaResult<T> = Result<T, OutputError>;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum OutputStatisticDtype {
@@ -18,7 +16,7 @@ pub(crate) enum OutputStatisticDtype {
 }
 
 impl OutputStatisticDtype {
-    pub(crate) fn parse(value: &str) -> OutputSchemaResult<Self> {
+    pub(crate) fn parse(value: &str) -> OutputResult<Self> {
         match value {
             "float32" => Ok(Self::Float32),
             "float64" => Ok(Self::Float64),
@@ -54,9 +52,9 @@ pub(crate) fn get_regenie_step2_chunk_schema(output_statistic_dtype: OutputStati
     }
 }
 
-pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> OutputSchemaResult<ArrayRef> {
+pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: usize) -> OutputResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
-        return Ok(build_null_extra_string_array(row_count));
+        return Ok(new_null_array(&DataType::Utf8, row_count));
     };
     let extra_code_values = extra_code_array
         .as_any()
@@ -68,7 +66,7 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
         ));
     }
     if extra_code_values.null_count() == row_count {
-        return Ok(build_null_extra_string_array(row_count));
+        return Ok(new_null_array(&DataType::Utf8, row_count));
     }
     let mut has_test_fail = false;
     for row_index in 0..extra_code_values.len() {
@@ -87,7 +85,7 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
         }
     }
     if !has_test_fail {
-        return Ok(build_null_extra_string_array(row_count));
+        return Ok(new_null_array(&DataType::Utf8, row_count));
     }
 
     let mut extra_string_builder = StringBuilder::with_capacity(row_count, row_count * "TEST_FAIL".len());
@@ -101,14 +99,7 @@ pub(crate) fn build_extra_string_array(extra_code: Option<ArrayRef>, row_count: 
     Ok(Arc::new(extra_string_builder.finish()))
 }
 
-pub(crate) fn build_null_extra_string_array(row_count: usize) -> ArrayRef {
-    new_null_array(&DataType::Utf8, row_count)
-}
-
-pub(crate) fn build_correction_method_array(
-    extra_code: Option<ArrayRef>,
-    row_count: usize,
-) -> OutputSchemaResult<ArrayRef> {
+pub(crate) fn build_correction_method_array(extra_code: Option<ArrayRef>, row_count: usize) -> OutputResult<ArrayRef> {
     build_correction_label_array(
         extra_code,
         row_count,
@@ -123,10 +114,7 @@ pub(crate) fn build_correction_method_array(
     )
 }
 
-pub(crate) fn build_correction_status_array(
-    extra_code: Option<ArrayRef>,
-    row_count: usize,
-) -> OutputSchemaResult<ArrayRef> {
+pub(crate) fn build_correction_status_array(extra_code: Option<ArrayRef>, row_count: usize) -> OutputResult<ArrayRef> {
     build_correction_label_array(
         extra_code,
         row_count,
@@ -146,7 +134,7 @@ fn build_correction_label_array(
     label_kind: &str,
     label_for_code: impl Fn(i32) -> Option<&'static str>,
     default_label: &'static str,
-) -> OutputSchemaResult<ArrayRef> {
+) -> OutputResult<ArrayRef> {
     let Some(extra_code_array) = extra_code else {
         return Ok(Arc::new(StringArray::from(vec![default_label; row_count])));
     };
@@ -186,7 +174,7 @@ pub(crate) fn get_regenie_step2_final_schema(output_statistic_dtype: OutputStati
     }
 }
 
-pub(crate) fn output_statistic_dtype_from_schema(schema: &Schema) -> OutputSchemaResult<OutputStatisticDtype> {
+pub(crate) fn output_statistic_dtype_from_schema(schema: &Schema) -> OutputResult<OutputStatisticDtype> {
     let statistic_column_names = ["BETA", "SE", "CHISQ", "LOG10P"];
     let mut observed_dtype: Option<OutputStatisticDtype> = None;
     for column_name in statistic_column_names {

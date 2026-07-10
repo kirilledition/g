@@ -1,10 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+#[cfg(test)]
+use std::path::PathBuf;
 
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
@@ -29,7 +32,6 @@ mod variant_major;
 
 #[derive(Debug)]
 pub struct BgenReaderCore {
-    bgen_path: PathBuf,
     mmap: Mmap,
     sample_count: usize,
     variant_count: usize,
@@ -91,7 +93,6 @@ impl BgenReaderCore {
         let chromosome_boundary_indices = metadata::build_chromosome_boundary_indices(&variant_records);
 
         Ok(Self {
-            bgen_path: bgen_path.to_path_buf(),
             mmap,
             sample_count,
             variant_count,
@@ -256,10 +257,6 @@ impl BgenReaderCore {
             selected_variant_count,
         )
         .map_err(|error| BgenError::Range(error.to_string()))
-    }
-
-    pub fn bgen_path(&self) -> &Path {
-        &self.bgen_path
     }
 
     fn prepared_sample_selection_arc(&self) -> Result<Arc<SampleSelection>, BgenError> {

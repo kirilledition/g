@@ -736,7 +736,6 @@ dependencies = [
 name = "g"
 version = "0.1.0"
 dependencies = [
- "arrow",
  "g-engine",
  "g-genotype",
  "g-input",
@@ -744,13 +743,11 @@ dependencies = [
  "g-output",
  "g-plan",
  "g-runtime",
- "nalgebra",
  "numpy",
  "pyo3",
  "pyo3-pylogger",
  "serde",
  "serde_json",
- "toml",
  "tracing",
 ]
 
@@ -758,6 +755,7 @@ dependencies = [
 name = "g-engine"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "g-genotype",
  "g-input",
  "g-output",

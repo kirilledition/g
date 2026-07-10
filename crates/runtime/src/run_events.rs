@@ -1,30 +1,26 @@
 //! Runtime-owned run lifecycle event payloads and rendering policy.
 
-mod callback_diagnostics;
 mod diagnostics;
 mod lifecycle;
 mod names;
 mod native_cli_diagnostics;
 mod native_dispatch_diagnostics;
-mod output_diagnostics;
 mod pipeline_diagnostics;
 mod preflight_diagnostics;
 mod runner_diagnostics;
 mod runtime_diagnostics;
 mod telemetry;
 
-pub use callback_diagnostics::build_callback_null_logistic_nonconvergence_warning_diagnostic_payload;
 pub use diagnostics::{
     RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue, serialize_run_diagnostic_fields_json,
 };
 pub use lifecycle::{
-    RunArtifactPayload, RunArtifactTelemetryFields, RunArtifactsPayload, RunCompletedEventPayload,
-    RunCompletedTelemetryFields, RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload,
-    RunInterruptedTelemetryFields, RunTelemetryStringField, attach_run_metadata_to_artifacts,
-    build_artifact_telemetry_fields, build_run_completed_event_from_artifacts, build_run_completed_telemetry_fields,
-    build_run_failed_event_payload, build_run_failed_telemetry_fields, build_run_interrupted_event_payload,
-    build_run_interrupted_telemetry_fields, flatten_run_artifact_payloads, render_artifact_lines,
-    render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+    RunArtifactPayload, RunArtifactsPayload, RunCompletedEventPayload, RunCompletedTelemetryFields,
+    RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,
+    RunTelemetryStringField, build_artifact_telemetry_fields, build_run_completed_event_from_artifacts,
+    build_run_completed_telemetry_fields, build_run_failed_event_payload, build_run_failed_telemetry_fields,
+    build_run_interrupted_event_payload, build_run_interrupted_telemetry_fields, flatten_run_artifact_payloads,
+    render_artifact_lines, render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
 };
 pub use native_cli_diagnostics::{
     build_native_cli_completed_line_diagnostic_payload, build_native_cli_failed_line_diagnostic_payload,
@@ -33,19 +29,12 @@ pub use native_cli_diagnostics::{
 };
 pub use native_dispatch_diagnostics::{
     build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
-    build_native_dispatch_callback_drain_started_diagnostic_payload,
-    build_native_dispatch_delivery_failed_diagnostic_payload,
     build_native_dispatch_delivery_finished_diagnostic_payload,
-    build_native_dispatch_delivery_interrupted_diagnostic_payload,
-    build_native_dispatch_delivery_started_diagnostic_payload,
     build_native_dispatch_pipeline_finished_diagnostic_payload,
     build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
-    build_native_dispatch_writer_session_finish_started_diagnostic_payload,
-    build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
 };
-pub use output_diagnostics::build_io_output_resume_committed_chunks_diagnostic_payload;
 pub use pipeline_diagnostics::{
     build_pipeline_bgen_engine_open_started_diagnostic_payload, build_pipeline_bgen_engine_opened_diagnostic_payload,
     build_pipeline_gpu_genotype_format_resolved_diagnostic_payload,
@@ -76,14 +65,11 @@ pub use runner_diagnostics::{
     build_runner_execution_plan_dispatch_started_diagnostic_payload,
     build_runner_execution_plan_finalization_started_diagnostic_payload,
     build_runner_execution_plan_prepared_diagnostic_payload,
-    build_runner_jax_runtime_configuration_started_diagnostic_payload,
     build_runner_linear_engine_dispatch_started_diagnostic_payload,
     build_runner_metadata_artifacts_finalized_diagnostic_payload,
     build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
     build_runner_multi_phenotype_dispatch_started_diagnostic_payload,
     build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
-    build_runner_run_completed_diagnostic_payload, build_runner_run_failed_diagnostic_payload,
-    build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
 };
 pub use runtime_diagnostics::build_native_runtime_knobs_configured_diagnostic_payload;

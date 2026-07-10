@@ -12,25 +12,14 @@ pub(super) const GPU_GENOTYPE_FORMAT_RESOLVED_EVENT_NAME: &str = "gpu_genotype_f
 pub(super) const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
 pub(super) const BGEN_ENGINE_OPENED_EVENT_NAME: &str = "bgen_engine_opened";
 pub(super) const BINARY_CORRECTION_SUMMARY_EVENT_NAME: &str = "binary_correction_summary";
-pub(super) const CALLBACK_NULL_LOGISTIC_NONCONVERGENCE_WARNING_DIAGNOSTIC_EVENT_NAME: &str =
-    "callback_null_logistic_nonconvergence_warning";
 pub(super) const RUN_LIFECYCLE_INFO_LEVEL: &str = "info";
 pub(super) const RUN_LIFECYCLE_WARN_LEVEL: &str = "warn";
 pub(super) const RUN_LIFECYCLE_ERROR_LEVEL: &str = "error";
-pub(super) const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_started";
-pub(super) const RUNNER_REGENIE_RUN_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_interrupted";
-pub(super) const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_failed";
-pub(super) const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_EVENT_NAME: &str = "runner_regenie_run_completed";
-pub(super) const RUNNER_REGENIE_RUN_STARTED_DIAGNOSTIC_MESSAGE: &str = "Starting REGENIE run.";
-pub(super) const RUNNER_REGENIE_RUN_FAILED_DIAGNOSTIC_MESSAGE: &str = "REGENIE run failed.";
-pub(super) const RUNNER_REGENIE_RUN_COMPLETED_DIAGNOSTIC_MESSAGE: &str = "Finished REGENIE run.";
 pub(super) const NATIVE_CLI_STDOUT_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stdout";
 pub(super) const NATIVE_CLI_STDERR_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_stderr";
 pub(super) const NATIVE_CLI_INTERRUPTED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_interrupted_line";
 pub(super) const NATIVE_CLI_FAILED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_failed_line";
 pub(super) const NATIVE_CLI_COMPLETED_LINE_DIAGNOSTIC_EVENT_NAME: &str = "native_cli_completed_line";
-pub(super) const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "runner_jax_runtime_configuration_started";
 pub(super) const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_execution_plan_build_started";
 pub(super) const RUNNER_EXECUTION_PLAN_PREPARED_DIAGNOSTIC_EVENT_NAME: &str = "runner_execution_plan_prepared";
@@ -38,14 +27,11 @@ pub(super) const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_EVENT_NAME: &
     "runner_execution_plan_dispatch_started";
 pub(super) const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "runner_execution_plan_finalization_started";
-pub(super) const RUNNER_JAX_RUNTIME_CONFIGURATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Configuring JAX runtime before backend initialization.";
 pub(super) const RUNNER_EXECUTION_PLAN_BUILD_STARTED_DIAGNOSTIC_MESSAGE: &str = "Building REGENIE execution plan.";
 pub(super) const RUNNER_EXECUTION_PLAN_DISPATCH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Dispatching REGENIE execution plan.";
 pub(super) const RUNNER_EXECUTION_PLAN_FINALIZATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Finalizing REGENIE execution plan.";
-pub(super) const IO_OUTPUT_RESUME_COMMITTED_CHUNKS_DIAGNOSTIC_EVENT_NAME: &str = "io_output_resume_committed_chunks";
 pub(super) const PIPELINE_GPU_GENOTYPE_FORMAT_RESOLVED_DIAGNOSTIC_EVENT_NAME: &str =
     "pipeline_gpu_genotype_format_resolved";
 pub(super) const PIPELINE_BGEN_ENGINE_OPEN_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "pipeline_bgen_engine_open_started";
@@ -97,26 +83,12 @@ pub(super) const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_EVEN
     "native_dispatch_trusted_bgen_validation_started";
 pub(super) const NATIVE_DISPATCH_TRUSTED_BGEN_VALIDATION_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Validating trusted no-missing diploid BGEN mode.";
-pub(super) const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_callback_drain_started";
-pub(super) const NATIVE_DISPATCH_CALLBACK_DRAIN_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Draining native callback worker queues.";
-pub(super) const NATIVE_DISPATCH_DELIVERY_STARTED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_started";
 pub(super) const NATIVE_DISPATCH_DELIVERY_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_finished";
-pub(super) const NATIVE_DISPATCH_DELIVERY_INTERRUPTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_delivery_interrupted";
-pub(super) const NATIVE_DISPATCH_DELIVERY_FAILED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_delivery_failed";
 pub(super) const NATIVE_DISPATCH_PIPELINE_FINISHED_DIAGNOSTIC_EVENT_NAME: &str = "native_dispatch_pipeline_finished";
-pub(super) const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_session_finish_started";
-pub(super) const NATIVE_DISPATCH_WRITER_SESSION_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
-    "Finishing output writer and optional Parquet finalization.";
 pub(super) const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_sessions_finish_started";
 pub(super) const NATIVE_DISPATCH_WRITER_SESSIONS_FINISH_STARTED_DIAGNOSTIC_MESSAGE: &str =
     "Finishing output writer(s) and optional Parquet finalization.";
-pub(super) const NATIVE_DISPATCH_WRITER_SESSION_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
-    "native_dispatch_writer_session_interrupted_flush_started";
 pub(super) const NATIVE_DISPATCH_WRITER_SESSIONS_INTERRUPTED_FLUSH_STARTED_DIAGNOSTIC_EVENT_NAME: &str =
     "native_dispatch_writer_sessions_interrupted_flush_started";
 pub(super) const NATIVE_RUNTIME_KNOBS_CONFIGURED_DIAGNOSTIC_EVENT_NAME: &str = "native_runtime_knobs_configured";

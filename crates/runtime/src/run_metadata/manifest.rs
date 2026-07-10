@@ -12,7 +12,6 @@ pub fn build_run_manifest_extension(input: RunManifestExtensionInput) -> RunMani
         output_format,
         device,
         staging_depth,
-        native_callback_batch_size,
         threads,
         writer_threads,
         writer_queue_depth,
@@ -34,7 +33,6 @@ pub fn build_run_manifest_extension(input: RunManifestExtensionInput) -> RunMani
         runtime: RunManifestRuntimePayload {
             device,
             staging_depth,
-            native_callback_batch_size,
             threads,
             writer_threads,
             writer_queue_depth,

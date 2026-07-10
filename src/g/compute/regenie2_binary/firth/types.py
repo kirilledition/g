@@ -681,18 +681,10 @@ class ScalarVariantFirthFixedBatchOperands:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class CompactSparseFirthLaneSharedOperands:
-    """Shared operands for compact sparse approximate-Firth lanes."""
-
-    solver_parameters: ScalarApproximateFirthSolverParameters
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
 class CompactSparseFirthFixedBatchScanCarry:
     """Scan carry for compact sparse approximate-Firth fixed batches."""
 
-    shared_operands: CompactSparseFirthLaneSharedOperands
+    solver_parameters: ScalarApproximateFirthSolverParameters
     phenotype_batches: jax.Array
     genotype_batches: jax.Array
     offset_batches: jax.Array

@@ -8,22 +8,6 @@ use crate::run_events::{
 pub const CLI_RUNTIME_FAILURE_EXIT_CODE: i32 = 1;
 pub const NATIVE_CLI_OUTPUT_LOG_LIMIT: i64 = 4096;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CliRunLifecycleState {
-    runner_started: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CliRunFailureTelemetryPlan {
-    pub should_log_run_failed_to_telemetry: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CliRunFailedTelemetryEmissionPlan {
-    pub should_emit: bool,
-    pub should_suppress_errors: bool,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CliTelemetryCloseFailurePlan {
     pub should_report_failure: bool,
@@ -52,22 +36,6 @@ pub struct CliOutputChunks {
 pub struct CliOutputBuffer {
     stdout_chunks: Vec<String>,
     stderr_chunks: Vec<String>,
-}
-
-impl CliRunLifecycleState {
-    #[must_use]
-    pub const fn runner_started(&self) -> bool {
-        self.runner_started
-    }
-
-    pub const fn mark_runner_started(&mut self) {
-        self.runner_started = true;
-    }
-
-    #[must_use]
-    pub const fn plan_run_failed_telemetry(&self) -> CliRunFailureTelemetryPlan {
-        CliRunFailureTelemetryPlan { should_log_run_failed_to_telemetry: !self.runner_started }
-    }
 }
 
 impl CliTerminalResult {
@@ -140,22 +108,16 @@ pub const fn plan_cli_telemetry_close_failure(
 }
 
 #[must_use]
-pub const fn plan_cli_run_failed_telemetry_emission(
-    should_log_run_failed_to_telemetry: bool,
-    has_telemetry_session: bool,
-) -> CliRunFailedTelemetryEmissionPlan {
-    CliRunFailedTelemetryEmissionPlan {
-        should_emit: should_log_run_failed_to_telemetry && has_telemetry_session,
-        should_suppress_errors: true,
-    }
-}
-
-#[must_use]
 pub fn build_completed_cli_terminal_result(artifacts: &RunArtifactsPayload) -> CliTerminalResult {
     let completed_event = build_run_completed_event_from_artifacts(artifacts);
     CliTerminalResult::success(render_run_completed_lines(&completed_event))
 }
 
+/// Build terminal output for a signal-interrupted run.
+///
+/// # Errors
+///
+/// Returns an error when the signal-derived exit code does not fit in `i32`.
 pub fn build_interrupted_cli_terminal_result(
     interrupted_event: &RunInterruptedEventPayload,
 ) -> Result<CliTerminalResult, CliExitCodeRangeError> {

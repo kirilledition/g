@@ -74,9 +74,9 @@ impl OutputStageTimingAccumulator {
         self.writer_arrow_finish_seconds += timing.arrow_writer_finish_seconds;
         self.writer_arrow_rename_seconds += timing.arrow_file_rename_seconds;
         self.writer_total_seconds += timing.total_seconds;
-        self.writer_chunk_file_count += timing.chunk_file_count;
-        self.writer_chunk_count += timing.chunk_count;
-        self.writer_row_count += timing.row_count;
+        self.writer_chunk_file_count = self.writer_chunk_file_count.saturating_add(timing.chunk_file_count);
+        self.writer_chunk_count = self.writer_chunk_count.saturating_add(timing.chunk_count);
+        self.writer_row_count = self.writer_row_count.saturating_add(timing.row_count);
         self.writer_arrow_array_memory_bytes =
             self.writer_arrow_array_memory_bytes.saturating_add(timing.arrow_array_memory_bytes);
         self.writer_arrow_file_bytes = self.writer_arrow_file_bytes.saturating_add(timing.arrow_file_bytes);
@@ -97,12 +97,12 @@ impl OutputStageTimingAccumulator {
         self.finalization_close_writer_seconds += timing.close_writer_seconds;
         self.finalization_manifest_update_seconds += timing.manifest_update_seconds;
         self.finalization_total_seconds += timing.total_seconds;
-        self.finalization_chunk_file_count += timing.chunk_file_count;
-        self.finalization_batch_count += timing.batch_count;
-        self.finalization_row_count += timing.row_count;
+        self.finalization_chunk_file_count = self.finalization_chunk_file_count.saturating_add(timing.chunk_file_count);
+        self.finalization_batch_count = self.finalization_batch_count.saturating_add(timing.batch_count);
+        self.finalization_row_count = self.finalization_row_count.saturating_add(timing.row_count);
         self.finalization_arrow_file_bytes = self.finalization_arrow_file_bytes.saturating_add(timing.arrow_file_bytes);
         self.finalization_parquet_file_bytes =
             self.finalization_parquet_file_bytes.saturating_add(timing.parquet_file_bytes);
-        self.finalization_count += 1;
+        self.finalization_count = self.finalization_count.saturating_add(1);
     }
 }

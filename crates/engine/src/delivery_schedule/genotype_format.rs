@@ -1,6 +1,13 @@
-use crate::schedule::ScheduleError;
+use crate::schedule_error::ScheduleError;
 
-use super::types::GpuGenotypeFormatResolutionPlan;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuGenotypeFormatResolutionPlan {
+    pub requested_gpu_genotype_format: String,
+    pub resolved_gpu_genotype_format: Option<String>,
+    pub resolution_reason: Option<String>,
+    pub fallback_error: Option<String>,
+    pub requires_trusted_validation: bool,
+}
 
 const GPU_GENOTYPE_FORMAT_AUTO: &str = "auto";
 const GPU_GENOTYPE_FORMAT_DOSAGE: &str = "dosage";

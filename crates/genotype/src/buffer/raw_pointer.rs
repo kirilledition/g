@@ -7,17 +7,11 @@ pub struct OutputBufferAddress(usize);
 
 impl OutputBufferAddress {
     #[must_use]
-    pub const fn new(address: usize) -> Self {
-        Self(address)
-    }
-
-    #[must_use]
     pub fn from_mut_ptr<Value>(pointer: *mut Value) -> Self {
         Self(pointer.addr())
     }
 
-    #[must_use]
-    pub const fn get(self) -> usize {
+    pub(crate) const fn get(self) -> usize {
         self.0
     }
 }
@@ -31,8 +25,7 @@ impl OutputValueCount {
         Self(value_count)
     }
 
-    #[must_use]
-    pub const fn get(self) -> usize {
+    pub(crate) const fn get(self) -> usize {
         self.0
     }
 }

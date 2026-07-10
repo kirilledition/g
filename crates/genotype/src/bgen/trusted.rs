@@ -22,10 +22,6 @@ fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, Bge
     })
 }
 
-pub(super) fn all_samples_present_diploid(sample_ploidy_and_missingness: &[u8]) -> bool {
-    simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
-}
-
 #[derive(Clone, Copy)]
 enum TrustedEightBitParseContext {
     Validation,
@@ -140,12 +136,14 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
 
     let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
     cursor += sample_count;
-    if validate_sample_ploidy_and_missingness && !all_samples_present_diploid(sample_ploidy_and_missingness) {
+    if validate_sample_ploidy_and_missingness
+        && !simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
+    {
         return Err(BgenError::UnsupportedFormat(trusted_missingness_error_message(parse_context, variant_identifier)));
     }
     if !validate_sample_ploidy_and_missingness {
         debug_assert!(
-            all_samples_present_diploid(sample_ploidy_and_missingness),
+            simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness),
             "trusted no-missing diploid decode skipped a ploidy scan before validation"
         );
     }

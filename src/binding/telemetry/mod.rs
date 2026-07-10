@@ -1,20 +1,8 @@
-//! PyO3 bindings for `_core.telemetry`.
+//! Crate-private telemetry support for the native CLI and run engine.
 
 pub(crate) mod logging;
 pub(crate) mod run_events;
+pub(crate) mod session;
 pub(crate) mod telemetry_policy;
 
-use pyo3::prelude::*;
-
-pub(crate) use crate::binding::engine::callback_progress;
-pub(crate) use crate::binding::engine::callback_schedule as schedule;
 pub(crate) use crate::binding::errors;
-pub(crate) use crate::binding::json_bridge;
-pub(crate) use crate::binding::runtime::jax_runtime;
-
-pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    logging::register_module(module)?;
-    telemetry_policy::register_module(module)?;
-    run_events::register_module(module)?;
-    Ok(())
-}

@@ -44,9 +44,7 @@ pub struct TraitRequest {
 pub struct ComputeRequest {
     pub device: Device,
     pub staging_depth: u32,
-    pub native_callback_batch_size: u32,
     pub result_in_flight_limit: Option<u32>,
-    pub dosage_buffer_limit: Option<u32>,
     pub variant_limit: Option<u32>,
     pub bgen_decode_tile_variant_count: u32,
     pub requested_gpu_genotype_format: GpuGenotypeFormat,

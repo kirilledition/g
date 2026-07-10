@@ -2,355 +2,165 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active consolidation plan | Native Rust workspace, PyO3 bindings, and Python orchestration | Development maintainers |
+| Production cleanup implemented; stabilization deferred | `src/` and `crates/` as of 2026-07-10 | Development maintainers |
 
-This page is the canonical cleanup and migration plan for `g`. It supersedes
-the older scratchpad cleanup plans and the standalone Rust migration plan. Keep
-new architectural policy and remaining cleanup steps here instead of creating
-another parallel plan.
+This page records the implemented cleanup and the decisions that replaced the
+earlier migration plan. Tests, benchmark tooling, Hydra configuration, and
+Justfile cleanup remain a separate stabilization project.
 
-## Direction
+## Result
 
-The root Python package remains `g`, and the Maturin/PyO3 native module remains
-`g._core`. The root Rust crate is a composition and PyO3 adapter crate. Internal
-domain crates must stay Python-free.
-
-Ownership is:
+The production application now has one ownership model:
 
 ```text
-crates/*    = Rust domain and application logic
-src/binding = PyO3 adaptation for g._core
-src/g       = public Python API, JAX setup, and JAX kernels
+Rust owns:
+  CLI/config validation and run planning
+  BGEN and tabular input
+  sample/prediction alignment and preflight
+  bounded scheduling, workers, host buffers, and output order
+  runtime, telemetry, timing, interruption, cleanup, and finalization
+
+Python owns:
+  console forwarding
+  one four-operation JAX backend
+  JAX kernel state and statistical computation
 ```
 
-Target crate responsibilities are:
+The root PyO3 module exposes only `g._core.cli` and `g._core.engine`. There are
+no legacy aliases, callback APIs, writer APIs, runtime APIs, or config object
+graphs registered for Python.
 
-| Crate | Responsibility |
+## Implemented Changes
+
+### Native backend and scheduler
+
+- Replaced the synthetic coordinator/effect scaffold with the production
+  `AssociationBackend` contract.
+- Added typed group, chromosome, genotype, null-diagnostic, materialization,
+  and host-result contracts.
+- Added the bounded `AssociationBatchPipeline` with separate compute and
+  materialization workers, deterministic drain, panic/error propagation, and
+  abort handling.
+- Kept variant metadata, output identity, result validation, and writing in
+  Rust.
+
+### Python JAX island
+
+- Replaced the single/multi/grouped callback hierarchy with
+  `JaxAssociationBackend`.
+- Limited the backend to `prepare_group`, `prepare_chromosome`, `compute_batch`,
+  and `materialize_batch`.
+- Reused kernel state dataclasses directly instead of adding one-field wrapper
+  state types.
+- Performs one batched `jax.device_get` per materialized result.
+- Deleted Python worker, writer, transfer, timing, lifecycle, telemetry, and
+  runtime wrappers.
+
+### Native host path
+
+- Native Rust dispatch now covers single-trait, complete-case multi-trait,
+  per-phenotype, and grouped-union modes.
+- Grouped-union delivery decodes the union once and projects native group
+  columns.
+- Output sessions are plain Rust values; Python never writes or finalizes
+  output.
+- Native CLI validation/help precedes JAX import and backend construction.
+- SIGINT uses Python pending-signal checks. SIGTERM uses a native first-signal
+  request flag and second-signal default action.
+- Configured stage timing and profile outputs are written by the Rust recorder
+  on every terminal path without masking a primary run failure.
+
+### Removed surface
+
+- Deleted callback schedulers, queues, progress/summary wrappers, callback
+  resource bundles, and the unused coordinator.
+- Deleted the Python `g.engine` tree, Python runner lifecycle/runtime modules,
+  and the separate `jax_runtime.py` wrapper.
+- Deleted unregistered PyO3 config, input, genotype, output, runtime, and
+  telemetry adapter graphs.
+- Deleted inert `native_callback_batch_size` and `dosage_buffer_limit` config
+  fields; neither influenced the new scheduler.
+- Canonical TOML accepts snake_case only. The CLI accepts only `--config` and
+  the supported REGENIE Step 2 flags.
+
+## Original Roadmap Accounting
+
+| Original phase | Production result |
 | --- | --- |
-| `g-plan` | Immutable requested and prepared run contracts. |
-| `g-interface` | Clap, TOML, defaults, overlays, validation, config-to-plan conversion, and native CLI frontend. |
-| `g-genotype` | BGEN mmap/index/decode, genotype chunk planning, preprocessing, and genotype benchmarks. |
-| `g-input` | Sample, phenotype, covariate, prediction-list, and LOCO alignment. |
-| `g-output` | Output paths, Arrow/Parquet/REGENIE writing, manifests, resume, and finalization. |
-| `g-runtime` | Logging, tracing, telemetry, timing, runtime policy, Rayon policy, and shutdown. |
-| `g-engine` | Application state machine, preflight, batching, queues, backend trait, and cleanup. |
+| Inventory, facades, and errors | Every domain crate exports one documented `api.rs` facade. Dead umbrella errors and convenience constructors are deleted. Public production APIs use crate-owned typed errors; no public `Result<T, String>` or library `anyhow::Result` remains. |
+| Plan and interface | Configuration has one native parser/default/overlay path. Python option normalization and compatibility aliases are deleted. |
+| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. The former 1,700-line BGEN `decode/mod.rs` is split into named matrix, probability, row-major, and variant-major modules with narrow BGEN-internal visibility. Raw caller-owned buffers validate address, alignment, counts, and offsets before unsafe writes. |
+| Output | `session.rs` is a module boundary over writer-session, coordinator, worker-pool, and validation modules. Manifest, batch, finalizer, and resume counts cross checked signed `i64` boundaries, with explicit aggregate overflow errors. Dead reconstruction, write-plan, finalizer, and resume wrappers are deleted. |
+| Runtime | Duplicate facades, callback-era diagnostics, and public event-name constants are deleted. Telemetry envelopes, fields, lifecycle payloads, counters, and close summaries serialize directly from typed Rust values while retaining their wire shape. |
+| Engine | The backend is batch-oriented and Python-free. Scheduler helper types stay internal; the forwarding schedule trampoline is deleted. The bounded pipeline retains ownership of queues, worker joins, first-error capture, drain, and abort. |
+| PyO3 and Python | CLI and output `mod.rs` files contain registration only. The unregistered input adapter tree and JSON bridge are deleted. Telemetry is a plain Rust session rather than a `PyClass`/`PyAny`/`PyDict` round trip. Python contains only console forwarding, the four-operation backend, and JAX kernels. |
+| Dependency and integer audit | Cargo dependency scanning reports no unused dependencies. Production engine/binding code has no unchecked integer `as` casts or bare tuple result mirrors. |
 
-Do not introduce generic dumping-ground crates such as `g-utils`, `g-common`,
-or `g-types`.
+Architecture guard source changes remain part of tooling stabilization because
+tooling was explicitly excluded from this production pass. Equivalent direct
+facade, error, import, cast, dead-code, dependency, and export scans pass on the
+production tree.
 
-## Invariants
+## Deliberate Plan Change
 
-- Preserve sample order, phenotype and covariate masks, LOCO prediction
-  alignment, allele orientation, output row order, correction selection,
-  correction status, and fresh/resumed equivalence unless a separate
-  science-change issue explicitly approves the difference.
-- Keep `g --help`, `g regenie --help`, CLI exit codes, TOML merge/default
-  behavior, `effective_config.toml`, PyO3 export names, and `_core.pyi` stable
-  unless an interface-change issue approves the change.
-- Keep crate dependencies acyclic and phase-aware.
-- Do not keep permanent production Python fallbacks for Rust-owned behavior.
-  Temporary dual implementations are allowed only for equivalence tests and must
-  have a removal task.
+The old target placed the entire run coordinator in `g-engine::RunEngine`.
+Instead, `g-engine` owns the Python-free contract and performance-sensitive
+scheduler, while the root Rust extension owns host orchestration that directly
+coordinates opaque Python handles, `PyErr`, and terminal interruption flushing.
 
-## Policies
+This avoids both prohibited alternatives: adding PyO3 to a domain crate or
+creating a second generic adapter/error hierarchy that mirrors the actual host
+session. The coordinator is Rust, not Python, and it has no parallel legacy
+path.
 
-### Public Rust API
+## Preserved Contracts
 
-Each crate has exactly one public Rust facade: `api.rs`.
+- Statistical formulas, correction selection, dtype behavior, sample masks,
+  LOCO alignment, allele orientation, row order, and output schemas.
+- Fresh/resumed equivalence, manifest compatibility, output paths, and writer
+  finalization behavior.
+- Supported REGENIE Step 2 option spellings.
+- Quantitative, binary score-only, approximate-Firth, single, complete-case,
+  per-phenotype, grouped-union, dosage, packed8, Arrow, Parquet, and REGENIE
+  production paths.
 
-- Crate roots should declare private implementation modules and `pub use api::*`.
-- `api.rs` contains public re-exports and type aliases only; it should not hold
-  business logic.
-- `PUBLIC_API.md` must describe every intentional public export group.
-- `debug.rs` must not be a second public API. Do not expose `pub mod debug` from
-  crate roots. If a transitional debug or compatibility export is still needed,
-  either make it private, move the behavior behind a real production API in
-  `api.rs`, or expose a clearly named temporary compatibility item from `api.rs`
-  with a removal task.
-- Test-only or benchmark-only internals should live under `#[cfg(test)]`,
-  `test_support`, benches, or private modules rather than a public `debug`
-  namespace.
+Python/PyO3 internals, camelCase TOML aliases, callback-era tuning knobs, and
+unreleased helper APIs were intentionally not preserved.
 
-### Binding Layer
+## Stabilization Work
 
-`src/binding` is PyO3 adaptation only. If a function can be written using only
-Rust crate types, it belongs in a crate. If it needs Python, PyO3, `PyAny`,
-`PyErr`, `PyModule`, NumPy/Python buffers, or direct Python callback invocation,
-it may live in `src/binding`.
+After the production API settles:
 
-Allowed in `src/binding`:
+1. Delete or migrate stale tests to the two-submodule `_core` API.
+2. Update benchmark and profiling tooling to the new native host path.
+3. Run the full CPU/GPU correctness matrix and capture new performance
+   baselines.
+4. Remove stale ignored local build/import artifacts from developer checkouts as
+   needed; they are not source or package contents.
 
-- `#[pyclass]` wrappers and `#[pymethods]` accessors.
-- `#[pyfunction]` wrappers.
-- Python module and submodule registration.
-- Python callback invocation and callback-object extraction.
-- NumPy/Python buffer adapters.
-- Python-to-Rust data extraction and Rust-to-Python object construction.
-- `PyErr` conversion.
-- Temporary compatibility aliases.
+Do not add production compatibility exports to make stale tests or tooling pass.
 
-Forbidden in `src/binding`:
+## Current Validation
 
-- Scheduling policy.
-- Callback worker lifecycle policy.
-- BGEN delivery cleanup policy.
-- Manifest/header construction policy.
-- Output resume or repair planning.
-- Preflight validation policy beyond converting Python arrays and calling crate
-  validation.
-- Run-event or diagnostic payload construction policy.
-- Telemetry rendering policy.
-- Genotype preprocessing policy.
-- Sample alignment policy.
-- Domain-level config validation.
-
-Production exports should live under domain submodules:
-
-```text
-g._core.cli
-g._core.config
-g._core.runtime
-g._core.telemetry
-g._core.engine
-g._core.genotype
-g._core.input
-g._core.output
-```
-
-Root `g._core` symbols are compatibility aliases only; new Python callers must
-use a domain submodule. The former `_core.debug` surface was removed after
-callback runtime promotion into `_core.engine`.
-
-### Python Ownership
-
-Python keeps public user-facing APIs, JAX runtime setup boundaries, and JAX
-kernels. Python should not own Rust-domain orchestration indefinitely.
-
-Target Python-owned areas:
-
-```text
-src/g/api.py
-src/g/runner/cli.py
-src/g/runner/runtime.py
-src/g/jax_runtime/
-src/g/compute/
-```
-
-Deleted after Rust ownership landed:
-
-```text
-src/g/execution_plan.py
-src/g/engine/regenie2_pipeline/
-src/g/engine/native_dispatch/
-src/g/engine/dispatch_requests.py
-src/g/engine/callbacks/runtime.py
-```
-
-### Module Boundaries
-
-`mod.rs` is a module boundary, not an implementation dumping ground.
-
-- `lib.rs`: crate root declarations and facade re-export.
-- `api.rs`: public facade, no heavy logic.
-- `mod.rs`: child module declarations, local re-exports, and tiny glue only.
-- named implementation files: real parsing, validation, orchestration,
-  scheduling, I/O, and algorithms.
-
-As a guideline, `mod.rs` should usually be under 100 lines. Files over 200 lines
-or functions over 30 lines need a concrete reason or should be split.
-
-### Integer Boundaries
-
-The project does not use one integer type everywhere.
-
-- In-memory Rust indexing, chunk lengths, matrix dimensions, queue sizes, and
-  slice offsets use `usize`.
-- Persistent schemas do not use `usize`.
-- Python, JSON, TOML, manifest, Arrow, and Parquet numeric fields use
-  fixed-width integers.
-- Output statistic count columns use the output schema type. Current native
-  chunk statistics keep signed `i32` count columns for compatibility.
-- Genomic positions use `i64` unless a file format requires otherwise.
-- File byte offsets use `u64` or parser-local checked `usize` after validating
-  mapped buffer bounds.
-- Large stored index arrays may use `u32` only after validation and benchmark
-  evidence.
-- Raw pointer addresses use `usize` only behind explicit wrappers such as
-  `OutputBufferAddress` and `OutputValueCount`.
-- Narrowing or sign-changing conversions use `TryFrom` or a named boundary
-  helper.
-- Unchecked integer `as` casts require an audited allowlist entry.
-
-### Wrapper Policy
-
-Remove wrapper chains that do not express a real boundary. Keep wrappers when
-they represent:
-
-- a public compatibility contract;
-- an unsafe or FFI boundary;
-- a JAX compiled-shape or donation boundary;
-- a typed invariant;
-- error-context conversion;
-- a true facade over a subsystem.
-
-Do not add one-line wrapper functions only to make a move look architectural.
-
-## Current State
-
-Already completed:
-
-- Cargo workspace and target crates exist.
-- `src/binding` is domain-organized.
-- `_core.<domain>` submodules exist.
-- CLI uses `_core.cli.run_with_python_backend`.
-- Binding layer policy, integer policy, integer audit, raw pointer wrappers,
-  checked conversion helpers, and architecture checks exist.
-- Main `g-engine`, `g-runtime`, and `g-output` facades are much narrower than
-  the original audit state.
-- Major CLI, runtime, telemetry, timing, output writer, and output preparation
-  policies have moved into Rust.
-- `g-genotype` exposes BGEN, buffer wrapper, preprocessing, and temporary tuning
-  items only through `api.rs`; its public `debug`, `ffi`, and `internal`
-  module facades have been removed.
-- `g-engine`, `g-runtime`, and `g-output` expose public Rust APIs only through
-  `api.rs`; their public `debug`, `events`, `trusted_validation`, and `admin`
-  module facades have been removed.
-- Root `_core.record_*_diagnostic_event` raw helper exports have been replaced
-  for production Python by typed recorder/context classes.
-- Output write dtype planning and writer finish thread planning now live in
-  `g-output`; the PyO3 output binding keeps Python buffer extraction and
-  `OutputWriterSession` adaptation.
-- Multi-trait output write iteration and Arrow array construction now live in
-  `g-output`; the PyO3 output binding extracts NumPy row slices and converts
-  Python metadata/stat buffers only.
-- Python option table normalization now lives in `g-interface`; the PyO3 config
-  binding converts Python objects into TOML-shaped values only.
-- Single-trait preflight value, prediction, and covariate-rank checks now live
-  in `g-engine`; the production engine binding no longer imports debug
-  preflight helpers.
-- Native BGEN delivery attempt planning and delivery error cleanup-outcome
-  planning now live in `g-engine`; the PyO3 engine binding executes Python
-  callback and writer side effects selected by those plans.
-- `NativeRunEngineSession` owns production run orchestration, including
-  dispatch selection, BGEN opening, sample alignment, prediction-source loading,
-  preflight, output bundle preparation, delivery, cleanup, writer finalization,
-  telemetry, and success finalization. Python supplies JAX runtime setup and
-  callback construction only.
-- Legacy Python orchestration modules
-  (`execution_plan.py`, `engine/regenie2_pipeline/`, `engine/native_dispatch/`,
-  `engine/dispatch_requests.py`) have been deleted.
-- Callback runtime resources, queues, schedule adapters, progress, and summary
-  bindings live under `src/binding/engine/` (not `_core.debug`).
-- Worker loops, dosage acquire/enqueue, and start/finish/abort execution run in
-  `NativeCallbackRuntimeResources` / delivery; Python `engine/callbacks/base.py`
-  retains local state plus JAX compute and result materialize/write hooks.
-- `engine/callbacks/runtime.py` and the legacy `Regenie2RunEngine` Python class
-  have been removed.
-
-Still active:
-
-- Large PyO3 modules remain, especially `engine/run_engine.rs`,
-  `telemetry/run_events.rs`, `output/mod.rs`, and `config/mod.rs`.
-- `crates/input/src/sample/mod.rs` still contains real alignment logic.
-- Tests and some tooling may still need restabilization against the cleaned API.
-
-## Remaining Roadmap
-
-### 1. Binding Adapter Collapse
-
-Completed for the current native ownership boundary. `src/binding` now adapts
-Python objects, invokes Python callbacks, executes writer/session side effects,
-emits native event payloads, and converts errors; Rust-domain planning lives in
-the relevant crates. Further shrinkage of the same large PyO3 files depends on
-the native session owning more orchestration and belongs to the following
-roadmap items.
-
-### 2. Native Engine Ownership
-
-**Completed (strict).** Production runs only through
-`NativeRunEngineSession.run_to_completion`. Python supplies JAX setup
-(`runner`) and compute callbacks (`engine/callbacks` + `compute`). Dual-path
-Python orchestration packages are deleted. Delivery lifecycle and genotype
-enqueue for single/multi-trait paths are native-owned in the binding session
-delivery path. Residual large size of `run_engine.rs` is **§1 Binding Adapter
-Collapse**, not open §2 work.
-
-### 3. Callback Runtime Finalization
-
-**Completed (strict).** `NativeCallbackRuntimeResources` owns queues, slots,
-dosage buffers, worker loops, start/finish/abort execution, and dosage enqueue
-for production single/multi-trait delivery. Delivery calls resources directly
-for acquire/put/lifecycle (not Python `start`/`finish`/`compute_preprocessed_*`
-enqueue entrypoints). Python callbacks retain local state (errors, pending
-diagnostics, JAX/writer handles), implement JAX compute hooks, result
-materialize/write, and thin result-slot/put helpers. `callbacks/runtime.py` is
-deleted; `base.py` is compute/write glue only. Grouped union fanout still uses a
-Python slice helper that enqueues via each child's native resources.
-
-### 4. Module Boundary Cleanup
-
-Move real logic out of `mod.rs` files.
-
-- Start with `crates/input/src/sample/mod.rs`.
-- Keep `mod.rs` as declarations and re-exports.
-- Add or extend architecture checks for large `mod.rs`, logic-heavy `api.rs`,
-  and allowlisted exceptions.
-
-### 5. Integer Follow-Up
-
-Do not restart a broad integer migration.
-
-- Add missing output count overflow validation where production sites still
-  produce signed count columns.
-- Keep unaudited casts out of production.
-- Introduce compact `u32` buffers only after benchmark evidence.
-
-### 6. Enforcement
-
-Extend existing architecture checks rather than adding isolated scripts.
-
-- `api.rs` is the only public crate facade.
-- No public `debug` modules in internal crate roots.
-- Public export changes require `PUBLIC_API.md` updates.
-- Production Python must not import `_core.debug`.
-- Root `_core` compatibility aliases must be allowlisted and shrink over time.
-- Production Python imports of `regenie2_pipeline`, `native_dispatch`,
-  `execution_plan`, `dispatch_requests`, and `callbacks.runtime` are rejected.
-- Integer casts remain checked or allowlisted.
-
-## Superseded Work
-
-Do not carry these forward as active tasks:
-
-- Initial Cargo workspace extraction.
-- `src/binding` rename and domain-folder reorganization.
-- `_core` domain submodule creation.
-- Binding policy creation.
-- Debug binding relocation under `_core.debug`.
-- CLI submodule migration.
-- Integer policy, audit, helper, and raw-pointer setup.
-- Initial public facade shrink for `g-engine`, `g-runtime`, and `g-output`.
-- Output manifest/preparation migration already moved into Rust.
-- Historical baseline failures unless current checks reproduce them.
-
-## Validation
-
-Documentation consolidation must run:
+Production changes should run directly on the development host with the
+configured mold linker and 30 Cargo jobs:
 
 ```bash
+cargo fmt --all --check
+cargo check -j 30 --workspace --lib
+cargo clippy -j 30 --workspace --lib --no-deps -- -D warnings
+uv run --no-sync ruff format --check src/g
+uv run --no-sync ruff check src/g
+uv run --no-sync ty check src/g
+cargo machete
 just docs-build
 git diff --check
 ```
 
-Code cleanup phases should run the narrowest relevant checks plus `just check`
-before integration. Correctness-boundary phases need parity coverage,
-manifest/schema snapshots, fresh-versus-resumed equivalence, and malformed input
-tests. Hot-path phases need Criterion and representative CPU/GPU benchmarks on
-the appropriate SLURM nodes.
+Tests, benches, and all-target compilation are intentionally not part of this
+validation pass. They still reference removed unreleased APIs and must be
+updated during stabilization rather than forcing compatibility exports back
+into production.
 
-## Stop Conditions
-
-Pause rather than force a phase through when a dependency cycle appears, a leaf
-crate needs PyO3, sample or prediction alignment changes unexpectedly, resume
-mutates outputs before validation, parity changes cannot be attributed, or a
-performance regression cannot be measured and explained.
+GPU association runs and large CPU scans still require an appropriate compute
+node. Development compilation and static checks do not require SLURM.

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::final_outputs::{
     FinalTimingOutputsWriteResultPayload, TimingFileError, plan_stage_timing_recorder, plan_timing_file_write,
-    write_profile_summary_payload, write_stage_timing_snapshot_payload,
+    write_pretty_json_payload,
 };
 use super::payloads::{
     ChunkStageTiming, NullLogisticDiagnosticValue, NumericDiagnosticValue, ProfileSummaryPayload,
@@ -125,7 +125,7 @@ impl StageTimingRecorder {
     ///
     /// Returns an error when the timing payload cannot be written.
     pub fn write_stage_timing_snapshot(&self, path: &Path) -> Result<(), TimingFileError> {
-        write_stage_timing_snapshot_payload(path, &self.build_stage_timing_snapshot_payload())
+        write_pretty_json_payload(path, &self.state.build_stage_timing_snapshot_payload())
     }
 
     /// Write a stage timing snapshot when a path is configured.
@@ -150,7 +150,7 @@ impl StageTimingRecorder {
     ///
     /// Returns an error when the profile summary payload cannot be written.
     pub fn write_profile_summary(&self, path: &Path, run_id: Option<String>) -> Result<(), TimingFileError> {
-        write_profile_summary_payload(path, &self.build_profile_summary(run_id))
+        write_pretty_json_payload(path, &self.state.build_profile_summary(run_id))
     }
 
     /// Write a profile summary when a path is configured.

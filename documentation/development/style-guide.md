@@ -46,9 +46,7 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * **Rule:** Relative imports are not allowed.
 * **Rule:** In production Python code under `src/g`, import first-party modules rather than first-party members.
   * Good: `from g import types`; `types.Device`
-  * Good: `from g import io`; `io.MultiPhenotypeSampleMode`
   * Bad: `from g.types import Device`
-  * Bad: `from g.io import MultiPhenotypeSampleMode`
 * **Rule:** Internal package initializers under `src/g/**/__init__.py` are package markers only. Do not define `__all__`, import/re-export submodules, assign aliases, or place helper functions there.
 * **Rule:** The top-level `src/g/__init__.py` may keep the lazy public entrypoint boundary required by the console script, but it must not define `__all__`.
 * Run `uv run python -m tooling.cli.debug tool.name=check_internal_init_exports` (or `just check-internal-init-exports`) before reviewing changes that touch package initializers.
@@ -159,7 +157,7 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 ### **PyO3 Native Stub Maintenance**
 
 * Follow [Binding Layer Policy](binding-layer-policy.md) for all code under `src/binding`.
-* Keep `src/g/_core.pyi` aligned with the exported Rust API in `src/binding/mod.rs` and `src/binding/config/mod.rs`.
+* Keep `src/g/_core.pyi` aligned with the `g._core.cli` and `g._core.engine` registrations under `src/binding/`.
 * Update the stub whenever Rust `#[pyclass]`, `#[pyfunction]`, `add_class`, or `add_function` changes touch argument or return types used by Python callers.
 * Run `uv run python -m tooling.cli.debug tool.name=check_pyo3_stub` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
 * Treat `just check` failures from `check-core-stub` as mandatory follow-up work when modifying native API exports.

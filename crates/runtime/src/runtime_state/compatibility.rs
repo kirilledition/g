@@ -1,9 +1,7 @@
 use crate::error::RuntimeCompatibilityError;
 use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
 
-use super::{
-    JaxRuntimePolicyPayload, ProcessRuntimeState, RunRuntime, RuntimeCompatibilityToken, RuntimePolicyPayload,
-};
+use super::{JaxRuntimePolicyPayload, ProcessRuntimeState, RuntimePolicyPayload};
 
 impl ProcessRuntimeState {
     /// Require all process-global runtime settings to be compatible.
@@ -17,11 +15,10 @@ impl ProcessRuntimeState {
         logging_policy: &LoggingRuntimePolicyPayload,
         requested_rayon_thread_count: Option<i64>,
         jax_policy: &JaxRuntimePolicyPayload,
-    ) -> Result<RuntimeCompatibilityToken, RuntimeCompatibilityError> {
+    ) -> Result<(), RuntimeCompatibilityError> {
         self.require_compatible_logging_policy(logging_policy)?;
         self.require_compatible_rayon_thread_count(requested_rayon_thread_count)?;
-        self.require_compatible_jax_policy(jax_policy)?;
-        Ok(RuntimeCompatibilityToken { _private: () })
+        self.require_compatible_jax_policy(jax_policy)
     }
 
     /// Require all process-global runtime settings from a run policy.
@@ -33,26 +30,12 @@ impl ProcessRuntimeState {
     pub fn require_compatible_runtime_policy_payload(
         &self,
         runtime_policy: &RuntimePolicyPayload,
-    ) -> Result<RuntimeCompatibilityToken, RuntimeCompatibilityError> {
+    ) -> Result<(), RuntimeCompatibilityError> {
         self.require_compatible_runtime_policy(
             &runtime_policy.logging_policy,
             runtime_policy.rayon_thread_count,
             &runtime_policy.jax_policy,
         )
-    }
-
-    /// Build a run-scoped runtime handle after compatibility checks pass.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any requested process-global runtime setting
-    /// conflicts with previously configured state.
-    pub fn build_run_runtime(
-        &self,
-        runtime_policy: RuntimePolicyPayload,
-    ) -> Result<RunRuntime, RuntimeCompatibilityError> {
-        let compatibility_token = self.require_compatible_runtime_policy_payload(&runtime_policy)?;
-        Ok(RunRuntime { runtime_policy, compatibility_token })
     }
 
     /// Require logging compatibility with previously configured process state.

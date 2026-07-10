@@ -80,7 +80,7 @@ configuration, GitHub Pages settings, and documentation workflow behavior.
 | Code style and review rules | [Style Guide](style-guide.md) |
 | Architecture map | [Architecture](architecture.md) |
 | Architecture cleanup and Rust migration | [Architecture Cleanup](architecture-cleanup.md) |
-| CLI/TOML/Python configuration frontend | [Configuration Frontend](configuration-frontend.md) |
+| CLI/TOML configuration frontend | [Configuration Frontend](configuration-frontend.md) |
 | Native BGEN, sample, output, and manifest boundaries | [Native I/O](native-io.md) |
 | Native integer boundary policy | [Integer Policy](integer-policy.md) |
 | Native integer type audit | [Integer Type Audit](integer-type-audit.md) |

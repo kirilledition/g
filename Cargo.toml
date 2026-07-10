@@ -74,7 +74,6 @@ pedantic = "warn"
 # "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
 pyo3 = { workspace = true }
 numpy = { workspace = true }
-arrow = { workspace = true }
 g-engine = { workspace = true }
 g-genotype = { workspace = true }
 g-input = { workspace = true }
@@ -82,12 +81,10 @@ g-interface = { workspace = true }
 g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
-nalgebra = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 pyo3-pylogger = { workspace = true }
-toml = { workspace = true }
 
 [features]
 default = []

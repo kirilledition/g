@@ -2,42 +2,47 @@
 
 pub use crate::cli_runtime::{
     CLI_RUNTIME_FAILURE_EXIT_CODE, CliExitCodeRangeError, CliOutputBuffer, CliOutputChunks,
-    CliRunFailedTelemetryEmissionPlan, CliRunFailureTelemetryPlan, CliRunLifecycleState, CliTelemetryCloseFailurePlan,
-    CliTerminalResult, NATIVE_CLI_OUTPUT_LOG_LIMIT, build_completed_cli_terminal_result,
+    CliTelemetryCloseFailurePlan, CliTerminalResult, NATIVE_CLI_OUTPUT_LOG_LIMIT, build_completed_cli_terminal_result,
     build_failed_cli_terminal_result, build_interrupted_cli_terminal_result,
-    build_telemetry_close_failure_cli_terminal_result, plan_cli_run_failed_telemetry_emission,
-    plan_cli_telemetry_close_failure,
+    build_telemetry_close_failure_cli_terminal_result, plan_cli_telemetry_close_failure,
 };
 pub use crate::error::{RuntimeCompatibilityError, RuntimeError, RuntimeResult};
-pub use crate::events::{
+pub use crate::jax_runtime::{
+    JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
+    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticFields,
+    JaxRuntimeDiagnosticRecordPlan, JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, JaxRuntimeSetupSession,
+    JaxRuntimeSetupSideEffectPlan, NvidiaDriverProbePathsPayload, build_jax_runtime_setup_diagnostic_events,
+    complete_jax_runtime_setup_validation, default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible,
+    plan_jax_gpu_validation, plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record,
+    plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup, serialize_jax_runtime_diagnostic_fields_json,
+};
+pub use crate::logging_sink::{
+    LoggingSinkConfig, LoggingSinkError, LoggingSinkInitializationError, initialize_logging_sinks,
+    shutdown_logging_sinks,
+};
+pub use crate::rayon_runtime::{
+    RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
+};
+pub use crate::run_events::{
     AssociationBackendSelectedTelemetryFields, BgenEngineOpenedTelemetryFields, EffectiveConfigWrittenTelemetryFields,
     ExecutionPlanPreparedTelemetryFields, GpuGenotypeFormatResolvedTelemetryFields,
     MultiPhenotypePreflightCompletedTelemetryFields, MultiPhenotypeSampleSummaryTelemetryFields,
     MultiPhenotypeWriterFinishedTelemetryFields, PhenotypeWriterFinishedTelemetryFields,
-    PredictionSourceLoadedTelemetryFields, RunArtifactPayload, RunArtifactTelemetryFields, RunArtifactsPayload,
-    RunCompletedEventPayload, RunCompletedTelemetryFields, RunDiagnosticEventPayload, RunDiagnosticFieldPayload,
-    RunDiagnosticFieldValue, RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload,
-    RunInterruptedTelemetryFields, RunStartedTelemetryFields, RunTelemetryEventKind, RunTelemetryStringField,
-    SampleAlignmentCompletedTelemetryFields, SingleTraitPreflightCompletedTelemetryFields,
-    attach_run_metadata_to_artifacts, build_artifact_telemetry_fields,
+    PredictionSourceLoadedTelemetryFields, RunArtifactPayload, RunArtifactsPayload, RunCompletedEventPayload,
+    RunCompletedTelemetryFields, RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue,
+    RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,
+    RunStartedTelemetryFields, RunTelemetryEventKind, RunTelemetryStringField, SampleAlignmentCompletedTelemetryFields,
+    SingleTraitPreflightCompletedTelemetryFields, build_artifact_telemetry_fields,
     build_association_backend_selected_telemetry_fields, build_bgen_engine_opened_telemetry_fields,
-    build_callback_null_logistic_nonconvergence_warning_diagnostic_payload,
     build_effective_config_written_telemetry_fields, build_execution_plan_prepared_telemetry_fields,
-    build_gpu_genotype_format_resolved_telemetry_fields, build_io_output_resume_committed_chunks_diagnostic_payload,
-    build_multi_phenotype_preflight_completed_telemetry_fields, build_multi_phenotype_sample_summary_telemetry_fields,
-    build_multi_phenotype_writer_finished_telemetry_fields, build_native_cli_completed_line_diagnostic_payload,
-    build_native_cli_failed_line_diagnostic_payload, build_native_cli_interrupted_line_diagnostic_payload,
-    build_native_cli_stderr_diagnostic_payload, build_native_cli_stdout_diagnostic_payload,
-    build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
-    build_native_dispatch_callback_drain_started_diagnostic_payload,
-    build_native_dispatch_delivery_failed_diagnostic_payload,
+    build_gpu_genotype_format_resolved_telemetry_fields, build_multi_phenotype_preflight_completed_telemetry_fields,
+    build_multi_phenotype_sample_summary_telemetry_fields, build_multi_phenotype_writer_finished_telemetry_fields,
+    build_native_cli_completed_line_diagnostic_payload, build_native_cli_failed_line_diagnostic_payload,
+    build_native_cli_interrupted_line_diagnostic_payload, build_native_cli_stderr_diagnostic_payload,
+    build_native_cli_stdout_diagnostic_payload, build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
     build_native_dispatch_delivery_finished_diagnostic_payload,
-    build_native_dispatch_delivery_interrupted_diagnostic_payload,
-    build_native_dispatch_delivery_started_diagnostic_payload,
     build_native_dispatch_pipeline_finished_diagnostic_payload,
     build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
-    build_native_dispatch_writer_session_finish_started_diagnostic_payload,
-    build_native_dispatch_writer_session_interrupted_flush_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
     build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
     build_native_runtime_knobs_configured_diagnostic_payload, build_phenotype_writer_finished_telemetry_fields,
@@ -70,34 +75,15 @@ pub use crate::events::{
     build_runner_execution_plan_dispatch_started_diagnostic_payload,
     build_runner_execution_plan_finalization_started_diagnostic_payload,
     build_runner_execution_plan_prepared_diagnostic_payload,
-    build_runner_jax_runtime_configuration_started_diagnostic_payload,
     build_runner_linear_engine_dispatch_started_diagnostic_payload,
     build_runner_metadata_artifacts_finalized_diagnostic_payload,
     build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
     build_runner_multi_phenotype_dispatch_started_diagnostic_payload,
     build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
-    build_runner_run_completed_diagnostic_payload, build_runner_run_failed_diagnostic_payload,
-    build_runner_run_interrupted_diagnostic_payload, build_runner_run_started_diagnostic_payload,
     build_runner_single_phenotype_dispatch_started_diagnostic_payload,
     build_sample_alignment_completed_telemetry_fields, build_single_trait_preflight_completed_telemetry_fields,
     flatten_run_artifact_payloads, render_artifact_lines, render_run_completed_lines, render_run_failed_lines,
     render_run_interrupted_lines, serialize_run_diagnostic_fields_json,
-};
-pub use crate::jax_runtime::{
-    JaxDeviceObservation, JaxGpuValidationPlan, JaxRuntimeConfigUpdatePayload, JaxRuntimeConfigValue,
-    JaxRuntimeDiagnosticEventPayload, JaxRuntimeDiagnosticFieldPayload, JaxRuntimeDiagnosticRecordPlan,
-    JaxRuntimeDiagnosticValue, JaxRuntimeSetupPayload, JaxRuntimeSetupSession, JaxRuntimeSetupSideEffectPlan,
-    NvidiaDriverProbePathsPayload, build_jax_runtime_setup_diagnostic_events, complete_jax_runtime_setup_validation,
-    default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation,
-    plan_jax_runtime_config_updates, plan_jax_runtime_diagnostic_record, plan_jax_runtime_setup_side_effects,
-    resolve_jax_runtime_setup, serialize_jax_runtime_diagnostic_fields_json,
-};
-pub use crate::logging_sink::{
-    LoggingSinkConfig, LoggingSinkError, LoggingSinkInitializationError, initialize_logging_sinks,
-    shutdown_logging_sinks,
-};
-pub use crate::rayon_runtime::{
-    RayonRuntimeError, configure_global_rayon_thread_pool, format_global_rayon_thread_pool_configuration_error,
 };
 pub use crate::run_metadata::{
     ExecutionRunArtifactsInput, ExecutionRunArtifactsSequenceInput, PhenotypeRunArtifactsInput,
@@ -111,14 +97,14 @@ pub use crate::runtime_policy::{
 };
 pub use crate::runtime_state::{
     JaxRuntimePolicyPayload, JaxRuntimeSetupLifecyclePlan, ProcessRuntimeState, RayonThreadPoolConfigurationError,
-    RayonThreadPoolConfigurationPlan, RunRuntime, RuntimeCompatibilityToken, RuntimePolicyPayload,
-    RuntimeStateSnapshotPayload, build_jax_runtime_policy_payload, describe_jax_runtime_policy,
-    resolve_jax_runtime_cache_directory,
+    RayonThreadPoolConfigurationPlan, RuntimePolicyPayload, RuntimeStateSnapshotPayload,
+    build_jax_runtime_policy_payload, describe_jax_runtime_policy, resolve_jax_runtime_cache_directory,
 };
 pub use crate::shutdown::{
     SecondSignalExceptionPlan, ShutdownControllerState, ShutdownError, ShutdownHandlerInstallPlan,
     ShutdownHandlerRestorePlan, ShutdownHandlerSession, ShutdownRequestAction, ShutdownRequestDecisionPayload,
-    ShutdownSignalPayload, build_shutdown_signal, default_shutdown_signal_numbers, plan_second_signal_exception,
+    ShutdownSignalPayload, SigtermShutdownScope, begin_sigterm_shutdown_scope, build_shutdown_signal,
+    default_shutdown_signal_numbers, plan_second_signal_exception, sigterm_shutdown_requested,
 };
 pub use crate::telemetry_policy::{
     TelemetryMode, TelemetryPathError, TelemetryPathsPayload, TelemetrySessionPolicyPayload,
@@ -126,12 +112,12 @@ pub use crate::telemetry_policy::{
     resolve_output_run_root, resolve_telemetry_paths, resolve_telemetry_session_policy, resolve_telemetry_stream_file,
 };
 pub use crate::telemetry_session::{
-    TelemetryCapAction, TelemetryCloseEventPayload, TelemetryCloseMetadataPayload, TelemetryClosePlan,
-    TelemetryEventCapState, TelemetryEventEmissionPlan, TelemetryEventEnvelope, TelemetryProgressEmissionPlan,
-    TelemetryProgressThrottleState, TelemetryRunSessionState, TelemetryRunSessionWriterPlan,
-    TelemetryWriterCounterSnapshot, build_current_telemetry_event_envelope, build_telemetry_close_event_payload,
-    build_telemetry_close_metadata, build_telemetry_event_envelope, generate_run_id, plan_telemetry_close,
-    plan_telemetry_event_emission, plan_telemetry_progress_emission, serialize_telemetry_payload_json_line,
+    TelemetryCapAction, TelemetryCloseEventPayload, TelemetryClosePlan, TelemetryEventCapState,
+    TelemetryEventEmissionPlan, TelemetryEventEnvelope, TelemetryProgressEmissionPlan, TelemetryProgressThrottleState,
+    TelemetryRunSessionState, TelemetryRunSessionWriterPlan, TelemetryWriterCounterSnapshot,
+    build_current_telemetry_event_envelope, build_telemetry_close_event_payload, build_telemetry_event_envelope,
+    generate_run_id, plan_telemetry_close, plan_telemetry_progress_emission, serialize_telemetry_event_json_line,
+    serialize_telemetry_payload_json_line,
 };
 pub use crate::telemetry_writer::{
     TelemetryLineWriter, TelemetrySessionWriter, TelemetryWriterFactory, TelemetryWriterGuard, build_log_file_writer,
@@ -151,8 +137,7 @@ pub use crate::timing::{
     TransferMetadataKey, TransferMetadataObservation, TransferMetadataSnapshot,
     build_final_timing_outputs_write_started_diagnostic_payload, build_transfer_metadata_observation,
     plan_stage_timing_recorder, plan_timing_file_write, resolve_final_timing_output_context,
-    serialize_final_timing_outputs_write_started_diagnostic_fields_json, write_profile_summary_payload,
-    write_stage_timing_snapshot_payload,
+    serialize_final_timing_outputs_write_started_diagnostic_fields_json,
 };
 pub use crate::trusted_validation::{
     TrustedBgenValidationCacheDirectoryError, TrustedBgenValidationCacheLookupError,

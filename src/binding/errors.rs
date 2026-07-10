@@ -1,23 +1,29 @@
 use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use g_engine::PipelineOutputPreparationError;
+use g_engine::{BackendError, PipelineOutputPreparationError, SchedulerError};
 use g_engine::{
-    CallbackDiagnosticsError, PipelineResumeCompatibilityError, PreflightError, ScheduleError,
+    NullLogisticPolicyError, PipelineResumeCompatibilityError, PreflightError, ScheduleError,
     TrustedBgenValidationError,
 };
 use g_genotype::{BgenError, GenotypeError};
 use g_input::{InputError, PredictionError};
-use g_interface::ConfigError;
 use g_output::OutputError;
 use g_plan::{HostPolicyError, PreparedPlanError};
 use g_runtime::{
     LoggingSinkError, LoggingSinkInitializationError, RayonRuntimeError, RayonThreadPoolConfigurationError,
-    TimingFileError, TransferMetadataError,
 };
 
 pub(super) fn convert_schedule_error(error: &ScheduleError) -> PyErr {
     PyValueError::new_err(error.to_string())
+}
+
+pub(super) fn convert_backend_error(operation: &str, error: &BackendError) -> PyErr {
+    PyRuntimeError::new_err(format!("Association backend failed during {operation}: {}", error.message()))
+}
+
+pub(super) fn convert_scheduler_error(operation: &str, error: &SchedulerError) -> PyErr {
+    PyRuntimeError::new_err(format!("Association scheduler failed during {operation}: {error}"))
 }
 
 pub(super) fn convert_pipeline_resume_compatibility_error(error: &PipelineResumeCompatibilityError) -> PyErr {
@@ -61,15 +67,7 @@ pub(super) fn convert_preflight_error(error: &PreflightError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
-pub(super) fn convert_timing_file_error(error: &TimingFileError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
-}
-
-pub(super) fn convert_transfer_metadata_error(error: &TransferMetadataError) -> PyErr {
-    PyValueError::new_err(error.to_string())
-}
-
-pub(super) fn convert_callback_diagnostics_error(error: &CallbackDiagnosticsError) -> PyErr {
+pub(super) fn convert_null_logistic_policy_error(error: &NullLogisticPolicyError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
@@ -236,7 +234,7 @@ pub(super) fn convert_trusted_bgen_validation_error(error: TrustedBgenValidation
     }
 }
 
-pub(super) fn convert_config_error(operation: &str, error: &ConfigError) -> PyErr {
+pub(super) fn convert_config_error(operation: &str, error: &impl std::fmt::Display) -> PyErr {
     let error_message = error.to_string();
     tracing::warn!(
         target: "g.python",

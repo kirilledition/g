@@ -13,7 +13,6 @@ pub use final_outputs::{
     StageTimingRecorderPlan, TimingFileError, TimingFileWritePlan,
     build_final_timing_outputs_write_started_diagnostic_payload, plan_stage_timing_recorder, plan_timing_file_write,
     resolve_final_timing_output_context, serialize_final_timing_outputs_write_started_diagnostic_fields_json,
-    write_profile_summary_payload, write_stage_timing_snapshot_payload,
 };
 pub use payloads::{
     ChunkStageSummary, ChunkStageTiming, NullLogisticDiagnosticValue, NullLogisticSummary, NumericDiagnosticValue,
