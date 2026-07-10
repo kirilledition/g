@@ -30,7 +30,7 @@ name = "_core"
 crate-type = ["cdylib", "rlib"]
 
 [workspace.dependencies]
-arrow = { version = "59.0.0", features = ["ipc_compression"] }
+arrow = "59.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap = { version = "4.6.1", features = ["derive"] }
 criterion = "0.8.2"
@@ -75,14 +75,9 @@ pedantic = "warn"
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 g-engine = { workspace = true }
-g-genotype = { workspace = true }
-g-input = { workspace = true }
 g-interface = { workspace = true }
-g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
 tracing = { workspace = true }
 pyo3-pylogger = { workspace = true }
 

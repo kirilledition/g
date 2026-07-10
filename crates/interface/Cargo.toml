@@ -15,10 +15,6 @@ toml = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 
-[[bin]]
-name = "g"
-path = "src/main.rs"
-
 [[bench]]
 name = "frontend"
 harness = false

@@ -42,7 +42,6 @@ impl RegenieCli {
 
     fn trait_config(&self) -> PartialTraitConfig {
         PartialTraitConfig {
-            step: self.trait_options.step,
             trait_type: None,
             qt: self.trait_options.qt.then_some(true),
             bt: self.trait_options.bt.then_some(true),
@@ -53,8 +52,7 @@ impl RegenieCli {
 
     fn binary_config(&self) -> PartialBinaryConfig {
         PartialBinaryConfig {
-            firth: self.binary.firth.then_some(true),
-            approx: self.binary.approx.then_some(true),
+            fallback_method: self.binary.fallback_method,
             p_threshold: self.binary.p_threshold,
             firth_se: self.binary.firth_se.then_some(true),
         }

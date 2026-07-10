@@ -49,9 +49,8 @@ impl TelemetryWriterFactory {
     }
 
     #[must_use]
-    pub fn counter_snapshot(&self, finish_flush_duration_seconds: Option<f64>) -> TelemetryWriterCounterSnapshot {
-        self.event_cap_state
-            .counter_snapshot(self.writer.error_counter().dropped_lines(), finish_flush_duration_seconds)
+    pub fn counter_snapshot(&self) -> TelemetryWriterCounterSnapshot {
+        self.event_cap_state.counter_snapshot(self.writer.error_counter().dropped_lines())
     }
 }
 

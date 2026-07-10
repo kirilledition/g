@@ -33,36 +33,10 @@ class FirthBatchPlan:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class FirthCandidateBatchInputs:
-    """Fixed-shape Firth candidate inputs after optional lane ordering.
-
-    Attributes:
-        flat_fallback_indices: Candidate variant indices in flattened batch order.
-        flat_active_mask: Active-lane mask in flattened batch order.
-        genotype_matrix_by_variant: Candidate genotypes in flattened batch order.
-        raw_genotype_matrix_by_variant: Raw candidate genotypes matching the solver's chosen allele orientation.
-        genotype_flip_mask: Whether each candidate lane needs beta sign restoration after correction.
-        sparse_correction_mask: Whether each candidate lane uses sparse carrier-only correction.
-        heuristic_firth_mask: Whether each lane uses the separation-oriented initializer.
-
-    """
-
-    flat_fallback_indices: jax.Array
-    flat_active_mask: jax.Array
-    genotype_matrix_by_variant: jax.Array
-    raw_genotype_matrix_by_variant: jax.Array
-    genotype_flip_mask: jax.Array
-    sparse_correction_mask: jax.Array
-    heuristic_firth_mask: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
 class MultiFirthCandidateBatchInputs:
     """Fixed-shape multi-trait Firth candidate inputs after lane ordering.
 
     Attributes:
-        flat_fallback_indices: Flattened trait-variant candidate lane ids in batch order.
         flat_trait_indices: Trait indices matching each flattened candidate lane.
         flat_variant_indices: Variant indices matching each flattened candidate lane.
         flat_active_mask: Active-lane mask in flattened batch order.
@@ -70,16 +44,14 @@ class MultiFirthCandidateBatchInputs:
         raw_genotype_matrix_by_variant: Raw candidate genotypes matching the solver's chosen allele orientation.
         genotype_flip_mask: Whether each candidate lane needs beta sign restoration after correction.
         sparse_correction_mask: Whether each candidate lane uses sparse carrier-only correction.
-        heuristic_firth_mask: Whether each lane uses the separation-oriented initializer.
         phenotype_matrix: Lane-specific phenotype vectors.
-        null_logistic_coefficients: Lane-specific null logistic coefficients.
+        initial_coefficients: Lane-specific full-model starting coefficients.
         null_firth_offset_matrix: Lane-specific null Firth offsets.
         loco_offset_matrix: Lane-specific LOCO offsets.
         null_firth_penalized_log_likelihood: Lane-specific null Firth penalized log-likelihoods.
 
     """
 
-    flat_fallback_indices: jax.Array
     flat_trait_indices: jax.Array
     flat_variant_indices: jax.Array
     flat_active_mask: jax.Array
@@ -87,9 +59,8 @@ class MultiFirthCandidateBatchInputs:
     raw_genotype_matrix_by_variant: jax.Array
     genotype_flip_mask: jax.Array
     sparse_correction_mask: jax.Array
-    heuristic_firth_mask: jax.Array
     phenotype_matrix: jax.Array
-    null_logistic_coefficients: jax.Array
+    initial_coefficients: jax.Array
     null_firth_offset_matrix: jax.Array
     loco_offset_matrix: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
@@ -254,46 +225,8 @@ def build_firth_candidate_bucket_order(
     )
 
 
-def group_firth_candidate_batch_inputs(
-    *,
-    flat_fallback_indices: jax.Array,
-    flat_active_mask: jax.Array,
-    genotype_matrix_by_variant: jax.Array,
-    raw_genotype_matrix_by_variant: jax.Array,
-    genotype_flip_mask: jax.Array,
-    sparse_correction_mask: jax.Array,
-    heuristic_firth_mask: jax.Array,
-    order_candidates: bool,
-) -> FirthCandidateBatchInputs:
-    """Group likely long-running Firth lanes together before fixed-size batching."""
-    if not order_candidates:
-        return FirthCandidateBatchInputs(
-            flat_fallback_indices=flat_fallback_indices,
-            flat_active_mask=flat_active_mask,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
-            genotype_flip_mask=genotype_flip_mask,
-            sparse_correction_mask=sparse_correction_mask,
-            heuristic_firth_mask=heuristic_firth_mask,
-        )
-    sort_order = build_firth_candidate_bucket_order(
-        flat_active_mask=flat_active_mask,
-        heuristic_firth_mask=heuristic_firth_mask,
-    )
-    return FirthCandidateBatchInputs(
-        flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
-        flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
-        genotype_matrix_by_variant=jnp.take(genotype_matrix_by_variant, sort_order, axis=0),
-        raw_genotype_matrix_by_variant=jnp.take(raw_genotype_matrix_by_variant, sort_order, axis=0),
-        genotype_flip_mask=jnp.take(genotype_flip_mask, sort_order, axis=0),
-        sparse_correction_mask=jnp.take(sparse_correction_mask, sort_order, axis=0),
-        heuristic_firth_mask=jnp.take(heuristic_firth_mask, sort_order, axis=0),
-    )
-
-
 def group_multi_firth_candidate_batch_inputs(
     *,
-    flat_fallback_indices: jax.Array,
     flat_trait_indices: jax.Array,
     flat_variant_indices: jax.Array,
     flat_active_mask: jax.Array,
@@ -303,7 +236,7 @@ def group_multi_firth_candidate_batch_inputs(
     sparse_correction_mask: jax.Array,
     heuristic_firth_mask: jax.Array,
     phenotype_matrix: jax.Array,
-    null_logistic_coefficients: jax.Array,
+    initial_coefficients: jax.Array,
     null_firth_offset_matrix: jax.Array,
     loco_offset_matrix: jax.Array,
     null_firth_penalized_log_likelihood: jax.Array,
@@ -312,7 +245,6 @@ def group_multi_firth_candidate_batch_inputs(
     """Group likely long-running multi-trait Firth lanes before fixed-size batching."""
     if not order_candidates:
         return MultiFirthCandidateBatchInputs(
-            flat_fallback_indices=flat_fallback_indices,
             flat_trait_indices=flat_trait_indices,
             flat_variant_indices=flat_variant_indices,
             flat_active_mask=flat_active_mask,
@@ -320,9 +252,8 @@ def group_multi_firth_candidate_batch_inputs(
             raw_genotype_matrix_by_variant=raw_genotype_matrix_by_variant,
             genotype_flip_mask=genotype_flip_mask,
             sparse_correction_mask=sparse_correction_mask,
-            heuristic_firth_mask=heuristic_firth_mask,
             phenotype_matrix=phenotype_matrix,
-            null_logistic_coefficients=null_logistic_coefficients,
+            initial_coefficients=initial_coefficients,
             null_firth_offset_matrix=null_firth_offset_matrix,
             loco_offset_matrix=loco_offset_matrix,
             null_firth_penalized_log_likelihood=null_firth_penalized_log_likelihood,
@@ -332,7 +263,6 @@ def group_multi_firth_candidate_batch_inputs(
         heuristic_firth_mask=heuristic_firth_mask,
     )
     return MultiFirthCandidateBatchInputs(
-        flat_fallback_indices=jnp.take(flat_fallback_indices, sort_order, axis=0),
         flat_trait_indices=jnp.take(flat_trait_indices, sort_order, axis=0),
         flat_variant_indices=jnp.take(flat_variant_indices, sort_order, axis=0),
         flat_active_mask=jnp.take(flat_active_mask, sort_order, axis=0),
@@ -340,9 +270,8 @@ def group_multi_firth_candidate_batch_inputs(
         raw_genotype_matrix_by_variant=jnp.take(raw_genotype_matrix_by_variant, sort_order, axis=0),
         genotype_flip_mask=jnp.take(genotype_flip_mask, sort_order, axis=0),
         sparse_correction_mask=jnp.take(sparse_correction_mask, sort_order, axis=0),
-        heuristic_firth_mask=jnp.take(heuristic_firth_mask, sort_order, axis=0),
         phenotype_matrix=jnp.take(phenotype_matrix, sort_order, axis=0),
-        null_logistic_coefficients=jnp.take(null_logistic_coefficients, sort_order, axis=0),
+        initial_coefficients=jnp.take(initial_coefficients, sort_order, axis=0),
         null_firth_offset_matrix=jnp.take(null_firth_offset_matrix, sort_order, axis=0),
         loco_offset_matrix=jnp.take(loco_offset_matrix, sort_order, axis=0),
         null_firth_penalized_log_likelihood=jnp.take(null_firth_penalized_log_likelihood, sort_order, axis=0),

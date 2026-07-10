@@ -19,8 +19,16 @@ pub fn build_trusted_bgen_validation_fingerprint(
 ) -> Result<String, std::io::Error> {
     let bgen_metadata = input.bgen_path.metadata()?;
     let resolved_bgen_path = input.bgen_path.canonicalize()?;
-    let modified_time_nanoseconds =
-        bgen_metadata.mtime().saturating_mul(1_000_000_000).saturating_add(bgen_metadata.mtime_nsec());
+    let modified_time_nanoseconds = bgen_metadata
+        .mtime()
+        .checked_mul(1_000_000_000)
+        .and_then(|seconds| seconds.checked_add(bgen_metadata.mtime_nsec()))
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "BGEN modification timestamp does not fit signed nanoseconds.",
+            )
+        })?;
     let mut fingerprint_payload = BTreeMap::new();
     fingerprint_payload.insert("bgen_path", Value::String(resolved_bgen_path.display().to_string()));
     fingerprint_payload.insert("mtime_ns", Value::from(modified_time_nanoseconds));

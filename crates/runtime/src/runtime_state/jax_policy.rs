@@ -1,10 +1,12 @@
+use std::path::{Path, PathBuf};
+
 use crate::error::RuntimeCompatibilityError;
 use crate::jax_runtime;
-use crate::runtime_paths;
 
 use super::ProcessRuntimeState;
 
 const DEFAULT_JAX_CACHE_DIRECTORY_NAME: &str = "g-jax-cache";
+const UNKNOWN_USER_NAME: &str = "unknown";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimePolicyPayload {
@@ -18,33 +20,42 @@ pub struct JaxRuntimePolicyPayload {
     pub transfer_guard: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JaxRuntimeSetupLifecyclePlan {
-    pub should_configure: bool,
+/// Build JAX process policy from the canonical run plan.
+///
+/// # Errors
+///
+/// Returns an error when a home-relative cache path cannot be expanded.
+pub fn build_jax_runtime_policy_payload(
+    run_plan: &g_plan::RunPlan,
+) -> Result<JaxRuntimePolicyPayload, RuntimeCompatibilityError> {
+    let runtime = &run_plan.runtime;
+    let cache_directory = runtime.jax_cache_directory.as_deref().map(expand_home_directory).transpose()?;
+    Ok(JaxRuntimePolicyPayload {
+        device: run_plan.compute.device.as_str().to_string(),
+        cache_directory,
+        matmul_precision: runtime.jax_matmul_precision.map(|precision| precision.as_str().to_string()),
+        persistent_cache: runtime.persistent_cache_enabled,
+        persistent_cache_min_entry_size_bytes: runtime.persistent_cache_min_entry_size_bytes,
+        persistent_cache_min_compile_time_seconds: i64::from(runtime.persistent_cache_min_compile_time_seconds),
+        xla_autotune_cache: runtime.xla_autotune_cache_enabled,
+        transfer_guard: runtime.transfer_guard_enabled,
+    })
 }
 
-#[allow(clippy::fn_params_excessive_bools)]
-#[must_use]
-pub fn build_jax_runtime_policy_payload(
-    device: &str,
-    cache_directory: Option<&str>,
-    matmul_precision: Option<&str>,
-    persistent_cache: bool,
-    persistent_cache_min_entry_size_bytes: i64,
-    persistent_cache_min_compile_time_seconds: i64,
-    xla_autotune_cache: bool,
-    transfer_guard: bool,
-) -> JaxRuntimePolicyPayload {
-    JaxRuntimePolicyPayload {
-        device: device.to_string(),
-        cache_directory: cache_directory.map(str::to_string),
-        matmul_precision: matmul_precision.map(str::to_string),
-        persistent_cache,
-        persistent_cache_min_entry_size_bytes,
-        persistent_cache_min_compile_time_seconds,
-        xla_autotune_cache,
-        transfer_guard,
+fn expand_home_directory(path_value: &str) -> Result<String, RuntimeCompatibilityError> {
+    if path_value == "~" {
+        return home_directory().map(|directory| directory.to_string_lossy().into_owned());
     }
+    let Some(relative_path) = path_value.strip_prefix("~/") else {
+        return Ok(path_value.to_string());
+    };
+    Ok(home_directory()?.join(Path::new(relative_path)).to_string_lossy().into_owned())
+}
+
+fn home_directory() -> Result<PathBuf, RuntimeCompatibilityError> {
+    std::env::var_os("HOME").filter(|directory| !directory.is_empty()).map(PathBuf::from).ok_or_else(|| {
+        RuntimeCompatibilityError::new("Cannot expand jax_cache_directory because HOME is not set.".to_string())
+    })
 }
 
 impl ProcessRuntimeState {
@@ -121,20 +132,6 @@ impl ProcessRuntimeState {
         self.complete_jax_runtime_setup(requested_policy)
     }
 
-    /// Plan whether JAX runtime setup should run for one request.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a previous run configured incompatible
-    /// process-global JAX runtime settings.
-    pub fn plan_jax_runtime_setup_lifecycle(
-        &self,
-        requested_policy: &JaxRuntimePolicyPayload,
-    ) -> Result<JaxRuntimeSetupLifecyclePlan, RuntimeCompatibilityError> {
-        self.require_compatible_jax_policy(requested_policy)?;
-        Ok(JaxRuntimeSetupLifecyclePlan { should_configure: self.jax_policy.as_ref() != Some(requested_policy) })
-    }
-
     /// Build a run-scoped JAX setup session after lifecycle compatibility checks.
     ///
     /// # Errors
@@ -146,7 +143,8 @@ impl ProcessRuntimeState {
         requested_policy: &JaxRuntimePolicyPayload,
         resolved_cache_directory: &str,
     ) -> Result<jax_runtime::JaxRuntimeSetupSession, RuntimeCompatibilityError> {
-        let lifecycle_plan = self.plan_jax_runtime_setup_lifecycle(requested_policy)?;
+        self.require_compatible_jax_policy(requested_policy)?;
+        let should_configure = self.jax_policy.as_ref() != Some(requested_policy);
         let setup = jax_runtime::resolve_jax_runtime_setup(
             &requested_policy.device,
             resolved_cache_directory,
@@ -157,7 +155,7 @@ impl ProcessRuntimeState {
             requested_policy.xla_autotune_cache,
             requested_policy.transfer_guard,
         );
-        Ok(jax_runtime::JaxRuntimeSetupSession::new(lifecycle_plan.should_configure, setup))
+        Ok(jax_runtime::JaxRuntimeSetupSession::new(should_configure, setup))
     }
 
     /// Build a run-scoped JAX setup session and resolve default cache paths natively.
@@ -178,7 +176,12 @@ impl ProcessRuntimeState {
 #[must_use]
 pub fn resolve_jax_runtime_cache_directory(requested_policy: &JaxRuntimePolicyPayload) -> String {
     requested_policy.cache_directory.clone().unwrap_or_else(|| {
-        runtime_paths::default_local_cache_directory(DEFAULT_JAX_CACHE_DIRECTORY_NAME).to_string_lossy().into_owned()
+        let user_name = std::env::var("USER")
+            .ok()
+            .filter(|name| !name.is_empty())
+            .or_else(|| std::env::var("LOGNAME").ok().filter(|name| !name.is_empty()))
+            .unwrap_or_else(|| UNKNOWN_USER_NAME.to_string());
+        std::env::temp_dir().join(user_name).join(DEFAULT_JAX_CACHE_DIRECTORY_NAME).to_string_lossy().into_owned()
     })
 }
 

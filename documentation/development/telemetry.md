@@ -18,8 +18,6 @@ telemetry = "progress" # off, progress, profile, or trace
 log_dir = "results/example.g/logs"
 log_filter = "g=info"
 log_stderr = true
-progress_interval_seconds = 1.0
-progress_interval_chunks = 1
 log_queue_size = 4096
 log_lossy = false
 include_source_location = false
@@ -47,8 +45,8 @@ surface.
 | Mode | Behavior |
 | --- | --- |
 | `off` | No telemetry stream. Explicit timing/profile paths still produce their configured files. |
-| `progress` | Bounded lifecycle and progress events suitable for normal runs. |
-| `profile` | Progress events plus aggregate profile/timing output. |
+| `progress` | Bounded lifecycle events suitable for normal runs. |
+| `profile` | Lifecycle events plus aggregate stage timing output. |
 | `trace` | High-volume filtered tracing with an event cap. |
 
 Production logging must not force JAX synchronization. Profile/trace runs may
@@ -75,7 +73,7 @@ The native CLI owns:
 2. telemetry session construction;
 3. frontend diagnostic recording;
 4. run, writer, and artifact events;
-5. timing/profile finalization;
+5. timing/profile serialization;
 6. terminal result rendering;
 7. telemetry close and writer counters.
 
@@ -84,16 +82,19 @@ construction. Active run failures produce a concise terminal error and a typed
 `run_failed` event. Graceful SIGINT/SIGTERM produces signal metadata and the
 signal-derived exit code after resumable writer flushing.
 
+The `writer_finished` event reports `parquet_dataset_path` for one phenotype or
+`parquet_dataset_paths` for a multi-phenotype run. These required paths point to
+the completed `parts/` datasets; there is no optional derived-file path.
+
 ## Timing
 
-`g-runtime::StageTimingRecorder` is constructed when an exact stage-timing path
+`g-runtime::StageTimingRecorder` is constructed when a stage-timing path
 or profile output is requested. Engine stages record through the native host;
 final timing files are written on success, failure, and interruption. A timing
 write error fails an otherwise successful run but never masks the primary run
 or interruption error.
 
-Per-output exact timing is enabled before writer construction so output stage
-timing remains part of the run directory contract.
+Stage timing records only host stages that have active production producers.
 
 ## Trace Cap
 
@@ -103,7 +104,7 @@ limits the event count; `0` disables the cap for intentional deep traces. With
 lossless logging, exceeding the cap fails the run.
 
 The close event reports accepted, written, cap-dropped, queue-dropped, and total
-dropped counts plus writer finish/flush duration. Use these counters when
+dropped counts. Use these counters when
 interpreting profiling results.
 
 ## Event Design

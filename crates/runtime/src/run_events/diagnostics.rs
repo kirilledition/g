@@ -1,11 +1,61 @@
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
 
+/// Emit a structured diagnostic through the process tracing subscriber.
+///
+/// # Errors
+///
+/// Returns an error when the diagnostic fields cannot be serialized.
+pub fn emit_diagnostic_event<Fields>(
+    level: &str,
+    event_name: &str,
+    message: &str,
+    fields: &Fields,
+) -> Result<(), serde_json::Error>
+where
+    Fields: serde::Serialize,
+{
+    let fields_json = serde_json::to_string(fields)?;
+    match level {
+        "error" => {
+            tracing::error!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
+        }
+        "warn" | "warning" => {
+            tracing::warn!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
+        }
+        "info" => {
+            tracing::info!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
+        }
+        "debug" => {
+            tracing::debug!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
+        }
+        "trace" => {
+            tracing::trace!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
+        }
+        _ => {
+            tracing::warn!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, requested_level = level, "{message}");
+        }
+    }
+    Ok(())
+}
+
+/// Emit a typed run diagnostic payload.
+///
+/// # Errors
+///
+/// Returns an error when the diagnostic fields cannot be serialized.
+pub fn emit_run_diagnostic_event(event: &RunDiagnosticEventPayload) -> Result<(), serde_json::Error> {
+    let mut fields = JsonMap::new();
+    for field in &event.fields {
+        fields.insert(field.name.to_string(), run_diagnostic_field_value_to_json_value(&field.value));
+    }
+    emit_diagnostic_event(event.level, event.event_name, &event.message, &JsonValue::Object(fields))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RunDiagnosticFieldValue {
     Boolean(bool),
     Integer(i64),
     OptionalInteger(Option<i64>),
-    OptionalText(Option<String>),
     Text(String),
 }
 
@@ -23,23 +73,6 @@ pub struct RunDiagnosticEventPayload {
     pub fields: Vec<RunDiagnosticFieldPayload>,
 }
 
-/// Serialize run diagnostic fields for native diagnostic emission.
-///
-/// This keeps the diagnostic field JSON shape in `g-runtime`; PyO3 callers only
-/// pass the serialized fields through to the logging boundary.
-///
-/// # Errors
-///
-/// Returns a serialization error if the diagnostic field payload cannot be
-/// encoded as JSON.
-pub fn serialize_run_diagnostic_fields_json(fields: &[RunDiagnosticFieldPayload]) -> Result<String, serde_json::Error> {
-    let mut payload = JsonMap::new();
-    for field in fields {
-        payload.insert(field.name.to_string(), run_diagnostic_field_value_to_json_value(&field.value));
-    }
-    serde_json::to_string(&JsonValue::Object(payload))
-}
-
 pub(super) fn boolean_diagnostic_field(name: &'static str, value: bool) -> RunDiagnosticFieldPayload {
     RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Boolean(value) }
 }
@@ -52,10 +85,6 @@ pub(super) fn optional_integer_diagnostic_field(name: &'static str, value: Optio
     RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::OptionalInteger(value) }
 }
 
-pub(super) fn optional_text_diagnostic_field(name: &'static str, value: Option<String>) -> RunDiagnosticFieldPayload {
-    RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::OptionalText(value) }
-}
-
 pub(super) fn text_diagnostic_field(name: &'static str, value: &str) -> RunDiagnosticFieldPayload {
     RunDiagnosticFieldPayload { name, value: RunDiagnosticFieldValue::Text(value.to_string()) }
 }
@@ -66,9 +95,6 @@ fn run_diagnostic_field_value_to_json_value(value: &RunDiagnosticFieldValue) -> 
         RunDiagnosticFieldValue::Integer(value) => JsonValue::Number(JsonNumber::from(*value)),
         RunDiagnosticFieldValue::OptionalInteger(value) => {
             value.map(JsonNumber::from).map_or(JsonValue::Null, JsonValue::Number)
-        }
-        RunDiagnosticFieldValue::OptionalText(value) => {
-            value.as_ref().map_or(JsonValue::Null, |value| JsonValue::String(value.clone()))
         }
         RunDiagnosticFieldValue::Text(value) => JsonValue::String(value.clone()),
     }

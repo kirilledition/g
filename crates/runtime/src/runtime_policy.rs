@@ -1,7 +1,5 @@
 //! Deterministic process runtime policy helpers.
 
-use crate::telemetry_policy::TelemetryMode;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct LoggingRuntimePolicyPayload {
@@ -17,40 +15,32 @@ pub struct LoggingRuntimePolicyPayload {
     pub trace_event_cap: Option<i64>,
 }
 
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::fn_params_excessive_bools)]
 #[must_use]
-pub fn build_logging_runtime_policy(
-    log_filter: String,
-    log_file: Option<String>,
-    log_stderr: bool,
-    log_queue_size: i64,
-    log_lossy: bool,
-    include_source_location: bool,
-    include_span_events: bool,
-    trace_file: Option<String>,
-    trace_filter: String,
-    trace_event_cap: Option<i64>,
-    telemetry_mode: TelemetryMode,
-    telemetry_stream_file: Option<String>,
+pub(crate) fn build_logging_runtime_policy(
+    run_plan: &g_plan::RunPlan,
+    telemetry_paths: &crate::telemetry_policy::TelemetryPathsPayload,
 ) -> LoggingRuntimePolicyPayload {
+    let diagnostics = &run_plan.diagnostics;
+    let telemetry_mode = diagnostics.telemetry;
+    let telemetry_stream_file = telemetry_paths.stream_file.clone();
     let telemetry_stream_file_is_some = telemetry_stream_file.is_some();
-    let resolved_log_file = if telemetry_stream_file_is_some { None } else { log_file };
-    let resolved_trace_file = telemetry_stream_file.or(trace_file);
-    let resolved_trace_filter = if telemetry_stream_file_is_some && !telemetry_mode.trace_enabled() {
-        log_filter.clone()
+    let resolved_log_file = if telemetry_stream_file_is_some { None } else { diagnostics.log_file.clone() };
+    let resolved_trace_file = telemetry_stream_file.or_else(|| diagnostics.trace_file.clone());
+    let resolved_trace_filter = if telemetry_stream_file_is_some && telemetry_mode != g_plan::TelemetryMode::Trace {
+        diagnostics.log_filter.clone()
     } else {
-        trace_filter
+        diagnostics.trace_filter.clone()
     };
-    let resolved_trace_event_cap = if telemetry_mode.trace_enabled() { trace_event_cap } else { None };
+    let resolved_trace_event_cap =
+        (telemetry_mode == g_plan::TelemetryMode::Trace).then_some(i64::from(diagnostics.trace_event_cap));
     LoggingRuntimePolicyPayload {
-        log_filter,
+        log_filter: diagnostics.log_filter.clone(),
         log_file: resolved_log_file,
-        log_stderr,
-        log_queue_size,
-        log_lossy,
-        include_source_location,
-        include_span_events,
+        log_stderr: diagnostics.log_to_stderr,
+        log_queue_size: i64::from(diagnostics.log_queue_size),
+        log_lossy: diagnostics.lossy_logging,
+        include_source_location: diagnostics.include_source_location,
+        include_span_events: diagnostics.include_span_events,
         trace_file: resolved_trace_file,
         trace_filter: resolved_trace_filter,
         trace_event_cap: resolved_trace_event_cap,

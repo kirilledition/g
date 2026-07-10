@@ -2,7 +2,6 @@ use super::BgenError;
 use super::decode::{ThreadScratch, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at, u32_to_usize};
 use super::format::{ALLELE_LENGTH_SIZE_IN_BYTES, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES};
 use super::metadata::VariantRecord;
-use super::profile::ThreadLocalProfileSnapshot;
 
 pub(super) fn parse_sample_identifier_block(
     mmap: &[u8],
@@ -163,15 +162,7 @@ fn validate_variant_probability_block(
     variant_label: &str,
 ) -> Result<(), BgenError> {
     let mut thread_scratch = ThreadScratch::default();
-    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let probability_block = read_probability_block(
-        mmap,
-        compression_type,
-        variant_record,
-        &mut thread_scratch,
-        &mut thread_local_profile_snapshot,
-        false,
-    )?;
+    let probability_block = read_probability_block(mmap, compression_type, variant_record, &mut thread_scratch)?;
     let observed_sample_count = u32_to_usize(read_u32_at(probability_block, 0)?)?;
     if observed_sample_count != sample_count {
         return Err(BgenError::InvalidFormat(format!(

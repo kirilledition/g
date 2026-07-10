@@ -5,7 +5,6 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from g import types
 from g.compute.common import linalg, pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
@@ -46,6 +45,9 @@ def initialize_full_model_coefficients_without_mask(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> jax.Array:
     """Initialize full-model coefficients with a pseudo-response regression."""
+    covariate_matrix = jnp.asarray(covariate_matrix, dtype=jnp.float64)
+    genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float64)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     pseudo_response_vector = kernel_config.approximate_firth.initial_response_scale * (
         phenotype_vector - regenie2_binary_config.BINARY_CASE_THRESHOLD
     )
@@ -100,13 +102,13 @@ def compute_firth_penalized_log_likelihood_from_cholesky(
     return log_likelihood + penalty_term
 
 
-def compute_information_components(
+def compute_information_matrix(
     covariate_matrix: jax.Array,
     genotype_vector: jax.Array,
     probability_vector: jax.Array,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.InformationComponents:
-    """Compute full information components for one genotype lane."""
+) -> jax.Array:
+    """Compute the full information matrix for one genotype lane."""
     weight_vector = jnp.maximum(
         probability_vector * (1.0 - probability_vector),
         kernel_config.numerical.minimum_variance,
@@ -115,38 +117,27 @@ def compute_information_components(
     covariate_information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
     cross_information_vector = weighted_genotype_vector @ covariate_matrix
     genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
-    information_matrix = build_full_model_information_matrix(
+    return build_full_model_information_matrix(
         covariate_information_matrix=covariate_information_matrix,
         cross_information_vector=cross_information_vector,
         genotype_information=genotype_information,
     )
-    return regenie2_binary_firth_types.InformationComponents(
-        covariate_information_matrix=covariate_information_matrix,
-        cross_information_vector=cross_information_vector,
-        genotype_information=genotype_information,
-        information_matrix=information_matrix,
-    )
 
 
-def compute_weighted_full_model_information_components(
+def compute_weighted_full_model_information_matrix(
     covariate_matrix: jax.Array,
     genotype_vector: jax.Array,
     weight_vector: jax.Array,
-) -> regenie2_binary_firth_types.InformationComponents:
-    """Compute full-model information blocks for one explicit weight vector."""
+) -> jax.Array:
+    """Compute the full-model information matrix for one explicit weight vector."""
     weighted_genotype_vector = weight_vector * genotype_vector
     covariate_information_matrix = (covariate_matrix.T * weight_vector) @ covariate_matrix
     cross_information_vector = weighted_genotype_vector @ covariate_matrix
     genotype_information = jnp.dot(weighted_genotype_vector, genotype_vector)
-    return regenie2_binary_firth_types.InformationComponents(
+    return build_full_model_information_matrix(
         covariate_information_matrix=covariate_information_matrix,
         cross_information_vector=cross_information_vector,
         genotype_information=genotype_information,
-        information_matrix=build_full_model_information_matrix(
-            covariate_information_matrix=covariate_information_matrix,
-            cross_information_vector=cross_information_vector,
-            genotype_information=genotype_information,
-        ),
     )
 
 
@@ -172,7 +163,6 @@ def compute_full_model_adjusted_weight_components(
     )
     second_weight_vector = (1.0 + leverage_vector) * variance_vector
     return regenie2_binary_firth_types.AdjustedWeightComponents(
-        leverage_vector=leverage_vector,
         adjusted_weight_vector=adjusted_weight_vector,
         second_weight_vector=second_weight_vector,
     )
@@ -207,21 +197,8 @@ def compute_full_model_adjusted_weight_components_from_parts(
     )
     second_weight_vector = (1.0 + leverage_vector) * variance_vector
     return regenie2_binary_firth_types.AdjustedWeightComponents(
-        leverage_vector=leverage_vector,
         adjusted_weight_vector=adjusted_weight_vector,
         second_weight_vector=second_weight_vector,
-    )
-
-
-def compute_full_model_score_components(
-    covariate_matrix: jax.Array,
-    genotype_vector: jax.Array,
-    score_weight_vector: jax.Array,
-) -> regenie2_binary_firth_types.FullModelScoreComponents:
-    """Compute covariate and genotype score blocks without a full design matrix."""
-    return regenie2_binary_firth_types.FullModelScoreComponents(
-        covariate_score=covariate_matrix.T @ score_weight_vector,
-        genotype_score=jnp.dot(genotype_vector, score_weight_vector),
     )
 
 
@@ -236,13 +213,19 @@ def fit_single_variant_firth_logistic_regression(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one Firth logistic model for a candidate variant."""
+    covariate_matrix = jnp.asarray(covariate_matrix, dtype=jnp.float64)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
+    loco_offset = jnp.asarray(loco_offset, dtype=jnp.float64)
+    initial_coefficients = jnp.asarray(initial_coefficients, dtype=jnp.float64)
+    null_penalized_log_likelihood = jnp.asarray(null_penalized_log_likelihood, dtype=jnp.float64)
     use_block_firth_math = kernel_config.approximate_firth.use_block_math
     if use_block_firth_math:
         coefficient_count = covariate_matrix.shape[1] + 1
     else:
         full_design_matrix = jnp.concatenate([covariate_matrix, genotype_vector[:, None]], axis=1)
         coefficient_count = full_design_matrix.shape[1]
-    unit_genotype_vector = jnp.zeros((coefficient_count,), dtype=jnp.float32).at[-1].set(1.0)
+    unit_genotype_vector = jnp.zeros((coefficient_count,), dtype=jnp.float64).at[-1].set(1.0)
 
     def compute_probability_vector(coefficients: jax.Array) -> jax.Array:
         linear_predictor = covariate_matrix @ coefficients[:-1] + genotype_vector * coefficients[-1] + loco_offset
@@ -250,19 +233,15 @@ def fit_single_variant_firth_logistic_regression(
 
     def compute_full_penalized_log_likelihood(coefficients: jax.Array) -> jax.Array:
         probability_vector = compute_probability_vector(coefficients)
-        information_components = compute_information_components(
+        information_matrix = compute_information_matrix(
             covariate_matrix=covariate_matrix,
             genotype_vector=genotype_vector,
             probability_vector=probability_vector,
             kernel_config=kernel_config,
         )
         information_matrix = (
-            information_components.information_matrix
-            + jnp.eye(
-                information_components.information_matrix.shape[0],
-                dtype=jnp.float32,
-            )
-            * kernel_config.numerical.minimum_variance
+            information_matrix
+            + jnp.eye(information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         return compute_firth_penalized_log_likelihood_from_cholesky(
@@ -284,19 +263,15 @@ def fit_single_variant_firth_logistic_regression(
         state: regenie2_binary_firth_types.FirthState,
     ) -> regenie2_binary_firth_types.FirthState:
         probability_vector = compute_probability_vector(state.coefficients)
-        information_components = compute_information_components(
+        information_matrix = compute_information_matrix(
             covariate_matrix=covariate_matrix,
             genotype_vector=genotype_vector,
             probability_vector=probability_vector,
             kernel_config=kernel_config,
         )
         information_matrix = (
-            information_components.information_matrix
-            + jnp.eye(
-                information_components.information_matrix.shape[0],
-                dtype=jnp.float32,
-            )
-            * kernel_config.numerical.minimum_variance
+            information_matrix
+            + jnp.eye(information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
         )
         information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
         current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
@@ -317,21 +292,18 @@ def fit_single_variant_firth_logistic_regression(
                 phenotype_vector=phenotype_vector,
                 kernel_config=kernel_config,
             )
-            adjusted_score_components = compute_full_model_score_components(
-                covariate_matrix=covariate_matrix,
-                genotype_vector=genotype_vector,
-                score_weight_vector=adjusted_weight_components.adjusted_weight_vector,
-            )
             adjusted_score = jnp.concatenate(
-                [adjusted_score_components.covariate_score, adjusted_score_components.genotype_score[None]],
+                [
+                    covariate_matrix.T @ adjusted_weight_components.adjusted_weight_vector,
+                    jnp.dot(genotype_vector, adjusted_weight_components.adjusted_weight_vector)[None],
+                ],
                 axis=0,
             )
-            second_hessian_components = compute_weighted_full_model_information_components(
+            second_hessian = compute_weighted_full_model_information_matrix(
                 covariate_matrix=covariate_matrix,
                 genotype_vector=genotype_vector,
                 weight_vector=adjusted_weight_components.second_weight_vector,
             )
-            second_hessian = second_hessian_components.information_matrix
         else:
             adjusted_weight_components = compute_full_model_adjusted_weight_components(
                 full_design_matrix=full_design_matrix,
@@ -346,7 +318,7 @@ def fit_single_variant_firth_logistic_regression(
             ) @ full_design_matrix
         second_hessian = (
             second_hessian
-            + jnp.eye(second_hessian.shape[0], dtype=jnp.float32) * kernel_config.numerical.minimum_variance
+            + jnp.eye(second_hessian.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
         )
         coefficient_step = linalg.solve_from_positive_definite_matrix(second_hessian, adjusted_score)
         current_failed = (
@@ -375,19 +347,6 @@ def fit_single_variant_firth_logistic_regression(
             adjusted_score=adjusted_score,
             kernel_config=kernel_config,
         ) & (~updated_failed)
-        updated_reason_code = jnp.where(
-            step_halving_failed,
-            regenie2_binary_firth_types.FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
-            jnp.where(
-                current_failed,
-                regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-                jnp.where(
-                    updated_converged,
-                    regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                ),
-            ),
-        ).astype(jnp.int32)
         return regenie2_binary_firth_types.FirthState(
             coefficients=jnp.where(updated_failed, state.coefficients, backtracking_result.coefficients),
             penalized_log_likelihood=jnp.where(
@@ -398,23 +357,18 @@ def fit_single_variant_firth_logistic_regression(
             converged=updated_converged,
             failed=updated_failed,
             iteration_count=state.iteration_count + jnp.asarray(1, dtype=jnp.int32),
-            termination_reason_code=updated_reason_code,
         )
 
     initial_probability_vector = compute_probability_vector(initial_coefficients)
-    initial_information_components = compute_information_components(
+    initial_information_matrix = compute_information_matrix(
         covariate_matrix=covariate_matrix,
         genotype_vector=genotype_vector,
         probability_vector=initial_probability_vector,
         kernel_config=kernel_config,
     )
     initial_information_matrix = (
-        initial_information_components.information_matrix
-        + jnp.eye(
-            initial_information_components.information_matrix.shape[0],
-            dtype=jnp.float32,
-        )
-        * kernel_config.numerical.minimum_variance
+        initial_information_matrix
+        + jnp.eye(initial_information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
     )
     initial_information_cholesky_factor = jnp.linalg.cholesky(initial_information_matrix)
     initial_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
@@ -428,15 +382,6 @@ def fit_single_variant_firth_logistic_regression(
     )
     initial_null_failed = (~skip_firth) & (~jnp.isfinite(null_penalized_log_likelihood))
     initial_failed = initial_full_failed | initial_null_failed
-    initial_reason_code = jnp.where(
-        initial_null_failed,
-        regenie2_binary_firth_types.FirthConvergenceReason.NULL_FAILURE.value,
-        jnp.where(
-            initial_full_failed,
-            regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-        ),
-    ).astype(jnp.int32)
     final_state = jax.lax.while_loop(
         condition_function,
         body_function,
@@ -446,23 +391,18 @@ def fit_single_variant_firth_logistic_regression(
             converged=skip_firth,
             failed=initial_failed,
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            termination_reason_code=initial_reason_code,
         ),
     )
     final_probability_vector = compute_probability_vector(final_state.coefficients)
-    final_information_components = compute_information_components(
+    final_information_matrix = compute_information_matrix(
         covariate_matrix=covariate_matrix,
         genotype_vector=genotype_vector,
         probability_vector=final_probability_vector,
         kernel_config=kernel_config,
     )
     final_information_matrix = (
-        final_information_components.information_matrix
-        + jnp.eye(
-            final_information_components.information_matrix.shape[0],
-            dtype=jnp.float32,
-        )
-        * kernel_config.numerical.minimum_variance
+        final_information_matrix
+        + jnp.eye(final_information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
     )
     final_information_cholesky_factor = jnp.linalg.cholesky(final_information_matrix)
     final_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
@@ -480,12 +420,11 @@ def fit_single_variant_firth_logistic_regression(
             phenotype_vector=phenotype_vector,
             kernel_config=kernel_config,
         )
-        final_second_hessian_components = compute_weighted_full_model_information_components(
+        final_second_hessian = compute_weighted_full_model_information_matrix(
             covariate_matrix=covariate_matrix,
             genotype_vector=genotype_vector,
             weight_vector=final_adjusted_weight_components.second_weight_vector,
         )
-        final_second_hessian = final_second_hessian_components.information_matrix
     else:
         final_adjusted_weight_components = compute_full_model_adjusted_weight_components(
             full_design_matrix=full_design_matrix,
@@ -499,7 +438,7 @@ def fit_single_variant_firth_logistic_regression(
         ) @ full_design_matrix
     final_second_hessian = (
         final_second_hessian
-        + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float32) * kernel_config.numerical.minimum_variance
+        + jnp.eye(final_second_hessian.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
     )
     genotype_variance = linalg.solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
     beta = final_state.coefficients[-1]
@@ -516,51 +455,10 @@ def fit_single_variant_firth_logistic_regression(
         & jnp.isfinite(log10_p_value)
         & (standard_error > 0.0)
     )
-    maximum_iteration_failure_mask = (
-        (~skip_firth)
-        & (~final_state.converged)
-        & (~final_state.failed)
-        & (final_state.iteration_count >= kernel_config.approximate_firth.maximum_iterations)
-    )
-    invalid_statistic_failure_mask = (~skip_firth) & final_state.converged & (~final_state.failed) & (~valid_mask)
-    convergence_reason_code = jnp.where(
-        maximum_iteration_failure_mask,
-        regenie2_binary_firth_types.FirthConvergenceReason.MAX_ITERATIONS.value,
-        jnp.where(
-            invalid_statistic_failure_mask,
-            regenie2_binary_firth_types.FirthConvergenceReason.INVALID_STATISTIC.value,
-            final_state.termination_reason_code,
-        ),
-    ).astype(jnp.int32)
-    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(convergence_reason_code)
     return regenie2_binary_firth_types.FirthVariantResult(
         beta=jnp.asarray(jnp.where(skip_firth, jnp.nan, beta), dtype=jnp.float64),
         standard_error=jnp.asarray(jnp.where(skip_firth, jnp.nan, standard_error), dtype=jnp.float64),
         chi_squared=jnp.asarray(jnp.where(skip_firth, jnp.nan, chi_squared), dtype=jnp.float64),
         log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, log10_p_value), dtype=jnp.float64),
-        penalized_log_likelihood=jnp.asarray(
-            jnp.where(skip_firth, jnp.nan, final_penalized_log_likelihood), dtype=jnp.float64
-        ),
-        converged_mask=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.bool_), final_state.converged),
         valid_mask=valid_mask,
-        iteration_count=jnp.where(skip_firth, jnp.asarray(0, dtype=jnp.int32), final_state.iteration_count),
-        failure_code=jnp.where(skip_firth, types.FirthFailureCode.NONE.value, failure_code).astype(jnp.int32),
-        convergence_reason_code=jnp.where(
-            skip_firth,
-            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            convergence_reason_code,
-        ),
-        correction_code=jnp.where(
-            skip_firth | (~valid_mask),
-            types.FirthCorrectionCode.NONE.value,
-            types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
-        ).astype(jnp.int32),
-        sparse_correction_mask=jnp.asarray(0, dtype=jnp.bool_),
-        pseudo_firth_iteration_count=jnp.asarray(0, dtype=jnp.int32),
-        nr_zero_start_iteration_count=jnp.asarray(0, dtype=jnp.int32),
-        nr_warm_start_iteration_count=jnp.where(
-            skip_firth,
-            jnp.asarray(0, dtype=jnp.int32),
-            final_state.iteration_count,
-        ),
     )

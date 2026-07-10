@@ -1,7 +1,7 @@
 use crate::error::RuntimeCompatibilityError;
 use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
 
-use super::{JaxRuntimePolicyPayload, ProcessRuntimeState, RuntimePolicyPayload};
+use super::{JaxRuntimePolicyPayload, ProcessRuntimeState};
 
 impl ProcessRuntimeState {
     /// Require all process-global runtime settings to be compatible.
@@ -19,23 +19,6 @@ impl ProcessRuntimeState {
         self.require_compatible_logging_policy(logging_policy)?;
         self.require_compatible_rayon_thread_count(requested_rayon_thread_count)?;
         self.require_compatible_jax_policy(jax_policy)
-    }
-
-    /// Require all process-global runtime settings from a run policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any requested process-global runtime setting
-    /// conflicts with previously configured state.
-    pub fn require_compatible_runtime_policy_payload(
-        &self,
-        runtime_policy: &RuntimePolicyPayload,
-    ) -> Result<(), RuntimeCompatibilityError> {
-        self.require_compatible_runtime_policy(
-            &runtime_policy.logging_policy,
-            runtime_policy.rayon_thread_count,
-            &runtime_policy.jax_policy,
-        )
     }
 
     /// Require logging compatibility with previously configured process state.

@@ -34,26 +34,8 @@ impl Serialize for JaxRuntimeDiagnosticFields<'_> {
     }
 }
 
-/// Serialize JAX runtime diagnostic fields for native diagnostic emission.
-///
-/// This keeps JAX diagnostic field JSON shape in `g-runtime`; PyO3 callers only
-/// pass the serialized fields through to the logging boundary.
-///
-/// # Errors
-///
-/// Returns a serialization error if the diagnostic field payload cannot be
-/// encoded as JSON.
-pub fn serialize_jax_runtime_diagnostic_fields_json(
-    fields: &[JaxRuntimeDiagnosticFieldPayload],
-) -> Result<String, serde_json::Error> {
-    serde_json::to_string(&JaxRuntimeDiagnosticFields::new(fields))
-}
-
 #[must_use]
-pub fn plan_jax_runtime_diagnostic_record(
-    diagnostic_level: &str,
-    has_telemetry_session: bool,
-) -> JaxRuntimeDiagnosticRecordPlan {
+pub fn plan_jax_runtime_diagnostic_record(diagnostic_level: &str) -> JaxRuntimeDiagnosticRecordPlan {
     let logging_level_name = if diagnostic_level == JAX_RUNTIME_DIAGNOSTIC_LEVEL_ERROR {
         PYTHON_LOGGING_LEVEL_ERROR
     } else {
@@ -61,7 +43,6 @@ pub fn plan_jax_runtime_diagnostic_record(
     };
     JaxRuntimeDiagnosticRecordPlan {
         logging_level_name: logging_level_name.to_string(),
-        should_emit_telemetry: has_telemetry_session,
         telemetry_level: diagnostic_level.to_string(),
     }
 }

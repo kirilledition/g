@@ -73,7 +73,7 @@ When validating a numerical change, record:
 - trait mode and binary correction plan;
 - device and dtype settings;
 - tolerance used for comparison;
-- whether differences are isolated to invalid or `TEST_FAIL` rows.
+- whether differences are isolated to invalid or failed-correction rows.
 
 ## Documentation Changes
 

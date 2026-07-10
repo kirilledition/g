@@ -201,14 +201,12 @@ trait_0001_phenotype.regenie2_linear.run/
 trait_0001_phenotype.regenie2_binary.run/
 ```
 
-Parquet output uses `parts/`; Arrow output uses `chunks/`; REGENIE text output
-uses `regenie/` plus `final.regenie`. See [Output Files](output-files.md).
+Results are the `parts/part_*.parquet` dataset inside each phenotype run
+directory. See [Output Files](output-files.md).
 
-## Finalization Fails But Chunks Exist
+## Some Parquet Parts Are Missing
 
-Chunked output is the resumable authority. If `final.parquet` or
-`final.regenie` is missing after an interruption or storage failure, rerun the
-same command with:
+If a run was interrupted or storage failed, rerun the same command with:
 
 ```toml
 [output]
@@ -216,16 +214,17 @@ resume = true
 resume_mode = "strict"
 ```
 
-If finalization continues to fail, inspect free space and permissions for the
-run directory and destination filesystem.
+Strict resume reconciles committed manifest chunks with Parquet files before
+writing the missing work. If writes continue to fail, inspect free space and
+permissions for the run directory and destination filesystem.
 
-## Approximate Firth Reports `TEST_FAIL`
+## Approximate Firth Reports a Failed Correction
 
-`TEST_FAIL` on approximate-Firth rows means score testing completed but the
-fallback correction did not produce a valid corrected statistic for that
-variant. First checks:
+`CORRECTION_METHOD = firth_approximate` with `CORRECTION_STATUS = failed`
+means score testing completed but the fallback correction did not produce a
+valid corrected statistic for that variant. First checks:
 
-- confirm `--bt --firth --approx` was intended;
+- confirm `--bt --binary-fallback firth_approximate` was intended;
 - compare candidate density by changing `--pThresh` on a small subset;
 - inspect profile logs for Firth solver iteration or line-search failures;
 - compare against upstream REGENIE only with equivalent Firth settings.

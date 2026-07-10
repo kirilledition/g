@@ -8,8 +8,8 @@ The canonical public pages are split by topic:
 
 - [Input Files](input-files.md) documents genotype, sample, phenotype,
   covariate, and Step 1 prediction requirements.
-- [Output Files](output-files.md) documents run directories, chunk formats,
-  final artifacts, telemetry files, and result schema.
+- [Output Files](output-files.md) documents run directories, Parquet dataset
+  parts, telemetry files, and result schema.
 - [Resume and Manifest](resume-and-manifest.md) documents
   `effective_config.toml`, `run_manifest.json`, and TOML resume modes.
 

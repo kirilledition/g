@@ -19,21 +19,20 @@ uv run g regenie --help
 ```
 
 Then use [Quickstart](quickstart.md) for concrete quantitative, binary,
-approximate-Firth, GPU, and REGENIE-text command shapes.
+approximate-Firth, and GPU command shapes.
 
 ## If You Have A REGENIE Workflow
 
 The active user workflow is REGENIE Step 2 over BGEN input:
 
 1. Generate Step 1 prediction lists with upstream `regenie`.
-2. Run `g regenie --step 2` with quantitative (`--qt`) or binary (`--bt`) trait
+2. Run `g regenie` with quantitative (`--qt`) or binary (`--bt`) trait
    mode.
-3. Inspect the run directory, manifest, chunks, logs, and optional Parquet
-   output.
+3. Inspect the run directory, manifest, Parquet parts, and logs.
 
 Use [Compatibility](compatibility.md) to check whether the workflow is currently
 supported. `g` does not implement Step 1, BED/PGEN inputs, SPA, categorical
-covariates, or exact Firth without `--approx`.
+covariates, or exact Firth.
 
 ## If You Need Exact Contracts
 
@@ -42,7 +41,7 @@ Read the reference page for the contract you are touching:
 | Need | Page |
 | --- | --- |
 | Required input files and sample alignment | [Input Files](input-files.md) |
-| Output directories, formats, and schema | [Output Files](output-files.md) |
+| Parquet dataset directories and schema | [Output Files](output-files.md) |
 | Resume behavior and manifests | [Resume and Manifest](resume-and-manifest.md) |
 | CLI flags and exit behavior | [CLI](cli.md) |
 | TOML merge order and effective config | [Configuration](configuration.md) |

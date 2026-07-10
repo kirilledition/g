@@ -2,20 +2,23 @@
 
 ## This crate owns
 
-Process runtime policy, logging sinks, telemetry/session/event helpers, JAX runtime setup policy, shutdown, timing, and trusted-validation cache policy.
+Process runtime policy, logging sinks, owned telemetry session/writer lifecycle,
+typed event helpers, JAX runtime setup policy, shutdown, timing, and
+trusted-validation cache policy.
 
 ## Public types
 
-`RuntimeError`/`RuntimeResult`, runtime state/policy/session DTOs, telemetry mode, envelopes/plans/writers/path errors, logging config, JAX setup reports,
-shutdown signal/session/install/restore plans and errors, timing recorders, and typed telemetry/diagnostic event payloads and kinds.
-Trusted-validation cache DTOs are root exports.
+Typed runtime compatibility and subsystem errors, runtime state/policy DTOs,
+`TelemetryRunSession`, telemetry path errors, logging config, JAX setup reports,
+shutdown signal/session/install/restore plans and errors, the stage timing recorder, and active typed lifecycle/diagnostic payloads.
+Telemetry mode is re-exported from canonical `g-plan`.
 
 ## Public functions
 
 Build/apply runtime policy plans, initialize/shutdown logging, build telemetry and diagnostic payloads, configure Rayon policy,
 resolve runtime paths, write timing artifacts, plan trusted-validation cache
-access, and build null-logistic timing diagnostics. Telemetry events are serialized
-from typed Rust field payloads through the shared envelope serializer.
+access, and serialize active run diagnostics. Telemetry events are
+serialized and flushed by the runtime-owned session.
 
 ## This crate must not expose
 

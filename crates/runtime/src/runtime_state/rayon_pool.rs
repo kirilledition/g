@@ -6,12 +6,6 @@ use crate::rayon_runtime;
 
 use super::ProcessRuntimeState;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RayonThreadPoolConfigurationPlan {
-    pub should_configure: bool,
-    pub thread_count: Option<i64>,
-}
-
 #[derive(Debug)]
 pub enum RayonThreadPoolConfigurationError {
     RuntimeCompatibility(RuntimeCompatibilityError),
@@ -72,27 +66,6 @@ impl ProcessRuntimeState {
         )))
     }
 
-    pub fn record_rayon_thread_count(&mut self, thread_count: i64) {
-        self.rayon_thread_count = Some(thread_count);
-    }
-
-    /// Plan process-global Rayon thread-pool configuration for one request.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the requested thread count conflicts with a
-    /// previously configured Rayon global thread count.
-    pub fn plan_rayon_thread_pool_configuration(
-        &self,
-        requested_thread_count: i64,
-    ) -> Result<RayonThreadPoolConfigurationPlan, RuntimeCompatibilityError> {
-        self.require_compatible_rayon_thread_count(Some(requested_thread_count))?;
-        if self.rayon_thread_count == Some(requested_thread_count) {
-            return Ok(RayonThreadPoolConfigurationPlan { should_configure: false, thread_count: None });
-        }
-        Ok(RayonThreadPoolConfigurationPlan { should_configure: true, thread_count: Some(requested_thread_count) })
-    }
-
     /// Configure the process-global Rayon thread pool and record the result.
     ///
     /// # Errors
@@ -102,13 +75,13 @@ impl ProcessRuntimeState {
     pub fn configure_rayon_thread_pool(
         &mut self,
         requested_thread_count: i64,
-    ) -> Result<RayonThreadPoolConfigurationPlan, RayonThreadPoolConfigurationError> {
-        let plan = self
-            .plan_rayon_thread_pool_configuration(requested_thread_count)
+    ) -> Result<(), RayonThreadPoolConfigurationError> {
+        self.require_compatible_rayon_thread_count(Some(requested_thread_count))
             .map_err(RayonThreadPoolConfigurationError::RuntimeCompatibility)?;
-        let Some(thread_count) = plan.thread_count else {
-            return Ok(plan);
-        };
+        if self.rayon_thread_count == Some(requested_thread_count) {
+            return Ok(());
+        }
+        let thread_count = requested_thread_count;
         let runtime_thread_count =
             usize::try_from(thread_count).map_err(|_| RayonThreadPoolConfigurationError::RuntimeConfiguration {
                 thread_count,
@@ -116,12 +89,7 @@ impl ProcessRuntimeState {
             })?;
         rayon_runtime::configure_global_rayon_thread_pool(runtime_thread_count)
             .map_err(|source| RayonThreadPoolConfigurationError::RuntimeConfiguration { thread_count, source })?;
-        self.record_rayon_thread_count(thread_count);
-        Ok(plan)
-    }
-
-    #[must_use]
-    pub fn effective_rayon_thread_count(&self, requested_thread_count: Option<i64>) -> Option<i64> {
-        self.rayon_thread_count.or(requested_thread_count)
+        self.rayon_thread_count = Some(thread_count);
+        Ok(())
     }
 }

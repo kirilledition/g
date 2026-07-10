@@ -1,5 +1,7 @@
 //! Closed string-valued planning domains.
 
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 
 macro_rules! string_enum {
@@ -24,17 +26,16 @@ macro_rules! string_enum {
                 }
             }
 
-            #[must_use]
-            pub fn from_str_value(value: &str) -> Option<Self> {
-                match value {
-                    $($value => Some(Self::$variant),)+
-                    _ => None,
-                }
-            }
+        }
 
-            #[must_use]
-            pub fn accepted_values() -> &'static [&'static str] {
-                &[$($value),+]
+        impl FromStr for $name {
+            type Err = String;
+
+            fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
+                match raw_value {
+                    $($value => Ok(Self::$variant),)+
+                    _ => Err(format!("invalid value {raw_value:?}")),
+                }
             }
         }
     };
@@ -58,7 +59,6 @@ string_enum!(Device {
 string_enum!(TrustedBgenValidationMode {
     CacheOnMiss => "cache_on_miss",
     ForceValidate => "force_validate",
-    AssumeValidated => "assume_validated",
 });
 
 string_enum!(SampleKeyMode {
@@ -100,20 +100,21 @@ string_enum!(BinaryFallbackMethod {
     FirthApproximate => "firth_approximate",
 });
 
-string_enum!(OutputFormat {
-    Parquet => "parquet",
-    Arrow => "arrow",
-    Regenie => "regenie",
+string_enum!(NullLogisticNonconvergencePolicy {
+    Fail => "fail",
+    Warn => "warn",
+});
+
+string_enum!(TelemetryMode {
+    Off => "off",
+    Progress => "progress",
+    Profile => "profile",
+    Trace => "trace",
 });
 
 string_enum!(ResumeMode {
     Fast => "fast",
     Strict => "strict",
-});
-
-string_enum!(ArrowCompression {
-    Zstd => "zstd",
-    None => "none",
 });
 
 string_enum!(ParquetCompression {

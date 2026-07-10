@@ -55,7 +55,7 @@ Binary kernels implement:
 - binary score statistic;
 - optional approximate-Firth candidate selection and correction;
 - Firth and null-Firth solver diagnostics;
-- failure labels that map to public `EXTRA = TEST_FAIL` when appropriate.
+- correction method and status labels for successful and failed rows.
 
 Changing binary correction behavior requires tests for score-only, approximate
 Firth, diagnostics, failure-code mapping, and public documentation updates when

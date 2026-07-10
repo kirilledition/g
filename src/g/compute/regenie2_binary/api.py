@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import time
 
 import jax
 
@@ -17,33 +16,11 @@ from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.variant_major_correction import dispatch as regenie2_binary_variant_major_dispatch
 from g.compute.regenie2_binary.variant_major_correction import public as regenie2_binary_variant_major_correction
 
-StageDurationRecorder = regenie2_binary_variant_major_correction.StageDurationRecorder
-
-
-@functools.partial(
-    jax.jit,
+compute_multi_binary_score_test_variant_major_donating_inputs = jax.jit(
+    regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major,
     static_argnames=("correction_plan", "kernel_config", "score_dtype"),
     donate_argnames=("genotype_matrix_by_variant", "dosage_sum", "observation_count"),
 )
-def compute_multi_binary_score_test_variant_major_donating_inputs(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    correction_plan: g_types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-    score_dtype: g_types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
-    """Compute multi-trait score-only binary statistics while donating one-shot chunk inputs."""
-    return regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        correction_plan=correction_plan,
-        kernel_config=kernel_config,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
-        score_dtype=score_dtype,
-    )
 
 
 @functools.partial(
@@ -130,7 +107,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_o
     small_candidate_capacity: int,
     bounded_candidate_capacity: int,
     overflow_candidate_capacity: int,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute a multi-trait binary chunk in one executable when overflow is impossible."""
     score_test_result = regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
         chromosome_state=chromosome_state,
@@ -183,7 +160,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflo
     small_candidate_capacity: int,
     bounded_candidate_capacity: int,
     overflow_candidate_capacity: int,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute a packed8 multi-trait binary chunk in one executable when overflow is impossible."""
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
         packed_probability_pairs_by_variant,
@@ -216,22 +193,6 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflo
     )
 
 
-def can_use_multi_binary_no_overflow_entrypoint(
-    capacity_plan: regenie2_binary_candidate_planning.FirthCandidateCapacityPlan,
-) -> bool:
-    """Return whether bounded capacity covers every flattened trait-variant lane."""
-    return capacity_plan.bounded_candidate_capacity == capacity_plan.overflow_candidate_capacity
-
-
-def record_firth_candidate_dispatch_plan_duration(
-    stage_duration_recorder: StageDurationRecorder | None,
-    start_time: float,
-) -> None:
-    """Record candidate-dispatch planning time when profiling is enabled."""
-    if stage_duration_recorder is not None:
-        stage_duration_recorder("firth_candidate_dispatch_plan", start_time)
-
-
 def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
@@ -239,10 +200,9 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
     score_dtype: g_types.FloatingPointDtype,
-    stage_duration_recorder: StageDurationRecorder | None,
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute multi-trait binary association from variant-major genotypes.
 
     Multi-binary score-only and approximate Firth execution share one batched
@@ -251,14 +211,12 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
 
     """
     if correction_plan.method != g_types.BinaryFallbackMethod.SCORE_ONLY:
-        capacity_plan_start_time = time.perf_counter() if stage_duration_recorder is not None else 0.0
         capacity_plan = regenie2_binary_candidate_planning.build_multi_firth_candidate_capacity_plan(
             trait_count=chromosome_state.phenotype_matrix.shape[0],
             variant_count=genotype_matrix_by_variant.shape[0],
             preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
         )
-        if can_use_multi_binary_no_overflow_entrypoint(capacity_plan):
-            record_firth_candidate_dispatch_plan_duration(stage_duration_recorder, capacity_plan_start_time)
+        if capacity_plan.bounded_candidate_capacity == capacity_plan.overflow_candidate_capacity:
             return compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major_no_overflow(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
@@ -291,7 +249,6 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         kernel_config=kernel_config,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
-        stage_duration_recorder=stage_duration_recorder,
     )
 
 
@@ -302,10 +259,9 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
     score_dtype: g_types.FloatingPointDtype,
-    stage_duration_recorder: StageDurationRecorder | None,
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute multi-trait binary association from packed8 BGEN probability pairs."""
     if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
         return compute_multi_binary_score_test_packed8_donating_inputs(
@@ -317,14 +273,12 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
             observation_count=observation_count,
             score_dtype=score_dtype,
         )
-    capacity_plan_start_time = time.perf_counter() if stage_duration_recorder is not None else 0.0
     capacity_plan = regenie2_binary_candidate_planning.build_multi_firth_candidate_capacity_plan(
         trait_count=chromosome_state.phenotype_matrix.shape[0],
         variant_count=packed_probability_pairs_by_variant.shape[0],
         preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
     )
-    if can_use_multi_binary_no_overflow_entrypoint(capacity_plan):
-        record_firth_candidate_dispatch_plan_duration(stage_duration_recorder, capacity_plan_start_time)
+    if capacity_plan.bounded_candidate_capacity == capacity_plan.overflow_candidate_capacity:
         return compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8_no_overflow(
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
@@ -355,7 +309,6 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
         correction_plan=correction_plan,
         sparse_candidate_mask=sparse_candidate_mask,
         kernel_config=kernel_config,
-        stage_duration_recorder=stage_duration_recorder,
         dosage_sum=dosage_sum,
         observation_count=observation_count,
         score_dtype=score_dtype,

@@ -43,20 +43,22 @@ compile_error!("g requires a 64-bit target.");
 This makes the supported target assumption explicit. It does not make `usize`
 a stable storage or interchange type.
 
-## Boundary Helpers
+## Boundary Conversion
 
-PyO3-facing conversion helpers live under `src/binding/convert/`. They attach
-field names to overflow and sign errors and keep Python integer conversion out
-of domain crates.
+Checked conversions live at the boundary that owns the source value. A local
+helper is appropriate when one boundary performs the same validated conversion
+more than once. Do not create forwarding modules or project-wide conversion
+frameworks for a single call site.
 
-Use these helpers when converting Python or Python-derived `i64` values into
-native indices and counts. Do not add broad conversion frameworks for normal
-internal arithmetic.
+Correctness paths use `checked_add`, `checked_sub`, and `checked_mul`; saturation
+is reserved for explicitly lossy telemetry counters. Float-to-integer timestamp
+conversion is isolated to telemetry formatting and falls back when Chrono
+rejects the resulting timestamp.
 
 ## Raw Buffers
 
-BGEN delivery writes into caller-owned Python/NumPy buffers. Public genotype
-reader methods should take explicit buffer wrappers:
+BGEN delivery writes into caller-owned Rust buffers. Public genotype reader
+methods take explicit buffer wrappers:
 
 ```rust
 OutputBufferAddress
@@ -64,8 +66,8 @@ OutputValueCount
 ```
 
 The unsafe pointer-to-slice conversion stays inside genotype buffer/decode
-modules. Binding code may create these wrappers from NumPy mutable slices after
-shape and contiguity validation.
+modules. `g-engine` constructs these wrappers only from owned vectors after
+validating the requested value count.
 
 ## Review Checklist
 

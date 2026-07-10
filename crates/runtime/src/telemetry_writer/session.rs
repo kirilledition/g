@@ -1,6 +1,5 @@
 use std::io;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use crate::telemetry_session::TelemetryWriterCounterSnapshot;
 
@@ -12,7 +11,6 @@ pub struct TelemetrySessionWriter {
     path: PathBuf,
     writer: Option<TelemetryWriterFactory>,
     guard: Option<TelemetryWriterGuard>,
-    last_counter_snapshot: Option<TelemetryWriterCounterSnapshot>,
 }
 
 impl TelemetrySessionWriter {
@@ -26,7 +24,7 @@ impl TelemetrySessionWriter {
         let (writer, guard) =
             build_telemetry_file_writer(&path, log_queue_size, log_lossy, normalize_event_cap(event_cap))?;
         replace_shared_telemetry_writer(path.clone(), writer.clone())?;
-        Ok(Self { path, writer: Some(writer), guard: Some(guard), last_counter_snapshot: None })
+        Ok(Self { path, writer: Some(writer), guard: Some(guard) })
     }
 
     /// Write one JSON line to the telemetry stream when it is still open.
@@ -45,9 +43,9 @@ impl TelemetrySessionWriter {
     #[must_use]
     pub fn counter_snapshot(&self) -> TelemetryWriterCounterSnapshot {
         if let Some(writer) = self.writer.as_ref() {
-            return writer.counter_snapshot(None);
+            return writer.counter_snapshot();
         }
-        self.last_counter_snapshot.clone().unwrap_or_else(TelemetryWriterCounterSnapshot::empty)
+        TelemetryWriterCounterSnapshot::empty()
     }
 
     /// Close the writer, flush buffered telemetry, and return final counters.
@@ -56,20 +54,15 @@ impl TelemetrySessionWriter {
     ///
     /// Returns an I/O error when the shared-writer registry cannot be cleared or
     /// when a lossless capped telemetry writer exceeded its event cap.
-    pub fn finish_counter_snapshot(&mut self) -> io::Result<TelemetryWriterCounterSnapshot> {
-        let finish_start_time = Instant::now();
+    pub fn finish(&mut self) -> io::Result<()> {
         let dropped_writer = self.writer.take();
         let dropped_guard = self.guard.take();
         drop(dropped_guard);
-        let finish_flush_duration_seconds = finish_start_time.elapsed().as_secs_f64();
         clear_shared_telemetry_writer(&self.path)?;
         let Some(writer) = dropped_writer.as_ref() else {
-            return Ok(self.counter_snapshot());
+            return Ok(());
         };
-
-        let counter_snapshot = writer.counter_snapshot(Some(finish_flush_duration_seconds));
-        self.last_counter_snapshot = Some(counter_snapshot.clone());
         writer.fail_if_lossless_cap_exceeded()?;
-        Ok(counter_snapshot)
+        Ok(())
     }
 }

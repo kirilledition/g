@@ -30,7 +30,6 @@ pub struct TelemetryWriterCounterSnapshot {
     pub event_cap_exceeded: bool,
     pub lossy: bool,
     pub event_cap: Option<usize>,
-    pub finish_flush_duration_seconds: Option<f64>,
 }
 
 impl TelemetryEventCapState {
@@ -100,11 +99,7 @@ impl TelemetryEventCapState {
     }
 
     #[must_use]
-    pub fn counter_snapshot(
-        &self,
-        queue_dropped_event_count: usize,
-        finish_flush_duration_seconds: Option<f64>,
-    ) -> TelemetryWriterCounterSnapshot {
+    pub fn counter_snapshot(&self, queue_dropped_event_count: usize) -> TelemetryWriterCounterSnapshot {
         let accepted_event_count = self.written_event_count.load(Ordering::Acquire);
         let cap_dropped_event_count = self.dropped_event_count.load(Ordering::Acquire);
         TelemetryWriterCounterSnapshot {
@@ -116,7 +111,6 @@ impl TelemetryEventCapState {
             event_cap_exceeded: self.exceeded.load(Ordering::Acquire),
             lossy: self.lossy,
             event_cap: self.event_cap,
-            finish_flush_duration_seconds,
         }
     }
 
@@ -167,7 +161,6 @@ impl TelemetryWriterCounterSnapshot {
             event_cap_exceeded: false,
             lossy: true,
             event_cap: None,
-            finish_flush_duration_seconds: None,
         }
     }
 }

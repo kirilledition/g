@@ -1,14 +1,19 @@
 //! Public input error boundary.
 
 use crate::regenie::PredictionError;
-use crate::sample::SampleAlignmentError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InputError {
     #[error(transparent)]
     Prediction(#[from] PredictionError),
-    #[error(transparent)]
-    SampleAlignment(#[from] SampleAlignmentError),
+    #[error("{0}")]
+    SampleAlignment(String),
+}
+
+impl From<String> for InputError {
+    fn from(message: String) -> Self {
+        Self::SampleAlignment(message)
+    }
 }
 
 pub type InputResult<T> = Result<T, InputError>;

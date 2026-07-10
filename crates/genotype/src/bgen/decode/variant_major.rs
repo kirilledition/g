@@ -1,21 +1,17 @@
-use std::time::Instant;
-
 use super::super::metadata::VariantRecord;
-use super::super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::super::sample_selection::SampleSelection;
 use super::super::simd;
 use super::super::{BgenError, CompressionType};
 use super::matrix::{
     MISSING_SAMPLE_FLAG_MASK, PLOIDY_MASK, ThreadScratch, VariantDecodeResult, VariantMajorOutputMatrix,
-    VariantMajorTileDecodeResult, VariantMajorTileStatsMut, exact_eight_bit_probability_pairs,
-    packed_eight_bit_probability_index, read_eight_bit_probability_pair, selected_sample_count_to_i32,
-    unphased_eight_bit_dosage_lookup,
+    VariantMajorTileStatsMut, exact_eight_bit_probability_pairs, packed_eight_bit_probability_index,
+    read_eight_bit_probability_pair, selected_sample_count_to_i32, unphased_eight_bit_dosage_lookup,
 };
 use super::probability::{
     PackedProbabilityReader, read_exact_bytes, read_probability_block, read_u8_at, read_u16_at, read_u32_at,
     u32_to_usize,
 };
-use crate::buffer::raw_pointer::OutputBufferAddress;
+use crate::buffer::OutputBufferAddress;
 use crate::preprocess;
 
 #[allow(clippy::too_many_arguments)]
@@ -28,14 +24,11 @@ pub(in crate::bgen) fn decode_variant_major_dosage_tile(
     output_pointer_address: OutputBufferAddress,
     selected_sample_count: usize,
     tile_variant_start_index: usize,
-    profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
-) -> Result<VariantMajorTileDecodeResult, BgenError> {
+) -> Result<(), BgenError> {
     validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
-    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let mut has_missing_values = false;
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_variant_dosages_into_variant_major_matrix(
             mmap,
@@ -46,27 +39,19 @@ pub(in crate::bgen) fn decode_variant_major_dosage_tile(
             output_pointer_address,
             tile_variant_start_index + tile_variant_index,
             selected_sample_count,
-            profiling_enabled,
             trusted_no_missing_diploid,
             thread_scratch,
         )?;
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
         tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
         tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
-        has_missing_values |= variant_decode_result.has_missing_values;
         tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
         tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
         tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
         tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
         tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
-        if profiling_enabled {
-            thread_local_profile_snapshot.merge_from(&variant_decode_result.profile_snapshot);
-        }
     }
-    if profiling_enabled {
-        thread_local_profile_snapshot.decode_tile_count += 1;
-    }
-    Ok(VariantMajorTileDecodeResult { profile_snapshot: thread_local_profile_snapshot, has_missing_values })
+    Ok(())
 }
 
 pub(in crate::bgen) fn validate_variant_major_tile_stats_lengths(
@@ -97,19 +82,10 @@ pub(super) fn decode_variant_dosages_into_variant_major_matrix(
     output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
-    profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<VariantDecodeResult, BgenError> {
-    let mut thread_local_profile_snapshot = ThreadLocalProfileSnapshot::default();
-    let probability_block = read_probability_block(
-        mmap,
-        compression_type,
-        variant_record,
-        thread_scratch,
-        &mut thread_local_profile_snapshot,
-        profiling_enabled,
-    )?;
+    let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
 
     let mut cursor = 0;
     let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
@@ -164,16 +140,12 @@ pub(super) fn decode_variant_dosages_into_variant_major_matrix(
             output_pointer_address,
             variant_index,
             selected_sample_count,
-            profiling_enabled,
             trusted_no_missing_diploid,
-            thread_local_profile_snapshot,
         );
     }
 
     let probability_scale_denominator =
         if probability_bit_count == 32 { f64::from(u32::MAX) } else { f64::from((1_u32 << probability_bit_count) - 1) };
-    let probability_decode_start_time = profiling_enabled.then(Instant::now);
-    let output_write_start_time = profiling_enabled.then(Instant::now);
     let mut bit_reader = PackedProbabilityReader::new(&probability_block[cursor..]);
     selected_sample_count_to_i32(selected_sample_count)?;
     let mut output_matrix = unsafe {
@@ -263,19 +235,10 @@ pub(super) fn decode_variant_dosages_into_variant_major_matrix(
         selected_observation_count,
         has_missing_values,
     );
-    record_variant_major_decode_profile(
-        &mut thread_local_profile_snapshot,
-        probability_decode_start_time,
-        output_write_start_time,
-        selected_sample_count,
-    )?;
-
     Ok(VariantDecodeResult {
-        profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total,
         selected_dosage_square_total,
         selected_observation_count,
-        has_missing_values,
         zero_count,
         nonzero_count,
         homozygous_reference_count,
@@ -293,9 +256,7 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
     output_pointer_address: OutputBufferAddress,
     variant_index: usize,
     selected_sample_count: usize,
-    profiling_enabled: bool,
     trusted_no_missing_diploid: bool,
-    mut thread_local_profile_snapshot: ThreadLocalProfileSnapshot,
 ) -> Result<VariantDecodeResult, BgenError> {
     let expected_probability_byte_count = sample_ploidy_and_missingness.len().checked_mul(2).ok_or_else(|| {
         BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
@@ -307,8 +268,6 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
         )));
     }
 
-    let probability_decode_start_time = profiling_enabled.then(Instant::now);
-    let output_write_start_time = profiling_enabled.then(Instant::now);
     selected_sample_count_to_i32(selected_sample_count)?;
     let mut output_matrix = unsafe {
         VariantMajorOutputMatrix::<f32>::from_pointer_address(
@@ -326,19 +285,10 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             &packed_probability_bytes[..expected_probability_byte_count],
             output_row,
         );
-        record_variant_major_decode_profile(
-            &mut thread_local_profile_snapshot,
-            probability_decode_start_time,
-            output_write_start_time,
-            selected_sample_count,
-        )?;
-
         return Ok(VariantDecodeResult {
-            profile_snapshot: thread_local_profile_snapshot,
             selected_dosage_total: decode_summary.selected_dosage_total,
             selected_dosage_square_total: decode_summary.selected_dosage_square_total,
             selected_observation_count: decode_summary.selected_observation_count,
-            has_missing_values: false,
             zero_count: decode_summary.zero_count,
             nonzero_count: decode_summary.nonzero_count,
             homozygous_reference_count: decode_summary.homozygous_reference_count,
@@ -376,19 +326,10 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
             )?;
             let decode_summary =
                 simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
-            record_variant_major_decode_profile(
-                &mut thread_local_profile_snapshot,
-                probability_decode_start_time,
-                output_write_start_time,
-                selected_sample_count,
-            )?;
-
             return Ok(VariantDecodeResult {
-                profile_snapshot: thread_local_profile_snapshot,
                 selected_dosage_total: decode_summary.selected_dosage_total,
                 selected_dosage_square_total: decode_summary.selected_dosage_square_total,
                 selected_observation_count: decode_summary.selected_observation_count,
-                has_missing_values: false,
                 zero_count: decode_summary.zero_count,
                 nonzero_count: decode_summary.nonzero_count,
                 homozygous_reference_count: decode_summary.homozygous_reference_count,
@@ -421,19 +362,10 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
                 &mut homozygous_alternate_count,
             );
         }
-        record_variant_major_decode_profile(
-            &mut thread_local_profile_snapshot,
-            probability_decode_start_time,
-            output_write_start_time,
-            selected_sample_count,
-        )?;
-
         return Ok(VariantDecodeResult {
-            profile_snapshot: thread_local_profile_snapshot,
             selected_dosage_total,
             selected_dosage_square_total,
             selected_observation_count,
-            has_missing_values: false,
             zero_count,
             nonzero_count,
             homozygous_reference_count,
@@ -491,19 +423,10 @@ pub(super) fn decode_unphased_eight_bit_dosages_into_variant_major_matrix(
         selected_observation_count,
         has_missing_values,
     );
-    record_variant_major_decode_profile(
-        &mut thread_local_profile_snapshot,
-        probability_decode_start_time,
-        output_write_start_time,
-        selected_sample_count,
-    )?;
-
     Ok(VariantDecodeResult {
-        profile_snapshot: thread_local_profile_snapshot,
         selected_dosage_total,
         selected_dosage_square_total,
         selected_observation_count,
-        has_missing_values,
         zero_count,
         nonzero_count,
         homozygous_reference_count,
@@ -528,31 +451,4 @@ fn impute_variant_major_row_if_needed(
             *output_value = imputed_dosage_value;
         }
     }
-}
-
-fn record_variant_major_decode_profile(
-    thread_local_profile_snapshot: &mut ThreadLocalProfileSnapshot,
-    probability_decode_start_time: Option<Instant>,
-    output_write_start_time: Option<Instant>,
-    selected_sample_count: usize,
-) -> Result<(), BgenError> {
-    if probability_decode_start_time.is_none() && output_write_start_time.is_none() {
-        return Ok(());
-    }
-    if let Some(output_write_start_time) = output_write_start_time {
-        thread_local_profile_snapshot.output_write_ns += elapsed_nanoseconds(output_write_start_time);
-        thread_local_profile_snapshot.output_write_count += 1;
-        thread_local_profile_snapshot.output_byte_count += u64::try_from(
-            selected_sample_count
-                .checked_mul(std::mem::size_of::<f32>())
-                .ok_or_else(|| BgenError::Range("Integer overflow while profiling BGEN output bytes.".to_string()))?,
-        )
-        .unwrap_or(u64::MAX);
-    }
-    if let Some(probability_decode_start_time) = probability_decode_start_time {
-        thread_local_profile_snapshot.probability_decode_ns += elapsed_nanoseconds(probability_decode_start_time);
-        thread_local_profile_snapshot.probability_decode_count += 1;
-    }
-    thread_local_profile_snapshot.variant_decode_count += 1;
-    Ok(())
 }

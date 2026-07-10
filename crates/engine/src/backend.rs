@@ -33,26 +33,11 @@ pub struct TraitMajorPredictionMatrixView<'view> {
     pub sample_count: usize,
 }
 
-/// Backend inputs specific to one chromosome.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ChromosomePreparationInput<'view> {
-    pub predictions: TraitMajorPredictionMatrixView<'view>,
-}
-
-/// Host diagnostics produced while preparing a binary null model.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NullModelDiagnostics {
-    pub logistic_converged: Vec<bool>,
-    pub logistic_iteration_count: Vec<i32>,
-    pub firth_iteration_count: Option<Vec<i32>>,
-    pub firth_convergence_reason_code: Option<Vec<i32>>,
-}
-
-/// Prepared chromosome state and the diagnostics needed by Rust policy code.
+/// Prepared chromosome state and null-logistic convergence policy input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedChromosome<State> {
     pub state: State,
-    pub null_model_diagnostics: Option<NullModelDiagnostics>,
+    pub null_logistic_converged: Option<Vec<bool>>,
 }
 
 /// Borrowed variant-major dosage values with shape `variants x samples`.
@@ -123,64 +108,19 @@ pub enum HostAssociationStatistics {
     Float64(HostAssociationStatisticMatrix<f64>),
 }
 
-/// Trait-major binary result codes with shape `traits x variants`.
+/// Trait-major binary correction codes with shape `traits x variants`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostExtraCodeMatrix {
+pub struct HostCorrectionCodeMatrix {
     pub trait_count: usize,
     pub variant_count: usize,
     pub values: Vec<i32>,
-}
-
-/// Host diagnostic counters for one binary association batch.
-#[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::struct_field_names)]
-pub struct BinaryBatchDiagnostics {
-    pub score_only_count: i64,
-    pub score_test_candidate_count: i64,
-    pub firth_candidate_count: i64,
-    pub firth_iteration_min: i64,
-    pub firth_iteration_median: f64,
-    pub firth_iteration_max: i64,
-    pub firth_converged_count: i64,
-    pub firth_failed_count: i64,
-    pub firth_numerical_failure_count: i64,
-    pub firth_max_iteration_failure_count: i64,
-    pub firth_invalid_statistic_failure_count: i64,
-    pub firth_step_halving_failure_count: i64,
-    pub pseudo_firth_attempt_count: i64,
-    pub pseudo_firth_success_count: i64,
-    pub newton_raphson_zero_start_attempt_count: i64,
-    pub newton_raphson_zero_start_success_count: i64,
-    pub newton_raphson_warm_start_attempt_count: i64,
-    pub newton_raphson_warm_start_success_count: i64,
-    pub sparse_correction_count: i64,
-    pub dense_correction_count: i64,
 }
 
 /// One fully materialized host association batch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostAssociationBatch {
     pub statistics: HostAssociationStatistics,
-    pub extra_codes: Option<HostExtraCodeMatrix>,
-    pub binary_diagnostics: Option<BinaryBatchDiagnostics>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("{message}")]
-pub struct BackendError {
-    message: String,
-}
-
-impl BackendError {
-    #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
-    }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
+    pub correction_codes: Option<HostCorrectionCodeMatrix>,
 }
 
 /// Chunk-oriented association compute implemented by the device runtime.
@@ -188,15 +128,16 @@ pub trait AssociationBackend: Send + Sync {
     type GroupState: Send;
     type ChromosomeState: Send;
     type DeviceResult: Send;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Prepare reusable device state for one phenotype group.
     ///
     /// # Errors
     ///
     /// Returns an error when the phenotype or covariate data cannot be prepared.
-    fn prepare_group(&self, input: GroupPreparationInput<'_>) -> Result<Self::GroupState, BackendError>;
+    fn prepare_group(&self, input: GroupPreparationInput<'_>) -> Result<Self::GroupState, Self::Error>;
 
-    /// Prepare reusable state and host diagnostics for one chromosome.
+    /// Prepare reusable state and null-logistic policy input for one chromosome.
     ///
     /// # Errors
     ///
@@ -205,8 +146,8 @@ pub trait AssociationBackend: Send + Sync {
     fn prepare_chromosome(
         &self,
         group: &Self::GroupState,
-        input: ChromosomePreparationInput<'_>,
-    ) -> Result<PreparedChromosome<Self::ChromosomeState>, BackendError>;
+        predictions: TraitMajorPredictionMatrixView<'_>,
+    ) -> Result<PreparedChromosome<Self::ChromosomeState>, Self::Error>;
 
     /// Submit one genotype batch and return an opaque device result.
     ///
@@ -218,7 +159,7 @@ pub trait AssociationBackend: Send + Sync {
         &self,
         chromosome: &Self::ChromosomeState,
         input: GenotypeBatchInput<'_>,
-    ) -> Result<Self::DeviceResult, BackendError>;
+    ) -> Result<Self::DeviceResult, Self::Error>;
 
     /// Select active traits, narrow statistics, and transfer one result to host.
     ///
@@ -230,5 +171,5 @@ pub trait AssociationBackend: Send + Sync {
         &self,
         result: Self::DeviceResult,
         input: MaterializationInput<'_>,
-    ) -> Result<HostAssociationBatch, BackendError>;
+    ) -> Result<HostAssociationBatch, Self::Error>;
 }

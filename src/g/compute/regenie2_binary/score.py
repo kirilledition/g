@@ -146,14 +146,13 @@ def compute_multi_binary_score_test_chunk_variant_major(
         jnp.nan,
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    extra_code = regenie2_binary_correction.build_extra_code(log10_p_value, valid_mask, correction_plan)
+    correction_code = regenie2_binary_correction.build_correction_code(log10_p_value, valid_mask, correction_plan)
     return regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
-        extra_code=extra_code,
-        valid_mask=valid_mask,
+        correction_code=correction_code,
     )
 
 

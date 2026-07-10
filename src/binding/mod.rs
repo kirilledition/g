@@ -4,15 +4,13 @@
 use pyo3::prelude::*;
 
 pub(crate) mod cli;
-pub(crate) mod convert;
 pub(crate) mod engine;
 pub(crate) mod errors;
-pub(crate) mod output;
 pub(crate) mod runtime;
 pub(crate) mod telemetry;
 
 pub(crate) use runtime::runtime_state;
-pub(crate) use telemetry::{logging, run_events, telemetry_policy};
+pub(crate) use telemetry::run_events;
 
 #[allow(clippy::missing_errors_doc)]
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

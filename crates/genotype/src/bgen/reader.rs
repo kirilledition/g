@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 
 #[cfg(test)]
 use std::path::PathBuf;
@@ -12,19 +11,25 @@ use std::path::PathBuf;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
-use crate::buffer::raw_pointer::{OutputBufferAddress, OutputValueCount, RowMajorDosageBuffer};
-use crate::common::{ChunkSpec, ChunkStats, VariantMetadataColumns};
+#[cfg(test)]
+use crate::buffer::{OutputBufferAddress, OutputValueCount, RowMajorDosageBuffer};
+#[cfg(test)]
+use crate::common::ChunkStats;
+use crate::common::{ChunkSpec, VariantMetadataColumns};
 use crate::error::GenotypeResult;
+#[cfg(test)]
 use crate::preprocess;
 
+#[cfg(test)]
 use super::decode::{
-    DosageTileDecodeResult, ThreadScratch, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
-    read_exact_bytes, read_u32_at, u32_to_usize,
+    DosageTileDecodeResult, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
 };
+use super::decode::{ThreadScratch, read_exact_bytes, read_u32_at, u32_to_usize};
 use super::error::BgenError;
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
-use super::profile::{ReaderProfileSnapshot, ReaderProfiling, ThreadLocalProfileSnapshot, elapsed_nanoseconds};
+#[cfg(test)]
+use super::profile::ThreadLocalProfileSnapshot;
 use super::sample_selection::{SampleSelection, build_sample_selection};
 use super::{index, metadata, trusted};
 
@@ -43,7 +48,6 @@ pub struct BgenReaderCore {
     variant_records: Vec<VariantRecord>,
     chromosome_boundary_indices: Vec<usize>,
     prepared_sample_selection: Mutex<Option<Arc<SampleSelection>>>,
-    profiling: ReaderProfiling,
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -104,7 +108,6 @@ impl BgenReaderCore {
             variant_records,
             chromosome_boundary_indices,
             prepared_sample_selection: Mutex::new(None),
-            profiling: ReaderProfiling::default(),
         })
     }
 
@@ -120,12 +123,12 @@ impl BgenReaderCore {
         self.contains_embedded_samples
     }
 
-    pub fn sample_identifiers(&self) -> Vec<String> {
-        self.sample_identifiers.clone()
+    pub fn sample_identifiers(&self) -> &[String] {
+        &self.sample_identifiers
     }
 
-    pub fn chromosome_boundary_indices(&self) -> Vec<usize> {
-        self.chromosome_boundary_indices.clone()
+    pub fn chromosome_boundary_indices(&self) -> &[usize] {
+        &self.chromosome_boundary_indices
     }
 
     pub fn plan_chromosome_homogeneous_chunks(
@@ -144,9 +147,7 @@ impl BgenReaderCore {
     }
 
     pub fn prepare_sample_selection(&self, sample_indices: &[usize]) -> Result<(), BgenError> {
-        let sample_selection_start_time = Instant::now();
         let sample_selection = Arc::new(build_sample_selection(self.sample_count, sample_indices)?);
-        self.profiling.record_sample_selection_prepare(elapsed_nanoseconds(sample_selection_start_time));
         let mut prepared_sample_selection = self
             .prepared_sample_selection
             .lock()
@@ -164,28 +165,19 @@ impl BgenReaderCore {
         Ok(())
     }
 
-    pub fn reset_profile(&self) {
-        self.profiling.reset();
-    }
-
-    pub fn profile_snapshot(&self) -> ReaderProfileSnapshot {
-        self.profiling.snapshot()
-    }
-
     pub fn validate_trusted_no_missing_diploid(&self) -> Result<(), BgenError> {
         if self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire) {
             return Ok(());
         }
         self.variant_records.par_iter().try_for_each_init(
-            || (ThreadScratch::default(), ThreadLocalProfileSnapshot::default()),
-            |(thread_scratch, thread_local_profile_snapshot), variant_record| {
+            ThreadScratch::default,
+            |thread_scratch, variant_record| {
                 trusted::validate_variant_compatible_with_trusted_no_missing_diploid(
                     &self.mmap,
                     self.compression_type,
                     variant_record,
                     self.sample_count,
                     thread_scratch,
-                    thread_local_profile_snapshot,
                 )
             },
         )?;
@@ -210,15 +202,13 @@ impl BgenReaderCore {
         variant_start: usize,
         variant_stop: usize,
     ) -> Result<VariantMetadataColumns, BgenError> {
-        let metadata_slice_start_time = Instant::now();
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
         let selected_variant_records = &self.variant_records[variant_start..variant_stop];
-        let variant_metadata_columns = metadata::build_variant_metadata_columns(selected_variant_records);
-        self.profiling.record_metadata_slice(elapsed_nanoseconds(metadata_slice_start_time));
-        Ok(variant_metadata_columns)
+        Ok(metadata::build_variant_metadata_columns(selected_variant_records))
     }
 
+    #[cfg(test)]
     pub fn read_preprocessed_dosage_f32_into_address_prepared(
         &self,
         variant_start: usize,
@@ -230,7 +220,7 @@ impl BgenReaderCore {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
         let selected_variant_count = variant_stop.saturating_sub(variant_start);
         if selected_variant_count == 0 {
-            return Ok(preprocess::build_empty_chunk_stats(0, false));
+            return Ok(preprocess::build_empty_chunk_stats(0));
         }
         let selected_sample_count = output_value_count.get().checked_div(selected_variant_count).ok_or_else(|| {
             BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
@@ -282,6 +272,7 @@ impl BgenReaderCore {
         ))
     }
 
+    #[cfg(test)]
     fn read_dosage_f32_into_address_with_selection_and_optional_stats(
         &self,
         sample_selection: &SampleSelection,
@@ -308,9 +299,6 @@ impl BgenReaderCore {
         }
 
         let output_pointer = output_pointer_address;
-        let profiling = &self.profiling;
-        let profiling_enabled = profiling.is_enabled();
-        profiling.record_selected_sample_count(selected_sample_count);
         let decode_tile_variant_count = decode_tile_variant_count();
         let decode_results = self.variant_records[variant_start..variant_stop]
             .par_chunks(decode_tile_variant_count)
@@ -325,7 +313,6 @@ impl BgenReaderCore {
                     output_pointer,
                     selected_variant_count,
                     tile_index * decode_tile_variant_count,
-                    profiling_enabled,
                     self.trusted_no_missing_diploid_decode_enabled(),
                     collect_dosage_totals,
                     thread_scratch,
@@ -334,7 +321,6 @@ impl BgenReaderCore {
             .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
         let mut selected_dosage_totals = collect_dosage_totals.then(|| Vec::with_capacity(selected_variant_count));
         for decode_result in decode_results {
-            profiling.merge_thread_local_snapshot(&decode_result.profile_snapshot);
             if let Some(totals) = &mut selected_dosage_totals {
                 totals.extend(decode_result.selected_dosage_totals);
             }

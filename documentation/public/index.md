@@ -34,7 +34,7 @@ prediction lists, then use `g` for Step 2 scans.
 | CLI grammar, flags, boolean semantics, and exit behavior | [CLI](cli.md) |
 | TOML sections, merge order, effective config, and defaults policy | [Configuration](configuration.md) |
 | Genotype, sample, phenotype, covariate, and prediction files | [Input Files](input-files.md) |
-| Run directories, output formats, schema, and telemetry files | [Output Files](output-files.md) |
+| Run directories, Parquet dataset schema, and telemetry files | [Output Files](output-files.md) |
 | Resume modes, manifest compatibility, and graceful interruption | [Resume and Manifest](resume-and-manifest.md) |
 | Statistical models and result interpretation | [Algorithm](algorithm.md) |
 | GPU, cluster, and SLURM operation | [GPU and Clusters](gpu-and-clusters.md) |

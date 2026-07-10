@@ -4,14 +4,15 @@ use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TryRecvError};
 use g_genotype::{ChunkStats, VariantMetadataColumns};
 use g_plan::FloatingPointDtype;
 
 use crate::backend::{
-    AssociationBackend, BackendError, GenotypeBatchInput, GenotypeBatchStatisticsView, GenotypeMatrixView,
-    HostAssociationBatch, MaterializationInput, VariantMajorDosageMatrixView, VariantMajorPacked8MatrixView,
+    AssociationBackend, GenotypeBatchInput, GenotypeBatchStatisticsView, GenotypeMatrixView, HostAssociationBatch,
+    MaterializationInput, VariantMajorDosageMatrixView, VariantMajorPacked8MatrixView,
 };
 
 const COMPUTE_WORKER_NAME: &str = "g-association-compute";
@@ -68,7 +69,7 @@ impl ScheduledAssociationBatch {
         }
     }
 
-    fn validate(&self) -> SchedulerResult<()> {
+    fn validate<BackendError>(&self) -> SchedulerResult<(), BackendError> {
         let genotype_value_count =
             self.variant_count.checked_mul(self.sample_count).ok_or_else(|| SchedulerError::InvalidBatch {
                 message: "variant and sample counts overflow the host index width".to_string(),
@@ -129,17 +130,22 @@ pub struct CompletedAssociationBatch {
     pub metadata: VariantMetadataColumns,
     pub statistics: ChunkStats,
     pub genotype_buffer: OwnedGenotypeBuffer,
+    pub active_trait_indices: Vec<usize>,
     pub result: HostAssociationBatch,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum SchedulerError {
+#[derive(Debug, thiserror::Error)]
+pub enum SchedulerError<BackendError> {
     #[error("association scheduler {queue} capacity must be positive, observed {capacity}")]
     InvalidCapacity { queue: &'static str, capacity: usize },
     #[error("invalid scheduled association batch: {message}")]
     InvalidBatch { message: String },
     #[error("association backend failed during {stage}: {source}")]
-    Backend { stage: &'static str, source: BackendError },
+    Backend {
+        stage: &'static str,
+        #[source]
+        source: BackendError,
+    },
     #[error("association scheduler {worker} worker could not start: {message}")]
     WorkerSpawn { worker: &'static str, message: String },
     #[error("association scheduler {worker} worker panicked: {message}")]
@@ -148,11 +154,13 @@ pub enum SchedulerError {
     ChannelDisconnected { queue: &'static str },
     #[error("association scheduler is closed")]
     Closed,
+    #[error("association scheduler submission must be closed before joining workers")]
+    SubmissionOpen,
     #[error("association scheduler was aborted")]
     Aborted,
 }
 
-type SchedulerResult<Value> = Result<Value, SchedulerError>;
+type SchedulerResult<Value, BackendError> = Result<Value, SchedulerError<BackendError>>;
 
 struct DeviceAssociationBatch<DeviceResult> {
     scheduled_batch: ScheduledAssociationBatch,
@@ -160,12 +168,12 @@ struct DeviceAssociationBatch<DeviceResult> {
 }
 
 #[derive(Debug)]
-struct SchedulerControl {
+struct SchedulerControl<BackendError> {
     aborted: std::sync::atomic::AtomicBool,
-    first_error: Mutex<Option<SchedulerError>>,
+    first_error: Mutex<Option<SchedulerError<BackendError>>>,
 }
 
-impl SchedulerControl {
+impl<BackendError> SchedulerControl<BackendError> {
     const fn new() -> Self {
         Self { aborted: std::sync::atomic::AtomicBool::new(false), first_error: Mutex::new(None) }
     }
@@ -178,7 +186,7 @@ impl SchedulerControl {
         self.aborted.load(std::sync::atomic::Ordering::Acquire)
     }
 
-    fn record_error(&self, error: SchedulerError) {
+    fn record_error(&self, error: SchedulerError<BackendError>) {
         {
             let mut first_error = self.first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if first_error.is_none() {
@@ -188,8 +196,8 @@ impl SchedulerControl {
         self.abort();
     }
 
-    fn error(&self) -> Option<SchedulerError> {
-        self.first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    fn take_error(&self) -> Option<SchedulerError<BackendError>> {
+        self.first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
     }
 }
 
@@ -204,7 +212,7 @@ where
     completed_receiver: Receiver<CompletedAssociationBatch>,
     compute_worker: Option<thread::JoinHandle<()>>,
     materialization_worker: Option<thread::JoinHandle<()>>,
-    control: Arc<SchedulerControl>,
+    control: Arc<SchedulerControl<Backend::Error>>,
     backend_marker: PhantomData<Backend>,
 }
 
@@ -225,13 +233,13 @@ where
         chromosome_state: Backend::ChromosomeState,
         staging_depth: usize,
         result_in_flight_limit: usize,
-    ) -> SchedulerResult<Self> {
+    ) -> SchedulerResult<Self, Backend::Error> {
         validate_capacity(DECODED_BATCH_QUEUE, staging_depth)?;
         validate_capacity(DEVICE_RESULT_QUEUE, result_in_flight_limit)?;
 
         let (decoded_sender, decoded_receiver) = crossbeam_channel::bounded(staging_depth);
         let (device_sender, device_receiver) = crossbeam_channel::bounded(result_in_flight_limit);
-        let (completed_sender, completed_receiver) = crossbeam_channel::unbounded();
+        let (completed_sender, completed_receiver) = crossbeam_channel::bounded(result_in_flight_limit);
         let control = Arc::new(SchedulerControl::new());
 
         let materialization_backend = Arc::clone(&backend);
@@ -260,13 +268,14 @@ where
             })?;
 
         let compute_control = Arc::clone(&control);
+        let compute_device_sender = device_sender.clone();
         let compute_worker = match thread::Builder::new().name(COMPUTE_WORKER_NAME.to_string()).spawn(move || {
             let worker_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_compute_worker(
                     backend.as_ref(),
                     &chromosome_state,
                     &decoded_receiver,
-                    &device_sender,
+                    &compute_device_sender,
                     &compute_control,
                 );
             }));
@@ -281,6 +290,7 @@ where
             Err(source) => {
                 control.abort();
                 drop(decoded_sender);
+                drop(device_sender);
                 let _ = materialization_worker.join();
                 return Err(SchedulerError::WorkerSpawn { worker: COMPUTE_WORKER, message: source.to_string() });
             }
@@ -302,8 +312,8 @@ where
     ///
     /// Returns an error when the batch shape is invalid, the pipeline has been
     /// closed or aborted, or a worker has failed.
-    pub fn submit(&self, batch: ScheduledAssociationBatch) -> SchedulerResult<()> {
-        batch.validate()?;
+    pub fn submit(&self, batch: ScheduledAssociationBatch) -> SchedulerResult<(), Backend::Error> {
+        batch.validate::<Backend::Error>()?;
         self.ensure_running()?;
         let sender = self.decoded_sender.as_ref().ok_or(SchedulerError::Closed)?;
         sender.send(batch).map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))
@@ -314,8 +324,8 @@ where
     /// # Errors
     ///
     /// Returns the first worker or backend error, or reports an explicit abort.
-    pub fn receive(&self) -> SchedulerResult<Option<CompletedAssociationBatch>> {
-        if let Some(error) = self.control.error() {
+    pub fn receive(&self) -> SchedulerResult<Option<CompletedAssociationBatch>, Backend::Error> {
+        if let Some(error) = self.control.take_error() {
             return Err(error);
         }
         if self.control.is_aborted() {
@@ -323,7 +333,7 @@ where
         }
         match self.completed_receiver.recv() {
             Ok(batch) => Ok(Some(batch)),
-            Err(_) => match self.control.error() {
+            Err(_) => match self.control.take_error() {
                 Some(error) => Err(error),
                 None if self.control.is_aborted() => Err(SchedulerError::Aborted),
                 None => Ok(None),
@@ -336,8 +346,8 @@ where
     /// # Errors
     ///
     /// Returns the first worker or backend error, or reports an explicit abort.
-    pub fn try_receive(&self) -> SchedulerResult<Option<CompletedAssociationBatch>> {
-        if let Some(error) = self.control.error() {
+    pub fn try_receive(&self) -> SchedulerResult<Option<CompletedAssociationBatch>, Backend::Error> {
+        if let Some(error) = self.control.take_error() {
             return Err(error);
         }
         if self.control.is_aborted() {
@@ -346,7 +356,7 @@ where
         match self.completed_receiver.try_recv() {
             Ok(batch) => Ok(Some(batch)),
             Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => match self.control.error() {
+            Err(TryRecvError::Disconnected) => match self.control.take_error() {
                 Some(error) => Err(error),
                 None if self.control.is_aborted() => Err(SchedulerError::Aborted),
                 None => Ok(None),
@@ -354,15 +364,22 @@ where
         }
     }
 
-    /// Close submission and join compute followed by materialization.
+    /// Close the decoded-batch input so queued work can complete.
+    pub fn close_submission(&mut self) {
+        self.decoded_sender.take();
+    }
+
+    /// Join compute followed by materialization after all results were drained.
     ///
     /// # Errors
     ///
     /// Returns the first worker or backend error, including a worker panic.
-    pub fn finish(&mut self) -> SchedulerResult<()> {
-        self.decoded_sender.take();
+    pub fn join(&mut self) -> SchedulerResult<(), Backend::Error> {
+        if self.decoded_sender.is_some() {
+            return Err(SchedulerError::SubmissionOpen);
+        }
         self.join_workers();
-        match self.control.error() {
+        match self.control.take_error() {
             Some(error) => Err(error),
             None => Ok(()),
         }
@@ -373,18 +390,18 @@ where
     /// # Errors
     ///
     /// Returns a worker or backend error observed before or during shutdown.
-    pub fn abort(&mut self) -> SchedulerResult<()> {
+    pub fn abort(&mut self) -> SchedulerResult<(), Backend::Error> {
         self.control.abort();
         self.decoded_sender.take();
         self.join_workers();
-        match self.control.error() {
+        match self.control.take_error() {
             Some(error) => Err(error),
             None => Ok(()),
         }
     }
 
-    fn ensure_running(&self) -> SchedulerResult<()> {
-        if let Some(error) = self.control.error() {
+    fn ensure_running(&self) -> SchedulerResult<(), Backend::Error> {
+        if let Some(error) = self.control.take_error() {
             return Err(error);
         }
         if self.control.is_aborted() {
@@ -396,8 +413,8 @@ where
         Ok(())
     }
 
-    fn current_or_channel_error(&self, queue: &'static str) -> SchedulerError {
-        self.control.error().unwrap_or(SchedulerError::ChannelDisconnected { queue })
+    fn current_or_channel_error(&self, queue: &'static str) -> SchedulerError<Backend::Error> {
+        self.control.take_error().unwrap_or(SchedulerError::ChannelDisconnected { queue })
     }
 
     fn join_workers(&mut self) {
@@ -438,7 +455,7 @@ fn run_compute_worker<Backend>(
     chromosome_state: &Backend::ChromosomeState,
     decoded_receiver: &Receiver<ScheduledAssociationBatch>,
     device_sender: &Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
-    control: &SchedulerControl,
+    control: &SchedulerControl<Backend::Error>,
 ) where
     Backend: AssociationBackend,
 {
@@ -469,7 +486,7 @@ fn run_materialization_worker<Backend>(
     backend: &Backend,
     device_receiver: &Receiver<DeviceAssociationBatch<Backend::DeviceResult>>,
     completed_sender: &Sender<CompletedAssociationBatch>,
-    control: &SchedulerControl,
+    control: &SchedulerControl<Backend::Error>,
 ) where
     Backend: AssociationBackend,
 {
@@ -496,25 +513,40 @@ fn run_materialization_worker<Backend>(
             metadata: scheduled_batch.metadata,
             statistics: scheduled_batch.statistics,
             genotype_buffer: scheduled_batch.genotype_buffer,
+            active_trait_indices: scheduled_batch.active_trait_indices,
             result,
         };
-        if completed_sender.send(completed_batch).is_err() {
-            if !control.is_aborted() {
-                control.record_error(SchedulerError::ChannelDisconnected { queue: COMPLETED_BATCH_QUEUE });
+        let mut pending_batch = completed_batch;
+        loop {
+            if control.is_aborted() {
+                return;
             }
-            break;
+            match completed_sender.send_timeout(pending_batch, Duration::from_millis(10)) {
+                Ok(()) => break,
+                Err(SendTimeoutError::Timeout(returned_batch)) => pending_batch = returned_batch,
+                Err(SendTimeoutError::Disconnected(_)) => {
+                    if !control.is_aborted() {
+                        control.record_error(SchedulerError::ChannelDisconnected { queue: COMPLETED_BATCH_QUEUE });
+                    }
+                    return;
+                }
+            }
         }
     }
 }
 
-fn validate_capacity(queue: &'static str, capacity: usize) -> SchedulerResult<()> {
+fn validate_capacity<BackendError>(queue: &'static str, capacity: usize) -> SchedulerResult<(), BackendError> {
     if capacity == 0 {
         return Err(SchedulerError::InvalidCapacity { queue, capacity });
     }
     Ok(())
 }
 
-fn validate_variant_column_length(name: &str, observed: usize, expected: usize) -> SchedulerResult<()> {
+fn validate_variant_column_length<BackendError>(
+    name: &str,
+    observed: usize,
+    expected: usize,
+) -> SchedulerResult<(), BackendError> {
     if observed != expected {
         return Err(SchedulerError::InvalidBatch {
             message: format!("{name} contains {observed} values, expected {expected}"),

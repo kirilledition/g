@@ -20,8 +20,6 @@ class engine:  # noqa: N801 - extension submodule name
         @property
         def score_dtype(self) -> str: ...
         @property
-        def firth_dtype(self) -> str: ...
-        @property
         def correction_method(self) -> str: ...
         @property
         def correction_p_threshold(self) -> float: ...
@@ -94,13 +92,7 @@ class engine:  # noqa: N801 - extension submodule name
         @property
         def covariate_matrix(self) -> typing.Any: ...
 
-    class JaxChromosomeInput:
-        @property
-        def prediction_matrix(self) -> typing.Any: ...
-
     class JaxGenotypeBatch:
-        @property
-        def variant_start_index(self) -> int: ...
         @property
         def dosage_matrix(self) -> typing.Any | None: ...
         @property
@@ -120,77 +112,10 @@ class engine:  # noqa: N801 - extension submodule name
         @property
         def output_statistic_dtype(self) -> str: ...
 
-    class JaxNullModelDiagnostics:
-        def __init__(
-            self,
-            *,
-            logistic_converged: typing.Any,
-            logistic_iteration_count: typing.Any,
-            firth_iteration_count: typing.Any | None,
-            firth_convergence_reason_code: typing.Any | None,
-        ) -> None: ...
-        @property
-        def logistic_converged(self) -> typing.Any: ...
-        @property
-        def logistic_iteration_count(self) -> typing.Any: ...
-        @property
-        def firth_iteration_count(self) -> typing.Any | None: ...
-        @property
-        def firth_convergence_reason_code(self) -> typing.Any | None: ...
-
     class JaxPreparedChromosome:
-        def __init__(self, *, state: object, diagnostics: engine.JaxNullModelDiagnostics | None) -> None: ...
-        @property
-        def state(self) -> object: ...
-        @property
-        def diagnostics(self) -> engine.JaxNullModelDiagnostics | None: ...
-
-    class JaxBinaryDiagnostics:
         def __init__(
             self,
             *,
-            score_only_count: int,
-            score_test_candidate_count: int,
-            firth_candidate_count: int,
-            firth_iteration_min: int,
-            firth_iteration_median: float,
-            firth_iteration_max: int,
-            firth_converged_count: int,
-            firth_failed_count: int,
-            firth_numerical_failure_count: int,
-            firth_max_iteration_failure_count: int,
-            firth_invalid_statistic_failure_count: int,
-            firth_step_halving_failure_count: int,
-            pseudo_firth_attempt_count: int,
-            pseudo_firth_success_count: int,
-            newton_raphson_zero_start_attempt_count: int,
-            newton_raphson_zero_start_success_count: int,
-            newton_raphson_warm_start_attempt_count: int,
-            newton_raphson_warm_start_success_count: int,
-            sparse_correction_count: int,
-            dense_correction_count: int,
+            state: object,
+            null_logistic_converged: typing.Any | None,
         ) -> None: ...
-
-    class JaxHostAssociationBatch:
-        def __init__(
-            self,
-            *,
-            beta: typing.Any,
-            standard_error: typing.Any,
-            chi_squared: typing.Any,
-            log10_p_value: typing.Any,
-            extra_code: typing.Any | None,
-            binary_diagnostics: engine.JaxBinaryDiagnostics | None,
-        ) -> None: ...
-        @property
-        def beta(self) -> typing.Any: ...
-        @property
-        def standard_error(self) -> typing.Any: ...
-        @property
-        def chi_squared(self) -> typing.Any: ...
-        @property
-        def log10_p_value(self) -> typing.Any: ...
-        @property
-        def extra_code(self) -> typing.Any | None: ...
-        @property
-        def binary_diagnostics(self) -> engine.JaxBinaryDiagnostics | None: ...

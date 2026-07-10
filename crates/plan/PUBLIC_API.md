@@ -2,17 +2,17 @@
 
 ## This crate owns
 
-Stable, serializable run-planning contracts shared by Rust crates and PyO3.
+Canonical immutable run-planning contracts and validated numeric policy shared
+by Rust crates and PyO3.
 
 ## Public types
 
-Run request/config DTOs, host-policy and prepared-plan errors, prepared-run
-plans, manifest fingerprints, association/backend enums and their string-value
-contracts, runtime/output plan DTOs.
+`RunPlan` and its input, analysis, compute, correction, output, runtime,
+diagnostic, phenotype-group, enum, and validated finite numeric components.
 
 ## Public functions
 
-Deterministic planning and identifier helpers, including prepared-run and association-backend planning.
+Deterministic phenotype grouping and output-identifier helpers.
 
 ## This crate must not expose
 

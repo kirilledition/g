@@ -1,6 +1,7 @@
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::error::OutputError;
 use crate::manifest;
@@ -11,17 +12,16 @@ use super::writer_session::OutputWriterConfig;
 
 struct OutputWriteTask {
     write_batch: RegenieStep2ChunkWriteBatch,
-    config: OutputWriterConfig,
-    worker_errors: Arc<Mutex<Vec<String>>>,
+    config: Arc<OutputWriterConfig>,
+    worker_error: Arc<Mutex<Option<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
     completion_tracker: OutputWriteCompletionTracker,
 }
 
 pub(super) struct OutputWriterPool {
-    sender: Sender<Box<OutputWriteTask>>,
-    receiver: Receiver<Box<OutputWriteTask>>,
-    worker_count: Mutex<usize>,
+    sender: Option<Sender<OutputWriteTask>>,
+    worker_handles: Vec<JoinHandle<()>>,
 }
 
 #[derive(Clone)]
@@ -34,48 +34,57 @@ struct OutputWriteCompletionGuard {
 }
 
 impl OutputWriterPool {
-    fn new() -> Self {
-        let (sender, receiver) = unbounded();
-        Self { sender, receiver, worker_count: Mutex::new(0) }
-    }
-
-    fn ensure_worker_count(&self, requested_worker_count: usize) -> Result<(), OutputError> {
-        let mut worker_count = self
-            .worker_count
-            .lock()
-            .map_err(|_| OutputError::Runtime("Rust output writer pool lock was poisoned.".to_string()))?;
-        while *worker_count < requested_worker_count {
-            let receiver_clone = self.receiver.clone();
-            std::thread::spawn(move || run_output_writer_worker(receiver_clone));
-            *worker_count += 1;
+    pub(super) fn new(worker_count: usize, queue_depth: usize) -> Result<Arc<Self>, OutputError> {
+        if worker_count == 0 {
+            return Err(OutputError::InvalidInput("Writer thread count must be at least 1.".to_string()));
         }
-        Ok(())
+        if queue_depth == 0 {
+            return Err(OutputError::InvalidInput("Writer queue depth must be at least 1.".to_string()));
+        }
+        let (sender, receiver) = bounded(queue_depth);
+        let mut worker_handles = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let receiver_clone = receiver.clone();
+            worker_handles.push(std::thread::spawn(move || run_output_writer_worker(receiver_clone)));
+        }
+        Ok(Arc::new(Self { sender: Some(sender), worker_handles }))
     }
 
     pub(super) fn enqueue_regenie_step2(
         &self,
         write_batch: RegenieStep2ChunkWriteBatch,
-        config: OutputWriterConfig,
-        worker_errors: &Arc<Mutex<Vec<String>>>,
+        config: &Arc<OutputWriterConfig>,
+        worker_error: &Arc<Mutex<Option<String>>>,
         worker_commits: &Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
         stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
         completion_tracker: &OutputWriteCompletionTracker,
-    ) -> Result<(), ()> {
-        completion_tracker.increment().map_err(|error| {
-            push_worker_error(worker_errors, error.to_string());
-        })?;
+    ) -> Result<(), OutputError> {
+        completion_tracker.increment()?;
         let write_task = OutputWriteTask {
             write_batch,
-            config,
-            worker_errors: Arc::clone(worker_errors),
+            config: Arc::clone(config),
+            worker_error: Arc::clone(worker_error),
             worker_commits: Arc::clone(worker_commits),
             stage_timings: Arc::clone(stage_timings),
             completion_tracker: completion_tracker.clone(),
         };
-        self.sender.send(Box::new(write_task)).map_err(|error| {
+        let Some(sender) = self.sender.as_ref() else {
             completion_tracker.decrement();
-            push_worker_error(worker_errors, error.to_string());
+            return Err(OutputError::Runtime("Rust output writer pool is closed.".to_string()));
+        };
+        sender.send(write_task).map_err(|error| {
+            completion_tracker.decrement();
+            OutputError::runtime(error)
         })
+    }
+}
+
+impl Drop for OutputWriterPool {
+    fn drop(&mut self) {
+        self.sender.take();
+        for worker_handle in self.worker_handles.drain(..) {
+            let _ = worker_handle.join();
+        }
     }
 }
 
@@ -98,7 +107,8 @@ impl OutputWriteCompletionTracker {
     fn decrement(&self) {
         let (pending_write_count_lock, pending_write_condvar) = &*self.inner;
         if let Ok(mut pending_write_count) = pending_write_count_lock.lock() {
-            *pending_write_count = pending_write_count.saturating_sub(1);
+            *pending_write_count =
+                pending_write_count.checked_sub(1).expect("output write completion count invariant violated");
             if *pending_write_count == 0 {
                 pending_write_condvar.notify_all();
             }
@@ -125,30 +135,18 @@ impl Drop for OutputWriteCompletionGuard {
     }
 }
 
-pub(super) fn get_output_writer_pool(worker_count: usize) -> Result<Arc<OutputWriterPool>, OutputError> {
-    if worker_count == 0 {
-        return Err(OutputError::InvalidInput("Writer thread count must be at least 1.".to_string()));
+pub(super) fn record_worker_error(worker_error: &Arc<Mutex<Option<String>>>, error: String) {
+    if let Ok(mut worker_error_guard) = worker_error.lock()
+        && worker_error_guard.is_none()
+    {
+        *worker_error_guard = Some(error);
     }
-    let pool = output_writer_pool();
-    pool.ensure_worker_count(worker_count)?;
-    Ok(pool)
-}
-
-pub(super) fn push_worker_error(worker_errors: &Arc<Mutex<Vec<String>>>, error: String) {
-    if let Ok(mut worker_errors_guard) = worker_errors.lock() {
-        worker_errors_guard.push(error);
-    }
-}
-
-fn output_writer_pool() -> Arc<OutputWriterPool> {
-    static OUTPUT_WRITER_POOL: OnceLock<Arc<OutputWriterPool>> = OnceLock::new();
-    Arc::clone(OUTPUT_WRITER_POOL.get_or_init(|| Arc::new(OutputWriterPool::new())))
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn run_output_writer_worker(receiver: Receiver<Box<OutputWriteTask>>) {
+fn run_output_writer_worker(receiver: Receiver<OutputWriteTask>) {
     while let Ok(output_write_task) = receiver.recv() {
-        run_output_write_task(*output_write_task);
+        run_output_write_task(output_write_task);
     }
 }
 
@@ -156,19 +154,17 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
     let _completion_guard =
         OutputWriteCompletionGuard { completion_tracker: output_write_task.completion_tracker.clone() };
     let write_result = write_regenie_step2_chunk_job(
-        &output_write_task.config.chunks_directory,
+        &output_write_task.config.parts_directory,
         output_write_task.write_batch,
-        output_write_task.config.output_format,
         output_write_task.config.output_statistic_dtype,
-        &output_write_task.config.arrow_compression,
-        &output_write_task.config.parquet_compression,
+        output_write_task.config.parquet_compression,
     );
     match write_result {
         Ok(write_result) => {
             if output_write_task.config.collect_stage_timings {
                 let Ok(mut stage_timings_guard) = output_write_task.stage_timings.lock() else {
-                    push_worker_error(
-                        &output_write_task.worker_errors,
+                    record_worker_error(
+                        &output_write_task.worker_error,
                         "Rust output writer stage timing lock was poisoned.".to_string(),
                     );
                     return;
@@ -176,8 +172,8 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
                 stage_timings_guard.add_writer_timing(write_result.timing);
             }
             let Ok(mut worker_commits_guard) = output_write_task.worker_commits.lock() else {
-                push_worker_error(
-                    &output_write_task.worker_errors,
+                record_worker_error(
+                    &output_write_task.worker_error,
                     "Rust output writer commit lock was poisoned.".to_string(),
                 );
                 return;
@@ -185,7 +181,7 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
             worker_commits_guard.extend(write_result.chunk_commits);
         }
         Err(error) => {
-            push_worker_error(&output_write_task.worker_errors, error.to_string());
+            record_worker_error(&output_write_task.worker_error, error.to_string());
         }
     }
 }

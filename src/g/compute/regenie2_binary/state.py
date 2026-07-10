@@ -54,9 +54,6 @@ class Regenie2BinaryChromosomeState:
         score_projection_sum: Sum of score projection columns across samples.
         full_null_deviance: Full-sample null deviance for approximate-Firth sparse corrections.
         null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
-        null_firth_iteration_count: Number of covariate-only Firth iterations.
-        null_firth_convergence_reason_code: Internal covariate-only Firth termination-reason code.
-        null_logistic_iteration_count: Number of IRLS updates used for the null logistic fit.
         null_logistic_converged: Whether the null logistic IRLS fit converged.
 
     """
@@ -77,9 +74,6 @@ class Regenie2BinaryChromosomeState:
     score_projection_sum: jax.Array
     full_null_deviance: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
-    null_firth_iteration_count: jax.Array
-    null_firth_convergence_reason_code: jax.Array
-    null_logistic_iteration_count: jax.Array
     null_logistic_converged: jax.Array
 
 
@@ -120,9 +114,6 @@ class Regenie2MultiBinaryChromosomeState:
         score_projection_sum: Per-trait score projection column sums across samples.
         full_null_deviance: Per-trait full-sample null deviance for sparse approximate-Firth corrections.
         null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
-        null_firth_iteration_count: Per-trait covariate-only Firth iteration counts.
-        null_firth_convergence_reason_code: Per-trait covariate-only Firth termination-reason codes.
-        null_logistic_iteration_count: Per-trait null IRLS iteration counts.
         null_logistic_converged: Per-trait null IRLS convergence flags.
 
     """
@@ -143,9 +134,6 @@ class Regenie2MultiBinaryChromosomeState:
     score_projection_sum: jax.Array
     full_null_deviance: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
-    null_firth_iteration_count: jax.Array
-    null_firth_convergence_reason_code: jax.Array
-    null_logistic_iteration_count: jax.Array
     null_logistic_converged: jax.Array
 
 
@@ -161,23 +149,6 @@ def build_multi_binary_state(
     return Regenie2MultiBinaryState(
         covariate_matrix=covariate_matrix_compute,
         phenotype_matrix=phenotype_matrix_compute,
-    )
-
-
-def build_binary_score_right_hand_matrix(
-    *,
-    score_projection_matrix: jax.Array,
-    bernoulli_weight: jax.Array,
-    score_residual: jax.Array,
-) -> jax.Array:
-    """Build the score-kernel right-hand matrix for one binary trait."""
-    return jnp.concatenate(
-        [
-            score_projection_matrix,
-            bernoulli_weight[None, :],
-            score_residual[None, :],
-        ],
-        axis=0,
     )
 
 
@@ -267,11 +238,6 @@ def build_binary_chromosome_state(
         null_firth_result = regenie2_binary_firth_types.NullFirthFitResult(
             coefficients=null_firth_coefficients,
             penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float64),
-            iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            convergence_reason_code=jnp.asarray(
-                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                dtype=jnp.int32,
-            ),
             converged=jnp.asarray(1, dtype=jnp.bool_),
         )
     else:
@@ -285,10 +251,13 @@ def build_binary_chromosome_state(
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
             loco_offset_compute, dtype=jnp.float64
         )
-    score_right_hand_matrix = build_binary_score_right_hand_matrix(
-        score_projection_matrix=score_projection_matrix,
-        bernoulli_weight=bernoulli_variance,
-        score_residual=score_residual,
+    score_right_hand_matrix = jnp.concatenate(
+        [
+            score_projection_matrix,
+            bernoulli_variance[None, :],
+            score_residual[None, :],
+        ],
+        axis=0,
     )
     full_null_deviance = compute_full_null_deviance(state.phenotype_vector, null_firth_offset)
     return Regenie2BinaryChromosomeState(
@@ -308,9 +277,6 @@ def build_binary_chromosome_state(
         score_projection_sum=jnp.sum(score_projection_matrix, axis=1),
         full_null_deviance=full_null_deviance,
         null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
-        null_firth_iteration_count=null_firth_result.iteration_count,
-        null_firth_convergence_reason_code=null_firth_result.convergence_reason_code,
-        null_logistic_iteration_count=null_logistic_fit_state.iteration_count,
         null_logistic_converged=null_logistic_fit_state.converged,
     )
 
@@ -358,8 +324,5 @@ def build_multi_binary_chromosome_state(
         score_projection_sum=chromosome_states.score_projection_sum,
         full_null_deviance=chromosome_states.full_null_deviance,
         null_firth_penalized_log_likelihood=chromosome_states.null_firth_penalized_log_likelihood,
-        null_firth_iteration_count=chromosome_states.null_firth_iteration_count,
-        null_firth_convergence_reason_code=chromosome_states.null_firth_convergence_reason_code,
-        null_logistic_iteration_count=chromosome_states.null_logistic_iteration_count,
         null_logistic_converged=chromosome_states.null_logistic_converged,
     )

@@ -4,19 +4,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::{Map, Value, json};
-
-use crate::error::{OutputError, OutputResult};
-use crate::resume;
-use crate::writer::OutputFileFormat;
+use serde_json::{Map, Value};
 
 use super::chunks::{RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit};
 use super::{RUN_MANIFEST_FILE_NAME, chunks, validation};
+use crate::error::{OutputError, OutputResult};
+use crate::resume;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputRunPaths {
     pub run_directory: PathBuf,
-    pub chunks_directory: PathBuf,
+    pub parts_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,57 +23,29 @@ pub struct PreparedOutputRun {
     pub existing_manifest_json: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OutputResumeMode {
-    Fast,
-    Strict,
-}
-
-impl OutputResumeMode {
-    pub fn parse(resume_mode: &str) -> Result<Self, OutputError> {
-        match resume_mode {
-            "fast" => Ok(Self::Fast),
-            "strict" => Ok(Self::Strict),
-            unsupported_resume_mode => Err(OutputError::InvalidInput(format!(
-                "Resume mode must be 'fast' or 'strict', observed '{unsupported_resume_mode}'."
-            ))),
-        }
-    }
-}
-
 #[must_use]
-fn resolve_output_run_paths(
-    output_root: &Path,
-    association_mode: &str,
-    output_format: OutputFileFormat,
-) -> OutputRunPaths {
+fn resolve_output_run_paths(output_root: &Path, association_mode: &str) -> OutputRunPaths {
     let run_directory = if output_root.extension().is_some_and(|extension| extension == "run") {
         output_root.to_path_buf()
     } else {
         PathBuf::from(format!("{}.{}.run", output_root.display(), association_mode))
     };
-    let output_directory_name = match output_format {
-        OutputFileFormat::Arrow => "chunks",
-        OutputFileFormat::Parquet => "parts",
-        OutputFileFormat::Regenie => "regenie",
-    };
-    OutputRunPaths { chunks_directory: run_directory.join(output_directory_name), run_directory }
+    OutputRunPaths { parts_directory: run_directory.join("parts"), run_directory }
 }
 
 pub fn prepare_output_run(
     output_root: &Path,
     association_mode: &str,
-    output_format: OutputFileFormat,
     resume: bool,
 ) -> Result<PreparedOutputRun, OutputError> {
-    let output_run_paths = resolve_output_run_paths(output_root, association_mode, output_format);
+    let output_run_paths = resolve_output_run_paths(output_root, association_mode);
     if !resume && directory_exists_and_is_non_empty(&output_run_paths.run_directory)? {
         return Err(OutputError::InvalidInput(format!(
             "Output run directory '{}' already exists and is not empty. Enable [output].resume or choose a new output path.",
             output_run_paths.run_directory.display()
         )));
     }
-    std::fs::create_dir_all(&output_run_paths.chunks_directory).map_err(OutputError::runtime)?;
+    std::fs::create_dir_all(&output_run_paths.parts_directory).map_err(OutputError::runtime)?;
     let existing_manifest_json = load_run_manifest_json(&output_run_paths.run_directory)?;
     if resume && existing_manifest_json.is_none() {
         return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
@@ -93,6 +63,27 @@ pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<Stri
     Ok(Some(manifest_json))
 }
 
+pub(crate) fn read_run_manifest_gpu_genotype_format_from_text(
+    manifest_json: &str,
+) -> Result<g_plan::GpuGenotypeFormat, OutputError> {
+    let manifest = parse_run_manifest_text(manifest_json, None)?;
+    let genotype_format = manifest
+        .pointer("/execution_plan/association_backend/genotype_format")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            OutputError::InvalidInput(
+                "Run manifest execution_plan.association_backend.genotype_format is missing.".to_string(),
+            )
+        })?;
+    match genotype_format {
+        "dosage" => Ok(g_plan::GpuGenotypeFormat::Dosage),
+        "packed8" => Ok(g_plan::GpuGenotypeFormat::Packed8),
+        unsupported_format => Err(OutputError::InvalidInput(format!(
+            "Run manifest has unsupported execution-plan GPU genotype format '{unsupported_format}'."
+        ))),
+    }
+}
+
 pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtime: Value) -> Result<(), OutputError> {
     upsert_run_manifest(run_directory, |manifest| {
         let manifest_object = manifest
@@ -104,51 +95,49 @@ pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtim
     })
 }
 
-fn validate_run_manifest_compatibility(manifest_json: &str, current_header_json: &str) -> Result<(), OutputError> {
+fn validate_run_manifest_compatibility(manifest_json: &str, current_header: &Value) -> Result<(), OutputError> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
-    let current_header = parse_current_header_text(current_header_json)?;
-    validation::validate_manifest_compatibility_values(&manifest, &current_header)
+    validation::validate_manifest_compatibility_values(&manifest, current_header)
 }
 
 pub fn validate_output_run_resume_compatibility(
-    chunks_directory: &Path,
+    parts_directory: &Path,
     manifest_json: &str,
-    current_header_json: &str,
-    resume_mode: OutputResumeMode,
+    current_header: &Value,
+    resume_mode: g_plan::ResumeMode,
 ) -> Result<(), OutputError> {
-    validate_run_manifest_compatibility(manifest_json, current_header_json)?;
-    if resume_mode == OutputResumeMode::Strict {
-        resume::repair_strict_manifest_chunk_commits(chunks_directory, manifest_json)?;
+    validate_run_manifest_compatibility(manifest_json, current_header)?;
+    if resume_mode == g_plan::ResumeMode::Strict {
+        resume::repair_strict_manifest_chunk_commits(parts_directory, manifest_json)?;
     }
     Ok(())
 }
 
 pub fn initialize_output_run(
     run_directory: &Path,
-    chunks_directory: &Path,
+    parts_directory: &Path,
     existing_manifest_json: Option<&str>,
-    current_header_json: &str,
+    current_header: &Value,
     resume: bool,
-    resume_mode: OutputResumeMode,
+    resume_mode: g_plan::ResumeMode,
 ) -> Result<Vec<i64>, OutputError> {
-    let current_header = parse_current_header_text(current_header_json)?;
     let (mut manifest, committed_chunks, committed_chunk_identifiers) = if let Some(existing_manifest_text) =
         existing_manifest_json
     {
         let existing_manifest = parse_run_manifest_text(existing_manifest_text, None)?;
-        validation::validate_manifest_compatibility_values(&existing_manifest, &current_header)?;
+        validation::validate_manifest_compatibility_values(&existing_manifest, current_header)?;
         let manifest_committed_chunks = read_run_manifest_committed_chunks(&existing_manifest)?;
         let _validated_committed_chunk_identifiers = read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
         if resume {
             match resume_mode {
-                OutputResumeMode::Fast => {
+                g_plan::ResumeMode::Fast => {
                     let committed_chunk_identifiers =
                         read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
                     (existing_manifest, manifest_committed_chunks, committed_chunk_identifiers)
                 }
-                OutputResumeMode::Strict => {
+                g_plan::ResumeMode::Strict => {
                     let repaired_commits =
-                        resume::repair_strict_manifest_chunk_commits(chunks_directory, existing_manifest_text)?;
+                        resume::repair_strict_manifest_chunk_commits(parts_directory, existing_manifest_text)?;
                     let committed_chunk_identifiers =
                         repaired_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect();
                     let committed_chunks = repaired_commits.iter().map(chunk_commit_to_value).collect::<Vec<_>>();
@@ -165,20 +154,15 @@ pub fn initialize_output_run(
         let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
         (manifest, Vec::new(), Vec::new())
     };
-    merge_manifest_header(&mut manifest, &current_header)?;
+    merge_manifest_header(&mut manifest, current_header)?;
     let manifest_object = manifest
         .as_object_mut()
         .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
     manifest_object.insert("committed_chunks".to_string(), Value::Array(committed_chunks));
-    manifest_object.entry("finalized".to_string()).or_insert(Value::Bool(false));
+    manifest_object.insert("status".to_string(), Value::String("running".to_string()));
+    manifest_object.remove("interrupted_signal");
     write_run_manifest_value(run_directory, &manifest)?;
     Ok(committed_chunk_identifiers)
-}
-
-pub(crate) fn read_run_manifest_chunk_commits(run_directory: &Path) -> OutputResult<Vec<RunManifestChunkCommit>> {
-    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
-    read_run_manifest_chunk_commits_from_text(&manifest_text)
 }
 
 pub(crate) fn read_run_manifest_chunk_commits_from_text(
@@ -230,46 +214,12 @@ pub(crate) fn record_run_manifest_chunk_commits(
     })
 }
 
-pub(crate) fn mark_run_manifest_finalized_output(
-    final_output_path: &Path,
-    row_count: i64,
-    chunk_file_count: i64,
-    output_format: &str,
-) -> OutputResult<()> {
-    if row_count < 0 || chunk_file_count < 0 {
-        return Err(OutputError::InvalidInput(
-            "Final output row and chunk-file counts must be non-negative.".to_string(),
-        ));
-    }
-    let Some(run_directory) = final_output_path.parent() else {
-        return Ok(());
-    };
+pub(crate) fn mark_run_manifest_completed(run_directory: &Path) -> OutputResult<()> {
     update_run_manifest(run_directory, |manifest| {
         let manifest_object = manifest
             .as_object_mut()
             .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-        manifest_object.insert("finalized".to_string(), Value::Bool(true));
-        manifest_object.insert("final_output".to_string(), Value::String(final_output_path.display().to_string()));
-        manifest_object.insert("final_output_format".to_string(), Value::String(output_format.to_string()));
-        match output_format {
-            "parquet" => {
-                manifest_object
-                    .insert("final_parquet".to_string(), Value::String(final_output_path.display().to_string()));
-                manifest_object.remove("final_regenie");
-            }
-            "regenie" => {
-                manifest_object
-                    .insert("final_regenie".to_string(), Value::String(final_output_path.display().to_string()));
-                manifest_object.remove("final_parquet");
-            }
-            _ => {
-                manifest_object.remove("final_parquet");
-                manifest_object.remove("final_regenie");
-            }
-        }
-        manifest_object.insert("final_row_count".to_string(), json!(row_count));
-        manifest_object.insert("final_chunk_file_count".to_string(), json!(chunk_file_count));
-        manifest_object.remove("interrupted");
+        manifest_object.insert("status".to_string(), Value::String("completed".to_string()));
         manifest_object.remove("interrupted_signal");
         Ok(())
     })
@@ -280,15 +230,8 @@ pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &
         let manifest_object = manifest
             .as_object_mut()
             .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-        manifest_object.insert("finalized".to_string(), Value::Bool(false));
-        manifest_object.insert("interrupted".to_string(), Value::Bool(true));
+        manifest_object.insert("status".to_string(), Value::String("interrupted".to_string()));
         manifest_object.insert("interrupted_signal".to_string(), Value::String(signal_name.to_string()));
-        manifest_object.remove("final_parquet");
-        manifest_object.remove("final_regenie");
-        manifest_object.remove("final_output");
-        manifest_object.remove("final_output_format");
-        manifest_object.remove("final_row_count");
-        manifest_object.remove("final_chunk_file_count");
         Ok(())
     })
 }
@@ -323,15 +266,6 @@ fn parse_run_manifest_text(manifest_json: &str, manifest_path: Option<&Path>) ->
         None => "Run manifest must contain a JSON object.".to_string(),
     };
     Err(OutputError::InvalidInput(message))
-}
-
-fn parse_current_header_text(current_header_json: &str) -> Result<Value, OutputError> {
-    let current_header = serde_json::from_str::<Value>(current_header_json)
-        .map_err(|error| OutputError::InvalidInput(error.to_string()))?;
-    if current_header.is_object() {
-        return Ok(current_header);
-    }
-    Err(OutputError::InvalidInput("Current run manifest header must contain a JSON object.".to_string()))
 }
 
 fn read_run_manifest_committed_chunks(manifest: &Value) -> Result<Vec<Value>, OutputError> {

@@ -5,10 +5,9 @@ use g_runtime as native_runtime;
 
 pub(crate) mod jax_runtime;
 pub(crate) mod runtime_state;
-pub(crate) mod timing;
 
 pub(crate) use crate::binding::errors;
-pub(crate) use crate::binding::telemetry::{logging, run_events, session as telemetry_session};
+pub(crate) use crate::binding::telemetry::{logging, run_events};
 pub(crate) use runtime_state::configure_cli_process_runtime;
 
 pyo3::create_exception!(g, NativeSigtermRequested, PyException);

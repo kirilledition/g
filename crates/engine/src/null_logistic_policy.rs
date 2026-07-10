@@ -10,17 +10,6 @@ pub enum NullLogisticNonconvergenceAction {
     Fail,
 }
 
-impl NullLogisticNonconvergenceAction {
-    #[must_use]
-    pub const fn as_value(self) -> &'static str {
-        match self {
-            Self::Continue => "continue",
-            Self::Warn => "warn",
-            Self::Fail => "fail",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NullLogisticNonconvergencePlan {
     pub action: NullLogisticNonconvergenceAction,

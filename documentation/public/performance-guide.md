@@ -5,7 +5,7 @@
 | Pre-release draft; guidance, not a benchmark guarantee | main branch as of 2026-07-01 CPU and GPU Step 2 runs | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
-decode cost, host-device transfer, JAX compilation, output format, storage, and
+decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
 cluster placement. Treat numbers from one machine as local evidence, not a
 portable guarantee.
 
@@ -32,7 +32,7 @@ portable guarantee.
 | GPU visible but little speedup | Single phenotype, small chunks, BGEN decode, host-device transfer, or output may dominate. |
 | First run slow but repeated work faster | JAX backend initialization and compilation are likely visible. |
 | Approximate Firth much slower than binary score test | Candidate density from `--pThresh` and Firth solver work dominate. |
-| Output stage slow | Storage throughput, writer threads, queue depth, output format, compression, and finalization. |
+| Output stage slow | Storage throughput, writer threads, queue depth, part grouping, and Parquet compression. |
 | Resume startup slow | Manifest validation mode and strict chunk reconciliation. |
 
 ## Cold, Warm, And Hot Runs
@@ -61,10 +61,10 @@ Use the current packaged defaults first. Override only with measurements.
 | `[compute] result_in_flight_limit` | Device results allowed ahead of host materialization. |
 | `[compute] bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
 | `[compute] gpu_genotype_format` | Host-to-device representation; `auto` upgrades eligible single-trait binary GPU runs to packed8. |
-| `[output] format` | Arrow, Parquet, or REGENIE text materialization. |
 | `[output] writer_threads` | Output writer worker count. |
 | `[output] writer_queue_depth` | Output writer queue depth. |
-| `[output] chunks_per_arrow_file` | Engine chunks grouped into each output part. |
+| `[output] chunks_per_parquet_file` | Engine chunks grouped into each Parquet part. |
+| `[output] parquet_compression` | Parquet compression, `none` or `zstd`. |
 | `[compute] firth_batch_size` | Approximate-Firth candidate batch size. |
 | `[compute] firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
 | `[compute] jax_persistent_cache`, `jax_cache_dir` | JAX compilation cache behavior. |
@@ -92,7 +92,6 @@ login node and pass the scheduler CPU count to `--threads`.
 
 ```bash
 uv run --no-sync g regenie \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --phenoFile /path/to/phenotypes.tsv \
@@ -130,16 +129,12 @@ As a practical rule of thumb:
 If speed is the only concern, test both modes on a small representative subset
 before changing production scripts.
 
-## Output Choices
+## Parquet Output
 
-| Format | Use when |
-| --- | --- |
-| `parquet` | You want dataset parts and efficient downstream analytics. |
-| `arrow` | You want Arrow IPC chunks for inspection or intermediate workflows. |
-| `regenie` | You need REGENIE Step 2-style text compatibility. |
-
-Finalizing a single `final.parquet` adds work after chunk output. Keep
-`[output] finalize_parquet = false` when the parts dataset is sufficient.
+Each phenotype run writes a `parts/` Parquet dataset. Tune writer threads,
+queue depth, part grouping, and compression against the target filesystem.
+Larger `chunks_per_parquet_file` values reduce file counts but delay each file
+commit and increase the amount of work repeated after an interruption.
 
 ## Measuring
 

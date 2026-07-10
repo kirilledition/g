@@ -14,20 +14,9 @@ pub struct ChunkSpec {
 pub struct ChunkStats {
     pub allele_one_frequency: Vec<f32>,
     pub observation_count: Vec<i32>,
-    pub has_missing_values: bool,
     pub dosage_sum: Arc<[f32]>,
-    pub dosage_square_sum: Vec<f32>,
     pub imputed_dosage_square_sum: Vec<f32>,
-    pub dosage_variance_numerator: Vec<f32>,
     pub info_score: Vec<Option<f32>>,
-    pub allele_count: Arc<[f32]>,
-    pub minor_allele_count: Vec<f32>,
-    pub zero_count: Vec<i32>,
-    pub nonzero_count: Vec<i32>,
-    pub homozygous_reference_count: Vec<i32>,
-    pub heterozygous_count: Vec<i32>,
-    pub homozygous_alternate_count: Vec<i32>,
-    pub is_sparse_candidate: Vec<bool>,
     pub is_rare_sparse_firth_candidate: Vec<bool>,
 }
 

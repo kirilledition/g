@@ -2,200 +2,88 @@ use std::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 
-use super::types::{AlignedSampleData, MultiAlignedSampleData, ResolvedPhenotypeComputeGroup, SampleKeyMode};
+use super::types::{AlignedPhenotypeGroupDraft, PhenotypeGroupLoadRequest};
 
-const GROUP_MODE_COMPLETE_CASE: &str = "complete-case";
-const GROUP_MODE_PER_PHENOTYPE_COMPATIBLE: &str = "per-phenotype-compatible";
-const GROUP_MODE_SINGLE_PHENOTYPE: &str = "single-phenotype";
-const SAMPLE_MODE_COMPLETE_CASE: &str = "complete-case";
-const SAMPLE_MODE_PER_PHENOTYPE: &str = "per-phenotype";
-
-#[must_use]
-pub fn resolve_single_phenotype_compute_group(
-    aligned_sample_data: &AlignedSampleData,
-    phenotype_name: String,
-    prediction_list_path: Option<&str>,
-    sample_key_mode: SampleKeyMode,
-) -> ResolvedPhenotypeComputeGroup {
-    let phenotype_names = vec![phenotype_name];
-    build_resolved_compute_group(
-        GROUP_MODE_SINGLE_PHENOTYPE,
-        vec![0],
-        phenotype_names,
-        SAMPLE_MODE_PER_PHENOTYPE,
-        aligned_sample_data,
-        prediction_list_path,
-        sample_key_mode,
-    )
-}
-
-#[must_use]
-pub fn resolve_per_phenotype_compute_group(
-    aligned_sample_data: &MultiAlignedSampleData,
-    phenotype_indices: Vec<usize>,
-    phenotype_names: Vec<String>,
-    prediction_list_path: Option<&str>,
-    sample_key_mode: SampleKeyMode,
-) -> ResolvedPhenotypeComputeGroup {
-    build_resolved_compute_group(
-        GROUP_MODE_PER_PHENOTYPE_COMPATIBLE,
+pub(super) fn build_phenotype_compute_group(
+    request: &PhenotypeGroupLoadRequest,
+    draft: &AlignedPhenotypeGroupDraft,
+    family_identifiers: &[&str],
+    individual_identifiers: &[&str],
+) -> Result<g_plan::PhenotypeComputeGroup, String> {
+    let phenotype_indices = draft
+        .phenotype_indices
+        .iter()
+        .map(|phenotype_index| {
+            u32::try_from(*phenotype_index).map_err(|_| "Phenotype index exceeds the supported u32 range.".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let phenotype_names = draft
+        .phenotype_indices
+        .iter()
+        .map(|phenotype_index| request.phenotype_names[*phenotype_index].clone())
+        .collect::<Vec<_>>();
+    let group_mode = if request.phenotype_names.len() == 1 {
+        g_plan::PhenotypeComputeGroupMode::SinglePhenotype
+    } else if request.sample_mode == g_plan::MultiPhenotypeSampleMode::CompleteCase {
+        g_plan::PhenotypeComputeGroupMode::CompleteCase
+    } else {
+        g_plan::PhenotypeComputeGroupMode::PerPhenotypeCompatible
+    };
+    let sample_mode = if request.phenotype_names.len() == 1 {
+        g_plan::MultiPhenotypeSampleMode::PerPhenotype
+    } else {
+        request.sample_mode
+    };
+    let sample_set_fingerprint =
+        fingerprint_sample_set(&draft.sample_indices, family_identifiers, individual_identifiers)?;
+    let covariate_design_fingerprint =
+        fingerprint_covariate_design(&draft.covariate_names, draft.sample_indices.len(), &draft.covariate_values);
+    let prediction_alignment_fingerprint = fingerprint_prediction_alignment(
+        &request.prediction_list_path,
+        request.sample_key_mode,
+        &sample_set_fingerprint,
+        &phenotype_names,
+    );
+    Ok(g_plan::PhenotypeComputeGroup {
+        group_mode,
         phenotype_indices,
         phenotype_names,
-        SAMPLE_MODE_PER_PHENOTYPE,
-        aligned_sample_data,
-        prediction_list_path,
-        sample_key_mode,
-    )
+        sample_mode,
+        sample_set_fingerprint: Some(sample_set_fingerprint),
+        covariate_design_fingerprint: Some(covariate_design_fingerprint),
+        prediction_alignment_fingerprint: Some(prediction_alignment_fingerprint),
+    })
 }
 
-#[must_use]
-pub fn resolve_complete_case_compute_group(
-    aligned_sample_data: &MultiAlignedSampleData,
-    phenotype_indices: Vec<usize>,
-    phenotype_names: Vec<String>,
-    prediction_list_path: Option<&str>,
-    sample_key_mode: SampleKeyMode,
-) -> ResolvedPhenotypeComputeGroup {
-    build_resolved_compute_group(
-        GROUP_MODE_COMPLETE_CASE,
-        phenotype_indices,
-        phenotype_names,
-        SAMPLE_MODE_COMPLETE_CASE,
-        aligned_sample_data,
-        prediction_list_path,
-        sample_key_mode,
-    )
-}
-
-fn build_resolved_compute_group(
-    group_mode: &str,
-    phenotype_indices: Vec<usize>,
-    phenotype_names: Vec<String>,
-    sample_mode: &str,
-    aligned_sample_data: &impl FingerprintAlignedSampleData,
-    prediction_list_path: Option<&str>,
-    sample_key_mode: SampleKeyMode,
-) -> ResolvedPhenotypeComputeGroup {
-    let sample_set_fingerprint = fingerprint_sample_set(aligned_sample_data);
-    let prediction_alignment_fingerprint = prediction_list_path
-        .map(|path| fingerprint_prediction_alignment(path, sample_key_mode, &sample_set_fingerprint, &phenotype_names));
-    ResolvedPhenotypeComputeGroup {
-        group_mode: group_mode.to_string(),
-        phenotype_indices,
-        phenotype_names,
-        sample_mode: sample_mode.to_string(),
-        sample_set_fingerprint,
-        covariate_design_fingerprint: fingerprint_covariate_design(aligned_sample_data),
-        prediction_alignment_fingerprint,
-    }
-}
-
-trait FingerprintAlignedSampleData {
-    fn sample_indices(&self) -> &[usize];
-
-    fn family_identifiers(&self) -> &[String];
-
-    fn individual_identifiers(&self) -> &[String];
-
-    fn covariate_names(&self) -> &[String];
-
-    fn covariate_matrix_values(&self) -> &[f32];
-
-    fn covariate_row_count(&self) -> usize;
-
-    fn covariate_column_count(&self) -> usize;
-}
-
-impl FingerprintAlignedSampleData for AlignedSampleData {
-    fn sample_indices(&self) -> &[usize] {
-        &self.sample_indices
-    }
-
-    fn family_identifiers(&self) -> &[String] {
-        &self.family_identifiers
-    }
-
-    fn individual_identifiers(&self) -> &[String] {
-        &self.individual_identifiers
-    }
-
-    fn covariate_names(&self) -> &[String] {
-        &self.covariate_names
-    }
-
-    fn covariate_matrix_values(&self) -> &[f32] {
-        &self.covariate_matrix_values
-    }
-
-    fn covariate_row_count(&self) -> usize {
-        self.covariate_row_count
-    }
-
-    fn covariate_column_count(&self) -> usize {
-        self.covariate_column_count
-    }
-}
-
-impl FingerprintAlignedSampleData for MultiAlignedSampleData {
-    fn sample_indices(&self) -> &[usize] {
-        &self.sample_indices
-    }
-
-    fn family_identifiers(&self) -> &[String] {
-        &self.family_identifiers
-    }
-
-    fn individual_identifiers(&self) -> &[String] {
-        &self.individual_identifiers
-    }
-
-    fn covariate_names(&self) -> &[String] {
-        &self.covariate_names
-    }
-
-    fn covariate_matrix_values(&self) -> &[f32] {
-        &self.covariate_matrix_values
-    }
-
-    fn covariate_row_count(&self) -> usize {
-        self.covariate_row_count
-    }
-
-    fn covariate_column_count(&self) -> usize {
-        self.covariate_column_count
-    }
-}
-
-fn fingerprint_sample_set(aligned_sample_data: &impl FingerprintAlignedSampleData) -> String {
+fn fingerprint_sample_set(
+    sample_indices: &[usize],
+    family_identifiers: &[&str],
+    individual_identifiers: &[&str],
+) -> Result<String, String> {
     let mut fingerprint_hash = Sha256::new();
     update_fingerprint(&mut fingerprint_hash, "sample-set-v1");
-    update_usize_as_i64_array_fingerprint(
-        &mut fingerprint_hash,
-        "int64",
-        &[aligned_sample_data.sample_indices().len()],
-        aligned_sample_data.sample_indices(),
-    );
-    update_string_sequence_fingerprint(&mut fingerprint_hash, aligned_sample_data.family_identifiers());
-    update_string_sequence_fingerprint(&mut fingerprint_hash, aligned_sample_data.individual_identifiers());
-    finalize_sha256_hex(fingerprint_hash)
+    update_usize_as_i64_array_fingerprint(&mut fingerprint_hash, "int64", &[sample_indices.len()], sample_indices)?;
+    update_str_sequence_fingerprint(&mut fingerprint_hash, family_identifiers);
+    update_str_sequence_fingerprint(&mut fingerprint_hash, individual_identifiers);
+    Ok(finalize_sha256_hex(fingerprint_hash))
 }
 
-fn fingerprint_covariate_design(aligned_sample_data: &impl FingerprintAlignedSampleData) -> String {
+fn fingerprint_covariate_design(covariate_names: &[String], sample_count: usize, covariate_values: &[f32]) -> String {
     let mut fingerprint_hash = Sha256::new();
     update_fingerprint(&mut fingerprint_hash, "covariate-design-v1");
-    update_string_sequence_fingerprint(&mut fingerprint_hash, aligned_sample_data.covariate_names());
+    update_string_sequence_fingerprint(&mut fingerprint_hash, covariate_names);
     update_f32_array_fingerprint(
         &mut fingerprint_hash,
         "float32",
-        &[aligned_sample_data.covariate_row_count(), aligned_sample_data.covariate_column_count()],
-        aligned_sample_data.covariate_matrix_values(),
+        &[sample_count, covariate_names.len()],
+        covariate_values,
     );
     finalize_sha256_hex(fingerprint_hash)
 }
 
 fn fingerprint_prediction_alignment(
     prediction_list_path: &str,
-    sample_key_mode: SampleKeyMode,
+    sample_key_mode: g_plan::SampleKeyMode,
     sample_set_fingerprint: &str,
     phenotype_names: &[String],
 ) -> String {
@@ -222,13 +110,15 @@ fn update_usize_as_i64_array_fingerprint(
     dtype_name: &str,
     shape: &[usize],
     values: &[usize],
-) {
+) -> Result<(), String> {
     update_fingerprint(fingerprint_hash, dtype_name);
     update_fingerprint(fingerprint_hash, &python_shape_repr(shape));
     for value in values {
-        let schema_value = i64::try_from(*value).expect("sample index must fit into int64 fingerprint schema");
+        let schema_value =
+            i64::try_from(*value).map_err(|_| "Sample index exceeds the fingerprint schema i64 range.".to_string())?;
         fingerprint_hash.update(schema_value.to_ne_bytes());
     }
+    Ok(())
 }
 
 fn update_f32_array_fingerprint(fingerprint_hash: &mut Sha256, dtype_name: &str, shape: &[usize], values: &[f32]) {
@@ -240,6 +130,13 @@ fn update_f32_array_fingerprint(fingerprint_hash: &mut Sha256, dtype_name: &str,
 }
 
 fn update_string_sequence_fingerprint(fingerprint_hash: &mut Sha256, values: &[String]) {
+    update_fingerprint(fingerprint_hash, &values.len().to_string());
+    for value in values {
+        update_fingerprint(fingerprint_hash, value);
+    }
+}
+
+fn update_str_sequence_fingerprint(fingerprint_hash: &mut Sha256, values: &[&str]) {
     update_fingerprint(fingerprint_hash, &values.len().to_string());
     for value in values {
         update_fingerprint(fingerprint_hash, value);

@@ -6,7 +6,7 @@ compile_error!("g requires a 64-bit target.");
 mod api;
 mod enums;
 mod host_policy;
-mod prepared;
+mod numeric;
 mod request;
 
 pub use api::*;

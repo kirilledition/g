@@ -3,12 +3,13 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use g_plan::SampleKeyMode;
+
 use super::keys::{SampleKey, build_sample_key, duplicate_table_sample_key_error};
-use super::types::{SampleAlignmentError, SampleKeyMode};
 
 const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
 
-type SampleAlignmentResult<T> = Result<T, SampleAlignmentError>;
+type SampleAlignmentResult<T> = Result<T, String>;
 
 struct TabularColumnSelection {
     family_identifier_value_index: Option<usize>,
@@ -34,11 +35,6 @@ struct StreamingTabularReader<R: Read> {
     current_line_number: usize,
 }
 
-pub(super) struct SinglePhenotypeTable {
-    pub(super) phenotype_values: Vec<f32>,
-    pub(super) phenotype_mask: Vec<bool>,
-}
-
 pub(super) struct MultiPhenotypeTable {
     pub(super) phenotype_values: Vec<f32>,
     pub(super) phenotype_masks: Vec<bool>,
@@ -51,62 +47,6 @@ pub(super) struct CovariateTable {
     pub(super) covariate_values: Vec<f32>,
     pub(super) covariate_mask: Vec<bool>,
     pub(super) selected_covariate_count: usize,
-}
-
-pub(super) fn read_single_phenotype_table(
-    phenotype_path: &Path,
-    phenotype_name: &str,
-    is_binary_trait: bool,
-    sample_key_mode: SampleKeyMode,
-    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
-    sample_count: usize,
-) -> SampleAlignmentResult<SinglePhenotypeTable> {
-    let mut reader = open_tabular_reader(phenotype_path, "phenotype table", b'\t')?;
-    let headers = read_tabular_header(&mut reader, phenotype_path)?;
-    let phenotype_path_text = phenotype_path.display().to_string();
-    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
-        Some(required_column_index(&headers, "FID", &phenotype_path_text)?)
-    } else {
-        None
-    };
-    let individual_identifier_index = required_column_index(&headers, "IID", &phenotype_path_text)?;
-    let phenotype_index = required_column_index(&headers, phenotype_name, &phenotype_path_text)?;
-    let phenotype_column_definition =
-        [TabularColumnDefinition { column_name: phenotype_name, column_index: phenotype_index }];
-    let selection =
-        TabularColumnSelection::new(family_identifier_index, individual_identifier_index, &phenotype_column_definition);
-    let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
-    let mut phenotype_values = vec![0.0; sample_count];
-    let mut phenotype_mask = vec![false; sample_count];
-    while let Some(record) = reader.read_next_record()? {
-        selection.validate_record(&reader, &record)?;
-        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
-        if individual_identifier.is_empty() {
-            continue;
-        }
-        let family_identifier = selection
-            .family_identifier_value_index
-            .map_or("", |value_index| selection.record_value(&record, value_index));
-        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
-        if !observed_sample_keys.insert(sample_key.clone()) {
-            return Err(SampleAlignmentError::new(duplicate_table_sample_key_error(
-                "phenotype table",
-                sample_key_mode,
-                family_identifier,
-                individual_identifier,
-            )));
-        }
-        let phenotype_value = selection.record_value(&record, selection.data_value_indices[0]);
-        if is_tabular_null_value(phenotype_value) {
-            continue;
-        }
-        if let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) {
-            phenotype_values[*sample_array_index] =
-                parse_phenotype_value(phenotype_value, phenotype_name, is_binary_trait)?;
-            phenotype_mask[*sample_array_index] = true;
-        }
-    }
-    Ok(SinglePhenotypeTable { phenotype_values, phenotype_mask })
 }
 
 pub(super) fn read_multi_phenotype_table(
@@ -158,12 +98,12 @@ pub(super) fn read_multi_phenotype_table(
             .map_or("", |value_index| selection.record_value(&record, value_index));
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
-            return Err(SampleAlignmentError::new(duplicate_table_sample_key_error(
+            return Err(duplicate_table_sample_key_error(
                 "phenotype table",
                 sample_key_mode,
                 family_identifier,
                 individual_identifier,
-            )));
+            ));
         }
         let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
             continue;
@@ -200,7 +140,7 @@ pub(super) fn load_covariate_table(
         );
     }
     if covariate_names.is_some() {
-        return Err(SampleAlignmentError::new("Covariate names cannot be provided without a covariate table."));
+        return Err("Covariate names cannot be provided without a covariate table.".to_string());
     }
     Ok(empty_covariate_table(sample_count))
 }
@@ -230,9 +170,8 @@ fn open_tabular_reader(
     source_label: &'static str,
     delimiter: u8,
 ) -> SampleAlignmentResult<StreamingTabularReader<File>> {
-    let table_file = File::open(table_path).map_err(|error| {
-        SampleAlignmentError::new(format!("Failed to read {source_label} '{}': {error}.", table_path.display()))
-    })?;
+    let table_file = File::open(table_path)
+        .map_err(|error| format!("Failed to read {source_label} '{}': {error}.", table_path.display()))?;
     Ok(StreamingTabularReader::new(table_path.display().to_string(), source_label, table_file, delimiter))
 }
 
@@ -240,17 +179,12 @@ fn read_tabular_header<R: Read>(
     reader: &mut StreamingTabularReader<R>,
     table_path: &Path,
 ) -> SampleAlignmentResult<Vec<String>> {
-    let headers = record_to_strings(&reader.read_required_record(format!(
-        "{} '{}' is empty.",
-        reader.display_source_label(),
-        table_path.display()
-    ))?);
+    let header_record = reader
+        .read_next_record()?
+        .ok_or_else(|| format!("{} '{}' is empty.", reader.display_source_label(), table_path.display()))?;
+    let headers = header_record.iter().map(ToString::to_string).collect::<Vec<_>>();
     if headers.is_empty() {
-        return Err(SampleAlignmentError::new(format!(
-            "{} '{}' must contain a header row.",
-            reader.display_source_label(),
-            table_path.display()
-        )));
+        return Err(format!("{} '{}' must contain a header row.", reader.display_source_label(), table_path.display()));
     }
     Ok(headers)
 }
@@ -266,19 +200,13 @@ impl<R: Read> StreamingTabularReader<R> {
         Self { path_text, source_label, reader, current_line_number: 0 }
     }
 
-    fn read_required_record(&mut self, empty_error_message: String) -> SampleAlignmentResult<csv::StringRecord> {
-        self.read_next_record()?.ok_or_else(|| SampleAlignmentError::new(empty_error_message))
-    }
-
     fn read_next_record(&mut self) -> SampleAlignmentResult<Option<csv::StringRecord>> {
         let mut record = csv::StringRecord::new();
         loop {
-            let has_record = self.reader.read_record(&mut record).map_err(|error| {
-                SampleAlignmentError::new(format!(
-                    "Failed to read {} '{}': {error}.",
-                    self.source_label, self.path_text
-                ))
-            })?;
+            let has_record = self
+                .reader
+                .read_record(&mut record)
+                .map_err(|error| format!("Failed to read {} '{}': {error}.", self.source_label, self.path_text))?;
             if !has_record {
                 return Ok(None);
             }
@@ -319,16 +247,12 @@ fn is_empty_tabular_record(record: &csv::StringRecord) -> bool {
     record.iter().all(str::is_empty)
 }
 
-fn record_to_strings(record: &csv::StringRecord) -> Vec<String> {
-    record.iter().map(ToString::to_string).collect()
-}
-
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> SampleAlignmentResult<usize> {
     column_index(headers, column_name).ok_or_else(|| {
         if column_name == "FID" || column_name == "IID" {
-            SampleAlignmentError::new(format!("Identifier column '{column_name}' was not found in {table_path}."))
+            format!("Identifier column '{column_name}' was not found in {table_path}.")
         } else {
-            SampleAlignmentError::new(format!("Phenotype column '{column_name}' was not found in {table_path}."))
+            format!("Phenotype column '{column_name}' was not found in {table_path}.")
         }
     })
 }
@@ -368,7 +292,7 @@ impl TabularColumnSelection {
     ) -> SampleAlignmentResult<()> {
         for selected_column in &self.selected_columns {
             if selected_column.column_index >= record.len() {
-                return Err(SampleAlignmentError::new(reader.missing_selected_column_error(selected_column, record)));
+                return Err(reader.missing_selected_column_error(selected_column, record));
             }
         }
         Ok(())
@@ -408,9 +332,7 @@ fn select_covariate_names(
                 .cloned()
                 .collect();
             if !missing_covariates.is_empty() {
-                return Err(SampleAlignmentError::new(format!(
-                    "Covariate columns are missing from {covariate_path}: {missing_covariates:?}."
-                )));
+                return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}."));
             }
             Ok(covariate_names.to_vec())
         }
@@ -421,9 +343,7 @@ fn select_covariate_names(
                 .cloned()
                 .collect();
             if inferred_covariate_names.is_empty() {
-                return Err(SampleAlignmentError::new(
-                    "Covariate table must contain at least one non-identifier column.",
-                ));
+                return Err("Covariate table must contain at least one non-identifier column.".to_string());
             }
             Ok(inferred_covariate_names)
         }
@@ -452,7 +372,7 @@ fn read_covariate_table(
         .iter()
         .map(|covariate_name| {
             column_index(&headers, covariate_name)
-                .ok_or_else(|| SampleAlignmentError::new(format!("Covariate column '{covariate_name}' was not found.")))
+                .ok_or_else(|| format!("Covariate column '{covariate_name}' was not found."))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let covariate_column_definitions = selected_covariate_names
@@ -483,12 +403,12 @@ fn read_covariate_table(
             .map_or("", |value_index| selection.record_value(&record, value_index));
         let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key.clone()) {
-            return Err(SampleAlignmentError::new(duplicate_table_sample_key_error(
+            return Err(duplicate_table_sample_key_error(
                 "covariate table",
                 sample_key_mode,
                 family_identifier,
                 individual_identifier,
-            )));
+            ));
         }
         let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
             continue;
@@ -528,9 +448,7 @@ fn parse_phenotype_value(
     is_binary_trait: bool,
 ) -> SampleAlignmentResult<f32> {
     let parsed_value = phenotype_value.parse::<f32>().map_err(|error| {
-        SampleAlignmentError::new(format!(
-            "Failed to parse phenotype column '{phenotype_name}' value '{phenotype_value}': {error}."
-        ))
+        format!("Failed to parse phenotype column '{phenotype_name}' value '{phenotype_value}': {error}.")
     })?;
     if !is_binary_trait {
         return Ok(parsed_value);
@@ -541,13 +459,11 @@ fn parse_phenotype_value(
     if parsed_value == 2.0 {
         return Ok(1.0);
     }
-    Err(SampleAlignmentError::new(format!(
-        "Binary phenotype must contain only values 1 and 2, found value {parsed_value}."
-    )))
+    Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}."))
 }
 
 fn parse_covariate_value(covariate_value: &str) -> SampleAlignmentResult<f32> {
-    covariate_value.parse::<f32>().map_err(|error| {
-        SampleAlignmentError::new(format!("Failed to parse covariate value '{covariate_value}': {error}."))
-    })
+    covariate_value
+        .parse::<f32>()
+        .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))
 }

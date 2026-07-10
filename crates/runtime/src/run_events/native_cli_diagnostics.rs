@@ -108,7 +108,7 @@ impl BoundedCliOutputPayload {
         let preview = output_text.chars().take(preview_character_count).collect::<String>();
         let preview_count = i64::try_from(preview.chars().count()).unwrap_or(i64::MAX);
         let truncated = character_count > preview_count;
-        let omitted_character_count = truncated.then_some(character_count.saturating_sub(preview_count));
+        let omitted_character_count = truncated.then_some(character_count - preview_count);
         Self {
             character_count,
             byte_count: i64::try_from(output_text.len()).unwrap_or(i64::MAX),

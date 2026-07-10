@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
-use super::domain::{DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, RegenieTraitTypeValue};
+use g_plan as plan;
+
 use super::resolved::RegenieConfigData;
 use super::{ConfigError, ConfigResult};
 
@@ -10,20 +11,9 @@ use super::{ConfigError, ConfigResult};
 ///
 /// Returns an error when required inputs are missing or options conflict semantically.
 pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_trait_config(config)?;
     validate_required_input_config(config)?;
     validate_compute_config(config)?;
     validate_binary_config(config)?;
-    Ok(())
-}
-
-fn validate_trait_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.trait_config.step == 1 {
-        return Err(ConfigError::new("--step 1 is recognized, but g currently supports REGENIE Step 2 only."));
-    }
-    if config.trait_config.step != 2 {
-        return Err(ConfigError::new("g regenie requires --step 2."));
-    }
     Ok(())
 }
 
@@ -48,24 +38,25 @@ fn validate_required_input_config(config: &RegenieConfigData) -> ConfigResult<()
 }
 
 fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.g_compute.gpu_genotype_format == GpuGenotypeFormatValue::Packed8
-        && config.g_compute.device != DeviceValue::Gpu
+    if config.g_compute.gpu_genotype_format == plan::GpuGenotypeFormat::Packed8
+        && config.g_compute.device != plan::Device::Gpu
     {
         return Err(ConfigError::new("--gpu_genotype_format=packed8 requires --device=gpu."));
     }
-    if config.g_compute.firth_dtype != FloatingPointDtypeValue::Float64 {
-        return Err(ConfigError::new("--firth_dtype currently supports float64 only."));
+    if config.g_compute.score_dtype == plan::FloatingPointDtype::Float32
+        && config.g_output.output_statistic_dtype == plan::FloatingPointDtype::Float64
+    {
+        return Err(ConfigError::new(
+            "output_statistic_dtype cannot be wider than score_dtype; use float32 output or float64 score computation.",
+        ));
     }
     validate_quantitative_binary_config(config)?;
     Ok(())
 }
 
 fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.binary.firth && !config.binary.approx {
-        return Err(ConfigError::new("Exact --firth is not implemented yet. Use --firth --approx."));
-    }
-    if config.binary.approx && !config.binary.firth {
-        return Err(ConfigError::new("--approx requires --firth."));
+    if config.binary.firth_se && config.binary.fallback_method != plan::BinaryFallbackMethod::FirthApproximate {
+        return Err(ConfigError::new("--firth-se requires --binary-fallback=firth_approximate."));
     }
     Ok(())
 }
@@ -86,15 +77,12 @@ fn validate_unique_phenotype_names(phenotype_names: &[String]) -> ConfigResult<(
 }
 
 fn validate_quantitative_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    if config.trait_config.trait_type != RegenieTraitTypeValue::Quantitative {
+    if config.trait_config.trait_type != plan::RegenieTraitType::Quantitative {
         return Ok(());
     }
     let mut binary_only_option_names = Vec::new();
-    if config.provenance.binary.firth {
-        binary_only_option_names.push("firth");
-    }
-    if config.provenance.binary.approx {
-        binary_only_option_names.push("approx");
+    if config.provenance.binary.fallback_method {
+        binary_only_option_names.push("binary-fallback");
     }
     if config.provenance.binary.firth_se {
         binary_only_option_names.push("firth-se");

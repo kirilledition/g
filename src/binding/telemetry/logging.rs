@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use g_runtime as native_logging_sink;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::errors;
@@ -15,39 +15,6 @@ use super::errors;
 const PYTHON_LOGGING_TARGET: &str = "g.python";
 
 static PYTHON_LOGGING_INSTALLED: AtomicBool = AtomicBool::new(false);
-
-pub(crate) struct LoggingShutdownGuard;
-
-impl Drop for LoggingShutdownGuard {
-    fn drop(&mut self) {
-        let _ = native_logging_sink::shutdown_logging_sinks();
-    }
-}
-
-pub fn emit_diagnostic_event(level: &str, event: &str, message: &str, fields_json: Option<String>) -> PyResult<()> {
-    let fields_json = fields_json.unwrap_or_else(|| "{}".to_string());
-    match level {
-        "error" => {
-            tracing::error!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
-        }
-        "warn" | "warning" => {
-            tracing::warn!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
-        }
-        "info" => {
-            tracing::info!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
-        }
-        "debug" => {
-            tracing::debug!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
-        }
-        "trace" => {
-            tracing::trace!(target: "g.python.diagnostic", g_event = event, g_fields = %fields_json, "{}", message);
-        }
-        other_level => {
-            return Err(PyValueError::new_err(format!("Unsupported diagnostic event level: {other_level}")));
-        }
-    }
-    Ok(())
-}
 
 #[expect(
     clippy::too_many_arguments,

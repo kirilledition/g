@@ -19,11 +19,11 @@ Supported statistical modes:
 
 | Mode | User options | What the row means |
 | --- | --- | --- |
-| Quantitative | `--step 2 --qt` | Linear additive effect of `ALLELE1` dosage after covariate and LOCO adjustment. |
-| Binary score | `--step 2 --bt` | Logistic score test for additive `ALLELE1` dosage at the null model. |
-| Binary approximate Firth | `--step 2 --bt --firth --approx` | Score test for all variants, then approximate Firth correction for variants passing `--pThresh`. |
+| Quantitative | `--qt` | Linear additive effect of `ALLELE1` dosage after covariate and LOCO adjustment. |
+| Binary score | `--bt` | Logistic score test for additive `ALLELE1` dosage at the null model. |
+| Binary approximate Firth | `--bt --binary-fallback firth_approximate` | Score test for all variants, then approximate Firth correction for variants passing `--pThresh`. |
 
-Unsupported REGENIE behavior should fail clearly. For example, `--bed`, `--pgen`, categorical covariates, `--spa`, and exact Firth without `--approx` are not silently ignored.
+Unsupported REGENIE behavior should fail clearly. For example, `--bed`, `--pgen`, categorical covariates, `--spa`, and exact Firth are not silently ignored.
 
 > Approximate Firth labels are correction diagnostics. They do not imply exact Firth support.
 
@@ -189,7 +189,7 @@ Numerical policy:
 
 ## Binary approximate Firth fallback
 
-For `--bt --firth --approx`, every variant first receives the score test. Then `g` chooses correction candidates:
+For `--bt --binary-fallback firth_approximate`, every variant first receives the score test. Then `g` chooses correction candidates:
 
 ```text
 score p-value < pThreshold
@@ -238,7 +238,6 @@ Failed correction candidates have:
 ```text
 CORRECTION_METHOD = firth_approximate
 CORRECTION_STATUS = failed
-EXTRA = TEST_FAIL
 ```
 
 `--firth-se` affects only the reported `SE` for successful Firth rows. It does not change candidate selection, the Firth fit, `BETA`, `CHISQ`, or `LOG10P`.[^firth-se]
@@ -290,15 +289,15 @@ Multiple phenotypes can be requested with repeated `--phenoCol` or with `--pheno
 | `--pred` | Supplies chromosome-specific Step 1 predictions or offsets. |
 | `--sample`, `[compute] sample_key_mode` | Changes sample identity resolution and alignment. |
 | `[compute] multi_phenotype_sample_mode` | Changes whether phenotypes use independent or shared complete-case samples. |
-| `--firth --approx` | Replaces selected binary score rows with approximate Firth rows. |
+| `--binary-fallback firth_approximate` | Replaces selected binary score rows with approximate Firth rows. |
 | `--pThresh` | Changes which score-test rows become Firth candidates. |
 | `--firth-se` | Changes reported `SE` for successful Firth rows only. |
 | `[compute] score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `[output] output_statistic_dtype`. |
 
-Runtime options such as `--bsize`, `--threads`, `[compute] device`, `[output]
-format`, resume, and telemetry/logging settings should not intentionally change
-scientific conclusions. If they change results beyond normal floating-point
-tolerance, treat that as a reproducibility bug.
+Runtime options such as `--bsize`, `--threads`, `[compute] device`, resume, and
+telemetry/logging settings should not intentionally change scientific
+conclusions. If they change results beyond normal floating-point tolerance,
+treat that as a reproducibility bug.
 
 ## Trust And Parity Status
 
@@ -311,13 +310,14 @@ behavior changes that require targeted parity review.
 Known intentional scope limits:
 
 - REGENIE Step 1 is not implemented.
-- Exact Firth without `--approx` is not implemented.
+- Exact Firth is not implemented.
 - SPA fallback is not implemented.
 - BGEN 1.2 is the supported genotype source.
 
-Implementation choices such as chunk size, device, writer format, and telemetry
-mode are operational. They should not change the mathematical contract, except
-for ordinary floating-point tolerance and explicitly documented dtype choices.
+Implementation choices such as chunk size, device, Parquet writer settings, and
+telemetry mode are operational. They should not change the mathematical
+contract, except for ordinary floating-point tolerance and explicitly
+documented dtype choices.
 
 ## Reading output rows
 
@@ -328,16 +328,12 @@ for ordinary floating-point tolerance and explicitly documented dtype choices.
 | `A1FREQ` | Observed allele-one frequency after sample alignment. |
 | `INFO` | Observed dosage INFO score. |
 | `N` | Observed genotype count after sample alignment. |
-| `TEST` | Currently `ADD` for the additive dosage test. |
 | `BETA` | Additive allele-one effect estimate for the selected mode. |
 | `SE` | Standard error for `BETA`. |
 | `CHISQ` | One-degree-of-freedom chi-squared statistic. |
 | `LOG10P` | Negative base-ten logarithm of the chi-squared tail probability. |
-| `EXTRA` | Null/`NA` for ordinary successful rows; `TEST_FAIL` when the statistic or correction failed. |
 | `CORRECTION_METHOD` | Diagnostic method label: `score` or `firth_approximate`. SPA labels are reserved for future support. |
 | `CORRECTION_STATUS` | Diagnostic status label: `success` or `failed`. |
-
-`EXTRA` stays sparse for REGENIE-style parsing. Prefer `CORRECTION_METHOD` and `CORRECTION_STATUS` when deciding which statistical path produced a row.
 
 ## Operational expectations
 

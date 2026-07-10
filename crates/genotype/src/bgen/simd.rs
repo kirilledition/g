@@ -249,7 +249,7 @@ fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
 ) {
     let (probability_pairs, _) = packed_probability_bytes[start_sample_index * 2..].as_chunks::<2>();
     for (relative_sample_index, [homozygous_reference_probability_byte, heterozygous_probability_byte]) in
-        probability_pairs.iter().copied().take(output_values.len().saturating_sub(start_sample_index)).enumerate()
+        probability_pairs.iter().copied().take(output_values.len() - start_sample_index).enumerate()
     {
         let output_index = start_sample_index + relative_sample_index;
         let raw_dosage_integer =

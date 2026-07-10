@@ -14,7 +14,7 @@ use super::probability::{
     PackedProbabilityReader, read_exact_bytes, read_probability_block, read_u8_at, read_u16_at, read_u32_at,
     u32_to_usize,
 };
-use crate::buffer::raw_pointer::OutputBufferAddress;
+use crate::buffer::OutputBufferAddress;
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::bgen) fn decode_variant_dosage_tile_into_row_major_matrix(

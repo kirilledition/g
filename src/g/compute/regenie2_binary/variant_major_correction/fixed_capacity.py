@@ -21,7 +21,7 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    result: regenie2_binary_result.Regenie2MultiBinaryChunkResult,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     candidate_mask: jax.Array,
     fallback_count: jax.Array,
@@ -31,7 +31,7 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     sparse_candidate_mask: jax.Array | None,
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply device-resident multi-trait Firth corrections with a fixed candidate capacity."""
     firth_batch_size = min(kernel_config.firth_candidate.batch_size, candidate_capacity)
     prepared_batch = regenie2_binary_firth_batch_prepare.prepare_multi_firth_candidate_batch(
@@ -49,13 +49,12 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     )
     firth_result = regenie2_binary_firth_batch_compute.compute_firth_multi_variantwise_fixed_batches(
         covariate_matrix=chromosome_state.covariate_matrix,
-        null_logistic_coefficients=prepared_batch.candidate_inputs.null_logistic_coefficients,
         null_firth_offset_matrix=prepared_batch.candidate_inputs.null_firth_offset_matrix,
         phenotype_matrix=prepared_batch.candidate_inputs.phenotype_matrix,
         genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
         raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
         loco_offset_matrix=prepared_batch.candidate_inputs.loco_offset_matrix,
-        initial_coefficients=prepared_batch.initial_coefficients,
+        initial_coefficients=prepared_batch.candidate_inputs.initial_coefficients,
         active_mask=prepared_batch.candidate_inputs.flat_active_mask,
         sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
         fallback_count=fallback_count,
@@ -82,7 +81,7 @@ def apply_firth_multi_packed8_fixed_capacity_corrections(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
-    result: regenie2_binary_result.Regenie2MultiBinaryChunkResult,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     candidate_mask: jax.Array,
     fallback_count: jax.Array,
@@ -93,7 +92,7 @@ def apply_firth_multi_packed8_fixed_capacity_corrections(
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply multi-trait Firth corrections by decoding only packed8 candidate rows."""
     firth_batch_size = min(kernel_config.firth_candidate.batch_size, candidate_capacity)
     prepared_batch = regenie2_binary_firth_batch_prepare.prepare_multi_firth_candidate_batch_from_packed8(
@@ -112,13 +111,12 @@ def apply_firth_multi_packed8_fixed_capacity_corrections(
     )
     firth_result = regenie2_binary_firth_batch_compute.compute_firth_multi_variantwise_fixed_batches(
         covariate_matrix=chromosome_state.covariate_matrix,
-        null_logistic_coefficients=prepared_batch.candidate_inputs.null_logistic_coefficients,
         null_firth_offset_matrix=prepared_batch.candidate_inputs.null_firth_offset_matrix,
         phenotype_matrix=prepared_batch.candidate_inputs.phenotype_matrix,
         genotype_matrix_by_variant=prepared_batch.candidate_inputs.genotype_matrix_by_variant,
         raw_genotype_matrix_by_variant=prepared_batch.candidate_inputs.raw_genotype_matrix_by_variant,
         loco_offset_matrix=prepared_batch.candidate_inputs.loco_offset_matrix,
-        initial_coefficients=prepared_batch.initial_coefficients,
+        initial_coefficients=prepared_batch.candidate_inputs.initial_coefficients,
         active_mask=prepared_batch.candidate_inputs.flat_active_mask,
         sparse_correction_mask=prepared_batch.candidate_inputs.sparse_correction_mask,
         fallback_count=fallback_count,

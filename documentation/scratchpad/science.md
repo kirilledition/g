@@ -11,7 +11,7 @@ Binary Step 2 has 2 null models:
 
 Default `--bt --firth --approx` = scalar approximate Firth, not full covariate-plus-genotype Firth.
 
-Successful correction internal. REGENIE final `EXTRA`: null for score/Firth/SPA success; `TEST_FAIL` for failed correction.
+Internal correction codes distinguish score success/failure from approximate-Firth success/failure.
 
 ### Binary Score Test
 

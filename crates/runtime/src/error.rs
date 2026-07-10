@@ -24,32 +24,3 @@ impl fmt::Display for RuntimeCompatibilityError {
 }
 
 impl Error for RuntimeCompatibilityError {}
-
-#[derive(Debug)]
-pub enum RuntimeError {
-    Compatibility(RuntimeCompatibilityError),
-}
-
-impl From<RuntimeCompatibilityError> for RuntimeError {
-    fn from(error: RuntimeCompatibilityError) -> Self {
-        Self::Compatibility(error)
-    }
-}
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Compatibility(error) => error.fmt(formatter),
-        }
-    }
-}
-
-impl Error for RuntimeError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Compatibility(error) => Some(error),
-        }
-    }
-}
-
-pub type RuntimeResult<T> = Result<T, RuntimeError>;

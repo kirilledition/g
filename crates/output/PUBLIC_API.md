@@ -2,20 +2,20 @@
 
 ## This crate owns
 
-Output run preparation, manifest compatibility, resume validation, chunk writing, and finalization.
+Output run preparation, manifest compatibility, resume validation, and chunked Parquet writing.
 
 ## Public types
 
-Output writer session, native chunk handle/stats, variant metadata columns, output run
-path/preparation payloads, output format, resume mode, and `OutputError`/`OutputResult`.
-The current manifest-header input, file fingerprints/cache, and typed statistic
-slice bundle are root exports for engine and native binding adapters.
+`OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, output writer
+sessions, native chunk metadata/statistics, typed manifest preparation inputs
+and fingerprints, and `OutputError`. Resume mode, compression, and statistic
+dtype use the canonical `g-plan` types directly.
 
 ## Public functions
 
-Prepare/init output runs, validate manifest and resume compatibility, write chunks through sessions,
-create/finish session batches, extend run manifests, and build cached manifest
-headers. Finalization is owned by `OutputWriterSession::finish`.
+Open and initialize output runs through `OutputManager`, select delivery state,
+write trait-major chunks, and complete, interrupt, or abort the owned writer
+sessions. Manifest construction and resume validation remain internal details.
 
 ## This crate must not expose
 
@@ -24,10 +24,11 @@ telemetry sinks, PyO3 classes, or public administrative submodules.
 
 ## Performance constraints
 
-Write chunk batches through handles and array views. Do not serialize Rust crate-to-crate hot-path data through JSON except manifest edges.
+Write chunk batches through handles and array views. Do not serialize Rust
+crate-to-crate data through JSON; JSON exists only inside manifest persistence.
 Persisted row and chunk counts use checked signed 64-bit arithmetic because the
 manifest contract is JSON integer based; overflow must fail before mutation.
 
 ## Allowed downstream users
 
-`g-engine` and root PyO3 facade.
+`g-engine`.

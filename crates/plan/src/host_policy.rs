@@ -3,70 +3,22 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt;
 use std::fmt::Write as _;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::enums::{BinaryFallbackMethod, MultiPhenotypeSampleMode, PhenotypeComputeGroupMode};
-use crate::request::{CorrectionPlan, PhenotypeComputeGroup};
+use crate::enums::{MultiPhenotypeSampleMode, PhenotypeComputeGroupMode};
+use crate::request::PhenotypeComputeGroup;
 
 const PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH: usize = 80;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum HostPolicyError {
-    NotImplemented(String),
-    Value(String),
-}
-
-impl fmt::Display for HostPolicyError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotImplemented(message) | Self::Value(message) => formatter.write_str(message),
-        }
-    }
-}
-
-impl Error for HostPolicyError {}
-
-#[allow(clippy::fn_params_excessive_bools)]
-pub fn normalize_binary_correction(
-    firth: bool,
-    approx: bool,
-    spa: bool,
-    p_threshold: f64,
-    firth_se: bool,
-) -> Result<CorrectionPlan, HostPolicyError> {
-    if !(p_threshold > 0.0 && p_threshold < 1.0) {
-        return Err(HostPolicyError::Value("pThresh must be in (0, 1).".to_string()));
-    }
-    if spa {
-        return Err(HostPolicyError::NotImplemented(
-            "SPA fallback is not implemented yet. Omit --spa for score-test-only output.".to_string(),
-        ));
-    }
-    if approx && !firth {
-        return Err(HostPolicyError::Value("--approx requires --firth.".to_string()));
-    }
-    if firth && approx {
-        return Ok(CorrectionPlan { method: BinaryFallbackMethod::FirthApproximate, p_threshold, firth_se });
-    }
-    if firth {
-        return Err(HostPolicyError::NotImplemented(
-            "Exact REGENIE --firth without --approx is not implemented yet. Use --firth --approx.".to_string(),
-        ));
-    }
-    Ok(CorrectionPlan { method: BinaryFallbackMethod::ScoreOnly, p_threshold, firth_se: false })
-}
 
 pub fn build_phenotype_compute_groups(
     phenotype_names: &[String],
     multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
-) -> Result<Vec<PhenotypeComputeGroup>, HostPolicyError> {
+) -> Result<Vec<PhenotypeComputeGroup>, String> {
     if phenotype_names.is_empty() {
-        return Err(HostPolicyError::Value("At least one phenotype is required for execution planning.".to_string()));
+        return Err("At least one phenotype is required for execution planning.".to_string());
     }
     if phenotype_names.len() == 1 {
         return Ok(vec![PhenotypeComputeGroup {
@@ -81,8 +33,7 @@ pub fn build_phenotype_compute_groups(
     }
     let phenotype_indices = (0..phenotype_names.len())
         .map(|phenotype_index| {
-            u32::try_from(phenotype_index)
-                .map_err(|_| HostPolicyError::Value("Phenotype count exceeds native u32 capacity.".to_string()))
+            u32::try_from(phenotype_index).map_err(|_| "Phenotype count exceeds native u32 capacity.".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
     if multi_phenotype_sample_mode == MultiPhenotypeSampleMode::CompleteCase {
@@ -103,9 +54,8 @@ pub fn build_phenotype_compute_groups(
             Ok(PhenotypeComputeGroup {
                 group_mode: PhenotypeComputeGroupMode::PerPhenotypeCompatible,
                 phenotype_indices: vec![
-                    u32::try_from(phenotype_index).map_err(|_| {
-                        HostPolicyError::Value("Phenotype count exceeds native u32 capacity.".to_string())
-                    })?,
+                    u32::try_from(phenotype_index)
+                        .map_err(|_| "Phenotype count exceeds native u32 capacity.".to_string())?,
                 ],
                 phenotype_names: vec![phenotype_name.clone()],
                 sample_mode: MultiPhenotypeSampleMode::PerPhenotype,

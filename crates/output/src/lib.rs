@@ -6,7 +6,7 @@ compile_error!("g requires a 64-bit target.");
 mod api;
 mod chunk;
 mod error;
-mod finalization;
+mod manager;
 mod manifest;
 mod resume;
 mod schema;
@@ -16,4 +16,3 @@ mod write_plan;
 mod writer;
 
 pub use api::*;
-pub(crate) use schema::OutputStatisticDtype;

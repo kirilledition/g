@@ -1,8 +1,9 @@
 use std::num::NonZeroU32;
 
 use clap::{ArgAction, Args, Parser};
+use g_plan as plan;
 
-use super::super::domain::{NameList, Probability};
+use super::super::domain::NameList;
 use super::super::overlay::ConfigLayer;
 use super::super::{ConfigError, ConfigResult};
 
@@ -39,8 +40,6 @@ pub(crate) struct RegenieCli {
 
 #[derive(Clone, Debug, Args)]
 pub(crate) struct TraitCli {
-    #[arg(long = "step", help_heading = "Trait")]
-    pub(crate) step: Option<u8>,
     #[arg(long = "qt", action = ArgAction::SetTrue, help_heading = "Trait")]
     pub(crate) qt: bool,
     #[arg(long = "bt", action = ArgAction::SetTrue, help_heading = "Trait")]
@@ -75,12 +74,10 @@ pub(crate) struct InputCli {
 
 #[derive(Clone, Debug, Args)]
 pub(crate) struct BinaryCli {
-    #[arg(long = "firth", action = ArgAction::SetTrue, help_heading = "Binary")]
-    pub(crate) firth: bool,
-    #[arg(long = "approx", action = ArgAction::SetTrue, help_heading = "Binary")]
-    pub(crate) approx: bool,
+    #[arg(long = "binary-fallback", help_heading = "Binary")]
+    pub(crate) fallback_method: Option<plan::BinaryFallbackMethod>,
     #[arg(long = "pThresh", help_heading = "Binary")]
-    pub(crate) p_threshold: Option<Probability>,
+    pub(crate) p_threshold: Option<plan::Probability>,
     #[arg(long = "firth-se", action = ArgAction::SetTrue, help_heading = "Binary")]
     pub(crate) firth_se: bool,
 }

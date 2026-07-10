@@ -6,16 +6,27 @@ use crate::error::InputResult;
 
 mod alignment;
 mod cache;
-mod chromosome;
 mod error;
 mod list;
 mod loco;
 mod source;
 
 pub use error::PredictionError;
-pub use source::{ChromosomePredictionMatrix, MultiPredictionSource, PredictionSource};
+pub use source::ChromosomePredictionMatrix;
+pub(crate) use source::{PredictionSource, PredictionSourceLoader};
 
 use list::{find_prediction_list_entry, parse_prediction_list_file};
+
+#[must_use]
+fn normalize_chromosome(chromosome: &str) -> String {
+    let normalized = chromosome.to_ascii_lowercase();
+    let without_prefix = normalized.strip_prefix("chr").unwrap_or(&normalized);
+    if without_prefix.chars().all(|character| character.is_ascii_digit()) {
+        without_prefix.parse::<u64>().map_or_else(|_| without_prefix.to_string(), |value| value.to_string())
+    } else {
+        without_prefix.to_string()
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct PredictionLocoPath {

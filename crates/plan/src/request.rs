@@ -1,29 +1,30 @@
-//! Canonical requested-run planning contracts.
+//! Canonical run-planning contracts.
 
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    ArrowCompression, AssociationMode, BinaryFallbackMethod, Device, FloatingPointDtype, GpuGenotypeFormat,
-    JaxMatmulPrecision, MultiPhenotypeSampleMode, OutputFormat, ParquetCompression, PhenotypeComputeGroupMode,
-    RegenieTraitType, ResumeMode, SampleKeyMode, TrustedBgenValidationMode,
+    AssociationMode, BinaryFallbackMethod, Device, FloatingPointDtype, GpuGenotypeFormat, JaxMatmulPrecision,
+    MultiPhenotypeSampleMode, NullLogisticNonconvergencePolicy, ParquetCompression, PhenotypeComputeGroupMode,
+    RegenieTraitType, ResumeMode, SampleKeyMode, TelemetryMode, TrustedBgenValidationMode,
 };
+use crate::numeric::{DosageThreshold, PositiveF64, Probability, ProbabilityFloor, StepScale};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct RunRequest {
+pub struct RunPlan {
     pub association_mode: AssociationMode,
-    pub input: InputRequest,
-    pub trait_request: TraitRequest,
-    pub compute: ComputeRequest,
+    pub input: InputPlan,
+    pub analysis: AnalysisPlan,
+    pub compute: ComputePlan,
     pub correction: CorrectionPlan,
-    pub output: OutputWriterPlan,
+    pub output: OutputPlan,
     pub runtime: RuntimePlan,
+    pub diagnostics: DiagnosticsPlan,
     pub phenotype_runs: Vec<PhenotypeRunPlan>,
     pub phenotype_compute_groups: Vec<PhenotypeComputeGroup>,
-    pub stage_timings_json: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct InputRequest {
+pub struct InputPlan {
     pub bgen_path: String,
     pub sample_path: Option<String>,
     pub phenotype_path: String,
@@ -34,14 +35,14 @@ pub struct InputRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct TraitRequest {
+pub struct AnalysisPlan {
     pub trait_type: RegenieTraitType,
     pub chunk_size: u32,
     pub thread_count: Option<u32>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct ComputeRequest {
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ComputePlan {
     pub device: Device,
     pub staging_depth: u32,
     pub result_in_flight_limit: Option<u32>,
@@ -52,29 +53,81 @@ pub struct ComputeRequest {
     pub trusted_bgen_validation_mode: TrustedBgenValidationMode,
     pub multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
     pub score_dtype: FloatingPointDtype,
-    pub firth_dtype: FloatingPointDtype,
+    pub kernels: KernelPlan,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct KernelPlan {
+    pub linear: LinearKernelPlan,
+    pub binary_null: BinaryNullKernelPlan,
+    pub firth: FirthKernelPlan,
+    pub null_firth: NullFirthKernelPlan,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LinearKernelPlan {
+    pub minimum_variance: PositiveF64,
+    pub relative_variance_tolerance: PositiveF64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct BinaryNullKernelPlan {
+    pub maximum_iterations: u32,
+    pub coefficient_tolerance: PositiveF64,
+    pub nonconvergence_policy: NullLogisticNonconvergencePolicy,
+    pub minimum_probability: ProbabilityFloor,
+    pub minimum_variance: PositiveF64,
+    pub relative_variance_tolerance: PositiveF64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct FirthKernelPlan {
+    pub batch_size: u32,
+    pub candidate_capacity: u32,
+    pub maximum_iterations: u32,
+    pub gradient_tolerance: PositiveF64,
+    pub coefficient_tolerance: PositiveF64,
+    pub likelihood_tolerance: PositiveF64,
+    pub maximum_step_size: PositiveF64,
+    pub pseudo_maximum_iterations: u32,
+    pub pseudo_inner_maximum_iterations: u32,
+    pub newton_raphson_zero_start_iterations: u32,
+    pub line_search_maximum_attempts: u32,
+    pub step_halving_maximum_attempts: u32,
+    pub initial_response_scale: PositiveF64,
+    pub sparse_carrier_dosage_threshold: DosageThreshold,
+    pub step_halving_scale: StepScale,
+    pub use_block_math: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct NullFirthKernelPlan {
+    pub maximum_iterations: u32,
+    pub gradient_tolerance: PositiveF64,
+    pub maximum_step_size: PositiveF64,
+    pub fallback_iteration_multiplier: u32,
+    pub fallback_step_divisor: PositiveF64,
+    pub line_search_maximum_attempts: u32,
+    pub step_halving_scale: StepScale,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CorrectionPlan {
     pub method: BinaryFallbackMethod,
-    pub p_threshold: f64,
+    pub p_threshold: Probability,
     pub firth_se: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct OutputWriterPlan {
+pub struct OutputPlan {
     pub output_prefix: String,
     pub output_run_root: String,
     pub resume: bool,
     pub resume_mode: ResumeMode,
-    pub finalize_parquet: bool,
     pub writer_thread_count: u32,
     pub writer_queue_depth: u32,
-    pub chunks_per_arrow_file: u32,
-    pub arrow_compression: ArrowCompression,
+    pub chunks_per_parquet_file: u32,
     pub parquet_compression: ParquetCompression,
-    pub output_format: OutputFormat,
     pub output_statistic_dtype: FloatingPointDtype,
 }
 
@@ -87,6 +140,25 @@ pub struct RuntimePlan {
     pub persistent_cache_min_compile_time_seconds: u32,
     pub xla_autotune_cache_enabled: bool,
     pub transfer_guard_enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[expect(clippy::struct_excessive_bools, reason = "Diagnostics flags are independent runtime policies.")]
+pub struct DiagnosticsPlan {
+    pub telemetry: TelemetryMode,
+    pub log_directory: Option<String>,
+    pub stage_timings_path: Option<String>,
+    pub log_filter: String,
+    pub log_file: Option<String>,
+    pub log_to_stderr: bool,
+    pub profile_summary_path: Option<String>,
+    pub trace_file: Option<String>,
+    pub trace_filter: String,
+    pub trace_event_cap: u32,
+    pub log_queue_size: u32,
+    pub lossy_logging: bool,
+    pub include_source_location: bool,
+    pub include_span_events: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

@@ -52,11 +52,8 @@ fn clear_effective_default_binary_provenance(
     provenance: &mut ConfigProvenance,
 ) -> ConfigResult<()> {
     let default_binary_config = load_default_config_data()?.partial_config.binary;
-    if partial_config.binary.firth == default_binary_config.firth {
-        provenance.binary.firth = false;
-    }
-    if partial_config.binary.approx == default_binary_config.approx {
-        provenance.binary.approx = false;
+    if partial_config.binary.fallback_method == default_binary_config.fallback_method {
+        provenance.binary.fallback_method = false;
     }
     if partial_config.binary.p_threshold == default_binary_config.p_threshold {
         provenance.binary.p_threshold = false;
@@ -65,16 +62,6 @@ fn clear_effective_default_binary_provenance(
         provenance.binary.firth_se = false;
     }
     Ok(())
-}
-
-/// Write deterministic effective TOML for a resolved config.
-///
-/// # Errors
-///
-/// Returns an error when serialization fails or the file cannot be written.
-pub fn write_toml(config: &RegenieConfigData, path: &Path) -> ConfigResult<()> {
-    fs::write(path, dumps_toml(config)?)
-        .map_err(|error| ConfigError::new(format!("Failed to write TOML config {}: {error}", path.display())))
 }
 
 /// Serialize a resolved config to TOML.

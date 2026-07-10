@@ -44,7 +44,7 @@ or I/O-bound runs when:
 - the scan has one phenotype and few variants;
 - BGEN decode or sample alignment dominates;
 - host-to-device transfer dominates compute;
-- output finalization dominates runtime;
+- Parquet writing dominates runtime;
 - approximate-Firth candidate density is low enough that GPU work is sparse;
 - the command repeatedly changes shapes and recompiles.
 
@@ -96,7 +96,6 @@ export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
   --config /path/to/gpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -128,7 +127,6 @@ export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
   --config /path/to/cpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -163,6 +161,8 @@ Important runtime knobs include:
 | `[compute].bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
 | `[output].writer_threads` | Output writer worker count. |
 | `[output].writer_queue_depth` | Output writer queue depth. |
+| `[output].chunks_per_parquet_file` | Engine chunks grouped into each committed Parquet part. |
+| `[output].parquet_compression` | Parquet compression, `none` or `zstd`. |
 | `[compute].firth_batch_size` | Binary approximate-Firth batch size. |
 | `[compute].jax_persistent_cache` | Enable JAX persistent compilation cache. |
 | `[compute].jax_cache_dir` | Persistent JAX compilation cache directory. |

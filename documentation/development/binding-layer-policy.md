@@ -21,24 +21,30 @@ src/g       console bootstrap, JAX backend, JAX kernels
 
 - The high-level native CLI entrypoint and terminal result.
 - Lazy construction of the Python JAX backend after native validation/setup.
+- One call into the coarse `g-engine::execute_coordinated_run` coordinator.
 - The four backend method invocations and typed NumPy exchange classes.
 - Retention of opaque Python JAX group, chromosome, and device-result handles.
-- Native host coordination whose error/interrupt lifecycle directly owns
-  `PyErr` and writer flushing.
+- Interruption checks and terminal adaptation that must retain a concrete
+  `PyErr`.
+- Supplying the current Python thread name to the runtime telemetry session.
 - Checked conversion between Python/NumPy values and crate-owned types.
 
 ## Forbidden
 
 - A second scheduler, queue protocol, or callback worker hierarchy.
 - Python-owned BGEN delivery, input alignment, output, resume, or cleanup.
+- Binding-owned telemetry state, serialization, writer, counter, or close
+  lifecycle.
 - JSON or dictionaries between Rust domain crates.
 - Public wrappers for crate APIs that production Python does not consume.
 - Root aliases, migration adapters, deprecated names, or test/tooling exports.
 - Per-variant Python calls.
+- Direct dependencies on `g-genotype`, `g-input`, or `g-output`; those services
+  are reached through `g-engine`.
 
-The performance-sensitive backend scheduler is implemented in `g-engine` and
-is Python-free. The root host supplies one `AssociationBackend` implementation
-that calls:
+Preparation, execution, output completion, and run-artifact construction are
+coordinated in `g-engine` and are Python-free. The root host supplies one
+`AssociationBackend` implementation that calls:
 
 ```text
 prepare_group
@@ -62,7 +68,9 @@ compatibility surface.
 
 ## Placement Test
 
-Move code to a domain crate when it can use crate-owned Rust types and errors.
-Keep code in the root host when moving it would require PyO3 in a domain crate
-or would create a generic mirror solely to transport opaque Python state or
-`PyErr`. Prefer deletion over a forwarding adapter.
+Move code to a domain crate whenever it can use crate-owned Rust types and
+errors. Opaque Python state and `PyErr` are generic backend/error parameters,
+not reasons to keep BGEN, output, buffer, numeric, or scheduling policy in the
+binding. The same rule applies to telemetry lifecycle: only Python thread-name
+lookup belongs here. Prefer deletion or a direct re-export over a forwarding
+adapter.

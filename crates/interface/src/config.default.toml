@@ -1,11 +1,9 @@
 [trait]
-step = 2
 trait_type = "quantitative"
 bsize = 16384
 
 [binary]
-firth = false
-approx = false
+fallback_method = "score_only"
 p_threshold = 0.05
 firth_se = false
 
@@ -53,9 +51,6 @@ gpu_genotype_format = "auto"
 # JAX compute dtype; public result statistics are still written as float32.
 # Use float64 only when parity or numerical debugging needs outweigh throughput.
 score_dtype = "float32"
-# Firth internals are parity-sensitive and currently require float64. Public
-# result statistics are still written as float32.
-firth_dtype = "float64"
 jax_persistent_cache = true
 jax_persistent_cache_min_entry_size_bytes = -1
 jax_persistent_cache_min_compile_time_seconds = 0
@@ -63,11 +58,9 @@ jax_xla_autotune_cache = false
 jax_transfer_guard = false
 
 [output]
-format = "parquet"
 writer_threads = 4
 writer_queue_depth = 16
-chunks_per_arrow_file = 16
-arrow_compression = "zstd"
+chunks_per_parquet_file = 16
 parquet_compression = "none"
 # Public BETA/SE/CHISQ/LOG10P output columns default to float32 for compact
 # REGENIE-style output. Use float64 for parity/debugging runs that need to
@@ -75,14 +68,11 @@ parquet_compression = "none"
 output_statistic_dtype = "float32"
 resume = false
 resume_mode = "fast"
-finalize_parquet = false
 
 [diagnostics]
 telemetry = "progress"
 log_filter = "info"
 log_stderr = true
-progress_interval_seconds = 5
-progress_interval_chunks = 10
 trace_filter = "g.native.bgen=trace,g.output=debug"
 trace_event_cap = 1000000
 log_queue_size = 65536

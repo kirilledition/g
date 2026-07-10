@@ -39,7 +39,6 @@ requires these run-specific inputs:
 
 | Option | Required when | Meaning |
 | --- | --- | --- |
-| `--step 2` | Always, unless inherited from config/defaults | REGENIE Step 2. Step 1 is not implemented. |
 | `--bgen PATH` | Always | BGEN genotype source. |
 | `--phenoFile PATH` | Always | Phenotype table. |
 | `--phenoCol NAME` or `--phenoColList LIST` | Always | One or more phenotype columns. |
@@ -52,7 +51,6 @@ requires these run-specific inputs:
 
 | Option | TOML section | Meaning |
 | --- | --- | --- |
-| `--step` | `[trait]` | REGENIE analysis step. Only `2` is executable. |
 | `--qt` | `[trait]` | Quantitative trait mode. |
 | `--bt` | `[trait]` | Binary trait mode. |
 | `--bgen` | `[input]` | BGEN genotype file. |
@@ -67,8 +65,7 @@ requires these run-specific inputs:
 | `--bsize` | `[trait]` | Variants per processing block. |
 | `--threads` | `[trait]` | Requested native CPU thread count. |
 | `--out` | `[output]` | Output prefix. |
-| `--firth` | `[binary]` | Binary Firth fallback switch. |
-| `--approx` | `[binary]` | Approximate Firth fallback switch. |
+| `--binary-fallback` | `[binary]` | `score_only` or `firth_approximate`. |
 | `--pThresh` | `[binary]` | Score-test p-value threshold for binary fallback candidates. |
 | `--firth-se` | `[binary]` | Firth-derived standard error reporting for corrected rows. |
 
@@ -78,7 +75,6 @@ Quantitative Step 2:
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -94,7 +90,6 @@ Binary score test:
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --bt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -110,7 +105,6 @@ Binary approximate Firth fallback:
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --bt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -119,8 +113,7 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
-  --firth \
-  --approx \
+  --binary-fallback firth_approximate \
   --pThresh 0.01 \
   --out /path/to/output/g_binary_firth_regenie2
 ```
@@ -132,8 +125,6 @@ Boolean CLI options use positive REGENIE-compatible flags:
 ```text
 --qt
 --bt
---firth
---approx
 --firth-se
 ```
 
@@ -149,9 +140,8 @@ Trait flags have additional rules:
 - An explicit `--bt` selection clears quantitative mode for the merged config.
 - If neither mode is explicitly set by the user, the packaged default applies.
 
-Binary-only flags (`--firth`, `--approx`, `--pThresh`, `--firth-se`) are rejected
-for quantitative runs. `--approx` requires `--firth`. Exact `--firth` without
-`--approx` is recognized but not implemented.
+Binary-only options (`--binary-fallback`, `--pThresh`, `--firth-se`) are rejected
+for quantitative runs. Exact Firth is not part of the option surface.
 
 ## Runtime Options
 

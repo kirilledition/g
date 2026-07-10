@@ -1,10 +1,8 @@
 use std::mem::MaybeUninit;
-use std::time::Instant;
 
 use flate2::{FlushDecompress, Status};
 
 use super::super::metadata::VariantRecord;
-use super::super::profile::{ThreadLocalProfileSnapshot, elapsed_nanoseconds};
 use super::super::{BgenError, CompressionType};
 use super::matrix::ThreadScratch;
 
@@ -13,29 +11,10 @@ pub(in crate::bgen) fn read_probability_block<'a>(
     compression_type: CompressionType,
     variant_record: &VariantRecord,
     thread_scratch: &'a mut ThreadScratch,
-    thread_local_profile_snapshot: &mut ThreadLocalProfileSnapshot,
-    profiling_enabled: bool,
 ) -> Result<&'a [u8], BgenError> {
-    let compressed_block_fetch_start_time = profiling_enabled.then(Instant::now);
     match compression_type {
         CompressionType::None => {
-            let block_payload = read_exact_bytes(
-                mmap,
-                variant_record.probability_payload_offset,
-                variant_record.probability_payload_length,
-            )?;
-            if let Some(compressed_block_fetch_start_time) = compressed_block_fetch_start_time {
-                thread_local_profile_snapshot.compressed_block_fetch_ns +=
-                    elapsed_nanoseconds(compressed_block_fetch_start_time);
-                thread_local_profile_snapshot.compressed_block_fetch_count += 1;
-                thread_local_profile_snapshot.compressed_byte_count +=
-                    u64::try_from(variant_record.probability_payload_length).unwrap_or(u64::MAX);
-            }
-            if profiling_enabled {
-                thread_local_profile_snapshot.uncompressed_byte_count +=
-                    u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
-            }
-            Ok(block_payload)
+            read_exact_bytes(mmap, variant_record.probability_payload_offset, variant_record.probability_payload_length)
         }
         CompressionType::Zlib => {
             let compressed_payload = read_exact_bytes(
@@ -43,29 +22,11 @@ pub(in crate::bgen) fn read_probability_block<'a>(
                 variant_record.probability_payload_offset,
                 variant_record.probability_payload_length,
             )?;
-            if let Some(compressed_block_fetch_start_time) = compressed_block_fetch_start_time {
-                thread_local_profile_snapshot.compressed_block_fetch_ns +=
-                    elapsed_nanoseconds(compressed_block_fetch_start_time);
-                thread_local_profile_snapshot.compressed_block_fetch_count += 1;
-                thread_local_profile_snapshot.compressed_byte_count +=
-                    u64::try_from(variant_record.probability_payload_length).unwrap_or(u64::MAX);
-            }
-
-            let decompression_start_time = profiling_enabled.then(Instant::now);
             decompress_zlib_block_into_scratch(
                 compressed_payload,
                 variant_record.declared_uncompressed_block_length,
                 thread_scratch,
             )?;
-            if let Some(decompression_start_time) = decompression_start_time {
-                thread_local_profile_snapshot.decompression_ns += elapsed_nanoseconds(decompression_start_time);
-                thread_local_profile_snapshot.decompression_count += 1;
-            }
-            if profiling_enabled {
-                thread_local_profile_snapshot.uncompressed_byte_count +=
-                    u64::try_from(variant_record.declared_uncompressed_block_length).unwrap_or(u64::MAX);
-                thread_local_profile_snapshot.zlib_stream_count += 1;
-            }
             Ok(thread_scratch.decompressed_probability_block.as_slice())
         }
     }

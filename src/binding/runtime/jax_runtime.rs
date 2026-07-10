@@ -8,12 +8,10 @@ use pyo3::types::PyAny;
 
 use g_runtime as native_jax_runtime;
 
-use super::{logging, telemetry_session};
-
 pub(crate) fn configure_jax_runtime_before_backend_init(
     py: Python<'_>,
     setup_session: &mut native_jax_runtime::JaxRuntimeSetupSession,
-    telemetry_session: Option<&telemetry_session::NativeTelemetryRunSession>,
+    telemetry_session: Option<&native_jax_runtime::TelemetryRunSession>,
 ) -> PyResult<()> {
     if !setup_session.should_configure() {
         return Ok(());
@@ -52,7 +50,7 @@ fn validate_gpu_with_default_probe_paths(
     py: Python<'_>,
     setup_session: &mut native_jax_runtime::JaxRuntimeSetupSession,
 ) -> PyResult<()> {
-    if !setup_session.side_effect_plan().should_validate_gpu {
+    if setup_session.setup().gpu_validation_status != "pending" {
         return Ok(());
     }
     let probe_paths = native_jax_runtime::default_nvidia_driver_probe_paths();
@@ -79,7 +77,7 @@ fn complete_gpu_validation_or_raise(
 ) -> PyResult<()> {
     let validation_plan =
         native_jax_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, devices);
-    let _ = setup_session.complete_validation(&validation_plan.status, Some(validation_plan.message.as_str()));
+    setup_session.complete_validation(&validation_plan.status, Some(validation_plan.message.as_str()));
     if validation_plan.should_raise {
         return Err(PyRuntimeError::new_err(validation_plan.message));
     }
@@ -88,24 +86,25 @@ fn complete_gpu_validation_or_raise(
 
 fn emit_native_jax_runtime_diagnostics(
     setup_session: &native_jax_runtime::JaxRuntimeSetupSession,
-    telemetry_session: Option<&telemetry_session::NativeTelemetryRunSession>,
+    telemetry_session: Option<&native_jax_runtime::TelemetryRunSession>,
 ) -> PyResult<()> {
     for event in setup_session.diagnostic_events() {
-        let record_plan =
-            native_jax_runtime::plan_jax_runtime_diagnostic_record(&event.level, telemetry_session.is_some());
-        let fields_json =
-            native_jax_runtime::serialize_jax_runtime_diagnostic_fields_json(&event.fields).map_err(|error| {
-                PyValueError::new_err(format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
-            })?;
-        logging::emit_diagnostic_event(
+        let record_plan = native_jax_runtime::plan_jax_runtime_diagnostic_record(&event.level);
+        let fields = native_jax_runtime::JaxRuntimeDiagnosticFields::new(&event.fields);
+        native_jax_runtime::emit_diagnostic_event(
             &record_plan.logging_level_name.to_lowercase(),
             &event.event_name,
             &event.message,
-            Some(fields_json),
-        )?;
+            &fields,
+        )
+        .map_err(|error| {
+            PyValueError::new_err(format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
+        })?;
         if let Some(telemetry_session) = telemetry_session {
-            let fields = native_jax_runtime::JaxRuntimeDiagnosticFields::new(&event.fields);
-            telemetry_session.emit_current_event(&event.event_name, &record_plan.telemetry_level, &fields)?;
+            let thread_name = crate::binding::telemetry::current_python_thread_name()?;
+            telemetry_session
+                .emit_current_event(&thread_name, &event.event_name, &record_plan.telemetry_level, &fields)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
         }
     }
     Ok(())

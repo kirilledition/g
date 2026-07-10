@@ -55,12 +55,8 @@ def compute_null_firth_components(
         & jnp.all(jnp.isfinite(modified_score))
     )
     return regenie2_binary_firth_types.NullFirthComponents(
-        probability_vector=probability_vector,
-        weight_vector=weight_vector,
-        information_matrix=information_matrix,
         information_cholesky_factor=information_cholesky_factor,
         deviance=deviance,
-        leverage_vector=leverage_vector,
         modified_score=modified_score,
         valid=valid,
     )
@@ -205,23 +201,6 @@ def run_null_firth_newton_raphson_iteration(
         (~components.valid) | (~jnp.all(jnp.isfinite(coefficient_step))) | ((~converged) & (~line_search_result.valid))
     )
     failed = numerical_failed | score_increase_failed | step_halving_failed
-    reason_code = jnp.where(
-        score_increase_failed,
-        regenie2_binary_firth_types.FirthConvergenceReason.STEP_SIZE_INCREASE.value,
-        jnp.where(
-            step_halving_failed,
-            regenie2_binary_firth_types.FirthConvergenceReason.STEP_HALVING_EXHAUSTED.value,
-            jnp.where(
-                numerical_failed,
-                regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-                jnp.where(
-                    converged,
-                    regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                ),
-            ),
-        ),
-    ).astype(jnp.int32)
     return regenie2_binary_firth_types.NullFirthNewtonRaphsonLoopCarry(
         state=regenie2_binary_firth_types.NullFirthNewtonRaphsonState(
             coefficients=jnp.where(converged | failed, state.coefficients, line_search_result.coefficients),
@@ -229,7 +208,6 @@ def run_null_firth_newton_raphson_iteration(
             converged=converged & (~failed),
             failed=failed,
             iteration_count=updated_iteration_count,
-            termination_reason_code=reason_code,
             previous_score_maximum=jnp.where(
                 score_maximum < state.previous_score_maximum,
                 score_maximum,
@@ -283,11 +261,6 @@ def fit_covariate_only_firth_null_model_once(
                 converged=jnp.asarray(0, dtype=jnp.bool_),
                 failed=~initial_components.valid,
                 iteration_count=jnp.asarray(0, dtype=jnp.int32),
-                termination_reason_code=jnp.where(
-                    initial_components.valid,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-                ).astype(jnp.int32),
                 previous_score_maximum=jnp.asarray(jnp.inf, dtype=scalar_dtype),
                 score_increase_count=jnp.asarray(0, dtype=jnp.int32),
             ),
@@ -303,12 +276,6 @@ def fit_covariate_only_firth_null_model_once(
         ),
     )
     final_state = final_carry.state
-    max_iteration_failure = (~final_state.converged) & (~final_state.failed)
-    convergence_reason_code = jnp.where(
-        max_iteration_failure,
-        regenie2_binary_firth_types.FirthConvergenceReason.MAX_ITERATIONS.value,
-        final_state.termination_reason_code,
-    ).astype(jnp.int32)
     return regenie2_binary_firth_types.NullFirthFitResult(
         coefficients=final_state.coefficients,
         penalized_log_likelihood=jnp.where(
@@ -316,8 +283,6 @@ def fit_covariate_only_firth_null_model_once(
             -FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER * final_state.deviance,
             jnp.asarray(jnp.nan, dtype=scalar_dtype),
         ),
-        iteration_count=final_state.iteration_count,
-        convergence_reason_code=convergence_reason_code,
         converged=final_state.converged,
     )
 
@@ -469,7 +434,5 @@ def fit_covariate_only_firth_null_model(
             selected_result.penalized_log_likelihood,
             jnp.asarray(jnp.nan, dtype=jnp.float64),
         ),
-        iteration_count=selected_result.iteration_count,
-        convergence_reason_code=selected_result.convergence_reason_code.astype(jnp.int32),
         converged=selected_result.converged,
     )

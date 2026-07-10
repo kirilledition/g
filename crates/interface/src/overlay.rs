@@ -52,10 +52,9 @@ pub(crate) fn resolve_partial_config(
     provenance: ConfigProvenance,
     validate: bool,
 ) -> ConfigResult<RegenieConfigData> {
-    let mut config = partial_config.resolve(provenance)?;
+    let config = partial_config.resolve(provenance)?;
     if validate {
         validate_config(&config)?;
-        config.is_validated = true;
     }
     Ok(config)
 }
@@ -106,7 +105,6 @@ impl PartialInputConfig {
 
 impl PartialTraitConfig {
     fn overlay(&mut self, override_config: Self) {
-        overlay_option!(self, override_config, step);
         overlay_option!(self, override_config, trait_type);
         overlay_option!(self, override_config, qt);
         overlay_option!(self, override_config, bt);
@@ -117,8 +115,7 @@ impl PartialTraitConfig {
 
 impl PartialBinaryConfig {
     fn overlay(&mut self, override_config: Self) {
-        overlay_option!(self, override_config, firth);
-        overlay_option!(self, override_config, approx);
+        overlay_option!(self, override_config, fallback_method);
         overlay_option!(self, override_config, p_threshold);
         overlay_option!(self, override_config, firth_se);
     }
@@ -168,7 +165,6 @@ impl PartialComputeConfig {
         overlay_option!(self, override_config, bgen_decode_tile_variant_count);
         overlay_option!(self, override_config, gpu_genotype_format);
         overlay_option!(self, override_config, score_dtype);
-        overlay_option!(self, override_config, firth_dtype);
         overlay_option!(self, override_config, jax_cache_dir);
         overlay_option!(self, override_config, jax_matmul_precision);
         overlay_option!(self, override_config, jax_persistent_cache);
@@ -182,17 +178,14 @@ impl PartialComputeConfig {
 impl PartialOutputConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, out);
-        overlay_option!(self, override_config, format);
         overlay_option!(self, override_config, output_run_directory);
         overlay_option!(self, override_config, writer_threads);
         overlay_option!(self, override_config, writer_queue_depth);
-        overlay_option!(self, override_config, chunks_per_arrow_file);
-        overlay_option!(self, override_config, arrow_compression);
+        overlay_option!(self, override_config, chunks_per_parquet_file);
         overlay_option!(self, override_config, parquet_compression);
         overlay_option!(self, override_config, output_statistic_dtype);
         overlay_option!(self, override_config, resume);
         overlay_option!(self, override_config, resume_mode);
-        overlay_option!(self, override_config, finalize_parquet);
     }
 }
 
@@ -204,8 +197,6 @@ impl PartialDiagnosticsConfig {
         overlay_option!(self, override_config, log_filter);
         overlay_option!(self, override_config, log_file);
         overlay_option!(self, override_config, log_stderr);
-        overlay_option!(self, override_config, progress_interval_seconds);
-        overlay_option!(self, override_config, progress_interval_chunks);
         overlay_option!(self, override_config, profile_summary_json);
         overlay_option!(self, override_config, trace_file);
         overlay_option!(self, override_config, trace_filter);

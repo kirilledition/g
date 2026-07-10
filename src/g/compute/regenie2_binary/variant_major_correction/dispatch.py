@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import functools
+import typing
 
 import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import result as regenie2_binary_result
-from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.variant_major_correction import fixed_capacity
+
+if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import config as regenie2_binary_config
+    from g.compute.regenie2_binary import result as regenie2_binary_result
+    from g.compute.regenie2_binary import state as regenie2_binary_state
 
 
 @functools.partial(
@@ -38,21 +41,20 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
     sparse_candidate_mask: jax.Array | None,
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply common multi-trait Firth corrections with device-side capacity dispatch."""
-    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
+    candidate_mask = result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
-    diagnostic_result = regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
 
-    def return_empty_diagnostics(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-        return diagnostic_result
+    def return_score_result(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+        return result
 
-    def apply_candidate_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-        def apply_tiny_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    def apply_candidate_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+        def apply_tiny_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -64,11 +66,11 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 observation_count=observation_count,
             )
 
-        def apply_small_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_small_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -80,11 +82,11 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 observation_count=observation_count,
             )
 
-        def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -96,11 +98,11 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 observation_count=observation_count,
             )
 
-        def apply_overflow_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_overflow_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=genotype_matrix_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -131,7 +133,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
 
     return jax.lax.cond(
         fallback_count == 0,
-        return_empty_diagnostics,
+        return_score_result,
         apply_candidate_corrections,
         operand=None,
     )
@@ -161,21 +163,20 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply multi-trait Firth corrections from packed8 rows with device-side dispatch."""
-    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
+    candidate_mask = result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
-    diagnostic_result = regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
 
-    def return_empty_diagnostics(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-        return diagnostic_result
+    def return_score_result(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+        return result
 
-    def apply_candidate_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
-        def apply_tiny_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+    def apply_candidate_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+        def apply_tiny_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_packed8_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -188,11 +189,11 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
                 score_dtype=score_dtype,
             )
 
-        def apply_small_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_small_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_packed8_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -205,11 +206,11 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
                 score_dtype=score_dtype,
             )
 
-        def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+        def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
             return fixed_capacity.apply_firth_multi_packed8_fixed_capacity_corrections(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-                result=diagnostic_result,
+                result=result,
                 correction_plan=correction_plan,
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
@@ -236,7 +237,7 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
 
     return jax.lax.cond(
         fallback_count == 0,
-        return_empty_diagnostics,
+        return_score_result,
         apply_candidate_corrections,
         operand=None,
     )
@@ -262,15 +263,14 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatc
     dosage_sum: jax.Array | None,
     observation_count: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
-) -> regenie2_binary_result.Regenie2MultiBinaryChunkResult:
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply rare overflow multi-trait Firth corrections from packed8 rows."""
-    candidate_mask = result.extra_code == types.BinaryExtraCode.FIRTH.value
+    candidate_mask = result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value
     fallback_count = jnp.sum(candidate_mask, dtype=jnp.int32)
-    diagnostic_result = regenie2_binary_result.expand_multi_score_result_with_empty_firth_diagnostics(result)
     return fixed_capacity.apply_firth_multi_packed8_fixed_capacity_corrections(
         chromosome_state=chromosome_state,
         packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-        result=diagnostic_result,
+        result=result,
         correction_plan=correction_plan,
         candidate_mask=candidate_mask,
         fallback_count=fallback_count,

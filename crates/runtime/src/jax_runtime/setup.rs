@@ -1,6 +1,6 @@
 use super::{
     DEVICE_GPU, JAX_CPU_PLATFORM_NAME, JAX_CUDA_PLATFORM_NAME, JAX_MATMUL_PRECISION_FLOAT32, JaxRuntimeSetupPayload,
-    JaxRuntimeSetupSideEffectPlan, XLA_AUXILIARY_CACHE_DISABLED, XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE,
+    XLA_AUXILIARY_CACHE_DISABLED, XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE,
 };
 
 #[allow(clippy::fn_params_excessive_bools)]
@@ -43,27 +43,4 @@ pub fn resolve_jax_runtime_setup(
         gpu_validation_status,
         gpu_validation_message,
     }
-}
-
-#[must_use]
-pub fn plan_jax_runtime_setup_side_effects(
-    requested_device: &str,
-    persistent_cache_enabled: bool,
-) -> JaxRuntimeSetupSideEffectPlan {
-    JaxRuntimeSetupSideEffectPlan {
-        should_create_cache_directory: persistent_cache_enabled,
-        should_validate_gpu: requested_device == DEVICE_GPU,
-    }
-}
-
-#[must_use]
-pub fn complete_jax_runtime_setup_validation(
-    setup: &JaxRuntimeSetupPayload,
-    gpu_validation_status: &str,
-    gpu_validation_message: Option<&str>,
-) -> JaxRuntimeSetupPayload {
-    let mut completed_setup = setup.clone();
-    completed_setup.gpu_validation_status = gpu_validation_status.to_string();
-    completed_setup.gpu_validation_message = gpu_validation_message.map(str::to_string);
-    completed_setup
 }

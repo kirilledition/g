@@ -1,14 +1,12 @@
 use rayon::prelude::*;
 
 use crate::bgen::decode::{
-    ThreadScratch, VariantMajorTileDecodeResult, VariantMajorTileStatsMut, decode_tile_variant_count,
-    decode_variant_major_dosage_tile,
+    ThreadScratch, VariantMajorTileStatsMut, decode_tile_variant_count, decode_variant_major_dosage_tile,
 };
 use crate::bgen::error::BgenError;
-use crate::bgen::profile::{ReaderProfiling, ThreadLocalProfileSnapshot};
 use crate::bgen::sample_selection::SampleSelection;
 use crate::bgen::trusted;
-use crate::buffer::raw_pointer::{OutputBufferAddress, OutputValueCount};
+use crate::buffer::{OutputBufferAddress, OutputValueCount};
 use crate::common::ChunkStats;
 use crate::preprocess;
 
@@ -23,27 +21,20 @@ struct VariantMajorReadShape {
 impl VariantMajorReadShape {
     fn from_selection(sample_selection: &SampleSelection, variant_start: usize, variant_stop: usize) -> Self {
         Self {
-            selected_variant_count: variant_stop.saturating_sub(variant_start),
+            selected_variant_count: variant_stop - variant_start,
             selected_sample_count: sample_selection.selected_sample_count,
         }
     }
 
     fn empty_chunk_stats(self) -> Option<ChunkStats> {
         if self.selected_variant_count == 0 {
-            return Some(preprocess::build_empty_chunk_stats(0, false));
+            return Some(preprocess::build_empty_chunk_stats(0));
         }
         if self.selected_sample_count == 0 {
-            return Some(preprocess::build_empty_chunk_stats(self.selected_variant_count, false));
+            return Some(preprocess::build_empty_chunk_stats(self.selected_variant_count));
         }
         None
     }
-}
-
-#[derive(Clone, Copy)]
-struct VariantMajorDecodePlan<'a> {
-    profiling: &'a ReaderProfiling,
-    profiling_enabled: bool,
-    decode_tile_variant_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -52,7 +43,7 @@ struct VariantMajorDecodeRequest<'a> {
     variant_start: usize,
     output_pointer_address: OutputBufferAddress,
     shape: VariantMajorReadShape,
-    plan: VariantMajorDecodePlan<'a>,
+    decode_tile_variant_count: usize,
 }
 
 impl VariantMajorDecodeRequest<'_> {
@@ -86,39 +77,16 @@ impl VariantMajorStatsBuffers {
         }
     }
 
-    fn into_chunk_stats(self, has_missing_values: bool, selected_sample_count: usize) -> Result<ChunkStats, BgenError> {
+    fn into_chunk_stats(self, selected_sample_count: usize) -> Result<ChunkStats, BgenError> {
         preprocess::build_chunk_stats_from_summaries(
             self.dosage_sum,
             self.dosage_square_sum,
             self.observation_count,
             self.zero_count,
-            self.nonzero_count,
-            self.homozygous_reference_count,
-            self.heterozygous_count,
             self.homozygous_alternate_count,
-            has_missing_values,
             selected_sample_count,
         )
         .map_err(|error| BgenError::Range(error.to_string()))
-    }
-}
-
-#[derive(Default)]
-struct VariantMajorDecodeAccumulator {
-    profile_snapshot: ThreadLocalProfileSnapshot,
-    has_missing_values: bool,
-}
-
-impl VariantMajorDecodeAccumulator {
-    fn merge_tile_result(&mut self, decode_result: &VariantMajorTileDecodeResult) {
-        self.profile_snapshot.merge_from(&decode_result.profile_snapshot);
-        self.has_missing_values |= decode_result.has_missing_values;
-    }
-
-    fn merge_accumulator(mut self, other: &Self) -> Self {
-        self.profile_snapshot.merge_from(&other.profile_snapshot);
-        self.has_missing_values |= other.has_missing_values;
-        self
     }
 }
 
@@ -149,16 +117,16 @@ impl BgenReaderCore {
             variant_start,
             output_pointer_address,
             shape: read_shape,
-            plan: build_variant_major_decode_plan(&self.profiling, read_shape.selected_sample_count),
+            decode_tile_variant_count: decode_tile_variant_count(),
         };
         let trusted_decode_enabled = self.trusted_no_missing_diploid_decode_enabled();
         let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count);
-        let has_missing_values = self.decode_preprocessed_variant_major_dosage_tiles(
+        self.decode_preprocessed_variant_major_dosage_tiles(
             decode_request,
             &mut stats_buffers,
             trusted_decode_enabled,
         )?;
-        stats_buffers.into_chunk_stats(has_missing_values, read_shape.selected_sample_count)
+        stats_buffers.into_chunk_stats(read_shape.selected_sample_count)
     }
 
     /// Read prepared variant-major packed8 probability pairs into a caller-provided u8 buffer.
@@ -189,11 +157,11 @@ impl BgenReaderCore {
             variant_start,
             output_pointer_address,
             shape: read_shape,
-            plan: build_variant_major_decode_plan(&self.profiling, read_shape.selected_sample_count),
+            decode_tile_variant_count: decode_tile_variant_count(),
         };
         let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count);
         self.decode_preprocessed_variant_major_packed8_probability_pair_tiles(decode_request, &mut stats_buffers)?;
-        stats_buffers.into_chunk_stats(false, read_shape.selected_sample_count)
+        stats_buffers.into_chunk_stats(read_shape.selected_sample_count)
     }
 
     fn decode_preprocessed_variant_major_dosage_tiles(
@@ -201,10 +169,10 @@ impl BgenReaderCore {
         request: VariantMajorDecodeRequest<'_>,
         stats_buffers: &mut VariantMajorStatsBuffers,
         trusted_decode_enabled: bool,
-    ) -> Result<bool, BgenError> {
-        let decode_tile_variant_count = request.plan.decode_tile_variant_count;
+    ) -> Result<(), BgenError> {
+        let decode_tile_variant_count = request.decode_tile_variant_count;
         let selected_variant_records = &self.variant_records[request.variant_start..request.variant_stop()];
-        let decode_accumulator = selected_variant_records
+        selected_variant_records
             .par_chunks(decode_tile_variant_count)
             .zip(stats_buffers.dosage_sum.par_chunks_mut(decode_tile_variant_count))
             .zip(stats_buffers.dosage_square_sum.par_chunks_mut(decode_tile_variant_count))
@@ -215,7 +183,7 @@ impl BgenReaderCore {
             .zip(stats_buffers.heterozygous_count.par_chunks_mut(decode_tile_variant_count))
             .zip(stats_buffers.homozygous_alternate_count.par_chunks_mut(decode_tile_variant_count))
             .enumerate()
-            .map_init(
+            .try_for_each_init(
                 ThreadScratch::default,
                 |thread_scratch,
                  (
@@ -260,7 +228,6 @@ impl BgenReaderCore {
                             request.output_pointer_address,
                             request.shape.selected_sample_count,
                             tile_index * decode_tile_variant_count,
-                            request.plan.profiling_enabled,
                             false,
                             &mut tile_stats,
                             thread_scratch,
@@ -275,23 +242,14 @@ impl BgenReaderCore {
                             request.output_pointer_address,
                             request.shape.selected_sample_count,
                             tile_index * decode_tile_variant_count,
-                            request.plan.profiling_enabled,
                             trusted_decode_enabled,
                             &mut tile_stats,
                             thread_scratch,
                         )
                     }
                 },
-            )
-            .try_fold(VariantMajorDecodeAccumulator::default, |mut accumulator, decode_result| {
-                accumulator.merge_tile_result(&decode_result?);
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(accumulator)
-            })
-            .try_reduce(VariantMajorDecodeAccumulator::default, |left, right| {
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(&right))
-            })?;
-        request.plan.profiling.merge_thread_local_snapshot(&decode_accumulator.profile_snapshot);
-        Ok(decode_accumulator.has_missing_values)
+            )?;
+        Ok(())
     }
 
     fn decode_preprocessed_variant_major_packed8_probability_pair_tiles(
@@ -299,9 +257,9 @@ impl BgenReaderCore {
         request: VariantMajorDecodeRequest<'_>,
         stats_buffers: &mut VariantMajorStatsBuffers,
     ) -> Result<(), BgenError> {
-        let decode_tile_variant_count = request.plan.decode_tile_variant_count;
+        let decode_tile_variant_count = request.decode_tile_variant_count;
         let selected_variant_records = &self.variant_records[request.variant_start..request.variant_stop()];
-        let decode_accumulator = selected_variant_records
+        selected_variant_records
             .par_chunks(decode_tile_variant_count)
             .zip(stats_buffers.dosage_sum.par_chunks_mut(decode_tile_variant_count))
             .zip(stats_buffers.dosage_square_sum.par_chunks_mut(decode_tile_variant_count))
@@ -312,7 +270,7 @@ impl BgenReaderCore {
             .zip(stats_buffers.heterozygous_count.par_chunks_mut(decode_tile_variant_count))
             .zip(stats_buffers.homozygous_alternate_count.par_chunks_mut(decode_tile_variant_count))
             .enumerate()
-            .map_init(
+            .try_for_each_init(
                 ThreadScratch::default,
                 |thread_scratch,
                  (
@@ -356,32 +314,14 @@ impl BgenReaderCore {
                         request.output_pointer_address,
                         request.shape.selected_sample_count,
                         tile_index * decode_tile_variant_count,
-                        request.plan.profiling_enabled,
                         false,
                         &mut tile_stats,
                         thread_scratch,
                     )
                 },
-            )
-            .try_fold(VariantMajorDecodeAccumulator::default, |mut accumulator, decode_result| {
-                accumulator.merge_tile_result(&decode_result?);
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(accumulator)
-            })
-            .try_reduce(VariantMajorDecodeAccumulator::default, |left, right| {
-                Ok::<VariantMajorDecodeAccumulator, BgenError>(left.merge_accumulator(&right))
-            })?;
-        request.plan.profiling.merge_thread_local_snapshot(&decode_accumulator.profile_snapshot);
+            )?;
         Ok(())
     }
-}
-
-fn build_variant_major_decode_plan(
-    profiling: &ReaderProfiling,
-    selected_sample_count: usize,
-) -> VariantMajorDecodePlan<'_> {
-    let profiling_enabled = profiling.is_enabled();
-    profiling.record_selected_sample_count(selected_sample_count);
-    VariantMajorDecodePlan { profiling, profiling_enabled, decode_tile_variant_count: decode_tile_variant_count() }
 }
 
 fn validate_variant_major_dosage_output_value_count(

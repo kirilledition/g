@@ -4,8 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::sync::Arc;
 
-use super::PredictionError;
-use super::chromosome::normalize_chromosome;
+use super::{PredictionError, normalize_chromosome};
 
 #[derive(Debug)]
 pub(super) struct LocoPredictions {

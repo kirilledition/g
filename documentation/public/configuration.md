@@ -54,7 +54,6 @@ jax_cache_dir = "/path/to/local/jax-cache"
 staging_depth = 2
 
 [output]
-format = "parquet"
 writer_threads = 2
 resume = true
 
@@ -67,7 +66,6 @@ Run-specific CLI values then override or fill the scientific fields:
 ```bash
 uv run g regenie \
   --config server-gpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -107,7 +105,8 @@ run-specific input and output fields.
 If `[input].sample` is omitted, `g regenie` reads embedded sample identifiers
 from the BGEN. It does not infer an adjacent `.sample` path.
 
-`[trait].step` must resolve to `2`. REGENIE Step 1 is not implemented.
+`g regenie` is a Step 2-only command. There is no `step` configuration field or
+`--step` compatibility flag.
 
 ## Minimal Quantitative Config
 
@@ -126,7 +125,6 @@ covar_columns = ["age", "sex"]
 pred = "/path/to/regenie_step1_qt_pred.list"
 
 [trait]
-step = 2
 trait_type = "quantitative"
 
 [output]
@@ -146,12 +144,10 @@ covar_columns = ["age", "sex"]
 pred = "/path/to/regenie_step1_pred.list"
 
 [trait]
-step = 2
 trait_type = "binary"
 
 [binary]
-firth = true
-approx = true
+fallback_method = "firth_approximate"
 p_threshold = 0.01
 
 [output]
@@ -163,11 +159,11 @@ out = "/path/to/output/g_binary_firth_regenie2"
 | Section | Purpose |
 | --- | --- |
 | `[input]` | Genotype, sample, phenotype, covariate, prediction-list paths, and selected columns. |
-| `[trait]` | Step, quantitative/binary mode, block size, and thread request. |
-| `[binary]` | Binary fallback flags, Firth mode, and p-value threshold. |
+| `[trait]` | Quantitative/binary mode, block size, and thread request. |
+| `[binary]` | Binary fallback method, p-value threshold, and Firth standard-error output. |
 | `[compute]` | Engine runtime, sample semantics, BGEN validation, JAX, numerical, and approximate-Firth tuning. |
-| `[output]` | Output prefix, chunk format, public statistic dtype, writer settings, Parquet finalization, and resume controls. |
-| `[diagnostics]` | Telemetry, logging, progress, profile, and trace controls. |
+| `[output]` | Output prefix, public statistic dtype, Parquet writer settings, and resume controls. |
+| `[diagnostics]` | Telemetry, logging, stage timing, profile, and trace controls. |
 | `[metadata]` | Optional metadata accepted by the TOML parser but not treated as a `g regenie` option. |
 
 Unknown keys are rejected.
@@ -186,18 +182,16 @@ not TOML aliases.
 | `--covarFile PATH` | `[input] covar_file = "PATH"` |
 | `--covarCol NAME` | `[input] covar_columns = ["NAME"]` |
 | `--pred PATH` | `[input] pred = "PATH"` |
-| `--step 2` | `[trait] step = 2` |
 | `--qt` | `[trait] qt = true` |
 | `--bt` | `[trait] bt = true` |
 | `--bsize N` | `[trait] bsize = N` |
 | `--threads N` | `[trait] threads = N` |
 | `--out PATH` | `[output] out = "PATH"` |
-| `--firth` | `[binary] firth = true` |
-| `--approx` | `[binary] approx = true` |
+| `--binary-fallback METHOD` | `[binary] fallback_method = METHOD` |
 | `--pThresh VALUE` | `[binary] p_threshold = VALUE` |
 | `--firth-se` | `[binary] firth_se = true` |
 
-Runtime, scheduling, output-format, resume, diagnostics, and JAX settings are
+Runtime, scheduling, Parquet writer, resume, diagnostics, and JAX settings are
 TOML-only. Important keys include:
 
 | Concern | TOML |
@@ -207,7 +201,7 @@ TOML-only. Important keys include:
 | Sample semantics | `[compute] sample_key_mode`, `multi_phenotype_sample_mode` |
 | GPU transfer | `[compute] gpu_genotype_format` |
 | JAX cache/runtime | `[compute] jax_cache_dir`, `jax_persistent_cache`, `jax_matmul_precision`, `jax_transfer_guard` |
-| Output | `[output] format`, `output_statistic_dtype`, `writer_threads`, `writer_queue_depth`, `finalize_parquet` |
+| Output | `[output] output_statistic_dtype`, `writer_threads`, `writer_queue_depth`, `chunks_per_parquet_file`, `parquet_compression` |
 | Resume | `[output] resume`, `resume_mode` |
 | Diagnostics | `[diagnostics] telemetry`, `log_dir`, `log_file`, `trace_event_cap` |
 

@@ -18,7 +18,7 @@ Rust owns:
   BGEN and tabular input
   sample/prediction alignment and preflight
   bounded scheduling, workers, host buffers, and output order
-  runtime, telemetry, timing, interruption, cleanup, and finalization
+  runtime, telemetry, timing, interruption, cleanup, and Parquet persistence
 
 Python owns:
   console forwarding
@@ -39,10 +39,12 @@ graphs registered for Python.
 - Added typed group, chromosome, genotype, null-diagnostic, materialization,
   and host-result contracts.
 - Added the bounded `AssociationBatchPipeline` with separate compute and
-  materialization workers, deterministic drain, panic/error propagation, and
-  abort handling.
+  materialization workers, a bounded completed-result queue, explicit
+  close/drain/join, panic/error propagation, and cancellation-aware abort.
 - Kept variant metadata, output identity, result validation, and writing in
   Rust.
+- Moved reusable genotype buffers, grouped projection, BGEN decode dispatch,
+  chromosome validation, and completed-result writing into `g-engine`.
 
 ### Python JAX island
 
@@ -53,6 +55,8 @@ graphs registered for Python.
 - Reused kernel state dataclasses directly instead of adding one-field wrapper
   state types.
 - Performs one batched `jax.device_get` per materialized result.
+- Removed output-only PyClasses and dead PyClass getters. Python now returns one
+  ordinary typed host-result dataclass that Rust consumes directly.
 - Deleted Python worker, writer, transfer, timing, lifecycle, telemetry, and
   runtime wrappers.
 
@@ -60,15 +64,25 @@ graphs registered for Python.
 
 - Native Rust dispatch now covers single-trait, complete-case multi-trait,
   per-phenotype, and grouped-union modes.
+- `RunEngine::prepare` owns BGEN opening, input alignment, preflight, resume,
+  manifest headers, and writer initialization. Consuming `PreparedRun::execute`
+  owns delivery and every terminal output path.
 - Grouped-union delivery decodes the union once and projects native group
   columns.
-- Output sessions are plain Rust values; Python never writes or finalizes
-  output.
+- Output sessions are plain Rust values; Python never writes output.
 - Native CLI validation/help precedes JAX import and backend construction.
 - SIGINT uses Python pending-signal checks. SIGTERM uses a native first-signal
   request flag and second-signal default action.
 - Configured stage timing and profile outputs are written by the Rust recorder
   on every terminal path without masking a primary run failure.
+- `g-output` consumes canonical `g-genotype` metadata/statistics, constructs
+  each trait-major Arrow buffer once, and slices shared arrays per writer.
+- Output workers are run-scoped and bounded; the global pool and per-phenotype
+  coordinator are deleted.
+- Completed outputs use one `CompletedOutputRun` per phenotype rather than five
+  parallel vectors. Resume commit sets and the run plan are shared immutably.
+- Telemetry state, serialization, writer counters, and close lifecycle moved
+  from the binding into `g-runtime::TelemetryRunSession`.
 
 ### Removed surface
 
@@ -80,6 +94,21 @@ graphs registered for Python.
   telemetry adapter graphs.
 - Deleted inert `native_callback_batch_size` and `dosage_buffer_limit` config
   fields; neither influenced the new scheduler.
+- Deleted the standalone Rust CLI subprocess bridge, dead prepared-plan graph,
+  row-major production BGEN path, scalar Firth path, unused binary batch
+  diagnostics, and unused shutdown-controller hierarchy.
+- Removed `step`, `firth_dtype`, `is_validated`, `assume_validated`, SPA, and
+  exact-Firth configuration states.
+- Removed the output-format choice entirely and removed duplicate resume-mode,
+  statistic-dtype, telemetry-mode, and backend-plan types; the remaining
+  canonical definitions are in `g-plan`.
+- Removed alternate result writers plus the derived-file consolidation path.
+  `parts/part_*.parquet` is the sole result contract and requires no post-run
+  materialization.
+- Removed always-disabled BGEN reader profiling and output-only per-variant
+  Firth diagnostic arrays.
+- Flattened module directories whose private builders or data models had only
+  one consumer.
 - Canonical TOML accepts snake_case only. The CLI accepts only `--config` and
   the supported REGENIE Step 2 flags.
 
@@ -88,12 +117,12 @@ graphs registered for Python.
 | Original phase | Production result |
 | --- | --- |
 | Inventory, facades, and errors | Every domain crate exports one documented `api.rs` facade. Dead umbrella errors and convenience constructors are deleted. Public production APIs use crate-owned typed errors; no public `Result<T, String>` or library `anyhow::Result` remains. |
-| Plan and interface | Configuration has one native parser/default/overlay path. Python option normalization and compatibility aliases are deleted. |
-| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. The former 1,700-line BGEN `decode/mod.rs` is split into named matrix, probability, row-major, and variant-major modules with narrow BGEN-internal visibility. Raw caller-owned buffers validate address, alignment, counts, and offsets before unsafe writes. |
-| Output | `session.rs` is a module boundary over writer-session, coordinator, worker-pool, and validation modules. Manifest, batch, finalizer, and resume counts cross checked signed `i64` boundaries, with explicit aggregate overflow errors. Dead reconstruction, write-plan, finalizer, and resume wrappers are deleted. |
-| Runtime | Duplicate facades, callback-era diagnostics, and public event-name constants are deleted. Telemetry envelopes, fields, lifecycle payloads, counters, and close summaries serialize directly from typed Rust values while retaining their wire shape. |
-| Engine | The backend is batch-oriented and Python-free. Scheduler helper types stay internal; the forwarding schedule trampoline is deleted. The bounded pipeline retains ownership of queues, worker joins, first-error capture, drain, and abort. |
-| PyO3 and Python | CLI and output `mod.rs` files contain registration only. The unregistered input adapter tree and JSON bridge are deleted. Telemetry is a plain Rust session rather than a `PyClass`/`PyAny`/`PyDict` round trip. Python contains only console forwarding, the four-operation backend, and JAX kernels. |
+| Plan and interface | Configuration compiles to one typed `RunPlan`. Duplicate enum mirrors, prepared-plan DTOs, Python option normalization, and compatibility aliases are deleted. Numeric controls use validated finite `f64` newtypes. |
+| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. Prediction sources are unified and cache shared chromosome matrices. The production BGEN decoder is split into matrix, probability, and variant-major modules; the row-major production path is deleted. Raw caller-owned buffers validate address, counts, and offsets before unsafe writes. |
+| Output | Canonical genotype DTOs flow directly into `NativeChunkHandle`. A run-scoped bounded worker pool is shared by Parquet writer sessions; the global pool, coordinator, duplicate DTOs, row-copy write plan, alternate writers, and derived-file consolidation are deleted. Manifest and resume counts cross checked signed `i64` boundaries. |
+| Runtime | Duplicate facades, callback-era diagnostics, unused binary chunk diagnostics, the unused shutdown controller, and public event-name constants are deleted. Telemetry envelopes and close summaries serialize directly from typed Rust values. |
+| Engine | The backend is batch-oriented and Python-free. `RunEngine`/`PreparedRun` own preparation, delivery, and terminal output policy. Scheduler helpers stay internal and the bounded pipeline retains ownership of queues, joins, first-error capture, drain, and abort. |
+| PyO3 and Python | The input, output, lifecycle, conversion, and JSON adapter trees are deleted. Telemetry lifecycle is runtime-owned. Python contains only console forwarding, the four-operation backend, and JAX kernels. |
 | Dependency and integer audit | Cargo dependency scanning reports no unused dependencies. Production engine/binding code has no unchecked integer `as` casts or bare tuple result mirrors. |
 
 Architecture guard source changes remain part of tooling stabilization because
@@ -101,31 +130,32 @@ tooling was explicitly excluded from this production pass. Equivalent direct
 facade, error, import, cast, dead-code, dependency, and export scans pass on the
 production tree.
 
-## Deliberate Plan Change
+## Binding Reduction
 
-The old target placed the entire run coordinator in `g-engine::RunEngine`.
-Instead, `g-engine` owns the Python-free contract and performance-sensitive
-scheduler, while the root Rust extension owns host orchestration that directly
-coordinates opaque Python handles, `PyErr`, and terminal interruption flushing.
-
-This avoids both prohibited alternatives: adding PyO3 to a domain crate or
-creating a second generic adapter/error hierarchy that mirrors the actual host
-session. The coordinator is Rust, not Python, and it has no parallel legacy
-path.
+The root crate no longer depends directly on `g-genotype`, `g-input`, or
+`g-output`. `g-engine` owns preparation, host buffers, decode, grouping,
+scheduling, result delivery, and terminal output policy. Binding code retains
+only Python attachment, opaque JAX objects, NumPy conversion, Python thread
+labels, terminal presentation, and original `PyErr` adaptation. The binding
+constructs the Python-backed association backend once and calls
+`g-engine::execute_coordinated_run`; engine preparation, execution reports,
+completed artifacts, and writer-completion telemetry are no longer assembled
+in `src/binding/cli.rs`.
 
 ## Preserved Contracts
 
-- Statistical formulas, correction selection, dtype behavior, sample masks,
+- Statistical formulas, correction selection, sample masks,
   LOCO alignment, allele orientation, row order, and output schemas.
-- Fresh/resumed equivalence, manifest compatibility, output paths, and writer
-  finalization behavior.
+- Fresh/resumed equivalence and manifest compatibility for the Parquet dataset
+  contract.
 - Supported REGENIE Step 2 option spellings.
 - Quantitative, binary score-only, approximate-Firth, single, complete-case,
-  per-phenotype, grouped-union, dosage, packed8, Arrow, Parquet, and REGENIE
-  production paths.
+  per-phenotype, grouped-union, dosage, and packed8 production paths.
 
-Python/PyO3 internals, camelCase TOML aliases, callback-era tuning knobs, and
-unreleased helper APIs were intentionally not preserved.
+Python/PyO3 internals, output-only diagnostics, manifest `firth_dtype`,
+camelCase TOML aliases, callback-era tuning knobs, and unreleased helper APIs
+were intentionally not preserved. The active dtype contract is documented in
+[Floating-Point Policy](floating-point-policy.md).
 
 ## Stabilization Work
 

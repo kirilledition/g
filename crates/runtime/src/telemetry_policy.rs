@@ -17,11 +17,6 @@ impl TelemetryPathError {
     fn new(message: impl Into<String>) -> Self {
         Self { message: message.into() }
     }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
 }
 
 impl fmt::Display for TelemetryPathError {
@@ -33,89 +28,17 @@ impl fmt::Display for TelemetryPathError {
 impl std::error::Error for TelemetryPathError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TelemetryPathsPayload {
-    pub log_dir: Option<String>,
-    pub stream_file: Option<String>,
-    pub profile_summary_json: Option<String>,
-    pub stage_timings_json: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TelemetryWriterCountersPayload {
-    pub accepted_event_count: i64,
-    pub written_event_count: i64,
-    pub dropped_event_count: i64,
-    pub cap_dropped_event_count: i64,
-    pub queue_dropped_event_count: i64,
-    pub event_cap_exceeded: bool,
-    pub lossy: bool,
-    pub event_cap: Option<i64>,
-    pub finish_flush_duration_seconds: Option<f64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TelemetrySessionPolicyPayload {
-    pub enabled: bool,
-    pub profile_enabled: bool,
-    pub event_cap: Option<i64>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TelemetryMode {
-    Off,
-    Profile,
-    Progress,
-    Trace,
-}
-
-impl TelemetryMode {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Profile => "profile",
-            Self::Progress => "progress",
-            Self::Trace => "trace",
-        }
-    }
-
-    #[must_use]
-    pub fn from_str_value(value: &str) -> Option<Self> {
-        match value {
-            "off" => Some(Self::Off),
-            "profile" => Some(Self::Profile),
-            "progress" => Some(Self::Progress),
-            "trace" => Some(Self::Trace),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub fn accepted_values() -> &'static [&'static str] {
-        &["off", "profile", "progress", "trace"]
-    }
-
-    #[must_use]
-    pub const fn enabled(self) -> bool {
-        !matches!(self, Self::Off)
-    }
-
-    #[must_use]
-    pub const fn profile_enabled(self) -> bool {
-        matches!(self, Self::Profile | Self::Trace)
-    }
-
-    #[must_use]
-    pub const fn trace_enabled(self) -> bool {
-        matches!(self, Self::Trace)
-    }
+pub(crate) struct TelemetryPathsPayload {
+    pub(crate) stream_file: Option<String>,
+    pub(crate) profile_summary_json: Option<String>,
+    pub(crate) stage_timings_json: Option<String>,
 }
 
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::cast_sign_loss)]
 #[must_use]
-pub fn format_timestamp(timestamp_seconds: f64) -> String {
+pub(crate) fn format_timestamp(timestamp_seconds: f64) -> String {
     let whole_seconds = timestamp_seconds.floor() as i64;
     let nanoseconds = (((timestamp_seconds - whole_seconds as f64) * 1_000_000_000.0) as u32).min(999_999_999);
     DateTime::from_timestamp(whole_seconds, nanoseconds).map_or_else(
@@ -124,50 +47,38 @@ pub fn format_timestamp(timestamp_seconds: f64) -> String {
     )
 }
 
-#[must_use]
-pub fn resolve_output_run_root(output_path: &Path, output_run_directory: Option<&Path>) -> PathBuf {
-    if let Some(run_directory) = output_run_directory {
-        return run_directory.to_path_buf();
-    }
-    output_path.with_file_name(format!(
-        "{}.g",
-        output_path.file_name().map_or_else(|| output_path.display().to_string(), |name| name.to_string_lossy().into())
-    ))
-}
-
 /// Resolve all telemetry file-system paths for one run.
 ///
 /// # Errors
 ///
 /// Returns an error when telemetry stream path options conflict.
-pub fn resolve_telemetry_paths(
-    output_path: &Path,
-    output_run_directory: Option<&Path>,
-    telemetry_mode: TelemetryMode,
-    log_dir: Option<&Path>,
-    log_file: Option<&Path>,
-    trace_file: Option<&Path>,
-    profile_summary_json: Option<&Path>,
-    stage_timings_json: Option<&Path>,
-) -> Result<TelemetryPathsPayload, TelemetryPathError> {
-    let resolved_log_dir = match (log_dir, telemetry_mode) {
+pub(crate) fn resolve_telemetry_paths(run_plan: &g_plan::RunPlan) -> Result<TelemetryPathsPayload, TelemetryPathError> {
+    let diagnostics = &run_plan.diagnostics;
+    let telemetry_mode = diagnostics.telemetry;
+    let resolved_log_dir = match (diagnostics.log_directory.as_deref().map(Path::new), telemetry_mode) {
         (Some(path), _) => Some(path.to_path_buf()),
-        (None, TelemetryMode::Off) => None,
-        (None, _) => Some(resolve_output_run_root(output_path, output_run_directory).join("logs")),
+        (None, g_plan::TelemetryMode::Off) => None,
+        (None, _) => Some(Path::new(&run_plan.output.output_run_root).join("logs")),
     };
-    let stream_file = resolve_telemetry_stream_file(telemetry_mode, resolved_log_dir.as_deref(), log_file, trace_file)?;
-    let resolved_profile_summary_json = match (profile_summary_json, resolved_log_dir.as_deref(), telemetry_mode) {
-        (Some(path), _, _) => Some(path.to_path_buf()),
-        (None, Some(directory), TelemetryMode::Profile | TelemetryMode::Trace) => {
-            Some(directory.join(PROFILE_SUMMARY_JSON_FILE_NAME))
-        }
-        _ => None,
-    };
+    let stream_file = resolve_telemetry_stream_file(
+        telemetry_mode,
+        resolved_log_dir.as_deref(),
+        diagnostics.log_file.as_deref().map(Path::new),
+        diagnostics.trace_file.as_deref().map(Path::new),
+    )?;
+    let resolved_profile_summary_json =
+        match (diagnostics.profile_summary_path.as_deref().map(Path::new), resolved_log_dir.as_deref(), telemetry_mode)
+        {
+            (Some(path), _, _) => Some(path.to_path_buf()),
+            (None, Some(directory), g_plan::TelemetryMode::Profile | g_plan::TelemetryMode::Trace) => {
+                Some(directory.join(PROFILE_SUMMARY_JSON_FILE_NAME))
+            }
+            _ => None,
+        };
     Ok(TelemetryPathsPayload {
-        log_dir: optional_path_string(resolved_log_dir.as_deref()),
         stream_file: optional_path_string(stream_file.as_deref()),
         profile_summary_json: optional_path_string(resolved_profile_summary_json.as_deref()),
-        stage_timings_json: optional_path_string(stage_timings_json),
+        stage_timings_json: diagnostics.stage_timings_path.clone(),
     })
 }
 
@@ -176,13 +87,13 @@ pub fn resolve_telemetry_paths(
 /// # Errors
 ///
 /// Returns an error when `log_file` and `trace_file` point to different files.
-pub fn resolve_telemetry_stream_file(
-    telemetry_mode: TelemetryMode,
+fn resolve_telemetry_stream_file(
+    telemetry_mode: g_plan::TelemetryMode,
     log_dir: Option<&Path>,
     log_file: Option<&Path>,
     trace_file: Option<&Path>,
 ) -> Result<Option<PathBuf>, TelemetryPathError> {
-    if telemetry_mode == TelemetryMode::Off {
+    if telemetry_mode == g_plan::TelemetryMode::Off {
         return Ok(None);
     }
     if let (Some(log_file_path), Some(trace_file_path)) = (log_file, trace_file)
@@ -202,35 +113,8 @@ pub fn resolve_telemetry_stream_file(
 }
 
 #[must_use]
-pub fn paths_refer_to_same_file(first_path: &Path, second_path: &Path) -> bool {
+fn paths_refer_to_same_file(first_path: &Path, second_path: &Path) -> bool {
     normalize_path_for_comparison(first_path) == normalize_path_for_comparison(second_path)
-}
-
-#[must_use]
-pub fn build_empty_writer_counters() -> TelemetryWriterCountersPayload {
-    TelemetryWriterCountersPayload {
-        accepted_event_count: 0,
-        written_event_count: 0,
-        dropped_event_count: 0,
-        cap_dropped_event_count: 0,
-        queue_dropped_event_count: 0,
-        event_cap_exceeded: false,
-        lossy: true,
-        event_cap: None,
-        finish_flush_duration_seconds: None,
-    }
-}
-
-#[must_use]
-pub fn resolve_telemetry_session_policy(
-    telemetry_mode: TelemetryMode,
-    trace_event_cap: i64,
-) -> TelemetrySessionPolicyPayload {
-    TelemetrySessionPolicyPayload {
-        enabled: telemetry_mode.enabled(),
-        profile_enabled: telemetry_mode.profile_enabled(),
-        event_cap: if telemetry_mode.trace_enabled() && trace_event_cap > 0 { Some(trace_event_cap) } else { None },
-    }
 }
 
 fn optional_path_string(path: Option<&Path>) -> Option<String> {

@@ -48,6 +48,7 @@ impl VariantMajorRowSummary {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn preprocess_row_major_dosage_matrix(
     dosage_values: &mut [f32],
     selected_sample_count: usize,
@@ -71,7 +72,6 @@ pub(crate) fn preprocess_row_major_dosage_matrix(
     let mut homozygous_reference_count = vec![0_i32; selected_variant_count];
     let mut heterozygous_count = vec![0_i32; selected_variant_count];
     let mut homozygous_alternate_count = vec![0_i32; selected_variant_count];
-    let mut has_missing_values = false;
 
     for sample_index in 0..selected_sample_count {
         let row_offset = sample_index
@@ -102,11 +102,7 @@ pub(crate) fn preprocess_row_major_dosage_matrix(
         dosage_square_sum,
         observation_count,
         zero_count,
-        nonzero_count,
-        homozygous_reference_count,
-        heterozygous_count,
         homozygous_alternate_count,
-        has_missing_values,
         selected_sample_count,
     )?;
 
@@ -151,8 +147,6 @@ pub fn summarize_variant_major_dosage_matrix(
     let mut homozygous_reference_count = vec![0_i32; selected_variant_count];
     let mut heterozygous_count = vec![0_i32; selected_variant_count];
     let mut homozygous_alternate_count = vec![0_i32; selected_variant_count];
-    let mut has_missing_values = false;
-
     for variant_index in 0..selected_variant_count {
         let row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
             GenotypeError::InvalidInput("Integer overflow while scanning variant-major rows.".to_string())
@@ -167,7 +161,6 @@ pub fn summarize_variant_major_dosage_matrix(
         homozygous_reference_count[variant_index] = row_summary.homozygous_reference_count;
         heterozygous_count[variant_index] = row_summary.heterozygous_count;
         homozygous_alternate_count[variant_index] = row_summary.homozygous_alternate_count;
-        has_missing_values |= row_summary.has_missing_values;
     }
 
     build_chunk_stats_from_summaries(
@@ -175,11 +168,7 @@ pub fn summarize_variant_major_dosage_matrix(
         dosage_square_sum,
         observation_count,
         zero_count,
-        nonzero_count,
-        homozygous_reference_count,
-        heterozygous_count,
         homozygous_alternate_count,
-        has_missing_values,
         selected_sample_count,
     )
 }
@@ -208,41 +197,24 @@ fn summarize_variant_major_row_scalar(dosage_values: &[f32]) -> VariantMajorRowS
 }
 
 #[must_use]
-pub(crate) fn build_empty_chunk_stats(selected_variant_count: usize, has_missing_values: bool) -> ChunkStats {
+pub(crate) fn build_empty_chunk_stats(selected_variant_count: usize) -> ChunkStats {
     let dosage_sum = Arc::<[f32]>::from(vec![0.0_f32; selected_variant_count]);
-    let allele_count = Arc::clone(&dosage_sum);
     ChunkStats {
         allele_one_frequency: vec![0.0_f32; selected_variant_count],
         observation_count: vec![0_i32; selected_variant_count],
-        has_missing_values,
         dosage_sum,
-        dosage_square_sum: vec![0.0_f32; selected_variant_count],
         imputed_dosage_square_sum: vec![0.0_f32; selected_variant_count],
-        dosage_variance_numerator: vec![0.0_f32; selected_variant_count],
         info_score: vec![None; selected_variant_count],
-        allele_count,
-        minor_allele_count: vec![0.0_f32; selected_variant_count],
-        zero_count: vec![0_i32; selected_variant_count],
-        nonzero_count: vec![0_i32; selected_variant_count],
-        homozygous_reference_count: vec![0_i32; selected_variant_count],
-        heterozygous_count: vec![0_i32; selected_variant_count],
-        homozygous_alternate_count: vec![0_i32; selected_variant_count],
-        is_sparse_candidate: vec![false; selected_variant_count],
         is_rare_sparse_firth_candidate: vec![false; selected_variant_count],
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_chunk_stats_from_summaries(
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
     zero_count: Vec<i32>,
-    nonzero_count: Vec<i32>,
-    homozygous_reference_count: Vec<i32>,
-    heterozygous_count: Vec<i32>,
     homozygous_alternate_count: Vec<i32>,
-    has_missing_values: bool,
     selected_sample_count: usize,
 ) -> GenotypeResult<ChunkStats> {
     let selected_variant_count = observation_count.len();
@@ -253,10 +225,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
     })?;
     let mut allele_one_frequency = Vec::with_capacity(selected_variant_count);
     let mut imputed_dosage_square_sum = Vec::with_capacity(selected_variant_count);
-    let mut dosage_variance_numerator = Vec::with_capacity(selected_variant_count);
     let mut info_score = Vec::with_capacity(selected_variant_count);
-    let mut minor_allele_count = Vec::with_capacity(selected_variant_count);
-    let mut is_sparse_candidate = Vec::with_capacity(selected_variant_count);
     let mut is_rare_sparse_firth_candidate = Vec::with_capacity(selected_variant_count);
 
     for variant_index in 0..selected_variant_count {
@@ -264,17 +233,18 @@ pub(crate) fn build_chunk_stats_from_summaries(
         if count <= 0 {
             allele_one_frequency.push(0.0);
             imputed_dosage_square_sum.push(0.0);
-            dosage_variance_numerator.push(0.0);
             info_score.push(None);
-            minor_allele_count.push(0.0);
-            is_sparse_candidate.push(false);
             is_rare_sparse_firth_candidate.push(false);
             continue;
         }
 
         let count_float = count as f32;
         let dosage_mean = dosage_sum[variant_index] / count_float;
-        let missing_count = selected_sample_count_i32.saturating_sub(count).max(0);
+        let missing_count = selected_sample_count_i32.checked_sub(count).ok_or_else(|| {
+            GenotypeError::InvalidInput(format!(
+                "Variant observation count {count} exceeds selected sample count {selected_sample_count_i32}."
+            ))
+        })?;
         let current_imputed_dosage_square_sum =
             dosage_square_sum[variant_index] + (missing_count as f32 * dosage_mean * dosage_mean);
         let allele_frequency = dosage_mean / 2.0;
@@ -302,35 +272,20 @@ pub(crate) fn build_chunk_stats_from_summaries(
 
         allele_one_frequency.push(allele_frequency);
         imputed_dosage_square_sum.push(current_imputed_dosage_square_sum);
-        dosage_variance_numerator.push(variance_numerator);
         info_score.push(current_info_score);
-        minor_allele_count.push(current_minor_allele_count);
-        is_sparse_candidate.push(current_sparse_candidate);
         is_rare_sparse_firth_candidate.push(
             current_sparse_candidate && current_minor_allele_count < RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD,
         );
     }
 
     let dosage_sum = Arc::<[f32]>::from(dosage_sum);
-    let allele_count = Arc::clone(&dosage_sum);
 
     Ok(ChunkStats {
         allele_one_frequency,
         observation_count,
-        has_missing_values,
         dosage_sum,
-        dosage_square_sum,
         imputed_dosage_square_sum,
-        dosage_variance_numerator,
         info_score,
-        allele_count,
-        minor_allele_count,
-        zero_count,
-        nonzero_count,
-        homozygous_reference_count,
-        heterozygous_count,
-        homozygous_alternate_count,
-        is_sparse_candidate,
         is_rare_sparse_firth_candidate,
     })
 }

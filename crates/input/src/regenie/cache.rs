@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::sample::SampleKeyMode;
+use g_plan::SampleKeyMode;
 
 use super::PredictionError;
 use super::alignment::{
@@ -37,8 +37,8 @@ impl LocoAlignmentCache {
         &mut self,
         loco_file_path: &Path,
         loco_predictions: &LocoPredictions,
-        target_family_identifiers: &[String],
-        target_individual_identifiers: &[String],
+        target_family_identifiers: &[&str],
+        target_individual_identifiers: &[&str],
         sample_key_mode: SampleKeyMode,
     ) -> Result<&[usize], PredictionError> {
         let cache_key = cache_key_for_loco_path(loco_file_path);

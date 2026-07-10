@@ -121,7 +121,6 @@ Minimal CPU shape:
 ```bash
 uv run g regenie \
   --config cpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -133,7 +132,8 @@ uv run g regenie \
   --out /path/to/output/g_regenie2
 ```
 
-Here `cpu.toml` contains `[compute] device = "cpu"` and `[output] format = "parquet"`.
+Here `cpu.toml` contains `[compute] device = "cpu"`. Result output is always a
+chunked Parquet dataset.
 For a GPU run, use a config with `[compute] device = "gpu"` and submit it on a GPU node rather than a login node.
 
 See [Quickstart](quickstart.md) for quantitative and binary command examples, [CLI](cli.md) for
@@ -179,7 +179,6 @@ export UV_LINK_MODE=copy
 
 uv run --no-sync g regenie \
   --config /path/to/gpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \

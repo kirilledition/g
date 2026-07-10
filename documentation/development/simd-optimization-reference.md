@@ -43,7 +43,7 @@ what was kept, and what should not be repeated without new profiling evidence.
 | Generic BGEN decode | SIMD for bit-packed widths 1-32 and phased mode | No | Branchy, many specialized kernels required | Avoid unless profiling shows hot workload |
 | Missing-value imputation | SIMD `NaN` replacement pass | No | Hot trusted/no-missing paths avoid it | Avoid unless missing-heavy profiles prove it hot |
 | Chunk stats post-processing | SIMD over summary vectors | No | Branchy `Option` and per-variant scalar work | Avoid unless profiling proves hot |
-| Output writing/finalization | Hand-written SIMD | No | Dominated by Arrow/Parquet, allocation, strings, and I/O | Not a SIMD target |
+| Parquet output writing | Hand-written SIMD | No | Dominated by the Parquet library, allocation, strings, and I/O | Not a SIMD target |
 | Sample alignment/LOCO loading | Hand-written SIMD | No | Dominated by CSV/text parsing, hash maps, and joins | Not a SIMD target |
 | BGEN metadata/index parsing | Hand-written SIMD | No | Control-flow and string-bound | Not a SIMD target |
 
@@ -319,7 +319,7 @@ and no-missing paths avoid it. This is not a good SIMD target without missing-he
 
 ### Non-Numeric Rust Paths
 
-Chunk stats post-processing, output writing/finalization, sample alignment, LOCO prediction loading, and BGEN metadata
+Chunk stats post-processing, Parquet output writing, sample alignment, LOCO prediction loading, and BGEN metadata
 or index parsing are not current hand-written SIMD targets. They are dominated by control flow, library code, allocation,
 strings, I/O, joins, or small per-variant scalar work.
 

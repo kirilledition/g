@@ -17,8 +17,8 @@ Integer boundary decisions for native I/O are maintained in
 | --- | --- |
 | `crates/genotype/src/` | BGEN mmap/index/decode/preprocess/profile and genotype source planning. |
 | `crates/input/src/` | Sample, phenotype, covariate, prediction-list, and LOCO prediction alignment. |
-| `crates/output/src/` | Arrow IPC chunks, Parquet parts/finalization, REGENIE text, manifests, resume, and writer sessions. |
-| `crates/engine/src/` | Production coordination of input, genotype delivery, output, and cleanup. |
+| `crates/output/src/` | Parquet dataset parts, manifests, resume, and bounded writer sessions. |
+| `crates/engine/src/` | Production coordination of input, genotype delivery, output, telemetry facts, and cleanup. |
 | `src/binding/` | NumPy/Python adaptation at the JAX backend boundary; no I/O policy. |
 
 ## BGEN Contract
@@ -52,23 +52,23 @@ Changing alignment behavior is a public input contract change. Update
 
 ## Output Contract
 
-Native output owns chunk persistence and finalization:
+Native output writes one result representation:
 
-| Format | Directory | File names |
+| Dataset | Directory | File names |
 | --- | --- | --- |
-| Arrow | `chunks/` | `chunk_<first>[_<last>].arrow` |
 | Parquet | `parts/` | `part_<first>[_<last>].parquet` |
-| REGENIE text | `regenie/` | `part_<first>[_<last>].regenie` plus sidecar JSON |
 
 Run directories also contain `run_manifest.json` and `effective_config.toml`.
-Finalization can write `final.parquet` or `final.regenie` depending on output
-format and options.
+The parts directory is the completed dataset; output does not require a
+consolidation pass.
 
 ## Manifest And Resume Contract
 
-`run_manifest.json` is the resume authority. It records prepared-run fields,
-input fingerprints, output writer settings, committed chunks, schema versions,
-and finalization metadata.
+`run_manifest.json` is the resume authority. Manifest schema version `11`
+stores prepared-run fields, input fingerprints, and Parquet writer settings in
+one canonical `execution_plan` object plus `execution_plan_hash`. Top-level
+state is limited to schema and mutable lifecycle fields such as committed
+chunks. The Parquet output schema remains version `3`.
 
 The immutable prepared run plan includes `association_backend.kind` so resume and
 review tooling can distinguish `jax_dosage` and `jax_packed8` execution without
@@ -79,9 +79,9 @@ Resume modes:
 - `fast` trusts manifest committed chunks after compatibility validation;
 - `strict` reconciles manifest chunk commits with files on disk.
 
-Strict resume reads chunk commit metadata from Arrow schema metadata, Parquet
-footer metadata, or REGENIE text sidecars. Do not add metadata-free Arrow
-fallbacks; pre-release output formats are allowed to require current metadata.
+Strict resume reads chunk commit metadata from Parquet footer metadata. Parts
+without the current metadata are rejected rather than reconstructed from result
+columns.
 
 Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.

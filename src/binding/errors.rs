@@ -1,33 +1,91 @@
-use pyo3::exceptions::{PyOSError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyKeyboardInterrupt, PyOSError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use g_engine::{BackendError, PipelineOutputPreparationError, SchedulerError};
+use g_engine::TrustedBgenValidationError;
 use g_engine::{
-    NullLogisticPolicyError, PipelineResumeCompatibilityError, PreflightError, ScheduleError,
-    TrustedBgenValidationError,
+    BgenError, CoordinatedRunError, DeliveryError, GenotypeError, InputError, OutputError,
+    PipelineOutputPreparationError, PredictionError, RunExecutionError, RunPreparationError, SchedulerError,
 };
-use g_genotype::{BgenError, GenotypeError};
-use g_input::{InputError, PredictionError};
-use g_output::OutputError;
-use g_plan::{HostPolicyError, PreparedPlanError};
 use g_runtime::{
     LoggingSinkError, LoggingSinkInitializationError, RayonRuntimeError, RayonThreadPoolConfigurationError,
 };
 
-pub(super) fn convert_schedule_error(error: &ScheduleError) -> PyErr {
-    PyValueError::new_err(error.to_string())
+use crate::binding::engine::PyJaxBackendError;
+use crate::binding::runtime;
+
+pub(super) fn convert_run_preparation_error(error: RunPreparationError) -> PyErr {
+    match error {
+        RunPreparationError::Bgen(error) => convert_bgen_error("prepare_run", error),
+        RunPreparationError::Input(error) => convert_input_error("prepare_run", error),
+        RunPreparationError::Output(error) => convert_output_error("prepare_run", error),
+        RunPreparationError::OutputPreparation(error) => convert_pipeline_output_preparation_error(&error),
+        RunPreparationError::Preflight(error) => PyValueError::new_err(error.to_string()),
+        RunPreparationError::Prediction(error) => convert_prediction_error("prepare_run", &error),
+        RunPreparationError::TrustedValidation(error) => convert_trusted_bgen_validation_error(error),
+        RunPreparationError::TrustedValidationCacheDirectory(error) => PyRuntimeError::new_err(error.to_string()),
+        error => PyValueError::new_err(error.to_string()),
+    }
 }
 
-pub(super) fn convert_backend_error(operation: &str, error: &BackendError) -> PyErr {
-    PyRuntimeError::new_err(format!("Association backend failed during {operation}: {}", error.message()))
+pub(super) fn convert_run_execution_error(error: RunExecutionError<PyJaxBackendError, PyErr>) -> PyErr {
+    match error {
+        RunExecutionError::Delivery(error) => convert_delivery_error(error),
+        RunExecutionError::Interrupted(error) => Python::attach(|py| {
+            if error.is_instance_of::<PyKeyboardInterrupt>(py) { runtime::flushed_interrupt_error() } else { error }
+        }),
+        RunExecutionError::InterruptedOutputFlush { interruption, output } => PyRuntimeError::new_err(format!(
+            "Association interruption ({interruption}) was followed by an output flush failure: {output}"
+        )),
+        RunExecutionError::DeliveryAbort { delivery, output } => PyRuntimeError::new_err(format!(
+            "Association delivery failed ({delivery}) and output abort also failed: {output}"
+        )),
+        RunExecutionError::OutputFinish(error) => convert_output_error("finish_run", error),
+    }
 }
 
-pub(super) fn convert_scheduler_error(operation: &str, error: &SchedulerError) -> PyErr {
-    PyRuntimeError::new_err(format!("Association scheduler failed during {operation}: {error}"))
+pub(super) fn convert_coordinated_run_error(error: CoordinatedRunError<PyJaxBackendError, PyErr>) -> PyErr {
+    match error {
+        CoordinatedRunError::Preparation(error) => convert_run_preparation_error(error),
+        CoordinatedRunError::Execution(error) => convert_run_execution_error(error),
+        CoordinatedRunError::Telemetry(error) => PyRuntimeError::new_err(error.to_string()),
+        CoordinatedRunError::Diagnostic(error) => PyRuntimeError::new_err(error.to_string()),
+        CoordinatedRunError::PhenotypeCountOutOfRange
+        | CoordinatedRunError::ProcessedChunkCountOutOfRange
+        | CoordinatedRunError::UnresolvedGpuGenotypeFormat
+        | CoordinatedRunError::MissingPhenotypeOutput => PyValueError::new_err(error.to_string()),
+    }
 }
 
-pub(super) fn convert_pipeline_resume_compatibility_error(error: &PipelineResumeCompatibilityError) -> PyErr {
-    PyValueError::new_err(error.to_string())
+pub(super) fn convert_backend_error(operation: &str, error: PyJaxBackendError) -> PyErr {
+    match error {
+        PyJaxBackendError::InvalidInput(message) => {
+            PyValueError::new_err(format!("Invalid association backend input during {operation}: {message}"))
+        }
+        PyJaxBackendError::Python(error) => error,
+    }
+}
+
+pub(super) fn convert_scheduler_error(operation: &str, error: SchedulerError<PyJaxBackendError>) -> PyErr {
+    match error {
+        SchedulerError::Backend { source, .. } => convert_backend_error(operation, source),
+        error => PyRuntimeError::new_err(format!("Association scheduler failed during {operation}: {error}")),
+    }
+}
+
+pub(super) fn convert_delivery_error(error: DeliveryError<PyJaxBackendError, PyErr>) -> PyErr {
+    match error {
+        DeliveryError::Backend { stage, source } => convert_backend_error(stage, source),
+        DeliveryError::Bgen(error) => convert_bgen_error("association_delivery", error),
+        DeliveryError::Genotype(error) => convert_genotype_error("association_delivery", error),
+        DeliveryError::Prediction(error) => convert_prediction_error("association_delivery", &error),
+        DeliveryError::Input(error) => convert_input_error("association_delivery", error),
+        DeliveryError::Output(error) => convert_output_error("association_delivery", error),
+        DeliveryError::NullLogisticPolicy(error) => PyValueError::new_err(error.to_string()),
+        DeliveryError::Interrupted(error) => error,
+        DeliveryError::Scheduler(error) => convert_scheduler_error("association_delivery", error),
+        DeliveryError::InvalidInput(message) => PyValueError::new_err(message),
+        DeliveryError::NullLogisticNonconvergence(message) => PyRuntimeError::new_err(message),
+    }
 }
 
 pub(super) fn convert_pipeline_output_preparation_error(error: &PipelineOutputPreparationError) -> PyErr {
@@ -36,15 +94,8 @@ pub(super) fn convert_pipeline_output_preparation_error(error: &PipelineOutputPr
             ("output_invalid_input", message.clone())
         }
         PipelineOutputPreparationError::Output(OutputError::Runtime(message)) => ("output_runtime", message.clone()),
-        PipelineOutputPreparationError::ResumeCompatibility(_) => ("output_resume_compatibility", error.to_string()),
-        PipelineOutputPreparationError::AssociationBackend(_) => ("association_backend", error.to_string()),
-        PipelineOutputPreparationError::MissingGroupedOutputField { .. }
-        | PipelineOutputPreparationError::PhenotypeComputeGroupLengthMismatch
-        | PipelineOutputPreparationError::PhenotypeComputeGroupIndexOutOfRange
-        | PipelineOutputPreparationError::UnknownPreparedPhenotype { .. }
-        | PipelineOutputPreparationError::InvalidGpuGenotypeFormat { .. }
-        | PipelineOutputPreparationError::CommittedChunkCountOutOfRange
-        | PipelineOutputPreparationError::OutputIndexOutOfRange => ("output_preparation", error.to_string()),
+        PipelineOutputPreparationError::UnknownPlannedPhenotype { .. }
+        | PipelineOutputPreparationError::UnresolvedGpuGenotypeFormat => ("output_preparation", error.to_string()),
     };
     tracing::warn!(
         target: "g.python",
@@ -61,14 +112,6 @@ pub(super) fn convert_pipeline_output_preparation_error(error: &PipelineOutputPr
         }
         _ => PyValueError::new_err(message),
     }
-}
-
-pub(super) fn convert_preflight_error(error: &PreflightError) -> PyErr {
-    PyValueError::new_err(error.to_string())
-}
-
-pub(super) fn convert_null_logistic_policy_error(error: &NullLogisticPolicyError) -> PyErr {
-    PyValueError::new_err(error.to_string())
 }
 
 pub(super) fn convert_rayon_thread_pool_configuration_error(error: &RayonThreadPoolConfigurationError) -> PyErr {
@@ -101,10 +144,6 @@ pub(super) fn convert_logging_sink_error(error: &LoggingSinkError) -> PyErr {
     }
 }
 
-pub(super) fn convert_telemetry_writer_error(error: &std::io::Error) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
-}
-
 pub(super) fn convert_bgen_error(operation: &str, error: BgenError) -> PyErr {
     let (error_class, message) = match &error {
         BgenError::InvalidFormat(message) | BgenError::UnsupportedFormat(message) | BgenError::Range(message) => {
@@ -130,23 +169,18 @@ pub(super) fn convert_bgen_error(operation: &str, error: BgenError) -> PyErr {
 }
 
 pub(super) fn convert_genotype_error(operation: &str, error: GenotypeError) -> PyErr {
-    let (error_class, message) = match &error {
-        GenotypeError::InvalidInput(message) => ("genotype_input", message.clone()),
-        GenotypeError::Reader(message) => ("genotype_reader", message.clone()),
-    };
+    let GenotypeError::InvalidInput(message) = &error;
     tracing::warn!(
         target: "g.python",
         g_event = "native_boundary_error",
         subsystem = "genotype",
         operation = operation,
-        error_class = error_class,
+        error_class = "genotype_input",
         error_message = %message,
         "Converting Rust genotype error to Python."
     );
-    match error {
-        GenotypeError::InvalidInput(message) => PyValueError::new_err(message),
-        GenotypeError::Reader(message) => PyRuntimeError::new_err(message),
-    }
+    let GenotypeError::InvalidInput(message) = error;
+    PyValueError::new_err(message)
 }
 
 pub(super) fn convert_prediction_error(operation: &str, error: &PredictionError) -> PyErr {
@@ -208,7 +242,7 @@ pub(super) fn convert_input_error(operation: &str, error: InputError) -> PyErr {
     match error {
         InputError::Prediction(prediction_error) => convert_prediction_error(operation, &prediction_error),
         InputError::SampleAlignment(sample_alignment_error) => {
-            let error_message = sample_alignment_error.to_string();
+            let error_message = sample_alignment_error.clone();
             tracing::warn!(
                 target: "g.python",
                 g_event = "native_boundary_error",
@@ -234,20 +268,6 @@ pub(super) fn convert_trusted_bgen_validation_error(error: TrustedBgenValidation
     }
 }
 
-pub(super) fn convert_config_error(operation: &str, error: &impl std::fmt::Display) -> PyErr {
-    let error_message = error.to_string();
-    tracing::warn!(
-        target: "g.python",
-        g_event = "native_boundary_error",
-        subsystem = "config",
-        operation = operation,
-        error_class = "config_error",
-        error_message = %error_message,
-        "Converting Rust config error to Python."
-    );
-    PyValueError::new_err(error_message)
-}
-
 pub(super) fn convert_output_error(operation: &str, error: OutputError) -> PyErr {
     let (error_class, message) = match &error {
         OutputError::InvalidInput(message) => ("output_invalid_input", message.clone()),
@@ -265,15 +285,5 @@ pub(super) fn convert_output_error(operation: &str, error: OutputError) -> PyErr
     match error {
         OutputError::InvalidInput(message) => PyValueError::new_err(message),
         OutputError::Runtime(message) => PyRuntimeError::new_err(message),
-    }
-}
-
-pub(super) fn convert_prepared_plan_error(error: &PreparedPlanError) -> PyErr {
-    PyValueError::new_err(error.to_string())
-}
-
-pub(super) fn convert_host_policy_error(error: HostPolicyError) -> PyErr {
-    match error {
-        HostPolicyError::NotImplemented(message) | HostPolicyError::Value(message) => PyValueError::new_err(message),
     }
 }

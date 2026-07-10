@@ -1,12 +1,8 @@
 use std::num::NonZeroU32;
 
+use g_plan as plan;
 use serde::Serialize;
 
-use super::domain::{
-    ArrowCompressionValue, DeviceValue, FloatingPointDtypeValue, GpuGenotypeFormatValue, JaxMatmulPrecisionValue,
-    MultiPhenotypeSampleModeValue, NullLogisticNonconvergencePolicyValue, OutputFormatValue, ParquetCompressionValue,
-    RegenieTraitTypeValue, ResumeModeValue, SampleKeyModeValue, TelemetryModeValue, TrustedBgenValidationModeValue,
-};
 use super::partial::PartialConfig;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,8 +20,7 @@ impl ConfigProvenance {
                 bt: partial_config.trait_config.bt.is_some(),
             },
             binary: BinaryConfigProvenance {
-                firth: partial_config.binary.firth.is_some(),
-                approx: partial_config.binary.approx.is_some(),
+                fallback_method: partial_config.binary.fallback_method.is_some(),
                 p_threshold: partial_config.binary.p_threshold.is_some(),
                 firth_se: partial_config.binary.firth_se.is_some(),
             },
@@ -54,18 +49,15 @@ impl TraitConfigProvenance {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[expect(clippy::struct_excessive_bools, reason = "Provenance mirrors validation-relevant explicit binary options.")]
 pub(crate) struct BinaryConfigProvenance {
-    pub(crate) firth: bool,
-    pub(crate) approx: bool,
+    pub(crate) fallback_method: bool,
     pub(crate) p_threshold: bool,
     pub(crate) firth_se: bool,
 }
 
 impl BinaryConfigProvenance {
     fn overlay(&mut self, override_provenance: Self) {
-        self.firth |= override_provenance.firth;
-        self.approx |= override_provenance.approx;
+        self.fallback_method |= override_provenance.fallback_method;
         self.p_threshold |= override_provenance.p_threshold;
         self.firth_se |= override_provenance.firth_se;
     }
@@ -103,76 +95,70 @@ impl InputConfigData {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TraitConfigData {
-    pub step: u8,
-    pub trait_type: RegenieTraitTypeValue,
+    pub trait_type: plan::RegenieTraitType,
     pub bsize: NonZeroU32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub threads: Option<NonZeroU32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public REGENIE boolean flags.")]
 pub struct BinaryConfigData {
-    pub firth: bool,
-    pub approx: bool,
-    #[serde(skip)]
-    pub spa: bool,
-    pub p_threshold: f32,
+    pub fallback_method: plan::BinaryFallbackMethod,
+    pub p_threshold: plan::Probability,
     pub firth_se: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[expect(clippy::struct_excessive_bools, reason = "Runtime config mirrors public g-specific boolean options.")]
 pub struct GComputeConfigData {
-    pub device: DeviceValue,
+    pub device: plan::Device,
     pub staging_depth: NonZeroU32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_in_flight_limit: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variant_limit: Option<NonZeroU32>,
     pub trusted_no_missing_diploid: bool,
-    pub trusted_bgen_validation_mode: TrustedBgenValidationModeValue,
-    pub sample_key_mode: SampleKeyModeValue,
-    pub multi_phenotype_sample_mode: MultiPhenotypeSampleModeValue,
+    pub trusted_bgen_validation_mode: plan::TrustedBgenValidationMode,
+    pub sample_key_mode: plan::SampleKeyMode,
+    pub multi_phenotype_sample_mode: plan::MultiPhenotypeSampleMode,
     pub firth_batch_size: NonZeroU32,
     pub firth_candidate_capacity: NonZeroU32,
     pub binary_null_maximum_iterations: NonZeroU32,
-    pub binary_null_coefficient_tolerance: f32,
-    pub null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicyValue,
-    pub binary_minimum_probability: f32,
-    pub binary_minimum_variance: f32,
-    pub binary_relative_variance_tolerance: f32,
-    pub linear_minimum_variance: f32,
-    pub linear_relative_variance_tolerance: f32,
+    pub binary_null_coefficient_tolerance: plan::PositiveF64,
+    pub null_logistic_nonconvergence_policy: plan::NullLogisticNonconvergencePolicy,
+    pub binary_minimum_probability: plan::ProbabilityFloor,
+    pub binary_minimum_variance: plan::PositiveF64,
+    pub binary_relative_variance_tolerance: plan::PositiveF64,
+    pub linear_minimum_variance: plan::PositiveF64,
+    pub linear_relative_variance_tolerance: plan::PositiveF64,
     pub firth_maximum_iterations: NonZeroU32,
-    pub firth_gradient_tolerance: f32,
-    pub firth_coefficient_tolerance: f32,
-    pub firth_likelihood_tolerance: f32,
-    pub firth_maximum_step_size: f32,
+    pub firth_gradient_tolerance: plan::PositiveF64,
+    pub firth_coefficient_tolerance: plan::PositiveF64,
+    pub firth_likelihood_tolerance: plan::PositiveF64,
+    pub firth_maximum_step_size: plan::PositiveF64,
     pub firth_pseudo_maximum_iterations: NonZeroU32,
     pub firth_pseudo_inner_maximum_iterations: NonZeroU32,
     pub firth_newton_raphson_zero_start_iterations: NonZeroU32,
     pub firth_line_search_maximum_attempts: NonZeroU32,
     pub firth_step_halving_maximum_attempts: NonZeroU32,
-    pub firth_initial_response_scale: f32,
-    pub firth_sparse_carrier_dosage_threshold: f32,
-    pub firth_step_halving_scale: f32,
+    pub firth_initial_response_scale: plan::PositiveF64,
+    pub firth_sparse_carrier_dosage_threshold: plan::DosageThreshold,
+    pub firth_step_halving_scale: plan::StepScale,
     pub null_firth_maximum_iterations: NonZeroU32,
-    pub null_firth_gradient_tolerance: f32,
-    pub null_firth_maximum_step_size: f32,
+    pub null_firth_gradient_tolerance: plan::PositiveF64,
+    pub null_firth_maximum_step_size: plan::PositiveF64,
     pub null_firth_fallback_iteration_multiplier: NonZeroU32,
-    pub null_firth_fallback_step_divisor: f32,
+    pub null_firth_fallback_step_divisor: plan::PositiveF64,
     pub null_firth_line_search_maximum_attempts: NonZeroU32,
-    pub null_firth_step_halving_scale: f32,
+    pub null_firth_step_halving_scale: plan::StepScale,
     pub use_block_firth_math: bool,
     pub bgen_decode_tile_variant_count: NonZeroU32,
-    pub gpu_genotype_format: GpuGenotypeFormatValue,
-    pub score_dtype: FloatingPointDtypeValue,
-    pub firth_dtype: FloatingPointDtypeValue,
+    pub gpu_genotype_format: plan::GpuGenotypeFormat,
+    pub score_dtype: plan::FloatingPointDtype,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jax_cache_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub jax_matmul_precision: Option<JaxMatmulPrecisionValue>,
+    pub jax_matmul_precision: Option<plan::JaxMatmulPrecision>,
     pub jax_persistent_cache: bool,
     pub jax_persistent_cache_min_entry_size_bytes: i64,
     pub jax_persistent_cache_min_compile_time_seconds: u32,
@@ -184,24 +170,21 @@ pub struct GComputeConfigData {
 pub struct GOutputConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub out: Option<String>,
-    pub format: OutputFormatValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_run_directory: Option<String>,
     pub writer_threads: NonZeroU32,
     pub writer_queue_depth: NonZeroU32,
-    pub chunks_per_arrow_file: NonZeroU32,
-    pub arrow_compression: ArrowCompressionValue,
-    pub parquet_compression: ParquetCompressionValue,
-    pub output_statistic_dtype: FloatingPointDtypeValue,
+    pub chunks_per_parquet_file: NonZeroU32,
+    pub parquet_compression: plan::ParquetCompression,
+    pub output_statistic_dtype: plan::FloatingPointDtype,
     pub resume: bool,
-    pub resume_mode: ResumeModeValue,
-    pub finalize_parquet: bool,
+    pub resume_mode: plan::ResumeMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[expect(clippy::struct_excessive_bools, reason = "Diagnostics config mirrors public g-specific boolean options.")]
 pub struct GDiagnosticsConfigData {
-    pub telemetry: TelemetryModeValue,
+    pub telemetry: plan::TelemetryMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,8 +193,6 @@ pub struct GDiagnosticsConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_file: Option<String>,
     pub log_stderr: bool,
-    pub progress_interval_seconds: f32,
-    pub progress_interval_chunks: NonZeroU32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_summary_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,6 +220,4 @@ pub struct RegenieConfigData {
     pub g_diagnostics: GDiagnosticsConfigData,
     #[serde(skip)]
     pub(crate) provenance: ConfigProvenance,
-    #[serde(skip)]
-    pub is_validated: bool,
 }

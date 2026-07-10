@@ -5,86 +5,35 @@ mod lifecycle;
 mod names;
 mod native_cli_diagnostics;
 mod native_dispatch_diagnostics;
-mod pipeline_diagnostics;
-mod preflight_diagnostics;
 mod runner_diagnostics;
 mod runtime_diagnostics;
 mod telemetry;
 
 pub use diagnostics::{
-    RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue, serialize_run_diagnostic_fields_json,
+    RunDiagnosticEventPayload, RunDiagnosticFieldPayload, RunDiagnosticFieldValue, emit_diagnostic_event,
+    emit_run_diagnostic_event,
 };
+pub(crate) use lifecycle::build_run_failed_telemetry_fields;
 pub use lifecycle::{
-    RunArtifactPayload, RunArtifactsPayload, RunCompletedEventPayload, RunCompletedTelemetryFields,
-    RunFailedEventPayload, RunFailedTelemetryFields, RunInterruptedEventPayload, RunInterruptedTelemetryFields,
-    RunTelemetryStringField, build_artifact_telemetry_fields, build_run_completed_event_from_artifacts,
-    build_run_completed_telemetry_fields, build_run_failed_event_payload, build_run_failed_telemetry_fields,
-    build_run_interrupted_event_payload, build_run_interrupted_telemetry_fields, flatten_run_artifact_payloads,
-    render_artifact_lines, render_run_completed_lines, render_run_failed_lines, render_run_interrupted_lines,
+    PhenotypeRunArtifacts, RunFailedEventPayload, RunInterruptedEventPayload, build_run_failed_event_payload,
+    build_run_interrupted_event_payload, render_run_completed_lines, render_run_failed_lines,
+    render_run_interrupted_lines,
 };
 pub use native_cli_diagnostics::{
     build_native_cli_completed_line_diagnostic_payload, build_native_cli_failed_line_diagnostic_payload,
     build_native_cli_interrupted_line_diagnostic_payload, build_native_cli_stderr_diagnostic_payload,
     build_native_cli_stdout_diagnostic_payload,
 };
-pub use native_dispatch_diagnostics::{
-    build_native_dispatch_bgen_engine_constructing_diagnostic_payload,
-    build_native_dispatch_delivery_finished_diagnostic_payload,
-    build_native_dispatch_pipeline_finished_diagnostic_payload,
-    build_native_dispatch_trusted_bgen_validation_started_diagnostic_payload,
-    build_native_dispatch_writer_sessions_finish_started_diagnostic_payload,
-    build_native_dispatch_writer_sessions_interrupted_flush_started_diagnostic_payload,
-};
-pub use pipeline_diagnostics::{
-    build_pipeline_bgen_engine_open_started_diagnostic_payload, build_pipeline_bgen_engine_opened_diagnostic_payload,
-    build_pipeline_gpu_genotype_format_resolved_diagnostic_payload,
-    build_pipeline_grouped_per_phenotype_groups_prepared_diagnostic_payload,
-    build_pipeline_grouped_per_phenotype_started_diagnostic_payload,
-    build_pipeline_grouped_union_delivery_selected_diagnostic_payload,
-    build_pipeline_multi_group_preflight_completed_diagnostic_payload,
-    build_pipeline_multi_group_preflight_started_diagnostic_payload,
-    build_pipeline_multi_phenotype_sample_summary_diagnostic_payload,
-    build_pipeline_multi_trait_input_aligned_diagnostic_payload,
-    build_pipeline_multi_trait_input_load_started_diagnostic_payload,
-    build_pipeline_multi_trait_prediction_source_load_started_diagnostic_payload,
-    build_pipeline_multi_trait_started_diagnostic_payload,
-    build_pipeline_output_resume_committed_chunks_diagnostic_payload,
-    build_pipeline_output_writer_sessions_create_started_diagnostic_payload,
-    build_pipeline_prevalidated_bgen_engine_used_diagnostic_payload,
-    build_pipeline_single_trait_input_aligned_diagnostic_payload,
-    build_pipeline_single_trait_input_load_started_diagnostic_payload,
-    build_pipeline_single_trait_prediction_source_load_started_diagnostic_payload,
-    build_pipeline_single_trait_preflight_completed_diagnostic_payload,
-    build_pipeline_single_trait_preflight_started_diagnostic_payload,
-    build_pipeline_single_trait_started_diagnostic_payload,
-};
-pub use preflight_diagnostics::build_preflight_warning_diagnostic_payload;
+pub use native_dispatch_diagnostics::build_native_dispatch_delivery_finished_diagnostic_payload;
 pub use runner_diagnostics::{
-    build_runner_binary_engine_dispatch_started_diagnostic_payload,
     build_runner_execution_plan_build_started_diagnostic_payload,
     build_runner_execution_plan_dispatch_started_diagnostic_payload,
-    build_runner_execution_plan_finalization_started_diagnostic_payload,
     build_runner_execution_plan_prepared_diagnostic_payload,
-    build_runner_linear_engine_dispatch_started_diagnostic_payload,
-    build_runner_metadata_artifacts_finalized_diagnostic_payload,
-    build_runner_multi_phenotype_binary_engine_dispatch_started_diagnostic_payload,
-    build_runner_multi_phenotype_dispatch_started_diagnostic_payload,
-    build_runner_multi_phenotype_linear_engine_dispatch_started_diagnostic_payload,
-    build_runner_single_phenotype_dispatch_started_diagnostic_payload,
+    build_runner_metadata_artifacts_completed_diagnostic_payload,
 };
 pub use runtime_diagnostics::build_native_runtime_knobs_configured_diagnostic_payload;
-pub use telemetry::{
-    AssociationBackendSelectedTelemetryFields, BgenEngineOpenedTelemetryFields, EffectiveConfigWrittenTelemetryFields,
-    ExecutionPlanPreparedTelemetryFields, GpuGenotypeFormatResolvedTelemetryFields,
-    MultiPhenotypePreflightCompletedTelemetryFields, MultiPhenotypeSampleSummaryTelemetryFields,
-    MultiPhenotypeWriterFinishedTelemetryFields, PhenotypeWriterFinishedTelemetryFields,
-    PredictionSourceLoadedTelemetryFields, RunStartedTelemetryFields, RunTelemetryEventKind,
-    SampleAlignmentCompletedTelemetryFields, SingleTraitPreflightCompletedTelemetryFields,
-    build_association_backend_selected_telemetry_fields, build_bgen_engine_opened_telemetry_fields,
-    build_effective_config_written_telemetry_fields, build_execution_plan_prepared_telemetry_fields,
-    build_gpu_genotype_format_resolved_telemetry_fields, build_multi_phenotype_preflight_completed_telemetry_fields,
-    build_multi_phenotype_sample_summary_telemetry_fields, build_multi_phenotype_writer_finished_telemetry_fields,
-    build_phenotype_writer_finished_telemetry_fields, build_prediction_source_loaded_telemetry_fields,
-    build_run_started_telemetry_fields, build_sample_alignment_completed_telemetry_fields,
-    build_single_trait_preflight_completed_telemetry_fields,
+pub(crate) use telemetry::{
+    RunTelemetryEventKind, build_association_backend_selected_telemetry_fields,
+    build_execution_plan_prepared_telemetry_fields, build_multi_phenotype_writer_finished_telemetry_fields,
+    build_phenotype_writer_finished_telemetry_fields,
 };

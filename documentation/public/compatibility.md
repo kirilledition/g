@@ -13,14 +13,14 @@ release line exists.
 
 | Area | Status |
 | --- | --- |
-| REGENIE Step 2 quantitative traits | Supported with `--step 2 --qt`. |
-| REGENIE Step 2 binary score test | Supported with `--step 2 --bt`. |
-| Binary approximate Firth fallback | Experimental with `--bt --firth --approx`; not production-stable until upstream golden parity is added. |
+| REGENIE Step 2 quantitative traits | Supported with `--qt`. |
+| REGENIE Step 2 binary score test | Supported with `--bt`. |
+| Binary approximate Firth fallback | Experimental with `--bt --binary-fallback firth_approximate`; not production-stable until upstream golden parity is added. |
 | BGEN 1.2 input | Supported. |
 | Oxford `.sample` files | Supported. |
 | Embedded BGEN sample identifiers | Supported when compatible with sample-key mode. |
 | Multiple phenotypes | Supported with per-phenotype semantics by default. |
-| Output formats | Arrow, Parquet dataset parts, optional finalized Parquet, and REGENIE Step 2-style text. |
+| Output | Chunked Parquet datasets under each phenotype run's `parts/` directory. |
 | GPU execution | Supported through JAX when the environment exposes a compatible accelerator. |
 | TOML config | Supported through `--config`. |
 
@@ -34,7 +34,7 @@ release line exists.
 | Sample/variant filters | `--keep`, `--remove`, `--extract`, and `--exclude` fail as unknown. |
 | Categorical covariates | `--catCovarList` fails as unknown. |
 | SPA fallback | `--spa` fails as unknown. |
-| Exact Firth without `--approx` | Recognized and rejected. |
+| Exact Firth | No option is exposed; unsupported flags fail as unknown. |
 | Alternative tests and time-to-event traits | `--test` and `--t2e` fail as unknown. |
 
 Unsupported flags fail loudly so REGENIE command migration does not silently
@@ -51,7 +51,7 @@ drop scientific intent.
 The supported command is intentionally close to REGENIE Step 2:
 
 ```bash
-g regenie --step 2 --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
+g regenie --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
 ```
 
 Important migration limits:
@@ -60,10 +60,10 @@ Important migration limits:
 - Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
 - Compare equivalent statistical modes only. A binary score-only `g` run should
   not be compared to upstream REGENIE output that used approximate Firth.
-- Treat `--bt --firth --approx` as experimental until the pre-release parity
+- Treat `--bt --binary-fallback firth_approximate` as experimental until the pre-release parity
   suite includes an upstream golden approximate-Firth fixture.
-- REGENIE text output is selected with `[output] format = "regenie"`; Arrow and
-  Parquet are the performance-oriented defaults for this engine.
+- Consume each phenotype run's `parts/` directory as a Parquet dataset. This is
+  the sole result contract; there is no consolidated result file.
 
 ## Versioning Expectations
 

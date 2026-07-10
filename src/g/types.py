@@ -22,37 +22,16 @@ class BinaryFallbackMethod(enum.StrEnum):
     """Internal binary fallback method."""
 
     SCORE_ONLY = "score_only"
-    FIRTH = "firth"
     FIRTH_APPROXIMATE = "firth_approximate"
-    SPA = "spa"
 
 
-class BinaryExtraCode(enum.IntEnum):
-    """Integer correction labels used by binary REGENIE step 2 output."""
+class BinaryCorrectionCode(enum.IntEnum):
+    """Binary association correction method and outcome."""
 
-    SCORE = 0
-    FIRTH = 1
-    SPA = 2
-    TEST_FAIL = 3
-
-
-class FirthFailureCode(enum.IntEnum):
-    """Integer failure labels for binary Firth fallback rows."""
-
-    NONE = 0
-    NUMERICAL = 1
-    MAX_ITERATIONS = 2
-    INVALID_STATISTIC = 3
-    STEP_HALVING = 4
-
-
-class FirthCorrectionCode(enum.IntEnum):
-    """Integer labels for the final binary approximate-Firth branch."""
-
-    NONE = 0
-    PSEUDO_FIRTH = 1
-    NEWTON_RAPHSON_ZERO_START = 2
-    NEWTON_RAPHSON_WARM_START = 3
+    SCORE_SUCCESS = 0
+    SCORE_FAILED = 1
+    FIRTH_SUCCESS = 2
+    FIRTH_FAILED = 3
 
 
 @dataclass(frozen=True)

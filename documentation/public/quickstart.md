@@ -34,7 +34,6 @@ For exact file contracts, see [Input Files](input-files.md).
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -50,7 +49,6 @@ uv run g regenie \
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --bt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -66,7 +64,6 @@ uv run g regenie \
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --bt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -75,8 +72,7 @@ uv run g regenie \
   --covarFile /path/to/covariates.tsv \
   --covarColList age,sex \
   --pred /path/to/regenie_step1_pred.list \
-  --firth \
-  --approx \
+  --binary-fallback firth_approximate \
   --pThresh 0.01 \
   --out /path/to/output/g_binary_firth_regenie2
 ```
@@ -92,7 +88,6 @@ You can request multiple traits in one run with repeated `--phenoCol` flags.
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -120,7 +115,6 @@ multi_phenotype_sample_mode = "complete-case"
 ```bash
 uv run g regenie \
   --config complete-case.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -152,7 +146,6 @@ device = "gpu"
 ```bash
 uv run g regenie \
   --config gpu.toml \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
@@ -164,29 +157,6 @@ uv run g regenie \
 
 Submit GPU commands on a GPU node or through your scheduler. See [GPU and Clusters](gpu-and-clusters.md)
 for cluster notes.
-
-## REGENIE Text Output
-
-Set `[output] format = "regenie"` in `regenie-output.toml` to write a
-REGENIE Step 2-compatible tab-separated `final.regenie` file:
-
-```toml
-[output]
-format = "regenie"
-```
-
-```bash
-uv run g regenie \
-  --config regenie-output.toml \
-  --step 2 \
-  --qt \
-  --bgen /path/to/genotypes.bgen \
-  --sample /path/to/genotypes.sample \
-  --phenoFile /path/to/phenotypes.tsv \
-  --phenoCol phenotype_continuous \
-  --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_regenie_text
-```
 
 ## Repository Fixture Data
 
@@ -205,5 +175,6 @@ are local and git-ignored.
 
 ## Output
 
-Successful runs print the run directory. See [Output Files](output-files.md) for generated
-layout and schema, and [Resume and Manifest](resume-and-manifest.md) for restart behavior.
+Successful runs print the run directory and its `parts/` Parquet dataset
+directory. See [Output Files](output-files.md) for the layout and schema, and
+[Resume and Manifest](resume-and-manifest.md) for restart behavior.

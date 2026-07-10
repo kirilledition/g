@@ -30,4 +30,5 @@ src/g/_core*.so
 .env.symphony
 
 skills-lock.json
-.agents/*
+.agents/
+.tanto/

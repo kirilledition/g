@@ -27,7 +27,6 @@ class Regenie2MultiLinearChunkResult:
         standard_error: Standard errors with shape ``traits x variants``.
         chi_squared: Chi-squared statistics with shape ``traits x variants``.
         log10_p_value: Negative log10 p-values with shape ``traits x variants``.
-        valid_mask: Boolean mask for valid statistics with shape ``traits x variants``.
 
     """
 
@@ -35,7 +34,6 @@ class Regenie2MultiLinearChunkResult:
     standard_error: jax.Array
     chi_squared: jax.Array
     log10_p_value: jax.Array
-    valid_mask: jax.Array
 
 
 def compute_positive_residual_variance_mask(
@@ -191,11 +189,9 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         pvalue.chi_squared_to_log10_p_value(chi_squared),
         jnp.nan,
     )
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
     return Regenie2MultiLinearChunkResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
-        valid_mask=valid_mask,
     )

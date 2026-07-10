@@ -4,9 +4,10 @@ use std::sync::OnceLock;
 use flate2::Decompress;
 
 use super::super::BgenError;
+#[cfg(test)]
 use super::super::profile::ThreadLocalProfileSnapshot;
 use super::probability::read_exact_bytes;
-use crate::buffer::raw_pointer::OutputBufferAddress;
+use crate::buffer::OutputBufferAddress;
 
 pub(super) const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
 pub(super) const PLOIDY_MASK: u8 = 0x3F;
@@ -57,12 +58,14 @@ impl<Value> VariantMajorOutputMatrix<Value> {
     }
 }
 
+#[cfg(test)]
 pub(super) struct RowMajorOutputMatrix<Value> {
     pointer: NonNull<Value>,
     row_value_count: usize,
     row_context: &'static str,
 }
 
+#[cfg(test)]
 impl<Value> RowMajorOutputMatrix<Value> {
     /// Builds a typed view over a caller-owned row-major output matrix.
     ///
@@ -129,11 +132,13 @@ impl<Value> RowMajorOutputMatrix<Value> {
     }
 }
 
+#[cfg(test)]
 pub(super) struct RowMajorOutputColumnMut<'a, Value> {
     matrix: &'a mut RowMajorOutputMatrix<Value>,
     column_index: usize,
 }
 
+#[cfg(test)]
 impl<Value> RowMajorOutputColumnMut<'_, Value> {
     /// Writes one value in the validated column.
     ///
@@ -156,11 +161,9 @@ impl<Value> RowMajorOutputColumnMut<'_, Value> {
 
 #[derive(Debug)]
 pub(in crate::bgen) struct VariantDecodeResult {
-    pub(in crate::bgen) profile_snapshot: ThreadLocalProfileSnapshot,
     pub(in crate::bgen) selected_dosage_total: f32,
     pub(in crate::bgen) selected_dosage_square_total: f32,
     pub(in crate::bgen) selected_observation_count: i32,
-    pub(in crate::bgen) has_missing_values: bool,
     pub(in crate::bgen) zero_count: i32,
     pub(in crate::bgen) nonzero_count: i32,
     pub(in crate::bgen) homozygous_reference_count: i32,
@@ -168,6 +171,7 @@ pub(in crate::bgen) struct VariantDecodeResult {
     pub(in crate::bgen) homozygous_alternate_count: i32,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(in crate::bgen) struct DosageTileDecodeResult {
     pub(in crate::bgen) profile_snapshot: ThreadLocalProfileSnapshot,
@@ -185,12 +189,7 @@ pub(in crate::bgen) struct VariantMajorTileStatsMut<'a> {
     pub(in crate::bgen) homozygous_alternate_count: &'a mut [i32],
 }
 
-#[derive(Debug)]
-pub(in crate::bgen) struct VariantMajorTileDecodeResult {
-    pub(in crate::bgen) profile_snapshot: ThreadLocalProfileSnapshot,
-    pub(in crate::bgen) has_missing_values: bool,
-}
-
+#[cfg(test)]
 pub(super) fn build_variant_decode_result(
     profile_snapshot: ThreadLocalProfileSnapshot,
     selected_dosage_total: f32,
@@ -209,7 +208,7 @@ pub(super) fn build_variant_decode_result(
     }
 }
 
-pub(super) fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
+pub(in crate::bgen) fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {
     i32::try_from(selected_sample_count).map_err(|_| {
         BgenError::Range(format!(
             "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
@@ -260,6 +259,7 @@ pub(in crate::bgen) fn read_eight_bit_probability_pair(buffer: &[u8], offset: us
 pub(in crate::bgen) struct ThreadScratch {
     pub(super) zlib_decompressor: Decompress,
     pub(super) decompressed_probability_block: Vec<u8>,
+    #[cfg(test)]
     pub(super) dosage_tile: Vec<f32>,
 }
 
@@ -268,11 +268,13 @@ impl Default for ThreadScratch {
         Self {
             zlib_decompressor: Decompress::new(true),
             decompressed_probability_block: Vec::new(),
+            #[cfg(test)]
             dosage_tile: Vec::new(),
         }
     }
 }
 
+#[cfg(test)]
 pub(super) fn record_variant_decode_if_enabled(
     thread_local_profile_snapshot: &mut ThreadLocalProfileSnapshot,
     profiling_enabled: bool,

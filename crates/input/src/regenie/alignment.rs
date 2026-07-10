@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use crate::sample::SampleKeyMode;
+use g_plan::SampleKeyMode;
 
 use super::PredictionError;
 use super::loco::LocoSampleIndex;
@@ -15,8 +15,8 @@ pub(super) fn align_prediction_values(prediction_values: &Arc<[f32]>, alignment_
 }
 
 pub(super) fn validate_target_sample_keys(
-    target_family_identifiers: &[String],
-    target_individual_identifiers: &[String],
+    target_family_identifiers: &[&str],
+    target_individual_identifiers: &[&str],
 ) -> Result<(), PredictionError> {
     if target_family_identifiers.len() != target_individual_identifiers.len() {
         return Err(PredictionError::TargetSampleLengthMismatch);
@@ -25,7 +25,7 @@ pub(super) fn validate_target_sample_keys(
     for (family_identifier, individual_identifier) in
         target_family_identifiers.iter().zip(target_individual_identifiers.iter())
     {
-        let sample_key = (family_identifier.as_str(), individual_identifier.as_str());
+        let sample_key = (*family_identifier, *individual_identifier);
         let occurrence_count = observed_sample_keys.entry(sample_key).or_insert(0);
         *occurrence_count += 1;
         if *occurrence_count > 1 {
@@ -55,17 +55,19 @@ pub(super) fn validate_loco_sample_keys(loco_sample_index: &LocoSampleIndex) -> 
 }
 
 pub(super) fn validate_unique_target_individual_identifiers(
-    target_individual_identifiers: &[String],
+    target_individual_identifiers: &[&str],
 ) -> Result<(), PredictionError> {
     let mut observed_individual_identifiers = HashMap::with_capacity(target_individual_identifiers.len());
     for individual_identifier in target_individual_identifiers {
         if individual_identifier.is_empty() {
             return Err(PredictionError::EmptyTargetIid);
         }
-        let occurrence_count = observed_individual_identifiers.entry(individual_identifier.as_str()).or_insert(0);
+        let occurrence_count = observed_individual_identifiers.entry(*individual_identifier).or_insert(0);
         *occurrence_count += 1;
         if *occurrence_count > 1 {
-            return Err(PredictionError::DuplicateTargetIid { individual_identifier: individual_identifier.clone() });
+            return Err(PredictionError::DuplicateTargetIid {
+                individual_identifier: (*individual_identifier).to_string(),
+            });
         }
     }
     Ok(())
@@ -90,8 +92,8 @@ pub(super) fn validate_unique_loco_individual_identifiers(
 
 pub(super) fn build_sample_alignment_indices(
     loco_sample_index: &LocoSampleIndex,
-    target_family_identifiers: &[String],
-    target_individual_identifiers: &[String],
+    target_family_identifiers: &[&str],
+    target_individual_identifiers: &[&str],
     sample_key_mode: SampleKeyMode,
 ) -> Result<Vec<usize>, PredictionError> {
     if target_family_identifiers.len() != target_individual_identifiers.len() {
@@ -110,7 +112,7 @@ pub(super) fn build_sample_alignment_indices(
 
 fn build_individual_identifier_alignment_indices(
     loco_sample_index: &LocoSampleIndex,
-    target_individual_identifiers: &[String],
+    target_individual_identifiers: &[&str],
 ) -> Result<Vec<usize>, PredictionError> {
     let mut loco_lookup = HashMap::with_capacity(loco_sample_index.individual_identifiers.len());
     for (sample_index, individual_identifier) in loco_sample_index.individual_identifiers.iter().enumerate() {
@@ -120,10 +122,10 @@ fn build_individual_identifier_alignment_indices(
     let mut alignment_indices = Vec::with_capacity(target_individual_identifiers.len());
     let mut missing_samples = Vec::new();
     for individual_identifier in target_individual_identifiers {
-        if let Some(sample_index) = loco_lookup.get(individual_identifier.as_str()) {
+        if let Some(sample_index) = loco_lookup.get(individual_identifier) {
             alignment_indices.push(*sample_index);
         } else {
-            missing_samples.push(individual_identifier.clone());
+            missing_samples.push((*individual_identifier).to_string());
         }
     }
 
@@ -135,8 +137,8 @@ fn build_individual_identifier_alignment_indices(
 
 fn build_family_individual_identifier_alignment_indices(
     loco_sample_index: &LocoSampleIndex,
-    target_family_identifiers: &[String],
-    target_individual_identifiers: &[String],
+    target_family_identifiers: &[&str],
+    target_individual_identifiers: &[&str],
 ) -> Result<Vec<usize>, PredictionError> {
     let mut loco_lookup = HashMap::with_capacity(loco_sample_index.family_identifiers.len());
     for (sample_index, (family_identifier, individual_identifier)) in
@@ -150,7 +152,7 @@ fn build_family_individual_identifier_alignment_indices(
     for (family_identifier, individual_identifier) in
         target_family_identifiers.iter().zip(target_individual_identifiers.iter())
     {
-        let key = (family_identifier.as_str(), individual_identifier.as_str());
+        let key = (*family_identifier, *individual_identifier);
         if let Some(sample_index) = loco_lookup.get(&key) {
             alignment_indices.push(*sample_index);
         } else {

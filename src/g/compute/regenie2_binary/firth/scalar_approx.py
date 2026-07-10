@@ -2,60 +2,17 @@
 
 from __future__ import annotations
 
-import typing
-
 import jax
 import jax.numpy as jnp
 
-from g import types
 from g.compute.common import pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
-if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import state as regenie2_binary_state
-
-
-def map_scalar_pseudo_firth_failure_to_reason_code(failure_code: jax.Array) -> jax.Array:
-    """Map REGENIE scalar pseudo-Firth failure states to internal reason codes."""
-    return jnp.where(
-        failure_code == jnp.asarray(1, dtype=jnp.int32),
-        regenie2_binary_firth_types.FirthConvergenceReason.MAX_ITERATIONS.value,
-        jnp.where(
-            failure_code == jnp.asarray(2, dtype=jnp.int32),
-            regenie2_binary_firth_types.FirthConvergenceReason.STEP_SIZE_INCREASE.value,
-            jnp.where(
-                failure_code == jnp.asarray(3, dtype=jnp.int32),
-                regenie2_binary_firth_types.FirthConvergenceReason.PROBABILITY_FAILURE.value,
-                jnp.where(
-                    failure_code == jnp.asarray(4, dtype=jnp.int32),
-                    regenie2_binary_firth_types.FirthConvergenceReason.NEGATIVE_LRT.value,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-                ),
-            ),
-        ),
-    ).astype(jnp.int32)
-
-
-def residualize_and_scale_genotypes_for_approximate_firth(
-    chromosome_state: regenie2_binary_state.Regenie2BinaryChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-) -> jax.Array:
-    """Build REGENIE's approximate-Firth residualized genotype vector."""
-    weighted_genotype_matrix_by_variant = genotype_matrix_by_variant * chromosome_state.square_root_weight[None, :]
-    projection_coordinates = (
-        weighted_genotype_matrix_by_variant @ chromosome_state.weighted_genotype_projection_matrix.T
-    )
-    weighted_residual_matrix_by_variant = weighted_genotype_matrix_by_variant - (
-        projection_coordinates @ chromosome_state.weighted_genotype_projection_matrix
-    )
-    return weighted_residual_matrix_by_variant / chromosome_state.square_root_weight[None, :]
-
 
 def build_scalar_approximate_firth_solver_parameters(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    scalar_dtype: typing.Any,
 ) -> regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters:
     """Build explicit scalar approximate-Firth policy operands."""
     pseudo_maximum_iterations = min(
@@ -64,9 +21,9 @@ def build_scalar_approximate_firth_solver_parameters(
     )
     newton_raphson_maximum_iterations = kernel_config.approximate_firth.maximum_iterations // 2
     return regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters(
-        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=scalar_dtype),
-        tolerance=jnp.asarray(kernel_config.approximate_firth.gradient_tolerance, dtype=scalar_dtype),
-        maximum_step_size=jnp.asarray(kernel_config.approximate_firth.maximum_step_size, dtype=scalar_dtype),
+        minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=jnp.float64),
+        tolerance=jnp.asarray(kernel_config.approximate_firth.gradient_tolerance, dtype=jnp.float64),
+        maximum_step_size=jnp.asarray(kernel_config.approximate_firth.maximum_step_size, dtype=jnp.float64),
         pseudo_maximum_iterations=jnp.asarray(pseudo_maximum_iterations, dtype=jnp.int32),
         pseudo_inner_maximum_iterations=jnp.asarray(
             kernel_config.approximate_firth.pseudo_inner_maximum_iterations,
@@ -121,7 +78,6 @@ def compute_scalar_firth_components_with_minimum_variance(
     )
     return regenie2_binary_firth_types.ScalarFirthComponents(
         probability_vector=probability_vector,
-        weight_vector=weight_vector,
         genotype_information=genotype_information,
         genotype_information_diagonal=genotype_information_diagonal,
         penalized_deviance=penalized_deviance,
@@ -169,15 +125,6 @@ def run_scalar_pseudo_logistic_iteration(
         | (updated_genotype_information <= 0.0)
     )
     failed = step_increased | probability_failed | numerical_failed
-    failure_code = jnp.where(
-        step_increased,
-        jnp.asarray(2, dtype=jnp.int32),
-        jnp.where(
-            probability_failed | numerical_failed,
-            jnp.asarray(3, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
-    )
     return regenie2_binary_firth_types.ScalarPseudoLogisticLoopCarry(
         state=regenie2_binary_firth_types.ScalarPseudoLogisticState(
             beta=jnp.where(failed, state.beta, updated_beta),
@@ -188,7 +135,6 @@ def run_scalar_pseudo_logistic_iteration(
             iteration_count=state.iteration_count + jnp.asarray(1, dtype=jnp.int32),
             converged=(jnp.abs(updated_score) < carry.tolerance) & (~failed),
             failed=failed,
-            failure_code=failure_code,
         ),
         genotype_vector=carry.genotype_vector,
         active_sample_mask=carry.active_sample_mask,
@@ -229,7 +175,6 @@ def fit_scalar_pseudo_logistic_step(
                 iteration_count=jnp.asarray(0, dtype=jnp.int32),
                 converged=jnp.asarray(0, dtype=jnp.bool_),
                 failed=jnp.asarray(0, dtype=jnp.bool_),
-                failure_code=jnp.asarray(0, dtype=jnp.int32),
             ),
             genotype_vector=genotype_vector,
             active_sample_mask=active_sample_mask,
@@ -291,27 +236,13 @@ def run_scalar_pseudo_firth_iteration(
         maximum_step_size=carry.maximum_step_size,
     )
     failed = (~components.valid) | slow_convergence_failure | logistic_state.failed
-    failure_code = jnp.where(
-        ~components.valid,
-        jnp.asarray(3, dtype=jnp.int32),
-        jnp.where(
-            slow_convergence_failure,
-            jnp.asarray(1, dtype=jnp.int32),
-            logistic_state.failure_code,
-        ),
-    )
     return regenie2_binary_firth_types.ScalarPseudoFirthLoopCarry(
         state=regenie2_binary_firth_types.ScalarPseudoFirthState(
             beta=jnp.where(converged | failed, state.beta, logistic_state.beta),
-            penalized_deviance=components.penalized_deviance,
-            genotype_information=components.genotype_information,
-            score=components.score,
             outer_iteration_count=updated_outer_iteration_count,
-            inner_iteration_count=state.inner_iteration_count + logistic_state.iteration_count,
             beta_iteration_14=beta_iteration_14,
             converged=converged & (~failed),
             failed=failed,
-            failure_code=failure_code,
         ),
         phenotype_vector=carry.phenotype_vector,
         genotype_vector=carry.genotype_vector,
@@ -357,19 +288,10 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
         regenie2_binary_firth_types.ScalarPseudoFirthLoopCarry(
             state=regenie2_binary_firth_types.ScalarPseudoFirthState(
                 beta=initial_beta,
-                penalized_deviance=initial_components.penalized_deviance,
-                genotype_information=initial_components.genotype_information,
-                score=initial_components.score,
                 outer_iteration_count=jnp.asarray(0, dtype=jnp.int32),
-                inner_iteration_count=jnp.asarray(0, dtype=jnp.int32),
                 beta_iteration_14=jnp.asarray(0.0, dtype=initial_beta.dtype),
                 converged=jnp.asarray(0, dtype=jnp.bool_),
                 failed=~initial_components.valid,
-                failure_code=jnp.where(
-                    initial_components.valid,
-                    jnp.asarray(0, dtype=jnp.int32),
-                    jnp.asarray(3, dtype=jnp.int32),
-                ),
             ),
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,
@@ -397,15 +319,6 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
     chi_squared = deviance_null - final_components.penalized_deviance
     negative_lrt_failure = final_state.converged & (chi_squared < 0.0)
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure | (~final_components.valid)
-    failure_code = jnp.where(
-        maximum_iteration_failure,
-        jnp.asarray(1, dtype=jnp.int32),
-        jnp.where(
-            negative_lrt_failure,
-            jnp.asarray(4, dtype=jnp.int32),
-            jnp.where(~final_components.valid, jnp.asarray(3, dtype=jnp.int32), final_state.failure_code),
-        ),
-    )
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
     log10_p_value = jnp.asarray(
         pvalue.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
@@ -417,12 +330,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
-        penalized_deviance=final_components.penalized_deviance,
-        genotype_information=final_components.genotype_information,
-        converged=final_state.converged & (~failed),
         valid=valid,
-        iteration_count=final_state.outer_iteration_count,
-        failure_reason_code=map_scalar_pseudo_firth_failure_to_reason_code(failure_code),
     )
 
 
@@ -593,11 +501,6 @@ def run_scalar_newton_raphson_iteration(
             iteration_count=updated_iteration_count,
             converged=converged & (~failed),
             failed=failed,
-            failure_reason_code=jnp.where(
-                failed,
-                regenie2_binary_firth_types.FirthConvergenceReason.PROBABILITY_FAILURE.value,
-                regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            ).astype(jnp.int32),
         ),
         phenotype_vector=carry.phenotype_vector,
         genotype_vector=carry.genotype_vector,
@@ -651,11 +554,6 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
                 iteration_count=jnp.asarray(0, dtype=jnp.int32),
                 converged=jnp.asarray(0, dtype=jnp.bool_),
                 failed=~initial_components.valid,
-                failure_reason_code=jnp.where(
-                    initial_components.valid,
-                    regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-                    regenie2_binary_firth_types.FirthConvergenceReason.PROBABILITY_FAILURE.value,
-                ).astype(jnp.int32),
             ),
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,
@@ -682,15 +580,6 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
     maximum_iteration_failure = (~final_state.converged) & (~final_state.failed)
     chi_squared = deviance_null - final_components.penalized_deviance
     negative_lrt_failure = final_state.converged & (chi_squared < 0.0)
-    reason_code = jnp.where(
-        maximum_iteration_failure,
-        regenie2_binary_firth_types.FirthConvergenceReason.MAX_ITERATIONS.value,
-        jnp.where(
-            negative_lrt_failure,
-            regenie2_binary_firth_types.FirthConvergenceReason.NEGATIVE_LRT.value,
-            final_state.failure_reason_code,
-        ),
-    ).astype(jnp.int32)
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure | (~final_components.valid)
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
     log10_p_value = jnp.asarray(
@@ -703,12 +592,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
-        penalized_deviance=final_components.penalized_deviance,
-        genotype_information=final_components.genotype_information,
-        converged=final_state.converged & (~failed),
         valid=valid,
-        iteration_count=final_state.iteration_count,
-        failure_reason_code=reason_code,
     )
 
 
@@ -716,7 +600,6 @@ def build_single_variant_regenie_approximate_firth_result(
     *,
     skip_firth: jax.Array,
     null_failed: jax.Array,
-    sparse_correction: jax.Array,
     pseudo_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
     zero_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
     warm_start_result: regenie2_binary_firth_types.ScalarFirthAttemptResult,
@@ -747,88 +630,13 @@ def build_single_variant_regenie_approximate_firth_result(
         pseudo_result.log10_p_value,
         jnp.where(use_zero_start, zero_start_result.log10_p_value, warm_start_result.log10_p_value),
     )
-    selected_deviance = jnp.where(
-        pseudo_result.valid,
-        pseudo_result.penalized_deviance,
-        jnp.where(use_zero_start, zero_start_result.penalized_deviance, warm_start_result.penalized_deviance),
-    )
-    selected_reason_code = jnp.where(
-        pseudo_result.valid,
-        regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-        jnp.where(
-            use_zero_start,
-            regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-            jnp.where(
-                use_warm_start,
-                regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-                warm_start_result.failure_reason_code,
-            ),
-        ),
-    ).astype(jnp.int32)
     valid_mask = (~skip_firth) & (~null_failed) & (pseudo_result.valid | use_zero_start | use_warm_start)
-    selected_reason_code = jnp.where(
-        null_failed,
-        regenie2_binary_firth_types.FirthConvergenceReason.NULL_FAILURE.value,
-        selected_reason_code,
-    )
-    failure_code = regenie2_binary_firth_types.map_firth_reason_code_to_failure_code(selected_reason_code)
-    correction_code = jnp.where(
-        valid_mask & pseudo_result.valid,
-        types.FirthCorrectionCode.PSEUDO_FIRTH.value,
-        jnp.where(
-            valid_mask & use_zero_start,
-            types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value,
-            jnp.where(
-                valid_mask & use_warm_start,
-                types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value,
-                types.FirthCorrectionCode.NONE.value,
-            ),
-        ),
-    ).astype(jnp.int32)
     return regenie2_binary_firth_types.FirthVariantResult(
         beta=jnp.where(skip_firth, jnp.nan, selected_beta),
         standard_error=jnp.where(skip_firth, jnp.nan, selected_standard_error),
         chi_squared=jnp.where(skip_firth, jnp.nan, selected_chi_squared),
         log10_p_value=jnp.asarray(jnp.where(skip_firth, jnp.nan, selected_log10_p_value), dtype=scalar_dtype),
-        penalized_log_likelihood=jnp.where(skip_firth, jnp.nan, -0.5 * selected_deviance),
-        converged_mask=valid_mask,
         valid_mask=valid_mask,
-        iteration_count=jnp.where(
-            skip_firth,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.where(
-                null_failed,
-                jnp.asarray(0, dtype=jnp.int32),
-                pseudo_result.iteration_count,
-            )
-            + jnp.where(run_zero_start, zero_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32))
-            + jnp.where(run_warm_start, warm_start_result.iteration_count, jnp.asarray(0, dtype=jnp.int32)),
-        ),
-        failure_code=jnp.where(skip_firth | valid_mask, types.FirthFailureCode.NONE.value, failure_code).astype(
-            jnp.int32
-        ),
-        convergence_reason_code=jnp.where(
-            skip_firth,
-            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            selected_reason_code,
-        ),
-        correction_code=jnp.where(skip_firth, types.FirthCorrectionCode.NONE.value, correction_code),
-        sparse_correction_mask=(~skip_firth) & sparse_correction,
-        pseudo_firth_iteration_count=jnp.where(
-            skip_firth,
-            jnp.asarray(0, dtype=jnp.int32),
-            jnp.where(null_failed, jnp.asarray(0, dtype=jnp.int32), pseudo_result.iteration_count),
-        ),
-        nr_zero_start_iteration_count=jnp.where(
-            (~skip_firth) & run_zero_start,
-            zero_start_result.iteration_count,
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
-        nr_warm_start_iteration_count=jnp.where(
-            (~skip_firth) & run_warm_start,
-            warm_start_result.iteration_count,
-            jnp.asarray(0, dtype=jnp.int32),
-        ),
     )
 
 
@@ -842,15 +650,7 @@ def build_skipped_scalar_firth_attempt(
         standard_error=jnp.asarray(jnp.nan, dtype=scalar_dtype),
         chi_squared=jnp.asarray(jnp.nan, dtype=scalar_dtype),
         log10_p_value=jnp.asarray(jnp.nan, dtype=scalar_dtype),
-        penalized_deviance=jnp.asarray(jnp.nan, dtype=scalar_dtype),
-        genotype_information=jnp.asarray(jnp.nan, dtype=scalar_dtype),
-        converged=jnp.asarray(0, dtype=jnp.bool_),
         valid=jnp.asarray(0, dtype=jnp.bool_),
-        iteration_count=jnp.asarray(0, dtype=jnp.int32),
-        failure_reason_code=jnp.asarray(
-            regenie2_binary_firth_types.FirthConvergenceReason.NONE.value,
-            dtype=jnp.int32,
-        ),
     )
 
 
@@ -925,7 +725,6 @@ def build_single_variant_regenie_approximate_firth_result_from_operands(
     return build_single_variant_regenie_approximate_firth_result(
         skip_firth=dispatch_operands.skip_firth,
         null_failed=dispatch_operands.null_failed,
-        sparse_correction=dispatch_operands.sparse_correction,
         pseudo_result=operands.pseudo_result,
         zero_start_result=operands.zero_start_result,
         warm_start_result=operands.warm_start_result,
@@ -1074,33 +873,6 @@ def run_scalar_active_solver(
     )
 
 
-def fit_single_variant_regenie_approximate_firth(
-    *,
-    phenotype_vector: jax.Array,
-    genotype_vector: jax.Array,
-    offset_vector: jax.Array,
-    carrier_sample_mask: jax.Array,
-    sparse_correction: jax.Array,
-    warm_start_beta: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one REGENIE-equivalent scalar approximate-Firth candidate."""
-    scalar_dtype = offset_vector.dtype
-    return fit_single_variant_regenie_approximate_firth_with_solver_parameters(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        carrier_sample_mask=carrier_sample_mask,
-        sparse_correction=sparse_correction,
-        warm_start_beta=warm_start_beta,
-        skip_firth=skip_firth,
-        null_failed=null_failed,
-        solver_parameters=build_scalar_approximate_firth_solver_parameters(kernel_config, scalar_dtype),
-    )
-
-
 def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     *,
     phenotype_vector: jax.Array,
@@ -1114,9 +886,9 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one scalar approximate-Firth candidate with explicit solver policy."""
-    scalar_dtype = offset_vector.dtype
-    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
-    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
+    offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
     all_sample_mask = jnp.ones_like(phenotype_vector, dtype=jnp.bool_)
     active_sample_mask = jnp.where(sparse_correction, carrier_sample_mask, all_sample_mask)
     null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
@@ -1155,10 +927,9 @@ def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one compact sparse lane with explicit solver policy."""
-    scalar_dtype = offset_vector.dtype
-    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
-    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
-    offset_vector = jnp.asarray(offset_vector, dtype=scalar_dtype)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
+    offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
     null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
     active_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
         phenotype_vector,
@@ -1170,8 +941,8 @@ def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
         active_sample_mask=active_carrier_slot_mask,
-        full_null_deviance=jnp.asarray(full_null_deviance, dtype=scalar_dtype),
-        non_active_deviance=jnp.asarray(full_null_deviance, dtype=scalar_dtype) - active_null_deviance,
+        full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
+        non_active_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64) - active_null_deviance,
         sparse_correction=jnp.ones((), dtype=jnp.bool_),
         warm_start_beta=warm_start_beta,
         skip_firth=skip_firth,
@@ -1195,14 +966,13 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Fit one approximate-Firth candidate with explicit solver parameters."""
-    scalar_dtype = offset_vector.dtype
-    phenotype_vector = jnp.asarray(phenotype_vector, dtype=scalar_dtype)
-    genotype_vector = jnp.asarray(genotype_vector, dtype=scalar_dtype)
-    offset_vector = jnp.asarray(offset_vector, dtype=scalar_dtype)
+    phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
+    genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
+    offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
     active_sample_mask = jnp.asarray(active_sample_mask, dtype=jnp.bool_)
-    full_null_deviance = jnp.asarray(full_null_deviance, dtype=scalar_dtype)
-    non_active_deviance = jnp.asarray(non_active_deviance, dtype=scalar_dtype)
-    warm_start_beta = jnp.asarray(warm_start_beta, dtype=scalar_dtype)
+    full_null_deviance = jnp.asarray(full_null_deviance, dtype=jnp.float64)
+    non_active_deviance = jnp.asarray(non_active_deviance, dtype=jnp.float64)
+    warm_start_beta = jnp.asarray(warm_start_beta, dtype=jnp.float64)
     sparse_correction = jnp.asarray(sparse_correction, dtype=jnp.bool_)
     null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
     null_weight_vector = null_probability_vector * (1.0 - null_probability_vector)

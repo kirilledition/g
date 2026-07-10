@@ -8,19 +8,19 @@
 
 Build a REGENIE-compatible, BGEN-backed Step 2 engine with Rust I/O, JAX
 compute, reproducible config-driven runs, structured telemetry, and resumable
-Arrow/Parquet output.
+Parquet dataset output.
 
 ## Active Supported Scope
 
-- Quantitative REGENIE Step 2 through `g regenie --step 2 --qt`.
-- Binary score-only Step 2 through `g regenie --step 2 --bt`.
-- Binary `--firth --approx` through scalar approximate Firth, with parity work
-  still treated as active engineering surface.
+- Quantitative REGENIE Step 2 through `g regenie --qt`.
+- Binary score-only Step 2 through `g regenie --bt`.
+- Binary approximate-Firth fallback through
+  `--binary-fallback firth_approximate`, with parity work still treated as an
+  active engineering surface.
 - BGEN 1.2 input with Oxford `.sample` metadata.
 - Native TOML/CLI input compiled into one Rust run request.
-- Arrow chunk output and final Parquet materialization.
-- REGENIE-compatible Step 2 text output through `[output].format = "regenie"`.
-- Runtime telemetry, progress logging, profile summaries, and trace mode.
+- Chunked Parquet output under each phenotype run's `parts/` directory.
+- Runtime lifecycle telemetry, stage summaries, and trace mode.
 
 ## Not Yet Supported
 

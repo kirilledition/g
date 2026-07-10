@@ -14,13 +14,7 @@ mod keys;
 mod tables;
 mod types;
 
-pub use alignment_workflow::{align_grouped_sample_data, align_multi_sample_data, align_sample_data};
-pub use fingerprints::{
-    resolve_complete_case_compute_group, resolve_per_phenotype_compute_group, resolve_single_phenotype_compute_group,
-};
+pub use alignment_workflow::load_aligned_phenotype_groups;
 pub use grouping::{build_group_sample_position_array, build_union_sample_indices};
 pub use identity::load_sample_identifier_data_from_sample_file;
-pub use types::{
-    AlignedPhenotypeGroup, AlignedSampleData, AlignmentInputs, MultiAlignedSampleData, MultiAlignmentInputs,
-    ResolvedPhenotypeComputeGroup, SampleAlignmentError, SampleIdentifierData, SampleKeyMode,
-};
+pub use types::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest, SampleIdentifierData};

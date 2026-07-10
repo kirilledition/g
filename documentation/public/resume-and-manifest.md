@@ -38,8 +38,13 @@ optional TOML file, and explicit CLI overrides.
 - trusted BGEN policy, sample-key mode, JAX device/precision policy, dtype
   choices;
 - output writer settings;
-- committed chunk identifiers and chunk file metadata;
-- final output paths after finalization.
+- committed chunk identifiers and Parquet part metadata.
+
+Manifest schema version `11` stores immutable compatibility state once under
+`execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
+fields are limited to manifest/output schema versions and mutable lifecycle
+metadata such as status, committed chunks, command, runtime, and interruption
+state. The Parquet output schema remains version `3`.
 
 The manifest is the resume authority. It is intentionally stricter than a file
 name check.
@@ -79,17 +84,17 @@ Use `fast` for normal interruption recovery. Use `strict` after manual file
 movement, storage failures, or any situation where the manifest and chunk files
 might disagree.
 
-Strict resume requires current chunk commit metadata in every chunk file. Arrow
-IPC chunks must carry the `g.output.chunk_commits` schema metadata written by
-the native writer; metadata-free Arrow chunks are rejected instead of being
-reconstructed from data columns.
+Strict resume requires current chunk commit metadata in every Parquet part.
+Parts without the native writer's `g.output.chunk_commits` footer metadata are
+rejected instead of being reconstructed from data columns.
 
 ## Compatibility Checks
 
-Resume first requires an existing `run_manifest.json`. It then compares the
-current requested run against manifest fields that affect results or output
-interpretation. A mismatch fails with a message naming the first incompatible
-manifest field.
+Resume first requires an existing schema-v11 `run_manifest.json`. It then
+compares the current requested run against the canonical `execution_plan` and
+its hash. A mismatch fails with a message naming the first incompatible
+manifest field. Earlier manifest layouts are not adapted because the
+application has no released legacy output contract.
 
 Incompatible resume attempts are non-mutating: `run_manifest.json` remains
 unchanged and `effective_config.toml` is not newly created or overwritten until
@@ -106,8 +111,8 @@ Common mismatch causes:
 - changed selected association backend;
 - changed sample-key mode, multi-phenotype sample mode, aligned sample set,
   covariate design, or prediction alignment;
-- changed chunk size, variant limit, output format, public statistic output dtype,
-  writer grouping, or schema version;
+- changed chunk size, variant limit, public statistic output dtype, Parquet
+  compression, writer grouping, or schema version;
 - changed JAX precision/dtype or trusted BGEN policy.
 
 Resume is not a way to combine different analyses into one output directory.
@@ -129,11 +134,8 @@ resume_mode = "strict"
 
 or use `fast` when the previous interruption was clean and storage is trusted.
 
-## Finalization And Resume
+## Parquet Parts And Resume
 
-Chunked output is the resumable unit. Final artifacts such as `final.parquet`
-and `final.regenie` are derived from committed chunks at successful completion
-or finalization time.
-
-If a run is interrupted before finalization, resume the chunked run first and
-let the engine complete finalization after all chunks are committed.
+Committed Parquet parts are both the resumable unit and the completed dataset.
+After interruption, resume writes only missing chunks and does not perform a
+separate dataset consolidation step.

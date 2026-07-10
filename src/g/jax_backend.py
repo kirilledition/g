@@ -13,7 +13,6 @@ import numpy.typing as npt
 from g import _core, types
 from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
-from g.compute.regenie2_binary import diagnostics as regenie2_binary_diagnostics
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_linear import api as regenie2_linear
@@ -22,11 +21,8 @@ from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
 type HostIntegerArray = npt.NDArray[np.int32]
-type HostBooleanArray = npt.NDArray[np.bool_]
 type HostStatisticArray = npt.NDArray[np.float32] | npt.NDArray[np.float64]
-type BinaryDeviceResult = (
-    regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult | regenie2_binary_result.Regenie2MultiBinaryChunkResult
-)
+type BinaryDeviceResult = regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
 type GroupState = regenie2_linear_state.Regenie2MultiLinearState | regenie2_binary_state.Regenie2MultiBinaryState
 type ChromosomeState = (
     regenie2_linear_state.Regenie2MultiLinearChromosomeState | regenie2_binary_state.Regenie2MultiBinaryChromosomeState
@@ -41,8 +37,18 @@ class DeviceAssociationResult:
     standard_error: jax.Array
     chi_squared: jax.Array
     log10_p_value: jax.Array
-    extra_code: jax.Array | None
-    binary_diagnostics: regenie2_binary_diagnostics.BinaryChunkDiagnostics | None
+    correction_code: jax.Array | None
+
+
+@dataclass(frozen=True)
+class HostAssociationResult:
+    """Trait-major host result consumed by the native engine."""
+
+    beta: HostStatisticArray
+    standard_error: HostStatisticArray
+    chi_squared: HostStatisticArray
+    log10_p_value: HostStatisticArray
+    correction_code: HostIntegerArray | None
 
 
 class JaxAssociationBackend:
@@ -141,33 +147,33 @@ class JaxAssociationBackend:
     def prepare_chromosome(
         self,
         group_state: GroupState,
-        chromosome_input: _core.engine.JaxChromosomeInput,
+        prediction_matrix: npt.NDArray[np.float32],
     ) -> _core.engine.JaxPreparedChromosome:
-        """Prepare chromosome-specific state and null-model diagnostics.
+        """Prepare chromosome-specific state and convergence policy input.
 
         Args:
             group_state: Opaque state returned by :meth:`prepare_group`.
-            chromosome_input: Chromosome label and trait-major LOCO predictions.
+            prediction_matrix: Trait-major LOCO predictions.
 
         Returns:
-            Opaque chromosome state with host null-model diagnostics.
+            Opaque chromosome state with host null-logistic convergence flags.
 
         Raises:
             TypeError: If the supplied state does not match the configured mode.
 
         """
-        prediction_matrix = typing.cast("jax.Array", jax.device_put(chromosome_input.prediction_matrix))
+        prediction_matrix_device = typing.cast("jax.Array", jax.device_put(prediction_matrix))
         if self.association_mode == types.AssociationMode.REGENIE2_LINEAR:
             if not isinstance(group_state, regenie2_linear_state.Regenie2MultiLinearState):
                 message = "Quantitative chromosome preparation requires quantitative group state."
                 raise TypeError(message)
             chromosome_state = regenie2_linear_state.build_multi_linear_chromosome_state(
                 state=group_state,
-                loco_prediction_matrix=prediction_matrix,
+                loco_prediction_matrix=prediction_matrix_device,
                 score_dtype=self.score_dtype,
             )
             jax.block_until_ready(chromosome_state.adjusted_residual_matrix)
-            return _core.engine.JaxPreparedChromosome(state=chromosome_state, diagnostics=None)
+            return _core.engine.JaxPreparedChromosome(state=chromosome_state, null_logistic_converged=None)
 
         if not isinstance(group_state, regenie2_binary_state.Regenie2MultiBinaryState):
             message = "Binary chromosome preparation requires binary group state."
@@ -178,38 +184,19 @@ class JaxAssociationBackend:
             raise RuntimeError(message)
         chromosome_state = regenie2_binary_state.build_multi_binary_chromosome_state(
             state=group_state,
-            loco_offset_matrix=prediction_matrix,
+            loco_offset_matrix=prediction_matrix_device,
             correction_plan=correction_plan,
             kernel_config=self.binary_config,
             score_dtype=self.score_dtype,
         )
-        host_diagnostics = typing.cast(
-            "dict[str, object]",
-            jax.device_get(
-                {
-                    "logistic_converged": chromosome_state.null_logistic_converged,
-                    "logistic_iteration_count": chromosome_state.null_logistic_iteration_count,
-                    "firth_iteration_count": chromosome_state.null_firth_iteration_count,
-                    "firth_convergence_reason_code": chromosome_state.null_firth_convergence_reason_code,
-                }
-            ),
+        null_logistic_converged = typing.cast(
+            "npt.NDArray[np.bool_]",
+            jax.device_get(chromosome_state.null_logistic_converged),
         )
-        diagnostics = _core.engine.JaxNullModelDiagnostics(
-            logistic_converged=typing.cast("HostBooleanArray", host_diagnostics["logistic_converged"]),
-            logistic_iteration_count=typing.cast(
-                "HostIntegerArray",
-                host_diagnostics["logistic_iteration_count"],
-            ),
-            firth_iteration_count=typing.cast(
-                "HostIntegerArray",
-                host_diagnostics["firth_iteration_count"],
-            ),
-            firth_convergence_reason_code=typing.cast(
-                "HostIntegerArray",
-                host_diagnostics["firth_convergence_reason_code"],
-            ),
+        return _core.engine.JaxPreparedChromosome(
+            state=chromosome_state,
+            null_logistic_converged=null_logistic_converged,
         )
-        return _core.engine.JaxPreparedChromosome(state=chromosome_state, diagnostics=diagnostics)
 
     def compute_batch(
         self,
@@ -282,8 +269,7 @@ class JaxAssociationBackend:
                 standard_error=linear_result.standard_error,
                 chi_squared=linear_result.chi_squared,
                 log10_p_value=linear_result.log10_p_value,
-                extra_code=None,
-                binary_diagnostics=None,
+                correction_code=None,
             )
 
         if not isinstance(chromosome_state, regenie2_binary_state.Regenie2MultiBinaryChromosomeState):
@@ -317,7 +303,6 @@ class JaxAssociationBackend:
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                     score_dtype=self.score_dtype,
-                    stage_duration_recorder=None,
                 )
         else:
             packed_device_array = typing.cast("jax.Array", jax.device_put(packed8_probabilities))
@@ -341,22 +326,20 @@ class JaxAssociationBackend:
                     dosage_sum=dosage_sum,
                     observation_count=observation_count,
                     score_dtype=self.score_dtype,
-                    stage_duration_recorder=None,
                 )
         return DeviceAssociationResult(
             beta=binary_result.beta,
             standard_error=binary_result.standard_error,
             chi_squared=binary_result.chi_squared,
             log10_p_value=binary_result.log10_p_value,
-            extra_code=binary_result.extra_code,
-            binary_diagnostics=regenie2_binary_diagnostics.count_binary_chunk_diagnostics(binary_result),
+            correction_code=binary_result.correction_code,
         )
 
     def materialize_batch(
         self,
         device_result: DeviceAssociationResult,
         request: _core.engine.JaxMaterializationRequest,
-    ) -> _core.engine.JaxHostAssociationBatch:
+    ) -> HostAssociationResult:
         """Select active traits and transfer one association result to the host.
 
         Args:
@@ -364,7 +347,7 @@ class JaxAssociationBackend:
             request: Active trait rows and native output statistic dtype.
 
         Returns:
-            Trait-major host arrays and aggregate binary diagnostics.
+            Trait-major host arrays and correction codes.
 
         """
         active_trait_indices = tuple(request.active_trait_indices)
@@ -374,17 +357,17 @@ class JaxAssociationBackend:
             standard_error = device_result.standard_error
             chi_squared = device_result.chi_squared
             log10_p_value = device_result.log10_p_value
-            extra_code = device_result.extra_code
+            correction_code = device_result.correction_code
         else:
             active_trait_index_array = jnp.asarray(active_trait_indices, dtype=jnp.int32)
             beta = jnp.take(device_result.beta, active_trait_index_array, axis=0)
             standard_error = jnp.take(device_result.standard_error, active_trait_index_array, axis=0)
             chi_squared = jnp.take(device_result.chi_squared, active_trait_index_array, axis=0)
             log10_p_value = jnp.take(device_result.log10_p_value, active_trait_index_array, axis=0)
-            extra_code = (
+            correction_code = (
                 None
-                if device_result.extra_code is None
-                else jnp.take(device_result.extra_code, active_trait_index_array, axis=0)
+                if device_result.correction_code is None
+                else jnp.take(device_result.correction_code, active_trait_index_array, axis=0)
             )
 
         output_statistic_dtype = types.FloatingPointDtype(request.output_statistic_dtype)
@@ -394,41 +377,13 @@ class JaxAssociationBackend:
             "standard_error": jnp.asarray(standard_error, dtype=statistic_jax_dtype),
             "chi_squared": jnp.asarray(chi_squared, dtype=statistic_jax_dtype),
             "log10_p_value": jnp.asarray(log10_p_value, dtype=statistic_jax_dtype),
-            "extra_code": None if extra_code is None else jnp.asarray(extra_code, dtype=jnp.int32),
-            "binary_diagnostics": device_result.binary_diagnostics,
+            "correction_code": (None if correction_code is None else jnp.asarray(correction_code, dtype=jnp.int32)),
         }
         host_payload = typing.cast("dict[str, object]", jax.device_get(transfer_payload))
-        binary_diagnostics = host_payload["binary_diagnostics"]
-        host_binary_diagnostics = None
-        if binary_diagnostics is not None:
-            diagnostics = typing.cast("regenie2_binary_diagnostics.BinaryChunkDiagnostics", binary_diagnostics)
-            host_binary_diagnostics = _core.engine.JaxBinaryDiagnostics(
-                score_only_count=int(diagnostics.score_only_count),
-                score_test_candidate_count=int(diagnostics.score_test_candidate_count),
-                firth_candidate_count=int(diagnostics.firth_candidate_count),
-                firth_iteration_min=int(diagnostics.firth_iteration_min),
-                firth_iteration_median=float(diagnostics.firth_iteration_median),
-                firth_iteration_max=int(diagnostics.firth_iteration_max),
-                firth_converged_count=int(diagnostics.firth_converged_count),
-                firth_failed_count=int(diagnostics.firth_failed_count),
-                firth_numerical_failure_count=int(diagnostics.firth_numerical_failure_count),
-                firth_max_iteration_failure_count=int(diagnostics.firth_max_iteration_failure_count),
-                firth_invalid_statistic_failure_count=int(diagnostics.firth_invalid_statistic_failure_count),
-                firth_step_halving_failure_count=int(diagnostics.firth_step_halving_failure_count),
-                pseudo_firth_attempt_count=int(diagnostics.pseudo_firth_attempt_count),
-                pseudo_firth_success_count=int(diagnostics.pseudo_firth_success_count),
-                newton_raphson_zero_start_attempt_count=int(diagnostics.nr_zero_start_attempt_count),
-                newton_raphson_zero_start_success_count=int(diagnostics.nr_zero_start_success_count),
-                newton_raphson_warm_start_attempt_count=int(diagnostics.nr_warm_start_attempt_count),
-                newton_raphson_warm_start_success_count=int(diagnostics.nr_warm_start_success_count),
-                sparse_correction_count=int(diagnostics.sparse_correction_count),
-                dense_correction_count=int(diagnostics.dense_correction_count),
-            )
-        return _core.engine.JaxHostAssociationBatch(
+        return HostAssociationResult(
             beta=typing.cast("HostStatisticArray", host_payload["beta"]),
             standard_error=typing.cast("HostStatisticArray", host_payload["standard_error"]),
             chi_squared=typing.cast("HostStatisticArray", host_payload["chi_squared"]),
             log10_p_value=typing.cast("HostStatisticArray", host_payload["log10_p_value"]),
-            extra_code=typing.cast("HostIntegerArray | None", host_payload["extra_code"]),
-            binary_diagnostics=host_binary_diagnostics,
+            correction_code=typing.cast("HostIntegerArray | None", host_payload["correction_code"]),
         )

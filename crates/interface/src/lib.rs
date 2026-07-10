@@ -6,7 +6,6 @@ mod cli;
 mod defaults;
 mod domain;
 mod error;
-mod native_cli;
 mod overlay;
 mod partial;
 mod plan_request;
@@ -19,4 +18,4 @@ pub use api::*;
 pub(crate) use error::{ConfigError, ConfigResult};
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("config.default.toml");
-const OPTION_SCHEMA_VERSION: i64 = 2;
+const OPTION_SCHEMA_VERSION: i64 = 4;

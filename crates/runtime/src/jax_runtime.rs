@@ -8,14 +8,9 @@ mod gpu_validation;
 mod setup;
 
 pub use config_updates::plan_jax_runtime_config_updates;
-pub use diagnostics::{
-    build_jax_runtime_setup_diagnostic_events, plan_jax_runtime_diagnostic_record,
-    serialize_jax_runtime_diagnostic_fields_json,
-};
+pub use diagnostics::{build_jax_runtime_setup_diagnostic_events, plan_jax_runtime_diagnostic_record};
 pub use gpu_validation::{default_nvidia_driver_probe_paths, nvidia_driver_files_are_visible, plan_jax_gpu_validation};
-pub use setup::{
-    complete_jax_runtime_setup_validation, plan_jax_runtime_setup_side_effects, resolve_jax_runtime_setup,
-};
+pub use setup::resolve_jax_runtime_setup;
 
 const DEVICE_GPU: &str = "gpu";
 const JAX_CONFIG_COMPILATION_CACHE_DIR: &str = "jax_compilation_cache_dir";
@@ -80,12 +75,6 @@ pub struct NvidiaDriverProbePathsPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JaxRuntimeSetupSideEffectPlan {
-    pub should_create_cache_directory: bool,
-    pub should_validate_gpu: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimeSetupSession {
     should_configure: bool,
     setup: JaxRuntimeSetupPayload,
@@ -139,7 +128,6 @@ pub struct JaxRuntimeDiagnosticEventPayload {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JaxRuntimeDiagnosticRecordPlan {
     pub logging_level_name: String,
-    pub should_emit_telemetry: bool,
     pub telemetry_level: String,
 }
 
@@ -160,11 +148,6 @@ impl JaxRuntimeSetupSession {
     }
 
     #[must_use]
-    pub fn side_effect_plan(&self) -> JaxRuntimeSetupSideEffectPlan {
-        plan_jax_runtime_setup_side_effects(&self.setup.requested_device, self.setup.persistent_cache_enabled)
-    }
-
-    #[must_use]
     pub fn config_updates(&self) -> Vec<JaxRuntimeConfigUpdatePayload> {
         plan_jax_runtime_config_updates(&self.setup)
     }
@@ -181,20 +164,15 @@ impl JaxRuntimeSetupSession {
     /// Returns an error when persistent caching is enabled and the cache
     /// directory cannot be created.
     pub fn create_cache_directory_if_configured(&self) -> Result<bool, std::io::Error> {
-        if !self.side_effect_plan().should_create_cache_directory {
+        if !self.setup.persistent_cache_enabled {
             return Ok(false);
         }
         fs::create_dir_all(&self.setup.cache_directory)?;
         Ok(true)
     }
 
-    #[must_use]
-    pub fn complete_validation(
-        &mut self,
-        gpu_validation_status: &str,
-        gpu_validation_message: Option<&str>,
-    ) -> JaxRuntimeSetupPayload {
-        self.setup = complete_jax_runtime_setup_validation(&self.setup, gpu_validation_status, gpu_validation_message);
-        self.setup.clone()
+    pub fn complete_validation(&mut self, gpu_validation_status: &str, gpu_validation_message: Option<&str>) {
+        self.setup.gpu_validation_status = gpu_validation_status.to_string();
+        self.setup.gpu_validation_message = gpu_validation_message.map(str::to_string);
     }
 }

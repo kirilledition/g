@@ -1,68 +1,29 @@
 //! Output writer adapter planning.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
+use arrow::buffer::ScalarBuffer;
 use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Float64Type, Int32Type};
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
-use crate::session::{OutputWriterSession, finish_interrupted_output_writer_sessions, finish_output_writer_sessions};
+use crate::session::OutputWriterSession;
 
-pub struct Regenie2StatisticSliceBundle<'a, T> {
-    pub beta: &'a [T],
-    pub standard_error: &'a [T],
-    pub chi_squared: &'a [T],
-    pub log10_p_value: &'a [T],
-    pub extra_code: Option<&'a [i32]>,
+pub struct Regenie2StatisticBatch<T> {
+    pub beta: Vec<T>,
+    pub standard_error: Vec<T>,
+    pub chi_squared: Vec<T>,
+    pub log10_p_value: Vec<T>,
+    pub correction_code: Option<Vec<i32>>,
 }
 
-fn resolve_writer_finish_thread_count(writer_session_count: i64, requested_thread_count: i64) -> OutputResult<usize> {
-    if writer_session_count <= 0 {
-        return Ok(0);
-    }
-    if requested_thread_count <= 0 {
-        return Err(OutputError::InvalidInput("Writer finish thread count must be positive.".to_string()));
-    }
-    let writer_session_count = usize::try_from(writer_session_count).map_err(|_| {
-        OutputError::InvalidInput(format!("Writer session count exceeds platform capacity: {writer_session_count}"))
-    })?;
-    let requested_thread_count = usize::try_from(requested_thread_count).map_err(|_| {
-        OutputError::InvalidInput(format!(
-            "Writer finish thread count exceeds platform capacity: {requested_thread_count}"
-        ))
-    })?;
-    Ok(writer_session_count.min(requested_thread_count))
-}
-
-/// Finish writer sessions after resolving the requested parallelism.
-///
-/// # Errors
-///
-/// Returns an error when finish planning or writer finalization fails.
-pub fn finish_output_writer_sessions_with_requested_threads(
-    writer_sessions: &[&OutputWriterSession],
-    requested_thread_count: i64,
-) -> OutputResult<Vec<Option<PathBuf>>> {
-    let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
-    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
-    finish_output_writer_sessions(writer_sessions, thread_count)
-}
-
-/// Flush interrupted writer sessions after resolving the requested parallelism.
-///
-/// # Errors
-///
-/// Returns an error when finish planning or interrupted writer flushing fails.
-pub fn finish_interrupted_output_writer_sessions_with_requested_threads(
-    writer_sessions: &[&OutputWriterSession],
-    requested_thread_count: i64,
-    signal_name: &str,
-) -> OutputResult<()> {
-    let writer_session_count = writer_session_count_as_i64(writer_sessions.len())?;
-    let thread_count = resolve_writer_finish_thread_count(writer_session_count, requested_thread_count)?;
-    finish_interrupted_output_writer_sessions(writer_sessions, thread_count, signal_name)
+struct Regenie2StatisticArrowArrays {
+    beta: ArrayRef,
+    standard_error: ArrayRef,
+    chi_squared: ArrayRef,
+    log10_p_value: ArrayRef,
+    correction_code: Option<ArrayRef>,
 }
 
 /// Write one f32 REGENIE statistic row to each active trait writer.
@@ -72,16 +33,16 @@ pub fn finish_interrupted_output_writer_sessions_with_requested_threads(
 /// Returns an error when an active trait index is out of bounds or a writer
 /// rejects the chunk.
 pub fn write_regenie2_multi_trait_chunk_f32(
-    writer_sessions: &[&OutputWriterSession],
+    writer_sessions: &[Arc<OutputWriterSession>],
     active_trait_indices: &[usize],
     chunk_handle: &NativeChunkHandle,
-    active_statistic_rows: &[Regenie2StatisticSliceBundle<'_, f32>],
+    statistic_batch: Regenie2StatisticBatch<f32>,
 ) -> OutputResult<()> {
     write_regenie2_multi_trait_chunk::<f32, Float32Type>(
         writer_sessions,
         active_trait_indices,
         chunk_handle,
-        active_statistic_rows,
+        statistic_batch,
     )
 }
 
@@ -92,59 +53,101 @@ pub fn write_regenie2_multi_trait_chunk_f32(
 /// Returns an error when an active trait index is out of bounds or a writer
 /// rejects the chunk.
 pub fn write_regenie2_multi_trait_chunk_f64(
-    writer_sessions: &[&OutputWriterSession],
+    writer_sessions: &[Arc<OutputWriterSession>],
     active_trait_indices: &[usize],
     chunk_handle: &NativeChunkHandle,
-    active_statistic_rows: &[Regenie2StatisticSliceBundle<'_, f64>],
+    statistic_batch: Regenie2StatisticBatch<f64>,
 ) -> OutputResult<()> {
     write_regenie2_multi_trait_chunk::<f64, Float64Type>(
         writer_sessions,
         active_trait_indices,
         chunk_handle,
-        active_statistic_rows,
+        statistic_batch,
     )
 }
 
-fn writer_session_count_as_i64(writer_session_count: usize) -> OutputResult<i64> {
-    i64::try_from(writer_session_count)
-        .map_err(|_| OutputError::InvalidInput("Writer session count exceeds native int64 capacity.".to_string()))
-}
-
 fn write_regenie2_multi_trait_chunk<T, ArrowType>(
-    writer_sessions: &[&OutputWriterSession],
+    writer_sessions: &[Arc<OutputWriterSession>],
     active_trait_indices: &[usize],
     chunk_handle: &NativeChunkHandle,
-    active_statistic_rows: &[Regenie2StatisticSliceBundle<'_, T>],
+    statistic_batch: Regenie2StatisticBatch<T>,
 ) -> OutputResult<()>
 where
     T: ArrowNativeType,
     ArrowType: ArrowPrimitiveType<Native = T>,
 {
-    if active_trait_indices.len() != active_statistic_rows.len() {
-        return Err(OutputError::InvalidInput(
-            "Active trait index count must match active statistic row count.".to_string(),
-        ));
-    }
-    for (&trait_index, statistic_row) in active_trait_indices.iter().zip(active_statistic_rows.iter()) {
-        let writer_session = writer_sessions.get(trait_index).ok_or_else(|| {
+    let row_count = chunk_handle.row_count();
+    let expected_value_count = row_count.checked_mul(active_trait_indices.len()).ok_or_else(|| {
+        OutputError::InvalidInput("Trait-major output statistic value count exceeds platform capacity.".to_string())
+    })?;
+    validate_statistic_batch_lengths(&statistic_batch, expected_value_count)?;
+    let statistic_arrays = build_statistic_arrow_arrays::<T, ArrowType>(statistic_batch);
+    for (active_trait_position, trait_index) in active_trait_indices.iter().copied().enumerate() {
+        let writer_session = writer_sessions.get(trait_index).map(Arc::as_ref).ok_or_else(|| {
             OutputError::InvalidInput("Active trait index is out of bounds for writer sessions.".to_string())
         })?;
+        let row_start = active_trait_position * row_count;
         writer_session.write_regenie2_native_chunk_handle_arrays(
             chunk_handle.clone(),
-            build_copied_arrow_array::<T, ArrowType>(statistic_row.beta),
-            build_copied_arrow_array::<T, ArrowType>(statistic_row.standard_error),
-            build_copied_arrow_array::<T, ArrowType>(statistic_row.chi_squared),
-            build_copied_arrow_array::<T, ArrowType>(statistic_row.log10_p_value),
-            statistic_row.extra_code.map(build_copied_arrow_array::<i32, Int32Type>),
+            statistic_arrays.beta.slice(row_start, row_count),
+            statistic_arrays.standard_error.slice(row_start, row_count),
+            statistic_arrays.chi_squared.slice(row_start, row_count),
+            statistic_arrays.log10_p_value.slice(row_start, row_count),
+            statistic_arrays
+                .correction_code
+                .as_ref()
+                .map(|correction_code| correction_code.slice(row_start, row_count)),
         )?;
     }
     Ok(())
 }
 
-fn build_copied_arrow_array<T, ArrowType>(values: &[T]) -> ArrayRef
+fn validate_statistic_batch_lengths<T>(
+    statistic_batch: &Regenie2StatisticBatch<T>,
+    expected_value_count: usize,
+) -> OutputResult<()> {
+    let observed_value_counts = [
+        statistic_batch.beta.len(),
+        statistic_batch.standard_error.len(),
+        statistic_batch.chi_squared.len(),
+        statistic_batch.log10_p_value.len(),
+    ];
+    if observed_value_counts.iter().any(|value_count| *value_count != expected_value_count) {
+        return Err(OutputError::InvalidInput(format!(
+            "Trait-major output statistic value counts {observed_value_counts:?} do not match expected count {expected_value_count}."
+        )));
+    }
+    if let Some(correction_code) = statistic_batch.correction_code.as_ref()
+        && correction_code.len() != expected_value_count
+    {
+        return Err(OutputError::InvalidInput(format!(
+            "Trait-major correction-code value count {} does not match expected count {expected_value_count}.",
+            correction_code.len()
+        )));
+    }
+    Ok(())
+}
+
+fn build_statistic_arrow_arrays<T, ArrowType>(
+    statistic_batch: Regenie2StatisticBatch<T>,
+) -> Regenie2StatisticArrowArrays
 where
     T: ArrowNativeType,
     ArrowType: ArrowPrimitiveType<Native = T>,
 {
-    Arc::new(PrimitiveArray::<ArrowType>::from_iter_values(values.iter().copied()))
+    Regenie2StatisticArrowArrays {
+        beta: build_owned_arrow_array::<T, ArrowType>(statistic_batch.beta),
+        standard_error: build_owned_arrow_array::<T, ArrowType>(statistic_batch.standard_error),
+        chi_squared: build_owned_arrow_array::<T, ArrowType>(statistic_batch.chi_squared),
+        log10_p_value: build_owned_arrow_array::<T, ArrowType>(statistic_batch.log10_p_value),
+        correction_code: statistic_batch.correction_code.map(build_owned_arrow_array::<i32, Int32Type>),
+    }
+}
+
+fn build_owned_arrow_array<T, ArrowType>(values: Vec<T>) -> ArrayRef
+where
+    T: ArrowNativeType,
+    ArrowType: ArrowPrimitiveType<Native = T>,
+{
+    Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::from(values), None))
 }

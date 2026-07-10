@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::types::{SampleAlignmentError, SampleKeyMode};
+use g_plan::SampleKeyMode;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) enum SampleKey {
@@ -12,14 +12,14 @@ pub(super) fn validate_sample_identifier_lengths(
     sample_indices: &[usize],
     family_identifiers: &[String],
     individual_identifiers: &[String],
-) -> Result<(), SampleAlignmentError> {
+) -> Result<(), String> {
     if sample_indices.len() != family_identifiers.len() || sample_indices.len() != individual_identifiers.len() {
-        return Err(SampleAlignmentError::new(format!(
+        return Err(format!(
             "Sample alignment arrays must have equal length: sample_indices={}, family_identifiers={}, individual_identifiers={}.",
             sample_indices.len(),
             family_identifiers.len(),
             individual_identifiers.len(),
-        )));
+        ));
     }
     Ok(())
 }
@@ -28,7 +28,7 @@ pub(super) fn validate_sample_identifier_keys(
     sample_key_mode: SampleKeyMode,
     family_identifiers: &[String],
     individual_identifiers: &[String],
-) -> Result<(), SampleAlignmentError> {
+) -> Result<(), String> {
     match sample_key_mode {
         SampleKeyMode::Iid => {
             reject_duplicate_individual_identifiers(individual_identifiers, "BGEN/sample identifiers")?;
@@ -88,10 +88,7 @@ pub(super) fn duplicate_table_sample_key_error(
     )
 }
 
-fn reject_duplicate_individual_identifiers(
-    individual_identifiers: &[String],
-    source_name: &str,
-) -> Result<(), SampleAlignmentError> {
+fn reject_duplicate_individual_identifiers(individual_identifiers: &[String], source_name: &str) -> Result<(), String> {
     let mut observed_identifiers: HashMap<&str, usize> = HashMap::new();
     for individual_identifier in individual_identifiers {
         if individual_identifier.is_empty() {
@@ -100,9 +97,9 @@ fn reject_duplicate_individual_identifiers(
         let occurrence_count = observed_identifiers.entry(individual_identifier.as_str()).or_insert(0);
         *occurrence_count += 1;
         if *occurrence_count > 1 {
-            return Err(SampleAlignmentError::new(format!(
+            return Err(format!(
                 "Duplicate IID '{individual_identifier}' found in {source_name}; sample_key_mode='iid' requires unique non-null IID values. Use sample_key_mode='fid_iid' for datasets with non-globally-unique IID."
-            )));
+            ));
         }
     }
     Ok(())
@@ -112,7 +109,7 @@ fn reject_duplicate_sample_keys(
     family_identifiers: &[String],
     individual_identifiers: &[String],
     source_name: &str,
-) -> Result<(), SampleAlignmentError> {
+) -> Result<(), String> {
     let mut observed_identifiers: HashMap<(&str, &str), usize> = HashMap::new();
     for (family_identifier, individual_identifier) in family_identifiers.iter().zip(individual_identifiers.iter()) {
         if individual_identifier.is_empty() {
@@ -122,9 +119,9 @@ fn reject_duplicate_sample_keys(
         let occurrence_count = observed_identifiers.entry(sample_key).or_insert(0);
         *occurrence_count += 1;
         if *occurrence_count > 1 {
-            return Err(SampleAlignmentError::new(format!(
+            return Err(format!(
                 "Duplicate sample key '{family_identifier}_{individual_identifier}' found in {source_name}; sample_key_mode='fid_iid' requires unique (FID, IID) values."
-            )));
+            ));
         }
     }
     Ok(())
