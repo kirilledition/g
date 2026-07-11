@@ -1,49 +1,51 @@
 //! Association delivery execution independent of Python.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use g_genotype::{BgenError, GenotypeError};
 use g_input::{InputError, PredictionError};
-use g_output::OutputError;
+use g_output::{NativeVariantMetadataHandle, OutputError};
 
 use crate::association_scheduler::{
-    AssociationBatchPipeline, CompletedAssociationBatch, OwnedGenotypeBuffer, ScheduledAssociationBatch, SchedulerError,
+    AssociationBatchOutput, AssociationBatchPipeline, CompletedAssociationBatch, ScheduledAssociationBatch,
+    SchedulerError,
 };
 use crate::backend::{
-    AssociationBackend, GroupPreparationInput, SampleMajorCovariateMatrixView, TraitMajorPhenotypeMatrixView,
-    TraitMajorPredictionMatrixView,
+    AssociationBackend, GroupPreparationInput, OwnedGenotypeBuffer, SampleMajorCovariateMatrix, TraitMajorMatrix,
 };
 use crate::delivery::{
     AssociationDeliveryRequest, AssociationDeliverySettings, GroupedUnionAssociationDeliveryRequest,
 };
 use crate::genotype_buffer::{
-    GenotypeBufferPool, decode_genotype_buffer, homogeneous_chunk_chromosome, project_variant_major_dosages,
+    GenotypeBufferPool, allocate_genotype_buffer, decode_genotype_buffer, homogeneous_chunk_chromosome,
+    project_variant_major_dosages,
 };
 use crate::null_logistic_policy::{
     NullLogisticNonconvergenceAction, NullLogisticPolicyError, plan_null_logistic_nonconvergence,
 };
-use crate::output_schedule::{active_trait_indices_for_chunk, intersect_committed_chunk_identifier_sets};
+use crate::output_schedule::{
+    ActiveTraitSelection, active_trait_selection_for_chunk, intersect_committed_chunk_identifier_sets,
+};
 use crate::output_write::write_host_association_batch;
 use crate::pipeline::BgenRunEngine;
 use crate::progress::RunProgressError;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeliveryWarning {
-    pub chromosome: String,
-    pub message: String,
-    pub nonconverged_count: usize,
-    pub total_fit_count: usize,
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct DeliveryWarning {
+    pub(crate) chromosome: String,
+    pub(crate) message: String,
+    pub(crate) nonconverged_count: usize,
+    pub(crate) total_fit_count: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AssociationDeliveryReport {
-    pub processed_chunk_count: usize,
-    pub warnings: Vec<DeliveryWarning>,
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct AssociationDeliveryReport {
+    pub(crate) processed_chunk_count: usize,
+    pub(crate) warnings: Vec<DeliveryWarning>,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum DeliveryError<BackendError, InterruptionError> {
+pub(crate) enum DeliveryError<BackendError, InterruptionError> {
     #[error("association backend failed during {stage}: {source}")]
     Backend {
         stage: &'static str,
@@ -77,6 +79,11 @@ pub enum DeliveryError<BackendError, InterruptionError> {
 type DeliveryResult<Value, BackendError, InterruptionError> =
     Result<Value, DeliveryError<BackendError, InterruptionError>>;
 
+struct PlannedAssociationDelivery {
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
+    chromosome_blocks: Vec<Arc<str>>,
+}
+
 /// Execute one aligned phenotype group through decode, compute, and output.
 ///
 /// # Errors
@@ -86,7 +93,7 @@ type DeliveryResult<Value, BackendError, InterruptionError> =
 pub(crate) fn run_association_delivery<Backend, CheckInterruption, InterruptionError>(
     engine: &BgenRunEngine,
     backend: &Arc<Backend>,
-    request: &AssociationDeliveryRequest,
+    mut request: AssociationDeliveryRequest,
     mut check_interruption: CheckInterruption,
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
@@ -95,9 +102,31 @@ where
     Backend::DeviceResult: 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
-    validate_delivery_request::<Backend::Error, InterruptionError>(request)?;
+    validate_delivery_request::<Backend::Error, InterruptionError>(&request)?;
+    let planned_delivery = plan_association_delivery(engine, &mut request)?;
+    if planned_delivery.chunk_specs.is_empty() {
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        return Ok(AssociationDeliveryReport { processed_chunk_count: 0, warnings: Vec::new() });
+    }
+    run_planned_association_delivery(engine, backend, request, planned_delivery.chunk_specs, &mut check_interruption)
+}
+
+fn run_planned_association_delivery<Backend, CheckInterruption, InterruptionError>(
+    engine: &BgenRunEngine,
+    backend: &Arc<Backend>,
+    mut request: AssociationDeliveryRequest,
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
     engine.reader.prepare_sample_selection(&request.group.sample_indices)?;
-    let delivery_result = run_prepared_association_delivery(engine, backend, request, &mut check_interruption);
+    let delivery_result =
+        run_prepared_association_delivery(engine, backend, &mut request, chunk_specs, check_interruption);
     let clear_result = engine.reader.clear_prepared_sample_selection();
     match (delivery_result, clear_result) {
         (Err(error), _) => Err(error),
@@ -109,7 +138,8 @@ where
 fn run_prepared_association_delivery<Backend, CheckInterruption, InterruptionError>(
     engine: &BgenRunEngine,
     backend: &Arc<Backend>,
-    request: &AssociationDeliveryRequest,
+    request: &mut AssociationDeliveryRequest,
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
     check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
@@ -119,146 +149,189 @@ where
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     let group_state = backend
-        .prepare_group(group_preparation_input(&request.group))
+        .prepare_group(group_preparation_input(&mut request.group))
         .map_err(|source| DeliveryError::Backend { stage: "prepare_group", source })?;
+    let delivery_result: DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError> = (|| {
+        let mut pipeline = AssociationBatchPipeline::new(
+            Arc::clone(backend),
+            request.settings.staging_depth,
+            request.settings.result_in_flight_limit,
+        )?;
+        let group_index = pipeline.register_group()?;
+        let mut current_chromosome = None;
+        let mut processed_chunk_count = 0_usize;
+        let mut warnings = Vec::new();
+
+        for chunk_spec in chunk_specs {
+            check_interruption().map_err(DeliveryError::Interrupted)?;
+            let variant_count = chunk_spec
+                .variant_stop_index
+                .checked_sub(chunk_spec.variant_start_index)
+                .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
+            let metadata =
+                engine.reader.variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
+            let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
+            if current_chromosome.as_deref() != Some(chromosome.as_ref()) {
+                let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+                    debug_assert_eq!(completed_batch.group_index, group_index);
+                    write_completed_batch::<Backend::Error, InterruptionError>(completed_batch, &request.settings)
+                };
+                drain_pending_batches(&mut pipeline, &mut write_completed)?;
+                pipeline.release_chromosome(group_index)?;
+                let chromosome_state = prepare_chromosome_state(
+                    backend.as_ref(),
+                    &group_state,
+                    &mut request.group,
+                    &request.settings,
+                    &chromosome,
+                    &mut warnings,
+                )?;
+                pipeline.prepare_chromosome(group_index, chromosome_state)?;
+                current_chromosome = Some(chromosome);
+            }
+
+            let active_trait_selection = active_trait_selection_for_chunk(
+                request.settings.writer_sessions.len(),
+                chunk_spec.variant_start_index,
+                &request.settings.committed_chunk_identifier_sets,
+            )
+            .map_err(DeliveryError::InvalidInput)?;
+            if matches!(&active_trait_selection, ActiveTraitSelection::Indices(indices) if indices.is_empty()) {
+                return Err(DeliveryError::InvalidInput(
+                    "planned a chunk already committed by every output writer".to_string(),
+                ));
+            }
+            let sample_count = request.group.sample_indices.len();
+            let genotype_value_count = variant_count
+                .checked_mul(sample_count)
+                .ok_or_else(|| DeliveryError::InvalidInput("genotype batch dimensions overflow usize".to_string()))?;
+            let mut genotype_buffer = allocate_genotype_buffer(genotype_value_count, request.settings.use_packed8)?;
+            let statistics = decode_genotype_buffer(
+                &engine.reader,
+                chunk_spec.variant_start_index,
+                chunk_spec.variant_stop_index,
+                &mut genotype_buffer,
+                request.settings.statistics_policy,
+            )?;
+            let scheduled_batch = ScheduledAssociationBatch {
+                variant_start_index: chunk_spec.variant_start_index,
+                variant_count,
+                sample_count,
+                metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
+                statistics,
+                genotype_buffer,
+                active_trait_selection,
+            };
+            let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+                debug_assert_eq!(completed_batch.group_index, group_index);
+                write_completed_batch::<Backend::Error, InterruptionError>(completed_batch, &request.settings)
+            };
+            submit_batch(&mut pipeline, group_index, scheduled_batch, &mut write_completed)?;
+            processed_chunk_count += 1;
+            drain_available_batches(&mut pipeline, &mut write_completed)?;
+        }
+
+        let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+            debug_assert_eq!(completed_batch.group_index, group_index);
+            write_completed_batch::<Backend::Error, InterruptionError>(completed_batch, &request.settings)
+        };
+        finish_and_drain_pipeline(&mut pipeline, &mut write_completed)?;
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+    })();
+    backend.release_group(group_state);
+    delivery_result
+}
+
+fn plan_association_delivery<BackendError, InterruptionError>(
+    engine: &BgenRunEngine,
+    request: &mut AssociationDeliveryRequest,
+) -> DeliveryResult<PlannedAssociationDelivery, BackendError, InterruptionError> {
     let committed_chunk_identifiers =
         intersect_committed_chunk_identifier_sets(&request.settings.committed_chunk_identifier_sets);
     let chunk_specs = engine.plan_chunks(&committed_chunk_identifiers)?;
+    let chromosome_blocks = planned_chromosome_blocks(engine, &chunk_specs)?;
+    request.group.plan_prediction_uses(&chromosome_blocks)?;
     if let Some(progress) = request.settings.progress.as_ref() {
-        let all_chunk_specs = engine.plan_chunks(&BTreeSet::new())?;
-        progress.initialize(&all_chunk_specs, &chunk_specs)?;
+        progress.initialize(&chunk_specs)?;
     }
-    let mut buffer_pool = GenotypeBufferPool::default();
-    let mut current_chromosome = None;
-    let mut pipeline: Option<AssociationBatchPipeline<Backend>> = None;
-    let mut processed_chunk_count = 0_usize;
-    let mut warnings = Vec::new();
-
-    for chunk_spec in chunk_specs {
-        check_interruption().map_err(DeliveryError::Interrupted)?;
-        let variant_count = chunk_spec
-            .variant_stop_index
-            .checked_sub(chunk_spec.variant_start_index)
-            .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
-        let metadata =
-            engine.reader.variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
-        let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
-        if current_chromosome.as_deref() != Some(chromosome.as_str()) {
-            if let Some(mut previous_pipeline) = pipeline.take() {
-                finish_and_drain_pipeline(&mut previous_pipeline, &request.settings, &mut buffer_pool)?;
-            }
-            pipeline = Some(prepare_chromosome_pipeline(
-                backend,
-                &group_state,
-                &request.group,
-                &request.settings,
-                &chromosome,
-                &mut warnings,
-            )?);
-            current_chromosome = Some(chromosome);
-        }
-
-        let active_trait_indices = active_trait_indices_for_chunk(
-            request.settings.writer_sessions.len(),
-            chunk_spec.variant_start_index,
-            &request.settings.committed_chunk_identifier_sets,
-        )
-        .map_err(DeliveryError::InvalidInput)?;
-        if active_trait_indices.is_empty() {
-            return Err(DeliveryError::InvalidInput(
-                "planned a chunk already committed by every output writer".to_string(),
-            ));
-        }
-        let sample_count = request.group.sample_indices.len();
-        let genotype_value_count = variant_count
-            .checked_mul(sample_count)
-            .ok_or_else(|| DeliveryError::InvalidInput("genotype batch dimensions overflow usize".to_string()))?;
-        let mut genotype_buffer = buffer_pool.acquire(genotype_value_count, request.settings.use_packed8)?;
-        let statistics = decode_genotype_buffer(
-            &engine.reader,
-            chunk_spec.variant_start_index,
-            chunk_spec.variant_stop_index,
-            &mut genotype_buffer,
-        )?;
-        let scheduled_batch = ScheduledAssociationBatch {
-            variant_start_index: chunk_spec.variant_start_index,
-            variant_count,
-            sample_count,
-            metadata,
-            statistics,
-            genotype_buffer,
-            active_trait_indices,
-        };
-        let active_pipeline = pipeline
-            .as_ref()
-            .ok_or_else(|| DeliveryError::InvalidInput("association pipeline was not initialized".to_string()))?;
-        active_pipeline.submit(scheduled_batch)?;
-        processed_chunk_count += 1;
-        drain_available_batches(active_pipeline, &request.settings, &mut buffer_pool)?;
-    }
-
-    if let Some(mut final_pipeline) = pipeline {
-        finish_and_drain_pipeline(&mut final_pipeline, &request.settings, &mut buffer_pool)?;
-    }
-    check_interruption().map_err(DeliveryError::Interrupted)?;
-    Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+    Ok(PlannedAssociationDelivery { chunk_specs, chromosome_blocks })
 }
 
-fn group_preparation_input(group: &g_input::AlignedPhenotypeGroup) -> GroupPreparationInput<'_> {
+fn group_preparation_input(group: &mut g_input::AlignedPhenotypeGroup) -> GroupPreparationInput {
     let sample_count = group.sample_indices.len();
     GroupPreparationInput {
-        phenotypes: TraitMajorPhenotypeMatrixView {
-            values: &group.phenotype_values,
+        phenotypes: TraitMajorMatrix {
+            values: std::mem::take(&mut group.phenotype_values),
             trait_count: group.phenotype_group.phenotype_names.len(),
             sample_count,
         },
-        covariates: SampleMajorCovariateMatrixView {
-            values: &group.covariate_values,
+        covariates: SampleMajorCovariateMatrix {
+            values: std::mem::take(&mut group.covariate_values),
             sample_count,
             covariate_count: group.covariate_names.len(),
         },
     }
 }
 
-fn prepare_chromosome_pipeline<Backend, InterruptionError>(
-    backend: &Arc<Backend>,
+fn planned_chromosome_blocks(
+    engine: &BgenRunEngine,
+    chunk_specs: &[g_genotype::ChunkSpec],
+) -> Result<Vec<Arc<str>>, BgenError> {
+    let mut chromosome_blocks = Vec::new();
+    for chunk_spec in chunk_specs {
+        if chunk_spec.variant_start_index >= chunk_spec.variant_stop_index {
+            return Err(BgenError::Range("Planned association chunk is empty.".to_string()));
+        }
+        let metadata =
+            engine.reader.variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_start_index + 1)?;
+        let chromosome = metadata
+            .shared_chromosome(0)
+            .ok_or_else(|| BgenError::Range("Planned association chunk has no chromosome label.".to_string()))?;
+        if chromosome_blocks.last().is_none_or(|previous: &Arc<str>| previous.as_ref() != chromosome.as_ref()) {
+            chromosome_blocks.push(chromosome);
+        }
+    }
+    Ok(chromosome_blocks)
+}
+
+fn prepare_chromosome_state<Backend, InterruptionError>(
+    backend: &Backend,
     group_state: &Backend::GroupState,
-    group: &g_input::AlignedPhenotypeGroup,
+    group: &mut g_input::AlignedPhenotypeGroup,
     settings: &AssociationDeliverySettings,
     chromosome: &str,
     warnings: &mut Vec<DeliveryWarning>,
-) -> DeliveryResult<AssociationBatchPipeline<Backend>, Backend::Error, InterruptionError>
+) -> DeliveryResult<Backend::ChromosomeState, Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
-    let predictions = group.chromosome_prediction_matrix(chromosome)?;
+    let predictions = group.take_chromosome_prediction_matrix(chromosome)?;
     let prepared_chromosome = backend
         .prepare_chromosome(
             group_state,
-            TraitMajorPredictionMatrixView {
-                values: &predictions.prediction_values,
+            TraitMajorMatrix {
+                values: predictions.prediction_values,
                 trait_count: predictions.trait_count,
                 sample_count: predictions.sample_count,
             },
         )
         .map_err(|source| DeliveryError::Backend { stage: "prepare_chromosome", source })?;
-    if let Some(logistic_converged) = prepared_chromosome.null_logistic_converged.as_ref() {
-        enforce_null_logistic_policy::<Backend::Error, InterruptionError>(
+    if let Some(logistic_converged) = prepared_chromosome.null_logistic_converged.as_ref()
+        && let Err(error) = enforce_null_logistic_policy::<Backend::Error, InterruptionError>(
             chromosome,
             logistic_converged,
             &group.phenotype_group.phenotype_names,
             settings.null_logistic_nonconvergence_policy,
             warnings,
-        )?;
+        )
+    {
+        backend.release_chromosome(prepared_chromosome.state);
+        return Err(error);
     }
-    Ok(AssociationBatchPipeline::new(
-        Arc::clone(backend),
-        prepared_chromosome.state,
-        settings.staging_depth,
-        settings.result_in_flight_limit,
-    )?)
+    Ok(prepared_chromosome.state)
 }
 
 fn enforce_null_logistic_policy<BackendError, InterruptionError>(
@@ -322,36 +395,75 @@ fn validate_delivery_request<BackendError, InterruptionError>(
     Ok(())
 }
 
-fn drain_available_batches<Backend, InterruptionError>(
-    pipeline: &AssociationBatchPipeline<Backend>,
-    settings: &AssociationDeliverySettings,
-    buffer_pool: &mut GenotypeBufferPool,
+fn drain_available_batches<Backend, InterruptionError, WriteCompleted>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    write_completed: &mut WriteCompleted,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
+    WriteCompleted: FnMut(CompletedAssociationBatch) -> DeliveryResult<(), Backend::Error, InterruptionError>,
 {
     while let Some(completed_batch) = pipeline.try_receive()? {
-        write_completed_batch::<Backend::Error, InterruptionError>(completed_batch, settings, buffer_pool)?;
+        write_completed(completed_batch)?;
     }
     Ok(())
 }
 
-fn finish_and_drain_pipeline<Backend, InterruptionError>(
+fn submit_batch<Backend, InterruptionError, WriteCompleted>(
     pipeline: &mut AssociationBatchPipeline<Backend>,
-    settings: &AssociationDeliverySettings,
-    buffer_pool: &mut GenotypeBufferPool,
+    group_index: usize,
+    scheduled_batch: ScheduledAssociationBatch,
+    write_completed: &mut WriteCompleted,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
+    WriteCompleted: FnMut(CompletedAssociationBatch) -> DeliveryResult<(), Backend::Error, InterruptionError>,
 {
-    pipeline.close_submission();
-    while let Some(completed_batch) = pipeline.receive()? {
-        write_completed_batch::<Backend::Error, InterruptionError>(completed_batch, settings, buffer_pool)?;
+    let mut pending_batch = scheduled_batch;
+    loop {
+        match pipeline.try_submit(group_index, pending_batch)? {
+            None => return Ok(()),
+            Some(returned_batch) => {
+                write_completed(pipeline.receive()?)?;
+                pending_batch = returned_batch;
+            }
+        }
     }
+}
+
+fn drain_pending_batches<Backend, InterruptionError, WriteCompleted>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    write_completed: &mut WriteCompleted,
+) -> DeliveryResult<(), Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    WriteCompleted: FnMut(CompletedAssociationBatch) -> DeliveryResult<(), Backend::Error, InterruptionError>,
+{
+    while !pipeline.is_drained() {
+        write_completed(pipeline.receive()?)?;
+    }
+    Ok(())
+}
+
+fn finish_and_drain_pipeline<Backend, InterruptionError, WriteCompleted>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    write_completed: &mut WriteCompleted,
+) -> DeliveryResult<(), Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    WriteCompleted: FnMut(CompletedAssociationBatch) -> DeliveryResult<(), Backend::Error, InterruptionError>,
+{
+    drain_pending_batches(pipeline, write_completed)?;
+    pipeline.release_all_chromosomes()?;
+    pipeline.close_submission();
     pipeline.join()?;
     Ok(())
 }
@@ -359,21 +471,17 @@ where
 fn write_completed_batch<BackendError, InterruptionError>(
     completed_batch: CompletedAssociationBatch,
     settings: &AssociationDeliverySettings,
-    buffer_pool: &mut GenotypeBufferPool,
 ) -> DeliveryResult<(), BackendError, InterruptionError> {
-    let CompletedAssociationBatch {
-        variant_start_index,
-        metadata,
-        statistics,
-        genotype_buffer,
-        active_trait_indices,
-        result,
-        ..
-    } = completed_batch;
-    let variant_count = metadata.variant_identifier.len();
+    let CompletedAssociationBatch { group_index: _, output, result } = completed_batch;
+    let AssociationBatchOutput { variant_start_index, metadata, statistics, active_trait_selection } = output;
+    let active_trait_indices = match &active_trait_selection {
+        ActiveTraitSelection::All => None,
+        ActiveTraitSelection::Indices(indices) => Some(indices.as_slice()),
+    };
+    let variant_count = metadata.row_count();
     write_host_association_batch(
         &settings.writer_sessions,
-        &active_trait_indices,
+        active_trait_indices,
         variant_start_index,
         metadata,
         statistics,
@@ -382,7 +490,6 @@ fn write_completed_batch<BackendError, InterruptionError>(
     if let Some(progress) = settings.progress.as_ref() {
         progress.record_writer_accepted(variant_count)?;
     }
-    buffer_pool.release(genotype_buffer);
     Ok(())
 }
 
@@ -392,11 +499,19 @@ where
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
+    group_index: usize,
     request: AssociationDeliveryRequest,
-    group_state: Backend::GroupState,
+    group_state: Option<Backend::GroupState>,
     sample_positions: Vec<usize>,
-    pipeline: Option<AssociationBatchPipeline<Backend>>,
-    buffer_pool: GenotypeBufferPool,
+    chromosome_blocks: Vec<Arc<str>>,
+    next_chromosome_block_index: usize,
+    final_chunk_identifier: usize,
+}
+
+struct PendingGroupedUnionGroup {
+    request: AssociationDeliveryRequest,
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
+    chromosome_blocks: Vec<Arc<str>>,
 }
 
 /// Decode each union-sample chunk once and execute every aligned group.
@@ -418,9 +533,40 @@ where
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     validate_grouped_union_request::<Backend::Error, InterruptionError>(&request)?;
-    engine.reader.prepare_sample_selection(&request.union_sample_indices)?;
-    let delivery_result =
-        run_prepared_grouped_union_association_delivery(engine, backend, request, &mut check_interruption);
+    let GroupedUnionAssociationDeliveryRequest { groups, union_sample_indices: _ } = request;
+    let pending_groups = plan_grouped_union_requests::<Backend::Error, InterruptionError>(engine, groups)?;
+    if pending_groups.is_empty() {
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        return Ok(AssociationDeliveryReport { processed_chunk_count: 0, warnings: Vec::new() });
+    }
+    let active_union_sample_indices = g_input::build_union_sample_indices(
+        pending_groups.iter().map(|group| group.request.group.sample_indices.as_slice()),
+    );
+    let grouped_sample_count = pending_groups.iter().try_fold(0_usize, |sample_count, group| {
+        sample_count
+            .checked_add(group.request.group.sample_indices.len())
+            .ok_or_else(|| DeliveryError::InvalidInput("pending grouped sample count overflowed usize".to_string()))
+    })?;
+    if pending_groups.len() == 1 || active_union_sample_indices.len() >= grouped_sample_count {
+        return run_pending_groups_direct(engine, backend, pending_groups, &mut check_interruption);
+    }
+
+    let committed_chunk_identifier_sets = pending_groups
+        .iter()
+        .flat_map(|group| group.request.settings.committed_chunk_identifier_sets.iter().cloned())
+        .collect::<Vec<_>>();
+    let shared_committed_chunk_identifiers =
+        intersect_committed_chunk_identifier_sets(&committed_chunk_identifier_sets);
+    let chunk_specs = engine.plan_chunks(&shared_committed_chunk_identifiers)?;
+    engine.reader.prepare_sample_selection(&active_union_sample_indices)?;
+    let delivery_result = run_prepared_grouped_union_association_delivery(
+        engine,
+        backend,
+        pending_groups,
+        &active_union_sample_indices,
+        chunk_specs,
+        &mut check_interruption,
+    );
     let clear_result = engine.reader.clear_prepared_sample_selection();
     match (delivery_result, clear_result) {
         (Err(error), _) => Err(error),
@@ -432,7 +578,9 @@ where
 fn run_prepared_grouped_union_association_delivery<Backend, CheckInterruption, InterruptionError>(
     engine: &BgenRunEngine,
     backend: &Arc<Backend>,
-    request: GroupedUnionAssociationDeliveryRequest,
+    pending_groups: Vec<PendingGroupedUnionGroup>,
+    union_sample_indices: &[usize],
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
     check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
@@ -441,94 +589,185 @@ where
     Backend::DeviceResult: 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
-    let GroupedUnionAssociationDeliveryRequest { groups, union_sample_indices } = request;
-    let committed_chunk_identifier_sets = groups
-        .iter()
-        .flat_map(|group| group.settings.committed_chunk_identifier_sets.iter().cloned())
-        .collect::<Vec<_>>();
-    let shared_committed_chunk_identifiers =
-        intersect_committed_chunk_identifier_sets(&committed_chunk_identifier_sets);
-    let chunk_specs = engine.plan_chunks(&shared_committed_chunk_identifiers)?;
-    let mut group_runtimes =
-        prepare_grouped_union_runtimes::<Backend, InterruptionError>(backend.as_ref(), groups, &union_sample_indices)?;
-    let all_chunk_specs = engine.plan_chunks(&BTreeSet::new())?;
-    for group_runtime in &group_runtimes {
-        let committed_chunk_identifiers =
-            intersect_committed_chunk_identifier_sets(&group_runtime.request.settings.committed_chunk_identifier_sets);
-        let pending_chunk_specs = engine.plan_chunks(&committed_chunk_identifiers)?;
-        if let Some(progress) = group_runtime.request.settings.progress.as_ref() {
-            progress.initialize(&all_chunk_specs, &pending_chunk_specs)?;
-        }
-    }
-    let union_sample_count = union_sample_indices.len();
-    let mut union_buffer_pool = GenotypeBufferPool::default();
-    let mut warnings = Vec::new();
-
-    let delivery_result = (|| {
-        let mut current_chromosome = None;
-        let mut processed_chunk_count = 0_usize;
-        for chunk_spec in chunk_specs {
-            check_interruption().map_err(DeliveryError::Interrupted)?;
-            let variant_count = chunk_spec
-                .variant_stop_index
-                .checked_sub(chunk_spec.variant_start_index)
-                .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
-            let metadata =
-                engine.reader.variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
-            let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
-            if current_chromosome.as_deref() != Some(chromosome.as_str()) {
-                finish_grouped_union_pipelines::<Backend, InterruptionError>(&mut group_runtimes)?;
-                start_grouped_union_chromosome_pipelines::<Backend, InterruptionError>(
-                    backend,
-                    &mut group_runtimes,
-                    &chromosome,
-                    &mut warnings,
-                )?;
-                current_chromosome = Some(chromosome);
-            }
-
-            let union_value_count = variant_count
-                .checked_mul(union_sample_count)
-                .ok_or_else(|| DeliveryError::InvalidInput("union genotype dimensions overflow usize".to_string()))?;
-            let mut union_buffer = union_buffer_pool.acquire(union_value_count, false)?;
-            decode_genotype_buffer(
-                &engine.reader,
-                chunk_spec.variant_start_index,
-                chunk_spec.variant_stop_index,
-                &mut union_buffer,
-            )?;
-            let OwnedGenotypeBuffer::Dosage(union_dosages) = union_buffer else {
-                return Err(DeliveryError::InvalidInput(
-                    "grouped-union delivery acquired a packed genotype buffer".to_string(),
-                ));
-            };
-            let submission_result = submit_grouped_union_chunk::<Backend, InterruptionError>(
-                &mut group_runtimes,
-                &union_dosages,
-                union_sample_count,
-                variant_count,
-                chunk_spec.variant_start_index,
-                &metadata,
-            );
-            union_buffer_pool.release(OwnedGenotypeBuffer::Dosage(union_dosages));
-            submission_result?;
-            processed_chunk_count += 1;
-            drain_grouped_union_pipelines::<Backend, InterruptionError>(&mut group_runtimes)?;
-        }
-        finish_grouped_union_pipelines::<Backend, InterruptionError>(&mut group_runtimes)?;
-        check_interruption().map_err(DeliveryError::Interrupted)?;
-        Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
-    })();
+    let first_settings =
+        &pending_groups.first().expect("grouped execution requires at least two pending groups").request.settings;
+    let mut pipeline = AssociationBatchPipeline::new(
+        Arc::clone(backend),
+        first_settings.staging_depth,
+        first_settings.result_in_flight_limit,
+    )?;
+    let mut group_runtimes = prepare_grouped_union_runtimes::<Backend, InterruptionError>(
+        &mut pipeline,
+        pending_groups,
+        union_sample_indices,
+    )?;
+    let delivery_result = execute_grouped_union_chunks(
+        engine,
+        backend.as_ref(),
+        &mut pipeline,
+        &mut group_runtimes,
+        union_sample_indices.len(),
+        chunk_specs,
+        check_interruption,
+    );
 
     if delivery_result.is_err() {
-        abort_grouped_union_pipelines(&mut group_runtimes);
+        let _ = pipeline.abort();
+    }
+    for group_runtime in &mut group_runtimes {
+        if let Some(group_state) = group_runtime.group_state.take() {
+            backend.release_group(group_state);
+        }
     }
     delivery_result
 }
 
-fn prepare_grouped_union_runtimes<Backend, InterruptionError>(
+fn execute_grouped_union_chunks<Backend, CheckInterruption, InterruptionError>(
+    engine: &BgenRunEngine,
     backend: &Backend,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>],
+    union_sample_count: usize,
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
+    let mut union_buffer_pool = GenotypeBufferPool::default();
+    let mut current_chromosome = None;
+    let mut processed_chunk_count = 0_usize;
+    let mut warnings = Vec::new();
+    for chunk_spec in chunk_specs {
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        let variant_count = chunk_spec
+            .variant_stop_index
+            .checked_sub(chunk_spec.variant_start_index)
+            .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
+        let metadata =
+            engine.reader.variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
+        let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
+        if current_chromosome.as_deref() != Some(chromosome.as_ref()) {
+            {
+                let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+                    write_grouped_union_completed_batch::<Backend, InterruptionError>(completed_batch, group_runtimes)
+                };
+                drain_pending_batches(pipeline, &mut write_completed)?;
+            }
+            for group_runtime in &*group_runtimes {
+                let starts_next_chromosome_block = group_runtime
+                    .chromosome_blocks
+                    .get(group_runtime.next_chromosome_block_index)
+                    .is_some_and(|planned_chromosome| planned_chromosome.as_ref() == chromosome.as_ref());
+                let completed_before_transition = group_runtime.final_chunk_identifier < chunk_spec.variant_start_index;
+                if starts_next_chromosome_block || completed_before_transition {
+                    pipeline.release_chromosome(group_runtime.group_index)?;
+                }
+            }
+            prepare_grouped_union_chromosome_states::<Backend, InterruptionError>(
+                backend,
+                pipeline,
+                group_runtimes,
+                &chromosome,
+                &mut warnings,
+            )?;
+            current_chromosome = Some(chromosome);
+        }
+
+        let union_value_count = variant_count
+            .checked_mul(union_sample_count)
+            .ok_or_else(|| DeliveryError::InvalidInput("union genotype dimensions overflow usize".to_string()))?;
+        let union_buffer = union_buffer_pool.acquire(union_value_count, false)?;
+        let OwnedGenotypeBuffer::Dosage(mut union_dosages) = union_buffer else {
+            return Err(DeliveryError::InvalidInput(
+                "grouped-union delivery acquired a packed genotype buffer".to_string(),
+            ));
+        };
+        engine.reader.read_trusted_variant_major_dosage_f32_into_address_prepared(
+            chunk_spec.variant_start_index,
+            chunk_spec.variant_stop_index,
+            g_genotype::OutputBufferAddress::from_mut_ptr(union_dosages.as_mut_ptr()),
+            g_genotype::OutputValueCount::new(union_dosages.len()),
+        )?;
+        let submission_result = submit_grouped_union_chunk::<Backend, InterruptionError>(
+            pipeline,
+            group_runtimes,
+            &union_dosages,
+            union_sample_count,
+            variant_count,
+            chunk_spec.variant_start_index,
+            &metadata,
+        );
+        union_buffer_pool.release(OwnedGenotypeBuffer::Dosage(union_dosages));
+        submission_result?;
+        processed_chunk_count += 1;
+        let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+            write_grouped_union_completed_batch::<Backend, InterruptionError>(completed_batch, group_runtimes)
+        };
+        drain_available_batches(pipeline, &mut write_completed)?;
+    }
+    let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+        write_grouped_union_completed_batch::<Backend, InterruptionError>(completed_batch, group_runtimes)
+    };
+    finish_and_drain_pipeline(pipeline, &mut write_completed)?;
+    check_interruption().map_err(DeliveryError::Interrupted)?;
+    Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+}
+
+fn plan_grouped_union_requests<BackendError, InterruptionError>(
+    engine: &BgenRunEngine,
     groups: Vec<AssociationDeliveryRequest>,
+) -> DeliveryResult<Vec<PendingGroupedUnionGroup>, BackendError, InterruptionError> {
+    let mut pending_groups = Vec::with_capacity(groups.len());
+    for mut request in groups {
+        let planned_delivery = plan_association_delivery(engine, &mut request)?;
+        if !planned_delivery.chunk_specs.is_empty() {
+            pending_groups.push(PendingGroupedUnionGroup {
+                request,
+                chunk_specs: planned_delivery.chunk_specs,
+                chromosome_blocks: planned_delivery.chromosome_blocks,
+            });
+        }
+    }
+    Ok(pending_groups)
+}
+
+fn run_pending_groups_direct<Backend, CheckInterruption, InterruptionError>(
+    engine: &BgenRunEngine,
+    backend: &Arc<Backend>,
+    pending_groups: Vec<PendingGroupedUnionGroup>,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    Backend::ChromosomeState: 'static,
+    Backend::DeviceResult: 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
+    let mut processed_chunk_count = 0_usize;
+    let mut warnings = Vec::new();
+    for pending_group in pending_groups {
+        let report = run_planned_association_delivery(
+            engine,
+            backend,
+            pending_group.request,
+            pending_group.chunk_specs,
+            check_interruption,
+        )?;
+        processed_chunk_count = processed_chunk_count.checked_add(report.processed_chunk_count).ok_or_else(|| {
+            DeliveryError::InvalidInput("direct resumed group chunk count overflowed usize".to_string())
+        })?;
+        warnings.extend(report.warnings);
+    }
+    Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+}
+
+fn prepare_grouped_union_runtimes<Backend, InterruptionError>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    pending_groups: Vec<PendingGroupedUnionGroup>,
     union_sample_indices: &[usize],
 ) -> DeliveryResult<Vec<GroupedUnionGroupRuntime<Backend>>, Backend::Error, InterruptionError>
 where
@@ -536,34 +775,36 @@ where
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
-    groups
+    let sample_positions_by_group = g_input::build_group_sample_position_arrays(
+        union_sample_indices,
+        pending_groups.iter().map(|group| group.request.group.sample_indices.as_slice()),
+    )?;
+    pending_groups
         .into_iter()
-        .map(|request| {
-            let sample_positions =
-                g_input::build_group_sample_position_array(union_sample_indices, &request.group.sample_indices)?
-                    .into_iter()
-                    .map(|position| {
-                        usize::try_from(position).map_err(|_| {
-                            DeliveryError::InvalidInput("grouped-union sample position must be nonnegative".to_string())
-                        })
-                    })
-                    .collect::<DeliveryResult<Vec<_>, Backend::Error, InterruptionError>>()?;
-            let group_state = backend
-                .prepare_group(group_preparation_input(&request.group))
-                .map_err(|source| DeliveryError::Backend { stage: "prepare_group", source })?;
+        .zip(sample_positions_by_group)
+        .map(|(pending_group, sample_positions)| {
+            let final_chunk_identifier = pending_group
+                .chunk_specs
+                .last()
+                .expect("pending grouped delivery has at least one chunk")
+                .variant_start_index;
+            let group_index = pipeline.register_group()?;
             Ok(GroupedUnionGroupRuntime {
-                request,
-                group_state,
+                group_index,
+                request: pending_group.request,
+                group_state: None,
                 sample_positions,
-                pipeline: None,
-                buffer_pool: GenotypeBufferPool::default(),
+                chromosome_blocks: pending_group.chromosome_blocks,
+                next_chromosome_block_index: 0,
+                final_chunk_identifier,
             })
         })
         .collect()
 }
 
-fn start_grouped_union_chromosome_pipelines<Backend, InterruptionError>(
-    backend: &Arc<Backend>,
+fn prepare_grouped_union_chromosome_states<Backend, InterruptionError>(
+    backend: &Backend,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>],
     chromosome: &str,
     warnings: &mut Vec<DeliveryWarning>,
@@ -574,47 +815,68 @@ where
     Backend::DeviceResult: 'static,
 {
     for group_runtime in group_runtimes {
-        group_runtime.pipeline = Some(prepare_chromosome_pipeline(
+        let Some(planned_chromosome) = group_runtime.chromosome_blocks.get(group_runtime.next_chromosome_block_index)
+        else {
+            continue;
+        };
+        if planned_chromosome.as_ref() != chromosome {
+            continue;
+        }
+        if group_runtime.group_state.is_none() {
+            group_runtime.group_state = Some(
+                backend
+                    .prepare_group(group_preparation_input(&mut group_runtime.request.group))
+                    .map_err(|source| DeliveryError::Backend { stage: "prepare_group", source })?,
+            );
+        }
+        let chromosome_state = prepare_chromosome_state(
             backend,
-            &group_runtime.group_state,
-            &group_runtime.request.group,
+            group_runtime.group_state.as_ref().expect("group state was prepared immediately above"),
+            &mut group_runtime.request.group,
             &group_runtime.request.settings,
             chromosome,
             warnings,
-        )?);
+        )?;
+        pipeline.prepare_chromosome(group_runtime.group_index, chromosome_state)?;
+        group_runtime.next_chromosome_block_index += 1;
+        if group_runtime.next_chromosome_block_index == group_runtime.chromosome_blocks.len() {
+            backend.release_group(group_runtime.group_state.take().expect("final chromosome retained group state"));
+        }
     }
     Ok(())
 }
 
 fn submit_grouped_union_chunk<Backend, InterruptionError>(
-    group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>],
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    group_runtimes: &[GroupedUnionGroupRuntime<Backend>],
     union_dosages: &[f32],
     union_sample_count: usize,
     variant_count: usize,
     variant_start_index: usize,
-    metadata: &g_genotype::VariantMetadataColumns,
+    metadata: &g_genotype_contracts::VariantMetadataColumns,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
+    let output_metadata = NativeVariantMetadataHandle::try_new(metadata)?;
     for group_runtime in group_runtimes {
         let settings = &group_runtime.request.settings;
-        let active_trait_indices = active_trait_indices_for_chunk(
+        let active_trait_selection = active_trait_selection_for_chunk(
             settings.writer_sessions.len(),
             variant_start_index,
             &settings.committed_chunk_identifier_sets,
         )
         .map_err(DeliveryError::InvalidInput)?;
-        if active_trait_indices.is_empty() {
+        if matches!(&active_trait_selection, ActiveTraitSelection::Indices(indices) if indices.is_empty()) {
             continue;
         }
         let sample_count = group_runtime.sample_positions.len();
         let genotype_value_count = variant_count
             .checked_mul(sample_count)
             .ok_or_else(|| DeliveryError::InvalidInput("projected genotype dimensions overflow usize".to_string()))?;
-        let genotype_buffer = group_runtime.buffer_pool.acquire(genotype_value_count, false)?;
+        let genotype_buffer = allocate_genotype_buffer(genotype_value_count, false)?;
         let OwnedGenotypeBuffer::Dosage(mut group_dosages) = genotype_buffer else {
             return Err(DeliveryError::InvalidInput(
                 "grouped-union delivery acquired a packed group buffer".to_string(),
@@ -627,71 +889,49 @@ where
             &group_runtime.sample_positions,
             &mut group_dosages,
         )?;
-        let statistics =
-            g_genotype::summarize_variant_major_dosage_matrix(&group_dosages, sample_count, variant_count)?;
+        let statistics = g_genotype::summarize_variant_major_dosage_matrix(
+            &group_dosages,
+            sample_count,
+            variant_count,
+            settings.statistics_policy,
+        )?;
         let scheduled_batch = ScheduledAssociationBatch {
             variant_start_index,
             variant_count,
             sample_count,
-            metadata: metadata.clone(),
+            metadata: output_metadata.clone(),
             statistics,
             genotype_buffer: OwnedGenotypeBuffer::Dosage(group_dosages),
-            active_trait_indices,
+            active_trait_selection,
         };
-        let pipeline = group_runtime
-            .pipeline
-            .as_ref()
-            .ok_or_else(|| DeliveryError::InvalidInput("grouped-union pipeline was not initialized".to_string()))?;
-        pipeline.submit(scheduled_batch)?;
+        let mut write_completed = |completed_batch: CompletedAssociationBatch| {
+            write_grouped_union_completed_batch::<Backend, InterruptionError>(completed_batch, group_runtimes)
+        };
+        submit_batch(pipeline, group_runtime.group_index, scheduled_batch, &mut write_completed)?;
     }
     Ok(())
 }
 
-fn drain_grouped_union_pipelines<Backend, InterruptionError>(
-    group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>],
+fn write_grouped_union_completed_batch<Backend, InterruptionError>(
+    completed_batch: CompletedAssociationBatch,
+    group_runtimes: &[GroupedUnionGroupRuntime<Backend>],
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
-    for group_runtime in group_runtimes {
-        let pipeline = group_runtime
-            .pipeline
-            .as_ref()
-            .ok_or_else(|| DeliveryError::InvalidInput("grouped-union pipeline was not initialized".to_string()))?;
-        drain_available_batches(pipeline, &group_runtime.request.settings, &mut group_runtime.buffer_pool)?;
+    let group_index = completed_batch.group_index;
+    let group_runtime = group_runtimes.get(group_index).ok_or_else(|| {
+        DeliveryError::InvalidInput(format!("shared pipeline returned unknown group index {group_index}"))
+    })?;
+    if group_runtime.group_index != group_index {
+        return Err(DeliveryError::InvalidInput(format!(
+            "shared pipeline group routing mismatch: slot {group_index} stores group {}",
+            group_runtime.group_index
+        )));
     }
-    Ok(())
-}
-
-fn finish_grouped_union_pipelines<Backend, InterruptionError>(
-    group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>],
-) -> DeliveryResult<(), Backend::Error, InterruptionError>
-where
-    Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
-{
-    for group_runtime in group_runtimes {
-        if let Some(mut pipeline) = group_runtime.pipeline.take() {
-            finish_and_drain_pipeline(&mut pipeline, &group_runtime.request.settings, &mut group_runtime.buffer_pool)?;
-        }
-    }
-    Ok(())
-}
-
-fn abort_grouped_union_pipelines<Backend>(group_runtimes: &mut [GroupedUnionGroupRuntime<Backend>])
-where
-    Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
-{
-    for group_runtime in group_runtimes {
-        if let Some(pipeline) = group_runtime.pipeline.as_mut() {
-            let _ = pipeline.abort();
-        }
-    }
+    write_completed_batch(completed_batch, &group_runtime.request.settings)
 }
 
 fn validate_grouped_union_request<BackendError, InterruptionError>(
@@ -707,18 +947,26 @@ fn validate_grouped_union_request<BackendError, InterruptionError>(
             "grouped-union delivery requires at least one union sample".to_string(),
         ));
     }
-    let sample_indices_by_group =
-        request.groups.iter().map(|group| group.group.sample_indices.clone()).collect::<Vec<_>>();
-    if request.union_sample_indices != g_input::build_union_sample_indices(&sample_indices_by_group) {
+    if request.union_sample_indices
+        != g_input::build_union_sample_indices(request.groups.iter().map(|group| group.group.sample_indices.as_slice()))
+    {
         return Err(DeliveryError::InvalidInput(
             "union sample indices do not match the ordered group union".to_string(),
         ));
     }
+    let first_settings = &request.groups[0].settings;
     for group in &request.groups {
         validate_delivery_request::<BackendError, InterruptionError>(group)?;
         if group.settings.use_packed8 {
             return Err(DeliveryError::InvalidInput(
                 "grouped-union delivery supports dosage genotypes only".to_string(),
+            ));
+        }
+        if group.settings.staging_depth != first_settings.staging_depth
+            || group.settings.result_in_flight_limit != first_settings.result_in_flight_limit
+        {
+            return Err(DeliveryError::InvalidInput(
+                "grouped-union delivery requires one shared queue-capacity policy".to_string(),
             ));
         }
     }

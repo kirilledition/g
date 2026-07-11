@@ -273,16 +273,7 @@ def fit_single_variant_firth_logistic_regression(
             information_matrix
             + jnp.eye(information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
         )
-        information_cholesky_factor = jnp.linalg.cholesky(information_matrix)
-        current_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
-            probability_vector=probability_vector,
-            phenotype_vector=phenotype_vector,
-            information_cholesky_factor=information_cholesky_factor,
-            kernel_config=kernel_config,
-        )
-        current_failed = (~jnp.isfinite(current_penalized_log_likelihood)) | (
-            ~jnp.all(jnp.isfinite(state.coefficients))
-        )
+        current_failed = (~jnp.isfinite(state.penalized_log_likelihood)) | (~jnp.all(jnp.isfinite(state.coefficients)))
         if use_block_firth_math:
             adjusted_weight_components = compute_full_model_adjusted_weight_components_from_parts(
                 covariate_matrix=covariate_matrix,
@@ -404,13 +395,6 @@ def fit_single_variant_firth_logistic_regression(
         final_information_matrix
         + jnp.eye(final_information_matrix.shape[0], dtype=jnp.float64) * kernel_config.numerical.minimum_variance
     )
-    final_information_cholesky_factor = jnp.linalg.cholesky(final_information_matrix)
-    final_penalized_log_likelihood = compute_firth_penalized_log_likelihood_from_cholesky(
-        probability_vector=final_probability_vector,
-        phenotype_vector=phenotype_vector,
-        information_cholesky_factor=final_information_cholesky_factor,
-        kernel_config=kernel_config,
-    )
     if use_block_firth_math:
         final_adjusted_weight_components = compute_full_model_adjusted_weight_components_from_parts(
             covariate_matrix=covariate_matrix,
@@ -443,7 +427,7 @@ def fit_single_variant_firth_logistic_regression(
     genotype_variance = linalg.solve_from_positive_definite_matrix(final_second_hessian, unit_genotype_vector)[-1]
     beta = final_state.coefficients[-1]
     standard_error = jnp.sqrt(jnp.where(genotype_variance > 0.0, genotype_variance, jnp.nan))
-    chi_squared = jnp.maximum(2.0 * (final_penalized_log_likelihood - null_penalized_log_likelihood), 0.0)
+    chi_squared = jnp.maximum(2.0 * (final_state.penalized_log_likelihood - null_penalized_log_likelihood), 0.0)
     log10_p_value = jnp.asarray(pvalue.chi_squared_to_log10_p_value(chi_squared), dtype=jnp.float64)
     valid_mask = (
         (~skip_firth)

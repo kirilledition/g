@@ -26,9 +26,9 @@ Python owns:
   JAX kernel state and statistical computation
 ```
 
-The root PyO3 module exposes only `g._core.cli` and `g._core.engine`. There are
-no legacy aliases, callback APIs, writer APIs, runtime APIs, or config object
-graphs registered for Python.
+The root PyO3 module exposes only `g._core.cli`. There are no legacy aliases,
+backend exchange classes, callback APIs, writer APIs, runtime APIs, or config
+object graphs registered for Python.
 
 ## Implemented Changes
 
@@ -43,17 +43,28 @@ graphs registered for Python.
   close/drain/join, panic/error propagation, and cancellation-aware abort.
 - Kept variant metadata, output identity, result validation, and writing in
   Rust.
-- Moved reusable genotype buffers, grouped projection, BGEN decode dispatch,
-  chromosome validation, and completed-result writing into `g-engine`.
+- Moved genotype buffers, grouped projection, BGEN decode dispatch, chromosome
+  validation, and completed-result writing into `g-engine`. Backend-bound
+  genotype, phenotype, covariate, and single-use LOCO buffers transfer their
+  allocation directly into NumPy; only the union-source buffer is pooled while
+  it is projected into multiple groups. Repeated noncontiguous chromosome
+  blocks retain a counted prediction clone fallback.
 
 ### Python JAX island
 
-- Replaced the single/multi/grouped callback hierarchy with
-  `JaxAssociationBackend`.
+- Replaced the single/multi/grouped callback hierarchy with mode-specialized
+  linear, binary-score, and binary-Firth backend classes.
 - Limited the backend to `prepare_group`, `prepare_chromosome`, `compute_batch`,
   and `materialize_batch`.
 - Reused kernel state dataclasses directly instead of adding one-field wrapper
   state types.
+- Split binary score policy and chromosome state from approximate-Firth state.
+  Score-only construction receives only numerical and null-logistic policy and
+  retains only score-kernel operands. The Firth state composes that compact
+  score state with its null-Firth offsets, likelihoods, and deviance arrays.
+- Removed all registered backend config and matrix exchange PyClasses. The
+  private binding passes NumPy arrays directly and selects mode/correction once
+  during backend construction.
 - Performs one batched `jax.device_get` per materialized result.
 - Removed output-only PyClasses and dead PyClass getters. Python now returns one
   ordinary typed host-result dataclass that Rust consumes directly.
@@ -75,8 +86,9 @@ graphs registered for Python.
   request flag and second-signal default action.
 - Configured stage timing and profile outputs are written by the Rust recorder
   on every terminal path without masking a primary run failure.
-- `g-output` consumes canonical `g-genotype` metadata/statistics, constructs
-  each trait-major Arrow buffer once, and slices shared arrays per writer.
+- `g-output` consumes canonical `g-genotype-contracts` metadata/statistics,
+  constructs each union-chunk Arrow metadata set once, and shares arrays across
+  compatible groups and trait writers.
 - Output workers are run-scoped and bounded; the global pool and per-phenotype
   coordinator are deleted.
 - Completed outputs use one `CompletedOutputRun` per phenotype rather than five
@@ -118,10 +130,10 @@ graphs registered for Python.
 | --- | --- |
 | Inventory, facades, and errors | Every domain crate exports one documented `api.rs` facade. Dead umbrella errors and convenience constructors are deleted. Public production APIs use crate-owned typed errors; no public `Result<T, String>` or library `anyhow::Result` remains. |
 | Plan and interface | Configuration compiles to one typed `RunPlan`. Duplicate enum mirrors, prepared-plan DTOs, Python option normalization, and compatibility aliases are deleted. Numeric controls use validated finite `f64` newtypes. |
-| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. Prediction sources are unified and cache shared chromosome matrices. The production BGEN decoder is split into matrix, probability, and variant-major modules; the row-major production path is deleted. Raw caller-owned buffers validate address, counts, and offsets before unsafe writes. |
-| Output | Canonical genotype DTOs flow directly into `NativeChunkHandle`. A run-scoped bounded worker pool is shared by Parquet writer sessions; the global pool, coordinator, duplicate DTOs, row-copy write plan, alternate writers, and derived-file consolidation are deleted. Manifest and resume counts cross checked signed `i64` boundaries. |
-| Runtime | Duplicate facades, callback-era diagnostics, unused binary chunk diagnostics, the unused shutdown controller, and public event-name constants are deleted. Telemetry envelopes and close summaries serialize directly from typed Rust values. |
-| Engine | The backend is batch-oriented and Python-free. `RunEngine`/`PreparedRun` own preparation, delivery, and terminal output policy. Scheduler helpers stay internal and the bounded pipeline retains ownership of queues, joins, first-error capture, drain, and abort. |
+| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. LOCO files are structurally indexed once per canonical path; identical loader-only headers share one identifier index and alignment recipe, indexed metadata plus row digests protect deferred reads, and only post-resume chromosome blocks are parsed and assembled lazily into final trait-major matrices. BGEN variant IDs use one UTF-8 arena and repeated chromosome/allele text uses compact dictionary codes. The production decoder is split into matrix, probability, and variant-major modules; the row-major production path is deleted. Raw caller-owned buffers validate address, counts, and offsets before unsafe writes. |
+| Output | Canonical `g-genotype-contracts` DTOs flow directly into `NativeChunkHandle`; `g-output` does not depend on the BGEN implementation crate. A run-scoped bounded worker pool is shared by Parquet writer sessions; the global pool, coordinator, duplicate DTOs, row-copy write plan, alternate writers, and derived-file consolidation are deleted. Manifest and resume counts cross checked signed `i64` boundaries. |
+| Runtime | Duplicate facades, callback-era diagnostics, event-specific payload builders, JAX policy, trusted-validation cache policy, and public event constants are deleted. Runtime owns generic logging/telemetry/timing/shutdown infrastructure. |
+| Engine | The backend is batch-oriented and Python-free. `RunEngine`/`PreparedRun` own preparation, delivery, trusted validation, and writer completion. Scheduler helpers stay internal and the bounded pipeline retains ownership of queues, joins, first-error capture, drain, and abort. |
 | PyO3 and Python | The input, output, lifecycle, conversion, and JSON adapter trees are deleted. Telemetry lifecycle is runtime-owned. Python contains only console forwarding, the four-operation backend, and JAX kernels. |
 | Dependency and integer audit | Cargo dependency scanning reports no unused dependencies. Production engine/binding code has no unchecked integer `as` casts or bare tuple result mirrors. |
 
@@ -132,11 +144,12 @@ production tree.
 
 ## Binding Reduction
 
-The root crate depends directly only on `g-runner` and `g-engine`, rather than
-`g-interface`, `g-plan`, or `g-runtime`. `g-runner` owns dispatch, process
+The root crate depends directly on `g-runner`, `g-engine`, and canonical
+`g-plan` contracts, rather than adapter-specific settings or `g-interface` and
+`g-runtime`. `g-runner` owns dispatch, process
 policy, timing, terminal rendering, and the coordinated engine call.
-`g-engine` owns preparation, host buffers, decode, grouping, scheduling,
-result delivery, and terminal output policy. Binding code retains only Python
+`g-engine` owns preparation, host buffers, decode, grouping, scheduling, and
+result delivery. `g-runner` owns terminal output policy. Binding code retains only Python
 attachment, opaque JAX objects, NumPy conversion, Python thread labels, and
 original `PyErr` adaptation. The binding implements the runner's Python host
 callbacks; no lifecycle is assembled in `src/binding/cli.rs`.
@@ -160,7 +173,7 @@ were intentionally not preserved. The active dtype contract is documented in
 
 After the production API settles:
 
-1. Delete or migrate stale tests to the two-submodule `_core` API.
+1. Delete or migrate stale tests to the CLI-only `_core` API.
 2. Update benchmark and profiling tooling to the new native host path.
 3. Run the full CPU/GPU correctness matrix and capture new performance
    baselines.

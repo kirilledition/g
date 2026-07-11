@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use arrow::datatypes::Schema;
 use parquet::arrow::ArrowWriter;
@@ -13,6 +12,7 @@ use parquet::schema::types::ColumnPath;
 use crate::error::OutputError;
 use crate::manifest;
 use crate::schema;
+use crate::timing::start_optional_timing;
 
 use super::chunk_manifest;
 use super::record_batch::{RegenieStep2RecordBatchArrayCache, build_regenie_step2_record_batch};
@@ -29,12 +29,13 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     parquet_record_batch_schema: &Arc<Schema>,
     chunk_file_path: &Path,
     chunk_commits: &[manifest::RunManifestChunkCommit],
+    collect_stage_timings: bool,
 ) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
-    let file_create_start_time = Instant::now();
+    let file_create_start_time = start_optional_timing(collect_stage_timings);
     let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
-    let file_create = file_create_start_time.elapsed().as_secs_f64();
+    let file_create = file_create_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
 
-    let writer_init_start_time = Instant::now();
+    let writer_init_start_time = start_optional_timing(collect_stage_timings);
     let writer_properties = build_regenie_step2_parquet_writer_properties();
     let mut writer = ArrowWriter::try_new(output_file, Arc::clone(chunk_schema), Some(writer_properties))
         .map_err(OutputError::runtime)?;
@@ -42,26 +43,31 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
         key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
         value: Some(chunk_manifest::build_chunk_commit_metadata_text(chunk_commits)?),
     });
-    let writer_init = writer_init_start_time.elapsed().as_secs_f64();
+    let writer_init = writer_init_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
 
     let mut record_batch_build_timing = RegenieStep2RecordBatchBuildTiming::default();
     let mut record_batch_build_seconds = 0.0;
     let mut array_cache = RegenieStep2RecordBatchArrayCache::default();
     let mut batch_write = 0.0;
     for chunk_job in chunks {
-        let record_batch_build_start_time = Instant::now();
-        let record_batch_build_result =
-            build_regenie_step2_record_batch(chunk_job, Arc::clone(parquet_record_batch_schema), &mut array_cache)?;
-        record_batch_build_seconds += record_batch_build_start_time.elapsed().as_secs_f64();
+        let record_batch_build_start_time = start_optional_timing(collect_stage_timings);
+        let record_batch_build_result = build_regenie_step2_record_batch(
+            chunk_job,
+            Arc::clone(parquet_record_batch_schema),
+            &mut array_cache,
+            collect_stage_timings,
+        )?;
+        record_batch_build_seconds +=
+            record_batch_build_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
         record_batch_build_timing.add(record_batch_build_result.timing);
 
-        let batch_write_start_time = Instant::now();
+        let batch_write_start_time = start_optional_timing(collect_stage_timings);
         writer.write(&record_batch_build_result.record_batch).map_err(OutputError::runtime)?;
-        batch_write += batch_write_start_time.elapsed().as_secs_f64();
+        batch_write += batch_write_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
     }
-    let writer_finish_start_time = Instant::now();
+    let writer_finish_start_time = start_optional_timing(collect_stage_timings);
     writer.close().map_err(OutputError::runtime)?;
-    let writer_finish = writer_finish_start_time.elapsed().as_secs_f64();
+    let writer_finish = writer_finish_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
     Ok(RegenieStep2ChunkStreamWriteResult {
         record_batch_build_timing,
         record_batch_build_seconds,

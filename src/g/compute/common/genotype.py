@@ -58,80 +58,43 @@ def decode_packed8_probability_pairs_to_variant_major_dosage(
     ) / EIGHT_BIT_PROBABILITY_DENOMINATOR
 
 
-def normalize_high_frequency_diploid_genotypes_variant_major(
+def compute_diploid_genotype_mean(
     genotype_matrix_by_variant: jax.Array,
-    score_dtype: types.FloatingPointDtype,
+    native_genotype_mean: jax.Array | None,
 ) -> jax.Array:
-    """Shift high-frequency diploid dosages to avoid score-kernel cancellation.
+    """Compute per-variant genotype means from native statistics when available.
 
     Args:
         genotype_matrix_by_variant: Variant-major dosage matrix.
-        score_dtype: Floating-point dtype for score-test computation.
+        native_genotype_mean: Optional native per-variant genotype mean.
 
     Returns:
-        Shifted variant-major dosage matrix.
+        Per-variant genotype means in the genotype matrix dtype.
 
     """
-    genotype_matrix_by_variant_compute = jnp.asarray(
-        genotype_matrix_by_variant,
-        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
-    )
-    genotype_mean = jnp.mean(genotype_matrix_by_variant_compute, axis=1)
-    genotype_offset = jnp.where(genotype_mean > 1.0, ALLELE_COUNT_MULTIPLIER, 0.0)
-    return genotype_matrix_by_variant_compute - genotype_offset[:, None]
-
-
-def normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
-    genotype_matrix_by_variant: jax.Array,
-    dosage_sum: jax.Array,
-    observation_count: jax.Array,
-    score_dtype: types.FloatingPointDtype,
-) -> jax.Array:
-    """Shift high-frequency diploid dosages using native per-variant statistics.
-
-    Args:
-        genotype_matrix_by_variant: Variant-major dosage matrix.
-        dosage_sum: Native observed per-variant dosage sum.
-        observation_count: Native per-variant observed genotype count.
-        score_dtype: Floating-point dtype for score-test computation.
-
-    Returns:
-        Shifted variant-major dosage matrix.
-
-    """
-    genotype_matrix_by_variant_compute = jnp.asarray(
-        genotype_matrix_by_variant,
-        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
-    )
-    dosage_sum_compute = jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant_compute.dtype)
-    observation_count_compute = jnp.asarray(observation_count, dtype=genotype_matrix_by_variant_compute.dtype)
-    genotype_mean = dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)
-    genotype_offset = jnp.where(genotype_mean > 1.0, ALLELE_COUNT_MULTIPLIER, 0.0)
-    return genotype_matrix_by_variant_compute - genotype_offset[:, None]
+    if native_genotype_mean is None:
+        return jnp.mean(genotype_matrix_by_variant, axis=1)
+    return jnp.asarray(native_genotype_mean, dtype=genotype_matrix_by_variant.dtype)
 
 
 def build_regenie_flipped_genotypes(
     genotype_matrix_by_variant: jax.Array,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
 ) -> RegenieGenotypeFlipResult:
     """Code variant-major genotypes the way REGENIE does before testing.
 
     Args:
         genotype_matrix_by_variant: Variant-major dosage matrix.
-        dosage_sum: Optional native per-variant dosage sum.
-        observation_count: Optional native per-variant observed genotype count.
+        native_genotype_mean: Optional native per-variant genotype mean.
 
     Returns:
         Flipped genotype matrix and per-variant flip mask.
 
     """
-    if dosage_sum is None or observation_count is None:
-        genotype_mean = jnp.mean(genotype_matrix_by_variant, axis=1)
-    else:
-        dosage_sum_compute = jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant.dtype)
-        observation_count_compute = jnp.asarray(observation_count, dtype=genotype_matrix_by_variant.dtype)
-        genotype_mean = dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)
+    genotype_mean = compute_diploid_genotype_mean(
+        genotype_matrix_by_variant,
+        native_genotype_mean,
+    )
     flip_mask = genotype_mean > 1.0
     flipped_genotype_matrix_by_variant = jnp.where(
         flip_mask[:, None],

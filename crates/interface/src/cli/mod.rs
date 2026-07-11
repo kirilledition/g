@@ -13,13 +13,13 @@ mod parser;
 
 use parser::{ParsedRegenieCli, RegenieCli, parse_regenie_cli};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum CliDispatch {
     Exit { exit_code: i32, stdout: String, stderr: String },
     Run(Box<CompiledCliRun>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct CompiledCliRun {
     pub run_plan: g_plan::RunPlan,
     pub effective_config_toml: String,

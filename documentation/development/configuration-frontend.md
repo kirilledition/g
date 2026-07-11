@@ -62,10 +62,10 @@ configurable defaults do not reappear as production constants.
    option is accepted in config files or affects runtime state.
 3. Add a packaged default in `crates/interface/src/config.default.toml` when the option is
    defaultable.
-4. Extend `JaxBackendConfig` and the engine stub only when the Python/JAX
-   backend needs the resolved value.
-5. Thread the field into `g-plan::RunRequest`, `PreparedRunPlan`, or the typed
-   JAX backend config, according to its owner.
+4. Extend the runner's mode-specific backend plan view only when the Python/JAX
+   backend needs the resolved value; do not add a PyO3 config class.
+5. Thread the field into the canonical `g-plan::RunPlan` owner and pass its
+   scalar value directly into the private Python backend constructor.
 6. Add validation for invalid combinations or unsupported modes.
 7. Update tests for CLI, TOML, and the runtime boundary after the API stabilizes.
 8. Update public docs if behavior, defaults policy, inputs, outputs, telemetry,

@@ -9,19 +9,20 @@ import jax.numpy as jnp
 
 from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, pvalue
+from g.compute.common import result as association_result
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
-from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary import state as regenie2_binary_state
 
 if typing.TYPE_CHECKING:
     from g import types
+    from g.compute.regenie2_binary import result as regenie2_binary_result
 
 
 def compute_positive_variance_mask(
     variance: jax.Array,
     reference_sum_squares: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryScoreConfig,
 ) -> jax.Array:
     """Return a stable positive-variance mask after covariate projection.
 
@@ -42,12 +43,11 @@ def compute_positive_variance_mask(
 
 
 def compute_multi_binary_score_test_chunk_variant_major(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState,
     genotype_matrix_by_variant: jax.Array,
-    correction_plan: types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
+    firth_candidate_p_threshold: float | None,
+    kernel_config: regenie2_binary_config.BinaryScoreConfig,
+    native_genotype_mean: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
@@ -55,10 +55,9 @@ def compute_multi_binary_score_test_chunk_variant_major(
     Args:
         chromosome_state: Trait-major chromosome-specific null model state.
         genotype_matrix_by_variant: Variant-major dosage matrix.
-        correction_plan: Binary fallback/correction policy.
+        firth_candidate_p_threshold: Firth candidate threshold, or ``None`` for score-only execution.
         kernel_config: Binary-kernel numerical policy.
-        dosage_sum: Optional native per-variant dosage sum.
-        observation_count: Optional native per-variant observed genotype count.
+        native_genotype_mean: Optional native per-variant genotype mean.
         score_dtype: Floating-point dtype for score-test computation.
 
     Returns:
@@ -69,13 +68,12 @@ def compute_multi_binary_score_test_chunk_variant_major(
         genotype_matrix_by_variant,
         dtype=compute_dtype.resolve_jax_dtype(score_dtype),
     )
-    genotype_mean = compute_genotype_mean(
+    genotype_mean = genotype.compute_diploid_genotype_mean(
         raw_genotype_matrix_by_variant,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
+        native_genotype_mean,
     )
-    trait_count = chromosome_state.score_residual.shape[0]
-    covariate_count = chromosome_state.score_projection_matrix.shape[1]
+    trait_count = chromosome_state.null_logistic_converged.shape[0]
+    covariate_count = chromosome_state.score_projection_sum.shape[1]
     variant_count = raw_genotype_matrix_by_variant.shape[0]
     genotype_flip_mask = genotype_mean > 1.0
     genotype_flip_mask_by_trait_variant = genotype_flip_mask[None, :]
@@ -84,6 +82,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     projection_row_count = trait_count * covariate_count
     weighted_genotype_sum_start = projection_row_count
     score_start = weighted_genotype_sum_start + trait_count
+    bernoulli_weight = chromosome_state.score_right_hand_matrix[weighted_genotype_sum_start:score_start, :]
     projection_coordinates = jnp.reshape(
         stacked_product_by_variant[:, :projection_row_count],
         (variant_count, trait_count, covariate_count),
@@ -105,7 +104,7 @@ def compute_multi_binary_score_test_chunk_variant_major(
     weighted_genotype_sum_squares = jnp.einsum(
         "vs,ts->tv",
         genotype_matrix_by_variant_squared,
-        chromosome_state.bernoulli_weight,
+        bernoulli_weight,
     )
     weighted_genotype_sum_squares = jnp.where(
         genotype_flip_mask_by_trait_variant,
@@ -146,24 +145,15 @@ def compute_multi_binary_score_test_chunk_variant_major(
         jnp.nan,
     )
     valid_mask = null_logistic_converged & jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    correction_code = regenie2_binary_correction.build_correction_code(log10_p_value, valid_mask, correction_plan)
-    return regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
+    correction_code = regenie2_binary_correction.build_correction_code(
+        log10_p_value,
+        valid_mask,
+        firth_candidate_p_threshold,
+    )
+    return association_result.AssociationResult(
         beta=beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
         log10_p_value=log10_p_value,
         correction_code=correction_code,
     )
-
-
-def compute_genotype_mean(
-    genotype_matrix_by_variant: jax.Array,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
-) -> jax.Array:
-    """Compute per-variant genotype means from native stats when available."""
-    if dosage_sum is None or observation_count is None:
-        return jnp.mean(genotype_matrix_by_variant, axis=1)
-    dosage_sum_compute = jnp.asarray(dosage_sum, dtype=genotype_matrix_by_variant.dtype)
-    observation_count_compute = jnp.asarray(observation_count, dtype=genotype_matrix_by_variant.dtype)
-    return dosage_sum_compute / jnp.maximum(observation_count_compute, 1.0)

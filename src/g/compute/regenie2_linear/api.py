@@ -26,16 +26,14 @@ LINEAR_SCORE_STATIC_ARGNAMES = (
     static_argnames=LINEAR_SCORE_STATIC_ARGNAMES,
     donate_argnames=(
         "packed_probability_pairs_by_variant",
-        "genotype_dosage_sum",
-        "genotype_observation_count",
+        "native_genotype_mean",
         "genotype_imputed_dosage_square_sum",
     ),
 )
 def compute_multi_linear_chunk_packed8_donating_inputs(
     chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None,
-    genotype_observation_count: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
     genotype_imputed_dosage_square_sum: jax.Array | None,
     score_dtype: g_types.FloatingPointDtype,
     linear_minimum_variance: float,
@@ -49,8 +47,7 @@ def compute_multi_linear_chunk_packed8_donating_inputs(
     return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
+        native_genotype_mean=native_genotype_mean,
         genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
         score_dtype=score_dtype,
         linear_minimum_variance=linear_minimum_variance,

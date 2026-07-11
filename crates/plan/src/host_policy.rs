@@ -3,7 +3,6 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -92,7 +91,7 @@ pub fn build_phenotype_compute_group_id(phenotype_compute_group: &PhenotypeCompu
         optional_string_value(phenotype_compute_group.sample_set_fingerprint.as_deref()),
     );
     let group_payload_bytes = serde_json::to_vec(&group_payload).expect("group payload serialization must succeed");
-    finalize_sha256_hex(Sha256::digest(group_payload_bytes))
+    hex::encode(Sha256::digest(group_payload_bytes))
 }
 
 #[must_use]
@@ -123,12 +122,4 @@ fn optional_string_value(value: Option<&str>) -> Value {
         Some(text) => Value::String(text.to_string()),
         None => Value::Null,
     }
-}
-
-fn finalize_sha256_hex(digest_bytes: sha2::digest::Output<Sha256>) -> String {
-    let mut digest_text = String::with_capacity(digest_bytes.len() * 2);
-    for digest_byte in digest_bytes {
-        write!(&mut digest_text, "{digest_byte:02x}").expect("writing to a string must succeed");
-    }
-    digest_text
 }

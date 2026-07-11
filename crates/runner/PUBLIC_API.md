@@ -3,17 +3,24 @@
 ## This crate owns
 
 Python-free native CLI lifecycle coordination above interface, runtime, and
-engine crates.
+engine crates, including JAX process policy and terminal rendering.
 
 ## Public types
 
 `NativeRunHost`, `NativeRunInterruption`, `NativeRunFailure`, `CliRunResult`,
-and runner-owned JAX host DTOs. The Python host names no `g-runtime` type.
+runner-owned JAX runtime observations, and the mode-specialized
+`JaxAssociationBackendPlan`. The backend plan borrows canonical `g-plan`
+kernel policy rather than redefining scalar settings. The Python host names no
+`g-runtime` type.
 
 ## Public functions
 
-`run_cli` dispatches the CLI, owns process-global setup, constructs terminal
-output, and invokes the coordinated engine run exactly once.
+`run_cli` dispatches the CLI, resolves the plan's diagnostics modes and output
+layout into a generic `g-runtime::NativeRunSessionPolicy`, owns process-global
+setup, constructs terminal output, and invokes the coordinated engine run
+exactly once. It rejects an incompatible process-global logging topology under
+the runtime-state lock before opening run files or starting asynchronous
+writers.
 
 ## This crate must not expose
 

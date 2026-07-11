@@ -139,12 +139,12 @@ Common files:
 
 | File | Written when | Meaning |
 | --- | --- | --- |
-| `events.jsonl` | Telemetry/log stream is enabled | Lifecycle, profile, or trace events. |
-| `stage-timings.json` | Profile/trace or explicit path | Stage timing snapshots. |
-| `profile.summary.json` | Profile/trace or explicit path | Aggregate profile summary. |
+| `events.jsonl` | Progress or profile telemetry is enabled | Lifecycle and profile events. |
+| `profile.summary.json` | Profile telemetry is enabled | Aggregate native stage summary. |
+| `output_stage_timings.json` | Profile telemetry is enabled | Per-phenotype output writer timings. |
 
-Use `[diagnostics].log_dir`, `log_file`, `stage_timings_json`, and
-`profile_summary_json` to route diagnostics explicitly.
+Diagnostics paths are derived from the output run directory; the production
+frontend currently exposes only `[diagnostics].telemetry`.
 
 Successful CLI runs print each phenotype run directory and its `parts/`
 Parquet dataset directory.

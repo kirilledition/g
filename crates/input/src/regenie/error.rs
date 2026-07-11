@@ -36,16 +36,8 @@ pub enum PredictionError {
     MissingChromosomePredictions(PathBuf),
     #[error("Target family and individual identifier arrays must have the same length.")]
     TargetSampleLengthMismatch,
-    #[error("Duplicate target sample key: {sample_key}")]
-    DuplicateTargetSampleKey { sample_key: String },
     #[error("Duplicate LOCO sample key: {sample_key}")]
     DuplicateLocoSampleKey { sample_key: String },
-    #[error(
-        "Duplicate target IID '{individual_identifier}' found; sample_key_mode='iid' requires unique non-null IID values."
-    )]
-    DuplicateTargetIid { individual_identifier: String },
-    #[error("Empty target IID found; sample_key_mode='iid' requires non-null IID values.")]
-    EmptyTargetIid,
     #[error(
         "Duplicate LOCO IID '{individual_identifier}' found; sample_key_mode='iid' requires unique non-null IID values."
     )]
@@ -58,8 +50,27 @@ pub enum PredictionError {
         "Chromosome '{chromosome}' (normalized: '{normalized_chromosome}') not found in LOCO file. Available chromosomes: {available_chromosomes:?}"
     )]
     MissingChromosome { chromosome: String, normalized_chromosome: String, available_chromosomes: Vec<String> },
+    #[error("LOCO prediction matrix shape {trait_count} traits x {sample_count} samples exceeds native capacity.")]
+    PredictionMatrixShapeOverflow { trait_count: usize, sample_count: usize },
     #[error("Failed to parse LOCO prediction value '{value}' on line {line_number}: {source}")]
     InvalidPredictionValue { line_number: usize, value: String, source: std::num::ParseFloatError },
+    #[error("LOCO prediction value '{value}' on line {line_number} is not finite.")]
+    NonFinitePredictionValue { line_number: usize, value: String },
+    #[error(
+        "LOCO file changed after indexing: {path}; line {line_number} should contain chromosome '{expected_chromosome}', found '{observed_chromosome}'."
+    )]
+    IndexedLocoRowChanged {
+        path: PathBuf,
+        line_number: usize,
+        expected_chromosome: String,
+        observed_chromosome: String,
+    },
+    #[error("LOCO file metadata changed after indexing: {path}.")]
+    IndexedLocoFileChanged { path: PathBuf },
+    #[error(
+        "LOCO file changed after indexing: {path}; prediction content for chromosome '{chromosome}' on line {line_number} no longer matches the indexed row."
+    )]
+    IndexedLocoRowContentChanged { path: PathBuf, line_number: usize, chromosome: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

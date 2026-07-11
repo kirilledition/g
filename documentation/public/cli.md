@@ -154,7 +154,14 @@ surface as command-line aliases.
 Logging sinks, `--threads`, and JAX runtime settings are process-global inside
 one Python process. Single CLI invocations are isolated by their process. Python
 callers that run multiple jobs in one process must reuse compatible settings or
-start a fresh process when `g` reports an incompatible runtime policy.
+start a fresh process when `g` reports an incompatible runtime policy. Once a
+JAX configuration attempt begins, a configuration update, device validation, or
+setup-diagnostic failure requires a fresh process because JAX may already be
+partially configured. Cache-directory creation occurs before that transition,
+so a directory-creation failure remains retryable. Compatibility uses effective
+JAX settings: cache directories, thresholds, and auxiliary-cache flags are
+ignored while persistent caching is disabled, and omitted
+`jax_matmul_precision` is equivalent to explicit `float32`.
 
 ## Recognized But Unsupported Options
 

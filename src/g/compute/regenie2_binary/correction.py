@@ -9,30 +9,36 @@ import jax
 import jax.numpy as jnp
 
 from g import types
-from g.compute.regenie2_binary import result as regenie2_binary_result
+from g.compute.common import result as association_result
 
 if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import result as regenie2_binary_result
     from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
 def build_correction_code(
     log10_p_value: jax.Array,
     valid_mask: jax.Array,
-    correction_plan: types.BinaryCorrectionPlan,
+    firth_candidate_p_threshold: float | None,
 ) -> jax.Array:
     """Select correction labels from score-test statistics."""
-    if correction_plan.method == types.BinaryFallbackMethod.SCORE_ONLY:
-        candidate_mask = jnp.zeros_like(valid_mask, dtype=jnp.bool_)
-        correction_code = types.BinaryCorrectionCode.SCORE_SUCCESS.value
-    else:
-        fallback_log10p_threshold = -math.log10(correction_plan.p_threshold)
-        candidate_mask = log10_p_value > fallback_log10p_threshold
-        correction_code = types.BinaryCorrectionCode.FIRTH_SUCCESS.value
+    if firth_candidate_p_threshold is None:
+        return jnp.where(
+            valid_mask,
+            types.BinaryCorrectionCode.SCORE_SUCCESS.value,
+            types.BinaryCorrectionCode.SCORE_FAILED.value,
+        ).astype(jnp.uint8)
+    fallback_log10p_threshold = -math.log10(firth_candidate_p_threshold)
+    candidate_mask = log10_p_value > fallback_log10p_threshold
     return jnp.where(
         valid_mask,
-        jnp.where(candidate_mask, correction_code, types.BinaryCorrectionCode.SCORE_SUCCESS.value),
+        jnp.where(
+            candidate_mask,
+            types.BinaryCorrectionCode.FIRTH_SUCCESS.value,
+            types.BinaryCorrectionCode.SCORE_SUCCESS.value,
+        ),
         types.BinaryCorrectionCode.SCORE_FAILED.value,
-    ).astype(jnp.int32)
+    ).astype(jnp.uint8)
 
 
 def merge_firth_variant_result_into_multi_chunk(
@@ -40,13 +46,14 @@ def merge_firth_variant_result_into_multi_chunk(
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     firth_result: regenie2_binary_firth_types.FirthVariantResult,
     active_flat_positions: jax.Array,
+    active_merge_mask: jax.Array,
     active_trait_indices: jax.Array,
     active_variant_indices: jax.Array,
     genotype_flip_mask: jax.Array,
     firth_se: bool,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Merge active Firth candidate results into a multi-trait binary chunk result."""
-    active_valid_mask = firth_result.valid_mask[active_flat_positions]
+    active_valid_mask = active_merge_mask & firth_result.valid_mask[active_flat_positions]
     active_firth_beta = jnp.where(
         genotype_flip_mask[active_flat_positions],
         -firth_result.beta[active_flat_positions],
@@ -81,21 +88,26 @@ def merge_firth_variant_result_into_multi_chunk(
         active_valid_mask,
         types.BinaryCorrectionCode.FIRTH_SUCCESS.value,
         types.BinaryCorrectionCode.FIRTH_FAILED.value,
-    ).astype(jnp.int32)
-    return regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult(
+    ).astype(jnp.uint8)
+    return association_result.AssociationResult(
         beta=result.beta.at[active_trait_indices, active_variant_indices].set(
-            jnp.asarray(merged_beta, dtype=result.beta.dtype)
+            jnp.asarray(merged_beta, dtype=result.beta.dtype),
+            mode="drop",
         ),
         standard_error=result.standard_error.at[active_trait_indices, active_variant_indices].set(
-            jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype)
+            jnp.asarray(merged_standard_error, dtype=result.standard_error.dtype),
+            mode="drop",
         ),
         chi_squared=result.chi_squared.at[active_trait_indices, active_variant_indices].set(
-            jnp.asarray(merged_chi_squared, dtype=result.chi_squared.dtype)
+            jnp.asarray(merged_chi_squared, dtype=result.chi_squared.dtype),
+            mode="drop",
         ),
         log10_p_value=result.log10_p_value.at[active_trait_indices, active_variant_indices].set(
-            jnp.asarray(merged_log10_p_value, dtype=result.log10_p_value.dtype)
+            jnp.asarray(merged_log10_p_value, dtype=result.log10_p_value.dtype),
+            mode="drop",
         ),
         correction_code=result.correction_code.at[active_trait_indices, active_variant_indices].set(
-            merged_correction_code
+            merged_correction_code,
+            mode="drop",
         ),
     )

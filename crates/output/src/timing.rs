@@ -115,7 +115,8 @@ pub(crate) fn write_stage_timing_snapshot(
     });
     let timing_path = run_directory.join(OUTPUT_STAGE_TIMING_FILE_NAME);
     let temporary_timing_path = timing_path.with_extension("json.tmp");
-    let timing_text = serde_json::to_string_pretty(&payload).map_err(OutputError::runtime)?;
-    std::fs::write(&temporary_timing_path, format!("{timing_text}\n")).map_err(OutputError::runtime)?;
+    let mut timing_text = serde_json::to_string_pretty(&payload).map_err(OutputError::runtime)?;
+    timing_text.push('\n');
+    std::fs::write(&temporary_timing_path, timing_text).map_err(OutputError::runtime)?;
     std::fs::rename(&temporary_timing_path, &timing_path).map_err(OutputError::runtime)
 }

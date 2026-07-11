@@ -1,5 +1,5 @@
 use super::decode::{
-    ThreadScratch, VariantDecodeResult, VariantMajorOutputMatrix, VariantMajorTileStatsMut,
+    ThreadScratch, VariantDecodeFailure, VariantMajorOutputMatrix, VariantMajorTileStatsMut,
     packed_eight_bit_probability_index, read_eight_bit_probability_pair, read_exact_bytes, read_probability_block,
     read_u8_at, read_u16_at, read_u32_at, selected_sample_count_to_i32, u32_to_usize, unphased_eight_bit_dosage_lookup,
     validate_variant_major_tile_stats_lengths,
@@ -9,6 +9,7 @@ use super::sample_selection::SampleSelection;
 use super::simd;
 use super::{BgenError, CompressionType};
 use crate::buffer::OutputBufferAddress;
+use crate::common::DosageSummary;
 use crate::preprocess;
 
 #[derive(Clone, Copy)]
@@ -20,62 +21,52 @@ enum TrustedEightBitParseContext {
 
 fn trusted_ploidy_bounds_error_message(
     parse_context: TrustedEightBitParseContext,
-    variant_identifier: &str,
     minimum_ploidy: u8,
     maximum_ploidy: u8,
 ) -> String {
     match parse_context {
         TrustedEightBitParseContext::Validation => format!(
-            "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because ploidy bounds are [{minimum_ploidy}, {maximum_ploidy}] instead of [2, 2].",
+            "is not compatible with trusted_no_missing_diploid because ploidy bounds are [{minimum_ploidy}, {maximum_ploidy}] instead of [2, 2].",
         ),
         TrustedEightBitParseContext::VariantMajorDosage => format!(
-            "Variant '{variant_identifier}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but variant-major trusted reads require diploid variants.",
+            "uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but variant-major trusted reads require diploid variants.",
         ),
         TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => format!(
-            "Variant '{variant_identifier}' uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but packed8 trusted reads require diploid variants.",
+            "uses ploidy bounds [{minimum_ploidy}, {maximum_ploidy}], but packed8 trusted reads require diploid variants.",
         ),
     }
 }
 
-fn trusted_missingness_error_message(parse_context: TrustedEightBitParseContext, variant_identifier: &str) -> String {
+fn trusted_missingness_error_message(parse_context: TrustedEightBitParseContext) -> String {
     match parse_context {
-        TrustedEightBitParseContext::Validation => format!(
-            "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because at least one sample is missing or non-diploid.",
-        ),
-        TrustedEightBitParseContext::VariantMajorDosage => format!(
-            "Variant '{variant_identifier}' contains missing or non-diploid samples, but variant-major trusted reads require every sample to be present diploid.",
-        ),
-        TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => format!(
-            "Variant '{variant_identifier}' contains missing or non-diploid samples, but packed8 trusted reads require every sample to be present diploid.",
-        ),
+        TrustedEightBitParseContext::Validation => "is not compatible with trusted_no_missing_diploid because at least one sample is missing or non-diploid.".to_string(),
+        TrustedEightBitParseContext::VariantMajorDosage => "contains missing or non-diploid samples, but variant-major trusted reads require every sample to be present diploid.".to_string(),
+        TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => "contains missing or non-diploid samples, but packed8 trusted reads require every sample to be present diploid.".to_string(),
     }
 }
 
 fn validate_trusted_phase_and_bit_count(
     parse_context: TrustedEightBitParseContext,
-    variant_identifier: &str,
     phased_flag: u8,
     probability_bit_count: u8,
 ) -> Result<(), BgenError> {
     match parse_context {
         TrustedEightBitParseContext::Validation => {
             if phased_flag != 0 {
-                return Err(BgenError::UnsupportedFormat(format!(
-                    "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because it is phased.",
-                )));
+                return Err(BgenError::UnsupportedFormat(
+                    "is not compatible with trusted_no_missing_diploid because it is phased.".to_string(),
+                ));
             }
             if probability_bit_count != 8 {
                 return Err(BgenError::UnsupportedFormat(format!(
-                    "Variant '{variant_identifier}' is not compatible with trusted_no_missing_diploid because it uses {probability_bit_count} bits per probability instead of 8.",
+                    "is not compatible with trusted_no_missing_diploid because it uses {probability_bit_count} bits per probability instead of 8.",
                 )));
             }
         }
         TrustedEightBitParseContext::VariantMajorDosage
         | TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs => {
             if phased_flag != 0 || probability_bit_count != 8 {
-                return Err(BgenError::UnsupportedFormat(format!(
-                    "Variant '{variant_identifier}' is not an unphased 8-bit BGEN variant.",
-                )));
+                return Err(BgenError::UnsupportedFormat("is not an unphased 8-bit BGEN variant.".to_string()));
             }
         }
     }
@@ -83,27 +74,25 @@ fn validate_trusted_phase_and_bit_count(
     Ok(())
 }
 
-fn parse_trusted_unphased_eight_bit_probability_block<'a>(
-    probability_block: &'a [u8],
+fn parse_trusted_unphased_eight_bit_probability_block(
+    probability_block: &[u8],
     sample_count: usize,
-    variant_record: &VariantRecord,
     parse_context: TrustedEightBitParseContext,
     validate_sample_ploidy_and_missingness: bool,
-) -> Result<&'a [u8], BgenError> {
-    let variant_identifier = variant_record.resolved_variant_identifier.as_str();
+) -> Result<&[u8], BgenError> {
     let mut cursor = 0;
     let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
     cursor += 4;
     if stored_sample_count != sample_count {
         return Err(BgenError::InvalidFormat(format!(
-            "Variant '{variant_identifier}' stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+            "stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
         )));
     }
 
     let allele_count = read_u16_at(probability_block, cursor)?;
     cursor += 2;
     if allele_count != 2 {
-        return Err(BgenError::UnsupportedFormat(format!("Variant '{variant_identifier}' is not biallelic.")));
+        return Err(BgenError::UnsupportedFormat("is not biallelic.".to_string()));
     }
 
     let minimum_ploidy = read_u8_at(probability_block, cursor)?;
@@ -113,7 +102,6 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
     if minimum_ploidy != 2 || maximum_ploidy != 2 {
         return Err(BgenError::UnsupportedFormat(trusted_ploidy_bounds_error_message(
             parse_context,
-            variant_identifier,
             minimum_ploidy,
             maximum_ploidy,
         )));
@@ -124,7 +112,7 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
     if validate_sample_ploidy_and_missingness
         && !simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness)
     {
-        return Err(BgenError::UnsupportedFormat(trusted_missingness_error_message(parse_context, variant_identifier)));
+        return Err(BgenError::UnsupportedFormat(trusted_missingness_error_message(parse_context)));
     }
     if !validate_sample_ploidy_and_missingness {
         debug_assert!(
@@ -137,7 +125,7 @@ fn parse_trusted_unphased_eight_bit_probability_block<'a>(
     cursor += 1;
     let probability_bit_count = read_u8_at(probability_block, cursor)?;
     cursor += 1;
-    validate_trusted_phase_and_bit_count(parse_context, variant_identifier, phased_flag, probability_bit_count)?;
+    validate_trusted_phase_and_bit_count(parse_context, phased_flag, probability_bit_count)?;
 
     let expected_probability_byte_count = sample_count.checked_mul(2).ok_or_else(|| {
         BgenError::InvalidFormat("Integer overflow while decoding 8-bit BGEN probabilities.".to_string())
@@ -159,7 +147,6 @@ pub(super) fn validate_variant_compatible_with_trusted_no_missing_diploid(
     parse_trusted_unphased_eight_bit_probability_block(
         probability_block,
         sample_count,
-        variant_record,
         TrustedEightBitParseContext::Validation,
         true,
     )?;
@@ -180,10 +167,12 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
     validate_sample_ploidy_and_missingness: bool,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
-) -> Result<(), BgenError> {
-    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
+) -> Result<(), VariantDecodeFailure> {
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())
+        .map_err(|source| VariantDecodeFailure { relative_variant_index: None, source })?;
+    let collect_sparse_candidate_counts = tile_stats.sparse_candidate_counts.is_some();
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
-        let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
+        let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix::<true>(
             mmap,
             compression_type,
             sample_count,
@@ -193,16 +182,56 @@ pub(super) fn decode_trusted_variant_major_dosage_tile(
             tile_variant_start_index + tile_variant_index,
             selected_sample_count,
             validate_sample_ploidy_and_missingness,
+            collect_sparse_candidate_counts,
             thread_scratch,
-        )?;
-        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
-        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
-        tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
-        tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
-        tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
-        tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
-        tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
-        tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
+        )
+        .map_err(|source| VariantDecodeFailure {
+            relative_variant_index: Some(tile_variant_start_index + tile_variant_index),
+            source,
+        })?;
+        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.dosage_sum;
+        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.dosage_square_sum;
+        tile_stats.observation_count[tile_variant_index] = variant_decode_result.observation_count;
+        if let Some(sparse_candidate_counts) = tile_stats.sparse_candidate_counts.as_mut() {
+            sparse_candidate_counts.zero_count[tile_variant_index] = variant_decode_result.zero_count;
+            sparse_candidate_counts.homozygous_alternate_count[tile_variant_index] =
+                variant_decode_result.homozygous_alternate_count;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decode_trusted_variant_major_dosage_tile_without_statistics(
+    mmap: &[u8],
+    compression_type: CompressionType,
+    sample_count: usize,
+    sample_selection: &SampleSelection,
+    variant_record_chunk: &[VariantRecord],
+    output_pointer_address: OutputBufferAddress,
+    selected_sample_count: usize,
+    tile_variant_start_index: usize,
+    validate_sample_ploidy_and_missingness: bool,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<(), VariantDecodeFailure> {
+    for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
+        decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix::<false>(
+            mmap,
+            compression_type,
+            sample_count,
+            sample_selection,
+            variant_record,
+            output_pointer_address,
+            tile_variant_start_index + tile_variant_index,
+            selected_sample_count,
+            validate_sample_ploidy_and_missingness,
+            false,
+            thread_scratch,
+        )
+        .map_err(|source| VariantDecodeFailure {
+            relative_variant_index: Some(tile_variant_start_index + tile_variant_index),
+            source,
+        })?;
     }
     Ok(())
 }
@@ -220,8 +249,10 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
     validate_sample_ploidy_and_missingness: bool,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
-) -> Result<(), BgenError> {
-    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())?;
+) -> Result<(), VariantDecodeFailure> {
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())
+        .map_err(|source| VariantDecodeFailure { relative_variant_index: None, source })?;
+    let collect_sparse_candidate_counts = tile_stats.sparse_candidate_counts.is_some();
     for (tile_variant_index, variant_record) in variant_record_chunk.iter().enumerate() {
         let variant_decode_result = decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pairs(
             mmap,
@@ -233,16 +264,21 @@ pub(super) fn decode_trusted_variant_major_packed8_probability_pair_tile(
             tile_variant_start_index + tile_variant_index,
             selected_sample_count,
             validate_sample_ploidy_and_missingness,
+            collect_sparse_candidate_counts,
             thread_scratch,
-        )?;
-        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.selected_dosage_total;
-        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.selected_dosage_square_total;
-        tile_stats.observation_count[tile_variant_index] = variant_decode_result.selected_observation_count;
-        tile_stats.zero_count[tile_variant_index] = variant_decode_result.zero_count;
-        tile_stats.nonzero_count[tile_variant_index] = variant_decode_result.nonzero_count;
-        tile_stats.homozygous_reference_count[tile_variant_index] = variant_decode_result.homozygous_reference_count;
-        tile_stats.heterozygous_count[tile_variant_index] = variant_decode_result.heterozygous_count;
-        tile_stats.homozygous_alternate_count[tile_variant_index] = variant_decode_result.homozygous_alternate_count;
+        )
+        .map_err(|source| VariantDecodeFailure {
+            relative_variant_index: Some(tile_variant_start_index + tile_variant_index),
+            source,
+        })?;
+        tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.dosage_sum;
+        tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.dosage_square_sum;
+        tile_stats.observation_count[tile_variant_index] = variant_decode_result.observation_count;
+        if let Some(sparse_candidate_counts) = tile_stats.sparse_candidate_counts.as_mut() {
+            sparse_candidate_counts.zero_count[tile_variant_index] = variant_decode_result.zero_count;
+            sparse_candidate_counts.homozygous_alternate_count[tile_variant_index] =
+                variant_decode_result.homozygous_alternate_count;
+        }
     }
     Ok(())
 }
@@ -259,14 +295,14 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     variant_index: usize,
     selected_sample_count: usize,
     validate_sample_ploidy_and_missingness: bool,
+    collect_sparse_candidate_counts: bool,
     thread_scratch: &mut ThreadScratch,
-) -> Result<VariantDecodeResult, BgenError> {
+) -> Result<DosageSummary, BgenError> {
     let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
 
     let packed_probability_bytes = parse_trusted_unphased_eight_bit_probability_block(
         probability_block,
         sample_count,
-        variant_record,
         TrustedEightBitParseContext::VariantMajorPackedProbabilityPairs,
         validate_sample_ploidy_and_missingness,
     )?;
@@ -282,12 +318,13 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
     };
     let output_row = output_matrix.row_mut(variant_index)?;
 
-    let decode_summary = if sample_selection.is_identity {
+    let decode_summary = if sample_selection.is_identity() {
         simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
             packed_probability_bytes,
             output_row,
+            collect_sparse_candidate_counts,
         )
-    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start() {
         let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
             BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
         })?;
@@ -296,10 +333,14 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
             selected_probability_bytes,
             output_row,
+            collect_sparse_candidate_counts,
         )
     } else {
-        let mut raw_integer_summary = simd::EightBitRawIntegerSummary::default();
-        for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+        let mut raw_integer_summary = simd::EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
+        let selected_file_indices = sample_selection
+            .indexed_file_indices()
+            .expect("non-identity, non-contiguous sample selections store explicit file indices");
+        for (selected_index, file_sample_index) in selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
             })?;
@@ -313,21 +354,12 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_probability_pair
         }
         raw_integer_summary.into_decode_summary()
     };
-    Ok(VariantDecodeResult {
-        selected_dosage_total: decode_summary.selected_dosage_total,
-        selected_dosage_square_total: decode_summary.selected_dosage_square_total,
-        selected_observation_count: decode_summary.selected_observation_count,
-        zero_count: decode_summary.zero_count,
-        nonzero_count: decode_summary.nonzero_count,
-        homozygous_reference_count: decode_summary.homozygous_reference_count,
-        heterozygous_count: decode_summary.heterozygous_count,
-        homozygous_alternate_count: decode_summary.homozygous_alternate_count,
-    })
+    Ok(decode_summary)
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
-fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
+fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix<const COLLECT_STATISTICS: bool>(
     mmap: &[u8],
     compression_type: CompressionType,
     sample_count: usize,
@@ -337,14 +369,15 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
     variant_index: usize,
     selected_sample_count: usize,
     validate_sample_ploidy_and_missingness: bool,
+    collect_sparse_candidate_counts: bool,
     thread_scratch: &mut ThreadScratch,
-) -> Result<VariantDecodeResult, BgenError> {
+) -> Result<DosageSummary, BgenError> {
+    debug_assert!(COLLECT_STATISTICS || !collect_sparse_candidate_counts);
     let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
 
     let packed_probability_bytes = parse_trusted_unphased_eight_bit_probability_block(
         probability_block,
         sample_count,
-        variant_record,
         TrustedEightBitParseContext::VariantMajorDosage,
         validate_sample_ploidy_and_missingness,
     )?;
@@ -355,27 +388,31 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
             "variant-major BGEN",
         )?
     };
-    let mut selected_dosage_total = 0.0_f32;
-    let mut selected_dosage_square_total = 0.0_f32;
-    let mut selected_observation_count = selected_sample_count_to_i32(selected_sample_count)?;
-    let mut zero_count = 0_i32;
-    let mut nonzero_count = 0_i32;
-    let mut homozygous_reference_count = 0_i32;
-    let mut heterozygous_count = 0_i32;
-    let mut homozygous_alternate_count = 0_i32;
-    if sample_selection.is_identity {
+    let mut dosage_sum = 0.0_f32;
+    let mut dosage_square_sum = 0.0_f32;
+    let mut observation_count =
+        if COLLECT_STATISTICS { selected_sample_count_to_i32(selected_sample_count)? } else { 0 };
+    let mut sparse_candidate_counts = (COLLECT_STATISTICS && collect_sparse_candidate_counts).then_some((0_i32, 0_i32));
+    if sample_selection.is_identity() {
         let output_row = output_matrix.row_mut(variant_index)?;
-        let decode_summary =
-            simd::decode_unphased_eight_bit_identity_simd_or_scalar(packed_probability_bytes, output_row);
-        selected_dosage_total = decode_summary.selected_dosage_total;
-        selected_dosage_square_total = decode_summary.selected_dosage_square_total;
-        selected_observation_count = decode_summary.selected_observation_count;
-        zero_count = decode_summary.zero_count;
-        nonzero_count = decode_summary.nonzero_count;
-        homozygous_reference_count = decode_summary.homozygous_reference_count;
-        heterozygous_count = decode_summary.heterozygous_count;
-        homozygous_alternate_count = decode_summary.homozygous_alternate_count;
-    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start {
+        if COLLECT_STATISTICS {
+            let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
+                packed_probability_bytes,
+                output_row,
+                collect_sparse_candidate_counts,
+            );
+            dosage_sum = decode_summary.dosage_sum;
+            dosage_square_sum = decode_summary.dosage_square_sum;
+            observation_count = decode_summary.observation_count;
+            sparse_candidate_counts = Some((decode_summary.zero_count, decode_summary.homozygous_alternate_count))
+                .filter(|_| collect_sparse_candidate_counts);
+        } else {
+            simd::decode_unphased_eight_bit_identity_without_statistics_simd_or_scalar(
+                packed_probability_bytes,
+                output_row,
+            );
+        }
+    } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start() {
         let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
             BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
         })?;
@@ -385,49 +422,48 @@ fn decode_trusted_unphased_eight_bit_variant_into_variant_major_matrix(
         let selected_probability_bytes =
             read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
         let output_row = output_matrix.row_mut(variant_index)?;
-        let decode_summary =
-            simd::decode_unphased_eight_bit_identity_simd_or_scalar(selected_probability_bytes, output_row);
-        selected_dosage_total = decode_summary.selected_dosage_total;
-        selected_dosage_square_total = decode_summary.selected_dosage_square_total;
-        selected_observation_count = decode_summary.selected_observation_count;
-        zero_count = decode_summary.zero_count;
-        nonzero_count = decode_summary.nonzero_count;
-        homozygous_reference_count = decode_summary.homozygous_reference_count;
-        heterozygous_count = decode_summary.heterozygous_count;
-        homozygous_alternate_count = decode_summary.homozygous_alternate_count;
+        if COLLECT_STATISTICS {
+            let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
+                selected_probability_bytes,
+                output_row,
+                collect_sparse_candidate_counts,
+            );
+            dosage_sum = decode_summary.dosage_sum;
+            dosage_square_sum = decode_summary.dosage_square_sum;
+            observation_count = decode_summary.observation_count;
+            sparse_candidate_counts = Some((decode_summary.zero_count, decode_summary.homozygous_alternate_count))
+                .filter(|_| collect_sparse_candidate_counts);
+        } else {
+            simd::decode_unphased_eight_bit_identity_without_statistics_simd_or_scalar(
+                selected_probability_bytes,
+                output_row,
+            );
+        }
     } else {
         let dosage_lookup = unphased_eight_bit_dosage_lookup();
         let output_row = output_matrix.row_mut(variant_index)?;
-        for (selected_index, file_sample_index) in sample_selection.selected_file_indices.iter().copied().enumerate() {
+        let selected_file_indices = sample_selection
+            .indexed_file_indices()
+            .expect("non-identity, non-contiguous sample selections store explicit file indices");
+        for (selected_index, file_sample_index) in selected_file_indices.iter().copied().enumerate() {
             let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
                 BgenError::InvalidFormat("Integer overflow while indexing trusted BGEN probabilities.".to_string())
             })?;
             let probability_pair = read_eight_bit_probability_pair(packed_probability_bytes, probability_offset)?;
             let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
             let dosage_value = dosage_lookup[packed_probability_index];
-            selected_dosage_total += dosage_value;
-            selected_dosage_square_total += dosage_value * dosage_value;
-            preprocess::increment_dosage_summary_counts(
-                dosage_value,
-                &mut zero_count,
-                &mut nonzero_count,
-                &mut homozygous_reference_count,
-                &mut heterozygous_count,
-                &mut homozygous_alternate_count,
-            );
+            if COLLECT_STATISTICS {
+                dosage_sum += dosage_value;
+                dosage_square_sum += dosage_value * dosage_value;
+                if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
+                    preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
+                }
+            }
             output_row[selected_index] = dosage_value;
         }
     }
-    Ok(VariantDecodeResult {
-        selected_dosage_total,
-        selected_dosage_square_total,
-        selected_observation_count,
-        zero_count,
-        nonzero_count,
-        homozygous_reference_count,
-        heterozygous_count,
-        homozygous_alternate_count,
-    })
+    let (zero_count, homozygous_alternate_count) = sparse_candidate_counts.unwrap_or_default();
+    Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
 }
 
 #[cfg(test)]

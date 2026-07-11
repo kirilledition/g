@@ -38,7 +38,6 @@ class FirthBacktrackingState:
         attempt_count: Number of candidate steps evaluated.
         next_coefficient_step: Candidate coefficient step for the next attempt.
         accepted_coefficient_step: Accepted coefficient step, or zeros before acceptance.
-        accepted_coefficients: Accepted candidate coefficients, or current coefficients before acceptance.
         accepted_penalized_log_likelihood: Accepted candidate penalized log-likelihood.
         accepted: Whether a candidate step has been accepted.
 
@@ -47,7 +46,6 @@ class FirthBacktrackingState:
     attempt_count: jax.Array
     next_coefficient_step: jax.Array
     accepted_coefficient_step: jax.Array
-    accepted_coefficients: jax.Array
     accepted_penalized_log_likelihood: jax.Array
     accepted: jax.Array
 
@@ -61,7 +59,6 @@ class FirthBacktrackingResult:
         coefficient_step: Accepted coefficient step, or zeros when exhausted.
         coefficients: Accepted candidate coefficients, or current coefficients when exhausted.
         penalized_log_likelihood: Accepted candidate penalized log-likelihood, or current value when exhausted.
-        accepted: Whether any candidate step was accepted.
         exhausted: Whether step-halving attempts were exhausted.
 
     """
@@ -69,7 +66,6 @@ class FirthBacktrackingResult:
     coefficient_step: jax.Array
     coefficients: jax.Array
     penalized_log_likelihood: jax.Array
-    accepted: jax.Array
     exhausted: jax.Array
 
 
@@ -156,73 +152,9 @@ class NullFirthLineSearchResult:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class NullFirthLineSearchLoopCarry:
-    """Loop carry for covariate-only null Firth line search.
+class NullFirthFallbackState:
+    """Mutable state for lazy null Firth fallback attempts."""
 
-    Attributes:
-        state: Mutable line-search state.
-        covariate_matrix: Covariate design matrix.
-        phenotype_vector: Binary phenotype values.
-        loco_offset: Per-sample LOCO offset.
-        current_coefficients: Coefficients at the start of line search.
-        current_deviance: Accepted deviance at the start of line search.
-        maximum_attempts: Maximum step-halving attempts.
-        step_halving_scale: Multiplicative factor for rejected steps.
-
-    """
-
-    state: NullFirthLineSearchState
-    covariate_matrix: jax.Array
-    phenotype_vector: jax.Array
-    loco_offset: jax.Array
-    current_coefficients: jax.Array
-    current_deviance: jax.Array
-    maximum_attempts: jax.Array
-    step_halving_scale: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class NullFirthNewtonRaphsonLoopCarry:
-    """Loop carry for covariate-only null Firth Newton-Raphson."""
-
-    state: NullFirthNewtonRaphsonState
-    covariate_matrix: jax.Array
-    phenotype_vector: jax.Array
-    loco_offset: jax.Array
-    maximum_iterations: jax.Array
-    maximum_step_size: jax.Array
-    tolerance: jax.Array
-    line_search_maximum_attempts: jax.Array
-    line_search_step_halving_scale: jax.Array
-    check_score_increase: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class NullFirthFallbackParameters:
-    """Explicit operands for the null Firth fallback cascade."""
-
-    covariate_matrix: jax.Array
-    phenotype_vector: jax.Array
-    loco_offset: jax.Array
-    initial_coefficients: jax.Array
-    zero_start_coefficients: jax.Array
-    maximum_iterations: jax.Array
-    fallback_maximum_iterations: jax.Array
-    maximum_step_size: jax.Array
-    fallback_maximum_step_size: jax.Array
-    tolerance: jax.Array
-    line_search_maximum_attempts: jax.Array
-    line_search_step_halving_scale: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class NullFirthFallbackLoopCarry:
-    """Loop carry for lazy null Firth fallback attempts."""
-
-    parameters: NullFirthFallbackParameters
     selected_result: NullFirthFitResult
     next_attempt_index: jax.Array
 
@@ -313,7 +245,6 @@ class ScalarPseudoLogisticState:
     beta: jax.Array
     score: jax.Array
     genotype_information: jax.Array
-    step_size: jax.Array
     previous_step_size: jax.Array
     iteration_count: jax.Array
     converged: jax.Array
@@ -330,7 +261,6 @@ class ScalarNewtonRaphsonState:
     genotype_information: jax.Array
     genotype_information_diagonal: jax.Array
     probability_vector: jax.Array
-    score: jax.Array
     iteration_count: jax.Array
     converged: jax.Array
     failed: jax.Array
@@ -343,24 +273,8 @@ class ScalarLineSearchState:
 
     beta: jax.Array
     step_size: jax.Array
-    penalized_deviance: jax.Array
-    genotype_information: jax.Array
-    genotype_information_diagonal: jax.Array
-    probability_vector: jax.Array
     attempt_count: jax.Array
     accepted: jax.Array
-    valid: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarFirthAttemptResult:
-    """Result for one scalar approximate-Firth attempt."""
-
-    beta: jax.Array
-    standard_error: jax.Array
-    chi_squared: jax.Array
-    log10_p_value: jax.Array
     valid: jax.Array
 
 
@@ -381,74 +295,6 @@ class ScalarApproximateFirthSolverParameters:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class ScalarPseudoLogisticLoopCarry:
-    """Loop carry for one pseudo-response scalar logistic update."""
-
-    state: ScalarPseudoLogisticState
-    genotype_vector: jax.Array
-    active_sample_mask: jax.Array
-    offset_vector: jax.Array
-    adjusted_response: jax.Array
-    tolerance: jax.Array
-    maximum_iterations: jax.Array
-    maximum_step_size: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarPseudoFirthLoopCarry:
-    """Loop carry for the scalar pseudo-Firth outer iteration."""
-
-    state: ScalarPseudoFirthState
-    phenotype_vector: jax.Array
-    genotype_vector: jax.Array
-    offset_vector: jax.Array
-    active_sample_mask: jax.Array
-    non_active_deviance: jax.Array
-    tolerance: jax.Array
-    maximum_iterations: jax.Array
-    inner_maximum_iterations: jax.Array
-    maximum_step_size: jax.Array
-    minimum_variance: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarLineSearchLoopCarry:
-    """Loop carry for scalar Newton-Raphson step-halving."""
-
-    state: ScalarLineSearchState
-    phenotype_vector: jax.Array
-    genotype_vector: jax.Array
-    offset_vector: jax.Array
-    active_sample_mask: jax.Array
-    non_active_deviance: jax.Array
-    current_beta: jax.Array
-    current_penalized_deviance: jax.Array
-    maximum_attempts: jax.Array
-    minimum_variance: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarNewtonRaphsonLoopCarry:
-    """Loop carry for scalar Newton-Raphson approximate Firth."""
-
-    state: ScalarNewtonRaphsonState
-    phenotype_vector: jax.Array
-    genotype_vector: jax.Array
-    offset_vector: jax.Array
-    active_sample_mask: jax.Array
-    non_active_deviance: jax.Array
-    tolerance: jax.Array
-    maximum_iterations: jax.Array
-    maximum_step_size: jax.Array
-    line_search_maximum_attempts: jax.Array
-    minimum_variance: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
 class ScalarApproximateFirthDispatchOperands:
     """Operands for scalar approximate-Firth active/inactive dispatch."""
 
@@ -460,63 +306,4 @@ class ScalarApproximateFirthDispatchOperands:
     non_active_deviance: jax.Array
     sparse_correction: jax.Array
     warm_start_beta: jax.Array
-    skip_firth: jax.Array
-    null_failed: jax.Array
     solver_parameters: ScalarApproximateFirthSolverParameters
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarApproximateFirthFallbackOperands:
-    """Operands for scalar approximate-Firth fallback after pseudo-Firth."""
-
-    dispatch_operands: ScalarApproximateFirthDispatchOperands
-    pseudo_result: ScalarFirthAttemptResult
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarApproximateFirthZeroStartOperands:
-    """Operands for scalar zero-start selection before warm-start fallback."""
-
-    fallback_operands: ScalarApproximateFirthFallbackOperands
-    zero_start_result: ScalarFirthAttemptResult
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class ScalarApproximateFirthResultOperands:
-    """Operands used to build the final scalar approximate-Firth result."""
-
-    dispatch_operands: ScalarApproximateFirthDispatchOperands
-    pseudo_result: ScalarFirthAttemptResult
-    zero_start_result: ScalarFirthAttemptResult
-    warm_start_result: ScalarFirthAttemptResult
-    run_zero_start: jax.Array
-    run_warm_start: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class CompactSparseFirthFixedBatchScanCarry:
-    """Scan carry for compact sparse approximate-Firth fixed batches."""
-
-    solver_parameters: ScalarApproximateFirthSolverParameters
-    phenotype_batches: jax.Array
-    genotype_batches: jax.Array
-    offset_batches: jax.Array
-    active_carrier_slot_mask_batches: jax.Array
-    active_mask_batches: jax.Array
-    full_null_deviance_batches: jax.Array
-    null_failed_mask_batches: jax.Array
-    active_batch_count: jax.Array
-    empty_firth_variant_result: FirthVariantResult
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class CompactSparseFirthFixedBatchOperands:
-    """Branch operands for one compact sparse fixed batch."""
-
-    carry: CompactSparseFirthFixedBatchScanCarry
-    batch_index: jax.Array

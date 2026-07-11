@@ -18,7 +18,7 @@ pub(super) fn build_run_manifest_chunk_commits(
             })?;
             Ok(manifest::RunManifestChunkCommit {
                 chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
-                variant_start_index: chunk_job.chunk_handle.variant_start_index(),
+                variant_start_index: chunk_job.chunk_handle.chunk_identifier,
                 variant_stop_index,
                 row_count,
                 chunk_file_name: job.chunk_file_name.clone(),

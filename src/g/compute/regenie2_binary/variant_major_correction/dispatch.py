@@ -12,6 +12,7 @@ from g import types
 from g.compute.regenie2_binary.variant_major_correction import fixed_capacity
 
 if typing.TYPE_CHECKING:
+    from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
     from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.compute.regenie2_binary import result as regenie2_binary_result
     from g.compute.regenie2_binary import state as regenie2_binary_state
@@ -29,7 +30,7 @@ if typing.TYPE_CHECKING:
     ),
 )
 def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dispatch(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
@@ -39,8 +40,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
     overflow_candidate_capacity: int,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply common multi-trait Firth corrections with device-side capacity dispatch."""
     candidate_mask = result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value
@@ -62,8 +62,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 order_candidates=False,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
             )
 
         def apply_small_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
@@ -78,8 +77,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 order_candidates=False,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
             )
 
         def apply_bounded_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
@@ -94,8 +92,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 order_candidates=True,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
             )
 
         def apply_overflow_corrections(_: None) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
@@ -110,8 +107,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
                 order_candidates=True,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
             )
 
         return jax.lax.cond(
@@ -151,7 +147,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
     ),
 )
 def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
@@ -160,8 +156,7 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
     bounded_candidate_capacity: int,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply multi-trait Firth corrections from packed8 rows with device-side dispatch."""
@@ -184,8 +179,7 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
                 order_candidates=False,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
                 score_dtype=score_dtype,
             )
 
@@ -201,8 +195,7 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
                 order_candidates=False,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
                 score_dtype=score_dtype,
             )
 
@@ -218,8 +211,7 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
                 order_candidates=True,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
-                dosage_sum=dosage_sum,
-                observation_count=observation_count,
+                native_genotype_mean=native_genotype_mean,
                 score_dtype=score_dtype,
             )
 
@@ -253,15 +245,14 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
     ),
 )
 def apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatch(
-    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryChromosomeState,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     packed_probability_pairs_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     correction_plan: types.BinaryCorrectionPlan,
     overflow_candidate_capacity: int,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
-    dosage_sum: jax.Array | None,
-    observation_count: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
     score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Apply rare overflow multi-trait Firth corrections from packed8 rows."""
@@ -278,7 +269,52 @@ def apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatc
         order_candidates=True,
         kernel_config=kernel_config,
         sparse_candidate_mask=sparse_candidate_mask,
-        dosage_sum=dosage_sum,
-        observation_count=observation_count,
+        native_genotype_mean=native_genotype_mean,
         score_dtype=score_dtype,
+    )
+
+
+def apply_device_candidate_corrections_multi_firth_packed8(
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
+    correction_plan: types.BinaryCorrectionPlan,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
+    score_dtype: types.FloatingPointDtype,
+    capacity_plan: regenie2_binary_candidate_planning.FirthCandidateCapacityPlan,
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+    """Select bounded or overflow packed8 correction without a facade layer."""
+    candidate_count = jnp.sum(
+        result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value,
+        dtype=jnp.int32,
+    )
+    return jax.lax.cond(
+        candidate_count <= capacity_plan.bounded_candidate_capacity,
+        lambda _: apply_device_candidate_corrections_multi_firth_packed8_with_device_dispatch(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            tiny_candidate_capacity=capacity_plan.tiny_candidate_capacity,
+            small_candidate_capacity=capacity_plan.small_candidate_capacity,
+            bounded_candidate_capacity=capacity_plan.bounded_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            native_genotype_mean=native_genotype_mean,
+            score_dtype=score_dtype,
+            kernel_config=kernel_config,
+        ),
+        lambda _: apply_device_candidate_corrections_multi_firth_packed8_with_overflow_dispatch(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            result=result,
+            correction_plan=correction_plan,
+            overflow_candidate_capacity=capacity_plan.overflow_candidate_capacity,
+            sparse_candidate_mask=sparse_candidate_mask,
+            native_genotype_mean=native_genotype_mean,
+            score_dtype=score_dtype,
+            kernel_config=kernel_config,
+        ),
+        operand=None,
     )

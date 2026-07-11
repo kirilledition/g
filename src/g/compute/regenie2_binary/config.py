@@ -25,21 +25,6 @@ class BinaryNumericalConfig:
     minimum_variance: float
     relative_variance_tolerance: float
 
-    def __post_init__(self) -> None:
-        """Validate positive numerical settings."""
-        if self.minimum_probability <= 0.0:
-            message = "Minimum probability must be positive."
-            raise ValueError(message)
-        if self.minimum_probability >= 0.5:
-            message = "Minimum probability must be less than 0.5."
-            raise ValueError(message)
-        if self.minimum_variance <= 0.0:
-            message = "Minimum variance must be positive."
-            raise ValueError(message)
-        if self.relative_variance_tolerance <= 0.0:
-            message = "Relative variance tolerance must be positive."
-            raise ValueError(message)
-
 
 @dataclass(frozen=True)
 class BinaryNullLogisticConfig:
@@ -54,15 +39,6 @@ class BinaryNullLogisticConfig:
     maximum_iterations: int
     coefficient_tolerance: float
 
-    def __post_init__(self) -> None:
-        """Validate null-logistic settings."""
-        if self.maximum_iterations <= 0:
-            message = "Maximum null iterations must be positive."
-            raise ValueError(message)
-        if self.coefficient_tolerance <= 0.0:
-            message = "Null logistic coefficient tolerance must be positive."
-            raise ValueError(message)
-
 
 @dataclass(frozen=True)
 class FirthCandidateConfig:
@@ -76,15 +52,6 @@ class FirthCandidateConfig:
 
     batch_size: int
     candidate_capacity: int
-
-    def __post_init__(self) -> None:
-        """Validate candidate batching settings."""
-        if self.batch_size <= 0:
-            message = "Firth batch size must be positive."
-            raise ValueError(message)
-        if self.candidate_capacity <= 0:
-            message = "Firth candidate capacity must be positive."
-            raise ValueError(message)
 
 
 @dataclass(frozen=True)
@@ -124,48 +91,6 @@ class ApproximateFirthConfig:
     step_halving_scale: float
     use_block_math: bool
 
-    def __post_init__(self) -> None:
-        """Validate approximate Firth settings."""
-        if self.maximum_iterations <= 0:
-            message = "Firth maximum iterations must be positive."
-            raise ValueError(message)
-        if self.gradient_tolerance <= 0.0:
-            message = "Firth gradient tolerance must be positive."
-            raise ValueError(message)
-        if self.coefficient_tolerance <= 0.0:
-            message = "Firth coefficient tolerance must be positive."
-            raise ValueError(message)
-        if self.likelihood_tolerance <= 0.0:
-            message = "Firth likelihood tolerance must be positive."
-            raise ValueError(message)
-        if self.maximum_step_size <= 0.0:
-            message = "Firth maximum step size must be positive."
-            raise ValueError(message)
-        if self.pseudo_maximum_iterations <= 0:
-            message = "Firth pseudo maximum iterations must be positive."
-            raise ValueError(message)
-        if self.pseudo_inner_maximum_iterations <= 0:
-            message = "Firth pseudo inner maximum iterations must be positive."
-            raise ValueError(message)
-        if self.newton_raphson_zero_start_iterations <= 0:
-            message = "Firth zero-start Newton-Raphson iterations must be positive."
-            raise ValueError(message)
-        if self.line_search_maximum_attempts <= 0:
-            message = "Firth line-search maximum attempts must be positive."
-            raise ValueError(message)
-        if self.step_halving_maximum_attempts <= 0:
-            message = "Firth step-halving maximum attempts must be positive."
-            raise ValueError(message)
-        if self.initial_response_scale <= 0.0:
-            message = "Firth initial response scale must be positive."
-            raise ValueError(message)
-        if self.sparse_carrier_dosage_threshold <= 0.0:
-            message = "Firth sparse carrier dosage threshold must be positive."
-            raise ValueError(message)
-        if self.step_halving_scale <= 0.0:
-            message = "Firth step-halving scale must be positive."
-            raise ValueError(message)
-
 
 @dataclass(frozen=True)
 class NullFirthConfig:
@@ -190,46 +115,32 @@ class NullFirthConfig:
     line_search_maximum_attempts: int
     step_halving_scale: float
 
-    def __post_init__(self) -> None:
-        """Validate null Firth settings."""
-        if self.maximum_iterations <= 0:
-            message = "Null Firth maximum iterations must be positive."
-            raise ValueError(message)
-        if self.gradient_tolerance <= 0.0:
-            message = "Null Firth gradient tolerance must be positive."
-            raise ValueError(message)
-        if self.maximum_step_size <= 0.0:
-            message = "Null Firth maximum step size must be positive."
-            raise ValueError(message)
-        if self.fallback_iteration_multiplier <= 0:
-            message = "Null Firth fallback iteration multiplier must be positive."
-            raise ValueError(message)
-        if self.fallback_step_divisor <= 0.0:
-            message = "Null Firth fallback step divisor must be positive."
-            raise ValueError(message)
-        if self.line_search_maximum_attempts <= 0:
-            message = "Null Firth line-search maximum attempts must be positive."
-            raise ValueError(message)
-        if self.step_halving_scale <= 0.0:
-            message = "Null Firth step-halving scale must be positive."
-            raise ValueError(message)
-
 
 @dataclass(frozen=True)
-class BinaryKernelConfig:
-    """Static binary-kernel settings that affect traced JAX programs.
+class BinaryScoreConfig:
+    """Static settings required by binary score kernels.
 
     Attributes:
         numerical: Shared binary numerical floors and tolerances.
         null_logistic: Null logistic IRLS policy.
+
+    """
+
+    numerical: BinaryNumericalConfig
+    null_logistic: BinaryNullLogisticConfig
+
+
+@dataclass(frozen=True)
+class BinaryKernelConfig(BinaryScoreConfig):
+    """Static binary-kernel settings that affect traced JAX programs.
+
+    Attributes:
         firth_candidate: Device Firth candidate batching policy.
         approximate_firth: Approximate Firth solver policy.
         null_firth: Covariate-only null Firth solver policy.
 
     """
 
-    numerical: BinaryNumericalConfig
-    null_logistic: BinaryNullLogisticConfig
     firth_candidate: FirthCandidateConfig
     approximate_firth: ApproximateFirthConfig
     null_firth: NullFirthConfig

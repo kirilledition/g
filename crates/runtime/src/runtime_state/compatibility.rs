@@ -1,7 +1,7 @@
 use crate::error::RuntimeCompatibilityError;
-use crate::runtime_policy::{LoggingRuntimePolicyPayload, describe_logging_runtime_policy};
+use crate::runtime_policy::{NativeRunSessionPolicy, describe_logging_subscriber_policy};
 
-use super::{JaxRuntimePolicyPayload, ProcessRuntimeState};
+use super::ProcessRuntimeState;
 
 impl ProcessRuntimeState {
     /// Require all process-global runtime settings to be compatible.
@@ -12,13 +12,11 @@ impl ProcessRuntimeState {
     /// conflicts with previously configured state.
     pub fn require_compatible_runtime_policy(
         &self,
-        logging_policy: &LoggingRuntimePolicyPayload,
+        logging_policy: &NativeRunSessionPolicy,
         requested_rayon_thread_count: Option<i64>,
-        jax_policy: &JaxRuntimePolicyPayload,
     ) -> Result<(), RuntimeCompatibilityError> {
         self.require_compatible_logging_policy(logging_policy)?;
-        self.require_compatible_rayon_thread_count(requested_rayon_thread_count)?;
-        self.require_compatible_jax_policy(jax_policy)
+        self.require_compatible_rayon_thread_count(requested_rayon_thread_count)
     }
 
     /// Require logging compatibility with previously configured process state.
@@ -27,26 +25,27 @@ impl ProcessRuntimeState {
     ///
     /// Returns an error when a previous run configured different process-global
     /// logging settings.
-    pub fn require_compatible_logging_policy(
+    pub(crate) fn require_compatible_logging_policy(
         &self,
-        requested_policy: &LoggingRuntimePolicyPayload,
+        requested_policy: &NativeRunSessionPolicy,
     ) -> Result<(), RuntimeCompatibilityError> {
-        let Some(configured_policy) = self.logging_policy.as_ref() else {
+        let Some(configured_policy) = self.logging_subscriber_policy.as_ref() else {
             return Ok(());
         };
-        if configured_policy == requested_policy {
+        let requested_subscriber_policy = requested_policy.subscriber_policy();
+        if configured_policy == &requested_subscriber_policy {
             return Ok(());
         }
         Err(RuntimeCompatibilityError::new(format!(
-            "Logging runtime policy is process-global for this Python process. \
+            "Logging subscriber policy is process-global for this Python process. \
              Configured policy: {}. Requested policy: {}. \
              Start a fresh Python process for incompatible logging settings.",
-            describe_logging_runtime_policy(configured_policy),
-            describe_logging_runtime_policy(requested_policy),
+            describe_logging_subscriber_policy(configured_policy),
+            describe_logging_subscriber_policy(&requested_subscriber_policy),
         )))
     }
 
-    pub fn record_logging_policy(&mut self, logging_policy: LoggingRuntimePolicyPayload) {
-        self.logging_policy = Some(logging_policy);
+    pub(crate) fn record_logging_subscriber_policy(&mut self, logging_policy: &NativeRunSessionPolicy) {
+        self.logging_subscriber_policy = Some(logging_policy.subscriber_policy().into_owned());
     }
 }

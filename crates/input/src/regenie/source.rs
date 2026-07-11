@@ -1,178 +1,184 @@
-//! Prediction source loading and chromosome matrix assembly.
+//! Deferred prediction source indexing and chromosome matrix assembly.
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use g_plan::SampleKeyMode;
-
-use super::alignment::{
-    align_prediction_values, validate_target_sample_keys, validate_unique_target_individual_identifiers,
-};
-use super::cache::{LocoAlignmentCache, LocoPredictionCache};
+use super::alignment::LocoSampleAlignment;
+use super::cache::{LocoAlignmentCache, LocoFileIndexCache};
 use super::error::PredictionError;
-use super::list::{PredictionListEntry, find_prediction_list_entry, parse_prediction_list_file};
-use super::normalize_chromosome;
+use super::loco::{LocoFileIndex, read_loco_chromosome_predictions_into};
+use super::{PredictionLocoPath, normalize_chromosome};
 
 #[derive(Debug)]
 pub(crate) struct PredictionSource {
+    trait_sources: Vec<PredictionTraitSource>,
     trait_count: usize,
     sample_count: usize,
-    pub(super) chromosome_predictions_by_trait: Vec<HashMap<String, Arc<[f32]>>>,
-    pub(super) chromosome_prediction_matrix_cache: Mutex<HashMap<String, Arc<ChromosomePredictionMatrix>>>,
+    matrix_value_count: usize,
+    planned_chromosomes: HashMap<String, PlannedChromosome>,
 }
 
-pub(crate) struct PredictionSourceLoader {
-    entries: Vec<PredictionListEntry>,
-    loco_prediction_cache: LocoPredictionCache,
+#[derive(Debug)]
+struct PredictionTraitSource {
+    file_index: Arc<LocoFileIndex>,
+    sample_alignment: Arc<LocoSampleAlignment>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+struct PlannedChromosome {
+    remaining_uses: usize,
+    retained_matrix: Option<ChromosomePredictionMatrix>,
+}
+
+pub(crate) struct PredictionSourceLoader<'paths> {
+    prediction_loco_paths: &'paths [PredictionLocoPath],
+    file_index_cache: LocoFileIndexCache,
+}
+
+#[derive(Clone, Debug)]
 pub struct ChromosomePredictionMatrix {
     pub trait_count: usize,
     pub sample_count: usize,
-    pub prediction_values: Arc<[f32]>,
+    pub prediction_values: Vec<f32>,
 }
 
-impl PredictionSourceLoader {
-    pub(crate) fn new(prediction_list_path: &Path) -> Result<Self, PredictionError> {
-        Ok(Self {
-            entries: parse_prediction_list_file(prediction_list_path)?,
-            loco_prediction_cache: LocoPredictionCache::default(),
-        })
+impl<'paths> PredictionSourceLoader<'paths> {
+    pub(crate) fn new(prediction_loco_paths: &'paths [PredictionLocoPath]) -> Self {
+        Self { prediction_loco_paths, file_index_cache: LocoFileIndexCache::default() }
     }
 
     pub(crate) fn load(
         &mut self,
-        phenotype_names: &[String],
-        target_family_identifiers: &[&str],
-        target_individual_identifiers: &[&str],
+        phenotype_indices: &[usize],
+        target_family_identifiers: &[String],
+        target_individual_identifiers: &[String],
+        target_sample_indices: &[usize],
         sample_key_mode: g_plan::SampleKeyMode,
     ) -> Result<PredictionSource, PredictionError> {
-        PredictionSource::load(
-            &self.entries,
-            phenotype_names,
-            target_family_identifiers,
-            target_individual_identifiers,
-            sample_key_mode,
-            &mut self.loco_prediction_cache,
-        )
+        let trait_count = phenotype_indices.len();
+        let sample_count = target_sample_indices.len();
+        let matrix_value_count = trait_count
+            .checked_mul(sample_count)
+            .ok_or(PredictionError::PredictionMatrixShapeOverflow { trait_count, sample_count })?;
+        let mut alignment_cache = LocoAlignmentCache::default();
+        let mut trait_sources = Vec::with_capacity(trait_count);
+        for phenotype_index in phenotype_indices {
+            let resolved_path = &self.prediction_loco_paths[*phenotype_index];
+            let indexed_file = self.file_index_cache.index(&resolved_path.loco_file_path, sample_key_mode)?;
+            let sample_alignment = alignment_cache.alignment(
+                &indexed_file.file_index,
+                &indexed_file.sample_index,
+                target_family_identifiers,
+                target_individual_identifiers,
+                target_sample_indices,
+                sample_key_mode,
+            )?;
+            trait_sources.push(PredictionTraitSource { file_index: indexed_file.file_index, sample_alignment });
+        }
+        Ok(PredictionSource {
+            trait_sources,
+            trait_count,
+            sample_count,
+            matrix_value_count,
+            planned_chromosomes: HashMap::new(),
+        })
     }
 }
 
 impl PredictionSource {
-    fn load(
-        entries: &[PredictionListEntry],
-        phenotype_names: &[String],
-        target_family_identifiers: &[&str],
-        target_individual_identifiers: &[&str],
-        sample_key_mode: g_plan::SampleKeyMode,
-        loco_prediction_cache: &mut LocoPredictionCache,
-    ) -> Result<Self, PredictionError> {
-        validate_target_sample_keys(target_family_identifiers, target_individual_identifiers)?;
-        if sample_key_mode == SampleKeyMode::Iid {
-            validate_unique_target_individual_identifiers(target_individual_identifiers)?;
+    pub(crate) fn plan_uses(&mut self, chromosome_blocks: &[Arc<str>]) -> Result<(), PredictionError> {
+        let mut planned_chromosomes = HashMap::new();
+        for chromosome in chromosome_blocks {
+            let normalized_chromosome = normalize_chromosome(chromosome);
+            let plan = planned_chromosomes
+                .entry(normalized_chromosome)
+                .or_insert(PlannedChromosome { remaining_uses: 0, retained_matrix: None });
+            plan.remaining_uses += 1;
         }
-        let mut chromosome_predictions_by_trait = Vec::with_capacity(phenotype_names.len());
-        let mut loco_alignment_cache = LocoAlignmentCache::default();
-        for phenotype_name in phenotype_names {
-            let entry = find_prediction_list_entry(entries, phenotype_name)?;
-            let aligned_predictions = load_aligned_chromosome_predictions(
-                entry,
-                loco_prediction_cache,
-                &mut loco_alignment_cache,
-                target_family_identifiers,
-                target_individual_identifiers,
-                sample_key_mode,
-            )?;
-            chromosome_predictions_by_trait.push(aligned_predictions);
-        }
-        Ok(Self {
-            trait_count: phenotype_names.len(),
-            sample_count: target_individual_identifiers.len(),
-            chromosome_predictions_by_trait,
-            chromosome_prediction_matrix_cache: Mutex::new(HashMap::new()),
-        })
-    }
-
-    pub(crate) fn chromosome_prediction_matrix(
-        &self,
-        chromosome: &str,
-    ) -> Result<Arc<ChromosomePredictionMatrix>, PredictionError> {
-        let normalized_chromosome = normalize_chromosome(chromosome);
-        {
-            let chromosome_prediction_matrix_cache = self.lock_chromosome_prediction_matrix_cache();
-            if let Some(cached_matrix) = chromosome_prediction_matrix_cache.get(&normalized_chromosome) {
-                return Ok(Arc::clone(cached_matrix));
+        for chromosome in planned_chromosomes.keys() {
+            for trait_source in &self.trait_sources {
+                if !trait_source.file_index.chromosome_rows.contains_key(chromosome) {
+                    return Err(PredictionError::MissingChromosome {
+                        chromosome: chromosome.clone(),
+                        normalized_chromosome: chromosome.clone(),
+                        available_chromosomes: sorted_chromosomes(&trait_source.file_index.chromosome_rows),
+                    });
+                }
             }
         }
-        let matrix = Arc::new(self.build_chromosome_prediction_matrix(&normalized_chromosome, chromosome)?);
-        self.lock_chromosome_prediction_matrix_cache().insert(normalized_chromosome, Arc::clone(&matrix));
+        self.planned_chromosomes = planned_chromosomes;
+        Ok(())
+    }
+
+    pub(crate) fn take_chromosome_prediction_matrix(
+        &mut self,
+        chromosome: &str,
+    ) -> Result<ChromosomePredictionMatrix, PredictionError> {
+        let normalized_chromosome = normalize_chromosome(chromosome);
+        let Some(mut planned_chromosome) = self.planned_chromosomes.remove(&normalized_chromosome) else {
+            return Err(PredictionError::MissingChromosome {
+                chromosome: chromosome.to_string(),
+                normalized_chromosome,
+                available_chromosomes: sorted_chromosomes(&self.planned_chromosomes),
+            });
+        };
+        if planned_chromosome.remaining_uses == 1 {
+            return match planned_chromosome.retained_matrix {
+                Some(matrix) => Ok(matrix),
+                None => self.materialize_chromosome(&normalized_chromosome),
+            };
+        }
+
+        if planned_chromosome.retained_matrix.is_none() {
+            planned_chromosome.retained_matrix = Some(self.materialize_chromosome(&normalized_chromosome)?);
+        }
+        planned_chromosome.remaining_uses -= 1;
+        let matrix = planned_chromosome
+            .retained_matrix
+            .as_ref()
+            .expect("repeated chromosome materialization is retained immediately above")
+            .clone();
+        self.planned_chromosomes.insert(normalized_chromosome, planned_chromosome);
         Ok(matrix)
     }
 
-    fn build_chromosome_prediction_matrix(
-        &self,
-        normalized_chromosome: &str,
-        requested_chromosome: &str,
-    ) -> Result<ChromosomePredictionMatrix, PredictionError> {
-        let trait_count = self.trait_count;
-        let mut prediction_matrix_values = Vec::new();
-        prediction_matrix_values.reserve_exact(trait_count * self.sample_count);
-        for chromosome_predictions in &self.chromosome_predictions_by_trait {
-            let Some(prediction_values) = chromosome_predictions.get(normalized_chromosome) else {
-                let mut available_chromosomes: Vec<String> = chromosome_predictions.keys().cloned().collect();
-                available_chromosomes.sort();
-                return Err(PredictionError::MissingChromosome {
-                    chromosome: requested_chromosome.to_string(),
-                    normalized_chromosome: normalized_chromosome.to_string(),
-                    available_chromosomes,
-                });
-            };
-            if prediction_values.len() != self.sample_count {
-                return Err(PredictionError::LocoPredictionCountMismatch {
-                    line_number: 0,
-                    expected_count: self.sample_count,
-                    observed_count: prediction_values.len(),
-                });
+    fn materialize_chromosome(&self, chromosome: &str) -> Result<ChromosomePredictionMatrix, PredictionError> {
+        let mut prediction_values = Vec::with_capacity(self.matrix_value_count);
+        let mut unaligned_prediction_values = Vec::new();
+        for trait_source in &self.trait_sources {
+            match trait_source.sample_alignment.as_ref() {
+                LocoSampleAlignment::Identity => {
+                    read_loco_chromosome_predictions_into(
+                        &trait_source.file_index,
+                        chromosome,
+                        &mut prediction_values,
+                    )?;
+                }
+                LocoSampleAlignment::Indices(alignment_indices) => {
+                    unaligned_prediction_values.clear();
+                    unaligned_prediction_values.reserve(trait_source.file_index.sample_count);
+                    read_loco_chromosome_predictions_into(
+                        &trait_source.file_index,
+                        chromosome,
+                        &mut unaligned_prediction_values,
+                    )?;
+                    prediction_values.extend(
+                        alignment_indices.iter().map(|sample_index| unaligned_prediction_values[*sample_index]),
+                    );
+                }
             }
-            prediction_matrix_values.extend_from_slice(prediction_values.as_ref());
         }
+        debug_assert_eq!(prediction_values.len(), self.matrix_value_count);
         Ok(ChromosomePredictionMatrix {
-            trait_count,
+            trait_count: self.trait_count,
             sample_count: self.sample_count,
-            prediction_values: prediction_matrix_values.into(),
+            prediction_values,
         })
-    }
-
-    fn lock_chromosome_prediction_matrix_cache(
-        &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, Arc<ChromosomePredictionMatrix>>> {
-        self.chromosome_prediction_matrix_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
-fn load_aligned_chromosome_predictions(
-    entry: &PredictionListEntry,
-    loco_prediction_cache: &mut LocoPredictionCache,
-    loco_alignment_cache: &mut LocoAlignmentCache,
-    target_family_identifiers: &[&str],
-    target_individual_identifiers: &[&str],
-    sample_key_mode: g_plan::SampleKeyMode,
-) -> Result<HashMap<String, Arc<[f32]>>, PredictionError> {
-    let loco_predictions = loco_prediction_cache.predictions(&entry.loco_file_path)?;
-    let alignment_indices = loco_alignment_cache.alignment_indices(
-        &entry.loco_file_path,
-        loco_predictions,
-        target_family_identifiers,
-        target_individual_identifiers,
-        sample_key_mode,
-    )?;
-    Ok(loco_predictions
-        .chromosome_predictions
-        .iter()
-        .map(|(chromosome, prediction_values)| {
-            (chromosome.clone(), align_prediction_values(prediction_values, alignment_indices))
-        })
-        .collect())
+fn sorted_chromosomes<Values>(predictions: &HashMap<String, Values>) -> Vec<String> {
+    let mut chromosomes = predictions.keys().cloned().collect::<Vec<_>>();
+    chromosomes.sort_unstable();
+    chromosomes
 }

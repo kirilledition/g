@@ -4,18 +4,18 @@ use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
 use arrow::buffer::ScalarBuffer;
-use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, Int32Type};
+use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, UInt8Type};
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
 use crate::session::OutputWriterSession;
 
-pub struct Regenie2StatisticBatch<T> {
-    pub beta: Vec<T>,
-    pub standard_error: Vec<T>,
-    pub chi_squared: Vec<T>,
-    pub log10_p_value: Vec<T>,
-    pub correction_code: Option<Vec<i32>>,
+pub struct Regenie2StatisticBatch {
+    pub beta: Vec<f32>,
+    pub standard_error: Vec<f32>,
+    pub chi_squared: Vec<f32>,
+    pub log10_p_value: Vec<f32>,
+    pub correction_code: Option<Vec<u8>>,
 }
 
 struct Regenie2StatisticArrowArrays {
@@ -28,41 +28,28 @@ struct Regenie2StatisticArrowArrays {
 
 /// Write one f32 REGENIE statistic row to each active trait writer.
 ///
+/// `None` selects every writer in identity order without allocating an index
+/// vector. A slice selects the corresponding subset for resumed output.
+///
 /// # Errors
 ///
 /// Returns an error when an active trait index is out of bounds or a writer
 /// rejects the chunk.
 pub fn write_regenie2_multi_trait_chunk_f32(
     writer_sessions: &[Arc<OutputWriterSession>],
-    active_trait_indices: &[usize],
+    active_trait_indices: Option<&[usize]>,
     chunk_handle: &NativeChunkHandle,
-    statistic_batch: Regenie2StatisticBatch<f32>,
+    statistic_batch: Regenie2StatisticBatch,
 ) -> OutputResult<()> {
-    write_regenie2_multi_trait_chunk::<f32, Float32Type>(
-        writer_sessions,
-        active_trait_indices,
-        chunk_handle,
-        statistic_batch,
-    )
-}
-
-fn write_regenie2_multi_trait_chunk<T, ArrowType>(
-    writer_sessions: &[Arc<OutputWriterSession>],
-    active_trait_indices: &[usize],
-    chunk_handle: &NativeChunkHandle,
-    statistic_batch: Regenie2StatisticBatch<T>,
-) -> OutputResult<()>
-where
-    T: ArrowNativeType,
-    ArrowType: ArrowPrimitiveType<Native = T>,
-{
     let row_count = chunk_handle.row_count();
-    let expected_value_count = row_count.checked_mul(active_trait_indices.len()).ok_or_else(|| {
+    let active_trait_count = active_trait_indices.map_or(writer_sessions.len(), <[usize]>::len);
+    let expected_value_count = row_count.checked_mul(active_trait_count).ok_or_else(|| {
         OutputError::InvalidInput("Trait-major output statistic value count exceeds platform capacity.".to_string())
     })?;
     validate_statistic_batch_lengths(&statistic_batch, expected_value_count)?;
-    let statistic_arrays = build_statistic_arrow_arrays::<T, ArrowType>(statistic_batch);
-    for (active_trait_position, trait_index) in active_trait_indices.iter().copied().enumerate() {
+    let statistic_arrays = build_statistic_arrow_arrays(statistic_batch);
+    for active_trait_position in 0..active_trait_count {
+        let trait_index = active_trait_indices.map_or(active_trait_position, |indices| indices[active_trait_position]);
         let writer_session = writer_sessions.get(trait_index).map(Arc::as_ref).ok_or_else(|| {
             OutputError::InvalidInput("Active trait index is out of bounds for writer sessions.".to_string())
         })?;
@@ -82,8 +69,8 @@ where
     Ok(())
 }
 
-fn validate_statistic_batch_lengths<T>(
-    statistic_batch: &Regenie2StatisticBatch<T>,
+fn validate_statistic_batch_lengths(
+    statistic_batch: &Regenie2StatisticBatch,
     expected_value_count: usize,
 ) -> OutputResult<()> {
     let observed_value_counts = [
@@ -108,19 +95,13 @@ fn validate_statistic_batch_lengths<T>(
     Ok(())
 }
 
-fn build_statistic_arrow_arrays<T, ArrowType>(
-    statistic_batch: Regenie2StatisticBatch<T>,
-) -> Regenie2StatisticArrowArrays
-where
-    T: ArrowNativeType,
-    ArrowType: ArrowPrimitiveType<Native = T>,
-{
+fn build_statistic_arrow_arrays(statistic_batch: Regenie2StatisticBatch) -> Regenie2StatisticArrowArrays {
     Regenie2StatisticArrowArrays {
-        beta: build_owned_arrow_array::<T, ArrowType>(statistic_batch.beta),
-        standard_error: build_owned_arrow_array::<T, ArrowType>(statistic_batch.standard_error),
-        chi_squared: build_owned_arrow_array::<T, ArrowType>(statistic_batch.chi_squared),
-        log10_p_value: build_owned_arrow_array::<T, ArrowType>(statistic_batch.log10_p_value),
-        correction_code: statistic_batch.correction_code.map(build_owned_arrow_array::<i32, Int32Type>),
+        beta: build_owned_arrow_array::<f32, Float32Type>(statistic_batch.beta),
+        standard_error: build_owned_arrow_array::<f32, Float32Type>(statistic_batch.standard_error),
+        chi_squared: build_owned_arrow_array::<f32, Float32Type>(statistic_batch.chi_squared),
+        log10_p_value: build_owned_arrow_array::<f32, Float32Type>(statistic_batch.log10_p_value),
+        correction_code: statistic_batch.correction_code.map(build_owned_arrow_array::<u8, UInt8Type>),
     }
 }
 

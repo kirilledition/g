@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use g_genotype::ChunkStatisticsPolicy;
 use g_input::AlignedPhenotypeGroup;
 use g_output::OutputWriterSession;
 use g_plan::NullLogisticNonconvergencePolicy;
@@ -17,6 +18,7 @@ pub(crate) struct AssociationDeliverySettings {
     pub result_in_flight_limit: usize,
     pub progress: Option<DeliveryProgress>,
     pub use_packed8: bool,
+    pub statistics_policy: ChunkStatisticsPolicy,
 }
 
 /// One native delivery request for a trait-major phenotype group.

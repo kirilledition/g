@@ -8,8 +8,9 @@ publish.workspace = true
 [dependencies]
 arrow = { workspace = true }
 crossbeam-channel = { workspace = true }
-g-genotype = { workspace = true }
+g-genotype-contracts = { workspace = true }
 g-plan = { workspace = true }
+hex = { workspace = true }
 parquet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

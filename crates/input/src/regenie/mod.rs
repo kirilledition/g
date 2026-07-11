@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::error::InputResult;
 
@@ -15,7 +16,7 @@ pub use error::PredictionError;
 pub use source::ChromosomePredictionMatrix;
 pub(crate) use source::{PredictionSource, PredictionSourceLoader};
 
-use list::{find_prediction_list_entry, parse_prediction_list_file};
+use list::parse_prediction_list_file;
 
 #[must_use]
 fn normalize_chromosome(chromosome: &str) -> String {
@@ -28,9 +29,9 @@ fn normalize_chromosome(chromosome: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PredictionLocoPath {
-    pub phenotype_name: String,
+    pub phenotype_name: Arc<str>,
     pub loco_file_path: PathBuf,
 }
 
@@ -38,14 +39,13 @@ pub fn resolve_prediction_loco_paths(
     prediction_list_path: &Path,
     phenotype_names: &[String],
 ) -> InputResult<Vec<PredictionLocoPath>> {
-    let entries = parse_prediction_list_file(prediction_list_path)?;
+    let prediction_list = parse_prediction_list_file(prediction_list_path)?;
     phenotype_names
         .iter()
         .map(|phenotype_name| {
-            let entry = find_prediction_list_entry(&entries, phenotype_name)?;
             Ok(PredictionLocoPath {
-                phenotype_name: phenotype_name.clone(),
-                loco_file_path: entry.loco_file_path.clone(),
+                phenotype_name: Arc::from(phenotype_name.as_str()),
+                loco_file_path: prediction_list.loco_file_path(phenotype_name)?.to_path_buf(),
             })
         })
         .collect::<Result<Vec<_>, PredictionError>>()

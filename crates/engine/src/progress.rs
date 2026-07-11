@@ -1,120 +1,134 @@
 //! Throttled association-run progress reporting.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use g_genotype::ChunkSpec;
 use g_runtime::{TelemetryRunError, TelemetryRunSession};
+use serde::Serialize;
 
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_secs(5);
 const PROGRESS_EVENT_NAME: &str = "run_progress";
 const PERCENT_SCALE_MICROUNITS: u64 = 100_000_000;
 const MICROUNITS_PER_PERCENT: f64 = 1_000_000.0;
 
+#[derive(Serialize)]
+struct ProgressTelemetryFields<'fields> {
+    group: &'fields str,
+    mode: &'fields str,
+    completed_chunks: u64,
+    total_chunks: u64,
+    completed_variants: u64,
+    total_variants: u64,
+    percent: f64,
+    elapsed_seconds: f32,
+    #[serde(rename = "final")]
+    final_update: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
-pub enum RunProgressError {
+pub(crate) enum RunProgressError {
     #[error("Progress counter overflowed uint64 capacity.")]
     CounterOverflow,
+    #[error("Run progress state mutex was poisoned.")]
+    StateLockPoisoned,
     #[error("Progress group '{group_name}' was not initialized.")]
-    MissingGroup { group_name: String },
+    UninitializedGroup { group_name: String },
     #[error(transparent)]
     Telemetry(#[from] TelemetryRunError),
 }
 
-#[derive(Clone)]
 pub(crate) struct DeliveryProgress {
     reporter: Arc<RunProgressReporter>,
-    group_name: String,
-    association_mode: String,
+    group: Arc<ProgressGroupEntry>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProgressTotals {
+    chunk_count: u64,
+    variant_count: u64,
 }
 
 impl DeliveryProgress {
-    pub(crate) fn new(reporter: Arc<RunProgressReporter>, group_name: String, association_mode: String) -> Self {
-        Self { reporter, group_name, association_mode }
-    }
-
-    pub(crate) fn initialize(
-        &self,
-        all_chunk_specs: &[ChunkSpec],
-        pending_chunk_specs: &[ChunkSpec],
-    ) -> Result<(), RunProgressError> {
-        self.reporter.initialize_group(&self.group_name, &self.association_mode, all_chunk_specs, pending_chunk_specs)
+    pub(crate) fn initialize(&self, pending_chunk_specs: &[ChunkSpec]) -> Result<(), RunProgressError> {
+        let pending_totals = ProgressTotals::from_chunk_specs(pending_chunk_specs)?;
+        let completed_chunk_count = self
+            .group
+            .totals
+            .chunk_count
+            .checked_sub(pending_totals.chunk_count)
+            .ok_or(RunProgressError::CounterOverflow)?;
+        let completed_variant_count = self
+            .group
+            .totals
+            .variant_count
+            .checked_sub(pending_totals.variant_count)
+            .ok_or(RunProgressError::CounterOverflow)?;
+        let mut progress = self.group.progress.lock().map_err(|_| RunProgressError::StateLockPoisoned)?;
+        let progress =
+            progress.insert(ProgressGroup { completed_chunk_count, completed_variant_count, last_emit_at: None });
+        self.reporter.emit_if_due(&self.group, progress, false)
     }
 
     pub(crate) fn record_writer_accepted(&self, variant_count: usize) -> Result<(), RunProgressError> {
-        self.reporter.record_writer_accepted(&self.group_name, variant_count)
+        let mut progress = self.group.progress.lock().map_err(|_| RunProgressError::StateLockPoisoned)?;
+        let progress = progress
+            .as_mut()
+            .ok_or_else(|| RunProgressError::UninitializedGroup { group_name: self.group.display_name.clone() })?;
+        progress.completed_chunk_count =
+            progress.completed_chunk_count.checked_add(1).ok_or(RunProgressError::CounterOverflow)?;
+        progress.completed_variant_count = progress
+            .completed_variant_count
+            .checked_add(u64::try_from(variant_count).map_err(|_| RunProgressError::CounterOverflow)?)
+            .ok_or(RunProgressError::CounterOverflow)?;
+        self.reporter.emit_if_due(&self.group, progress, false)
     }
 }
 
-pub struct RunProgressReporter {
+pub(crate) struct RunProgressReporter {
     telemetry_session: TelemetryRunSession,
     thread_name: String,
+    association_mode: g_plan::AssociationMode,
     started_at: Instant,
-    groups: Mutex<BTreeMap<String, ProgressGroup>>,
+    groups: Mutex<Vec<Arc<ProgressGroupEntry>>>,
+}
+
+struct ProgressGroupEntry {
+    display_name: String,
+    totals: ProgressTotals,
+    progress: Mutex<Option<ProgressGroup>>,
 }
 
 struct ProgressGroup {
-    association_mode: String,
-    total_chunk_count: u64,
     completed_chunk_count: u64,
-    total_variant_count: u64,
     completed_variant_count: u64,
     last_emit_at: Option<Instant>,
 }
 
 impl RunProgressReporter {
     #[must_use]
-    pub fn new(telemetry_session: TelemetryRunSession, thread_name: String) -> Self {
-        Self { telemetry_session, thread_name, started_at: Instant::now(), groups: Mutex::new(BTreeMap::new()) }
+    pub(crate) fn new(
+        telemetry_session: TelemetryRunSession,
+        thread_name: String,
+        association_mode: g_plan::AssociationMode,
+    ) -> Self {
+        Self {
+            telemetry_session,
+            thread_name,
+            association_mode,
+            started_at: Instant::now(),
+            groups: Mutex::new(Vec::new()),
+        }
     }
 
-    pub(crate) fn initialize_group(
-        &self,
-        group_name: &str,
-        association_mode: &str,
-        all_chunk_specs: &[ChunkSpec],
-        pending_chunk_specs: &[ChunkSpec],
-    ) -> Result<(), RunProgressError> {
-        let (total_chunk_count, total_variant_count) = count_chunks(all_chunk_specs)?;
-        let (pending_chunk_count, pending_variant_count) = count_chunks(pending_chunk_specs)?;
-        let completed_chunk_count =
-            total_chunk_count.checked_sub(pending_chunk_count).ok_or(RunProgressError::CounterOverflow)?;
-        let completed_variant_count =
-            total_variant_count.checked_sub(pending_variant_count).ok_or(RunProgressError::CounterOverflow)?;
-        let mut groups = self.groups.lock().map_err(|_| RunProgressError::CounterOverflow)?;
-        let progress_group = groups.entry(group_name.to_string()).or_insert_with(|| ProgressGroup {
-            association_mode: association_mode.to_string(),
-            total_chunk_count,
-            completed_chunk_count,
-            total_variant_count,
-            completed_variant_count,
-            last_emit_at: None,
-        });
-        progress_group.association_mode = association_mode.to_string();
-        progress_group.total_chunk_count = total_chunk_count;
-        progress_group.completed_chunk_count = completed_chunk_count;
-        progress_group.total_variant_count = total_variant_count;
-        progress_group.completed_variant_count = completed_variant_count;
-        self.emit_if_due(group_name, progress_group, true)
-    }
-
-    pub(crate) fn record_writer_accepted(
-        &self,
-        group_name: &str,
-        variant_count: usize,
-    ) -> Result<(), RunProgressError> {
-        let mut groups = self.groups.lock().map_err(|_| RunProgressError::CounterOverflow)?;
-        let progress_group = groups
-            .get_mut(group_name)
-            .ok_or_else(|| RunProgressError::MissingGroup { group_name: group_name.to_string() })?;
-        progress_group.completed_chunk_count =
-            progress_group.completed_chunk_count.checked_add(1).ok_or(RunProgressError::CounterOverflow)?;
-        progress_group.completed_variant_count = progress_group
-            .completed_variant_count
-            .checked_add(u64::try_from(variant_count).map_err(|_| RunProgressError::CounterOverflow)?)
-            .ok_or(RunProgressError::CounterOverflow)?;
-        self.emit_if_due(group_name, progress_group, false)
+    pub(crate) fn register_delivery(
+        self: &Arc<Self>,
+        display_name: String,
+        totals: ProgressTotals,
+    ) -> Result<DeliveryProgress, RunProgressError> {
+        let group = Arc::new(ProgressGroupEntry { display_name, totals, progress: Mutex::new(None) });
+        self.groups.lock().map_err(|_| RunProgressError::StateLockPoisoned)?.push(Arc::clone(&group));
+        Ok(DeliveryProgress { reporter: Arc::clone(self), group })
     }
 
     /// Emit a final update for every initialized phenotype group.
@@ -122,22 +136,26 @@ impl RunProgressReporter {
     /// # Errors
     ///
     /// Returns an error when telemetry output cannot be written.
-    pub fn finish(&self) -> Result<(), RunProgressError> {
-        let mut groups = self.groups.lock().map_err(|_| RunProgressError::CounterOverflow)?;
-        for (group_name, progress_group) in groups.iter_mut() {
-            self.emit_if_due(group_name, progress_group, true)?;
+    pub(crate) fn finish(&self) -> Result<(), RunProgressError> {
+        let groups = self.groups.lock().map_err(|_| RunProgressError::StateLockPoisoned)?;
+        for group in groups.iter() {
+            let mut progress = group.progress.lock().map_err(|_| RunProgressError::StateLockPoisoned)?;
+            let progress = progress
+                .as_mut()
+                .ok_or_else(|| RunProgressError::UninitializedGroup { group_name: group.display_name.clone() })?;
+            self.emit_if_due(group, progress, true)?;
         }
         Ok(())
     }
 
     fn emit_if_due(
         &self,
-        group_name: &str,
+        group: &ProgressGroupEntry,
         progress_group: &mut ProgressGroup,
-        force: bool,
+        final_update: bool,
     ) -> Result<(), RunProgressError> {
         let now = Instant::now();
-        if !force
+        if !final_update
             && progress_group
                 .last_emit_at
                 .is_some_and(|last_emit_at| now.duration_since(last_emit_at) < PROGRESS_EMIT_INTERVAL)
@@ -146,55 +164,46 @@ impl RunProgressReporter {
         }
         progress_group.last_emit_at = Some(now);
         let elapsed_seconds = self.started_at.elapsed().as_secs_f32();
-        let percent = if progress_group.total_chunk_count == 0 {
+        let percent = if group.totals.chunk_count == 0 {
             100.0_f64
         } else {
-            let completed_chunk_count = progress_group.completed_chunk_count.min(progress_group.total_chunk_count);
+            let completed_chunk_count = progress_group.completed_chunk_count.min(group.totals.chunk_count);
             let scaled_percent = u128::from(completed_chunk_count) * u128::from(PERCENT_SCALE_MICROUNITS)
-                / u128::from(progress_group.total_chunk_count);
+                / u128::from(group.totals.chunk_count);
             f64::from(u32::try_from(scaled_percent).map_err(|_| RunProgressError::CounterOverflow)?)
                 / MICROUNITS_PER_PERCENT
         };
-        let fields = serde_json::json!({
-            "group": group_name,
-            "mode": progress_group.association_mode,
-            "completed_chunks": progress_group.completed_chunk_count,
-            "total_chunks": progress_group.total_chunk_count,
-            "completed_variants": progress_group.completed_variant_count,
-            "total_variants": progress_group.total_variant_count,
-            "percent": percent,
-            "elapsed_seconds": elapsed_seconds,
-            "final": force,
-        });
-        self.telemetry_session.emit_current_event(&self.thread_name, PROGRESS_EVENT_NAME, "info", &fields)?;
-        tracing::info!(
-            target: "g.progress",
-            g_event = PROGRESS_EVENT_NAME,
-            group = group_name,
-            mode = progress_group.association_mode,
-            completed_chunks = progress_group.completed_chunk_count,
-            total_chunks = progress_group.total_chunk_count,
-            completed_variants = progress_group.completed_variant_count,
-            total_variants = progress_group.total_variant_count,
+        let fields = ProgressTelemetryFields {
+            group: &group.display_name,
+            mode: self.association_mode.as_str(),
+            completed_chunks: progress_group.completed_chunk_count,
+            total_chunks: group.totals.chunk_count,
+            completed_variants: progress_group.completed_variant_count,
+            total_variants: group.totals.variant_count,
             percent,
             elapsed_seconds,
-            final_update = force,
-            "run progress"
-        );
+            final_update,
+        };
+        self.telemetry_session.emit_current_event(&self.thread_name, PROGRESS_EVENT_NAME, "info", &fields)?;
         Ok(())
     }
 }
 
-fn count_chunks(chunk_specs: &[ChunkSpec]) -> Result<(u64, u64), RunProgressError> {
-    let mut total_variant_count = 0_u64;
-    for chunk_spec in chunk_specs {
-        let variant_count = chunk_spec
-            .variant_stop_index
-            .checked_sub(chunk_spec.variant_start_index)
-            .ok_or(RunProgressError::CounterOverflow)?;
-        total_variant_count = total_variant_count
-            .checked_add(u64::try_from(variant_count).map_err(|_| RunProgressError::CounterOverflow)?)
-            .ok_or(RunProgressError::CounterOverflow)?;
+impl ProgressTotals {
+    pub(crate) fn from_chunk_specs(chunk_specs: &[ChunkSpec]) -> Result<Self, RunProgressError> {
+        let mut variant_count = 0_u64;
+        for chunk_spec in chunk_specs {
+            let chunk_variant_count = chunk_spec
+                .variant_stop_index
+                .checked_sub(chunk_spec.variant_start_index)
+                .ok_or(RunProgressError::CounterOverflow)?;
+            variant_count = variant_count
+                .checked_add(u64::try_from(chunk_variant_count).map_err(|_| RunProgressError::CounterOverflow)?)
+                .ok_or(RunProgressError::CounterOverflow)?;
+        }
+        Ok(Self {
+            chunk_count: u64::try_from(chunk_specs.len()).map_err(|_| RunProgressError::CounterOverflow)?,
+            variant_count,
+        })
     }
-    Ok((u64::try_from(chunk_specs.len()).map_err(|_| RunProgressError::CounterOverflow)?, total_variant_count))
 }

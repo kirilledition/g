@@ -1,39 +1,43 @@
 //! CLI dispatch and native run lifecycle coordination.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
-use g_engine::{AssociationBackend, JaxBackendSettings, RunHooks};
+use g_engine::{AssociationBackend, RunHooks};
 use g_interface::CliDispatch;
-use g_runtime::{
-    CLI_RUNTIME_FAILURE_EXIT_CODE, CliOutputBuffer, CliTerminalResult, JaxRuntimeDiagnosticFields,
-    JaxRuntimeSetupSession, LoggingRuntimePolicyPayload, NativeRunSession, ProcessRuntimeState, TelemetryRunSession,
+use g_runtime::{NativeRunSession, NativeRunSessionPolicy, ProcessRuntimeState, TelemetryRunSession};
+use serde::Serialize;
+
+use crate::backend_plan::JaxAssociationBackendPlan;
+use crate::cli_output::{CliRunResult, render_completed_lines, render_failed_lines, render_interrupted_lines};
+use crate::jax_runtime::{
+    JaxDevice, JaxRuntimeConfigUpdate, JaxRuntimeSetupSession, JaxRuntimeState, build_jax_runtime_policy,
+    emit_jax_runtime_setup_diagnostics, nvidia_driver_files_are_visible, plan_jax_gpu_validation,
+    plan_jax_runtime_config_updates,
 };
+use crate::native_session_policy::project_native_run_session_policy;
 
-static GLOBAL_PROCESS_RUNTIME_STATE: OnceLock<Mutex<ProcessRuntimeState>> = OnceLock::new();
+static GLOBAL_PROCESS_RUNTIME_STATE: OnceLock<Mutex<RunnerProcessRuntimeState>> = OnceLock::new();
 
-/// Native CLI output that the Python bootstrap forwards verbatim.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CliRunResult {
-    pub exit_code: i32,
-    pub stdout_chunks: Vec<String>,
-    pub stderr_chunks: Vec<String>,
+const CLI_RUNTIME_FAILURE_EXIT_CODE: i32 = 1;
+const RUN_FAILED_EVENT_NAME: &str = "run_failed";
+
+#[derive(Serialize)]
+struct RunFailedTelemetryFields<'fields> {
+    failure_kind: &'static str,
+    error_type: &'fields str,
+    error_message: &'fields str,
 }
 
-/// Python-host logging inputs derived from the immutable run policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct LoggingSetup {
-    log_filter: String,
-    log_file: Option<String>,
-    log_stderr: bool,
-    log_queue_size: usize,
-    log_lossy: bool,
-    include_source_location: bool,
-    include_span_events: bool,
-    trace_file: Option<String>,
-    trace_filter: String,
-    trace_event_cap: Option<usize>,
+#[derive(Serialize)]
+struct NativeRuntimeKnobsDiagnosticFields {
+    bgen_decode_tile_variant_count: i64,
+    threads: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct TerminalLineDiagnosticFields<'line> {
+    line: &'line str,
 }
 
 /// Process interruption classified at the Python boundary.
@@ -47,33 +51,17 @@ pub enum NativeRunInterruption {
     FlushedSigint,
 }
 
-/// JAX runtime value applied through the Python host.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum JaxRuntimeConfigValue {
-    Boolean(bool),
-    Integer(i64),
-    Text(String),
-}
-
-/// One JAX runtime setting applied through the Python host.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JaxRuntimeConfigUpdate {
-    pub setting_name: String,
-    pub value: JaxRuntimeConfigValue,
-}
-
-/// JAX device information observed by the Python host.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JaxDevice {
-    pub platform: String,
-    pub description: String,
-}
-
 /// Python-host error details rendered by the Rust terminal lifecycle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct NativeRunFailure {
     pub error_type: String,
     pub error_message: String,
+}
+
+#[derive(Default)]
+struct RunnerProcessRuntimeState {
+    native: ProcessRuntimeState,
+    jax: JaxRuntimeState,
 }
 
 /// Operations the Python host must perform while Rust owns the run lifecycle.
@@ -84,18 +72,38 @@ pub trait NativeRunHost: Send {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Install the Python logging bridge after Rust initialized logging sinks.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host error when the bridge cannot be installed.
     fn install_python_logging(&mut self) -> Result<(), Self::Error>;
 
     /// Apply validated JAX configuration updates through the Python runtime.
-    fn apply_jax_config_updates(&mut self, updates: &[JaxRuntimeConfigUpdate]) -> Result<(), Self::Error>;
+    ///
+    /// # Errors
+    ///
+    /// Returns the host error when JAX rejects an update.
+    fn apply_jax_config_updates(&mut self, updates: &[JaxRuntimeConfigUpdate<'_>]) -> Result<(), Self::Error>;
 
     /// Return Python-owned JAX device observations for GPU validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host error when JAX device discovery fails.
     fn observe_jax_devices(&mut self) -> Result<Vec<JaxDevice>, Self::Error>;
 
-    /// Construct the opaque JAX association backend from validated scalar settings.
-    fn create_backend(&mut self, settings: JaxBackendSettings) -> Result<Arc<Self::Backend>, Self::Error>;
+    /// Construct the opaque JAX association backend from canonical mode-specific policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host error when backend construction fails.
+    fn create_backend(&mut self, plan: JaxAssociationBackendPlan<'_>) -> Result<Arc<Self::Backend>, Self::Error>;
 
     /// Check Python signals.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host interruption error when a signal is pending.
     fn check_interruption(&mut self) -> Result<(), Self::Error>;
 
     /// Construct the Python-host interruption used for a native SIGTERM request.
@@ -110,16 +118,17 @@ pub trait NativeRunHost: Send {
     /// Classify a terminal Python-boundary error as a resumable interruption.
     fn interruption_kind(&mut self, error: &Self::Error) -> Option<NativeRunInterruption>;
 
-    /// Convert a Python-free engine failure into the host error type.
-    fn engine_error(&mut self, message: String) -> Self::Error;
-
-    /// Construct a host error for a native lifecycle failure.
-    fn native_runtime_error(&mut self, message: String) -> Self::Error;
+    /// Convert a Python-free run failure into the host error type.
+    fn run_error(&mut self, message: String) -> Self::Error;
 
     /// Convert a host error into the terminal telemetry payload.
     fn failed_event(&mut self, error: &Self::Error) -> NativeRunFailure;
 
     /// Read the current Python thread name for telemetry labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host error when the thread name cannot be observed.
     fn current_thread_name(&mut self) -> Result<String, Self::Error>;
 
     /// Release the Python interpreter while executing CPU-bound Rust work.
@@ -162,7 +171,9 @@ where
     <Host::Backend as AssociationBackend>::DeviceResult: 'static,
 {
     match g_interface::dispatch_cli(arguments) {
-        CliDispatch::Exit { exit_code, stdout, stderr } => Ok(cli_result_from_output(exit_code, &stdout, &stderr)),
+        CliDispatch::Exit { exit_code, stdout, stderr } => {
+            Ok(CliRunResult::from_frontend_output(exit_code, &stdout, &stderr))
+        }
         CliDispatch::Run(compiled_run) => {
             run_compiled_cli(compiled_run.run_plan, compiled_run.effective_config_toml, host)
         }
@@ -180,41 +191,35 @@ where
     <Host::Backend as AssociationBackend>::ChromosomeState: 'static,
     <Host::Backend as AssociationBackend>::DeviceResult: 'static,
 {
-    let mut output = CliOutputBuffer::default();
-    let mut native_session = match NativeRunSession::new(&run_plan) {
+    let mut output = CliRunResult::default();
+    let native_session_policy = project_native_run_session_policy(&run_plan);
+    let mut native_session = match open_compatible_native_run_session(host, native_session_policy) {
         Ok(session) => session,
         Err(error) => {
-            let error = host.native_runtime_error(error.to_string());
             let terminal_result = failed_terminal_result(host, None, &error, None);
-            let exit_code = output.append_terminal_result(terminal_result);
-            return Ok(CliRunResult {
-                exit_code,
-                stdout_chunks: output.stdout_chunks,
-                stderr_chunks: output.stderr_chunks,
-            });
+            output.append(terminal_result);
+            return Ok(output);
         }
     };
     let thread_name = host.current_thread_name()?;
     let mut execution_result = (|| {
-        initialize_process_logging_runtime_policy(host, &native_session.logging_policy)?;
+        host.install_python_logging()?;
         let runtime_start_time = Instant::now();
         configure_process_runtime(
             host,
             &run_plan,
-            &native_session.logging_policy,
-            &native_session.telemetry_session,
+            native_session.policy(),
+            native_session.telemetry_session(),
             &thread_name,
         )?;
         native_session.record_stage_duration("jax_runtime_configuration", runtime_start_time);
 
         let backend_start_time = Instant::now();
-        let backend_settings = JaxBackendSettings::from_run_plan(&run_plan)
-            .map_err(|error| host.native_runtime_error(error.to_string()))?;
-        let backend = host.create_backend(backend_settings)?;
+        let backend = host.create_backend(JaxAssociationBackendPlan::from_run_plan(&run_plan))?;
         native_session.record_stage_duration("jax_backend_initialization", backend_start_time);
 
-        let telemetry_session = &native_session.telemetry_session;
-        let stage_timing_recorder = native_session.stage_timing_recorder.as_mut();
+        let telemetry_session = native_session.telemetry_session().clone();
+        let stage_timing_recorder = native_session.stage_timing_recorder();
         let thread_name_for_run = thread_name.as_str();
         let execution_result = Host::detach(|| {
             let mut hooks = HostRunHooks { host };
@@ -223,22 +228,17 @@ where
                 effective_config_toml,
                 backend,
                 &mut hooks,
-                telemetry_session,
+                &telemetry_session,
                 thread_name_for_run,
                 stage_timing_recorder,
             )
         });
         execution_result.map_err(|error| match error {
             g_engine::EngineRunError::Interrupted(error) => host.flushed_interruption_error(error),
-            g_engine::EngineRunError::Failure { message } => host.engine_error(message),
+            g_engine::EngineRunError::Failure { message } => host.run_error(message),
         })
     })();
-    if execution_result.is_ok()
-        && let Err(error) = check_interruption(host)
-    {
-        execution_result = Err(error);
-    }
-    let timing_result = native_session.finish_timing().map_err(|error| host.native_runtime_error(error.to_string()));
+    let timing_result = native_session.finish_timing().map_err(|error| host.run_error(error.to_string()));
     if execution_result.is_ok()
         && let Err(error) = timing_result
     {
@@ -251,21 +251,23 @@ where
     }
     let mut terminal_result = match execution_result {
         Ok(artifacts) => completed_terminal_result(host, &artifacts)?,
-        Err(error) => terminal_result_from_error(host, Some(&native_session.telemetry_session), &thread_name, &error),
+        Err(error) => terminal_result_from_error(host, Some(native_session.telemetry_session()), &thread_name, &error),
     };
     let mut close_result =
-        finish_telemetry_result(&native_session.telemetry_session, &thread_name, terminal_result.exit_code);
+        finish_telemetry_result(native_session.telemetry_session(), &thread_name, terminal_result.exit_code);
+    let mut logging_result = match native_session.finish_logging() {
+        Ok(()) => CliRunResult { exit_code: close_result.exit_code, ..CliRunResult::default() },
+        Err(error) => runtime_close_failure_result(close_result.exit_code, "LoggingSinkError", &error.to_string()),
+    };
     if let Err(error) = check_interruption(host) {
         terminal_result = terminal_result_from_error(host, None, &thread_name, &error);
-        close_result = CliTerminalResult {
-            exit_code: terminal_result.exit_code,
-            stdout_lines: Vec::new(),
-            stderr_lines: Vec::new(),
-        };
+        close_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
+        logging_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
     }
-    let _ = output.append_terminal_result(terminal_result);
-    let exit_code = output.append_terminal_result(close_result);
-    Ok(CliRunResult { exit_code, stdout_chunks: output.stdout_chunks, stderr_chunks: output.stderr_chunks })
+    output.append(terminal_result);
+    output.append(close_result);
+    output.append(logging_result);
+    Ok(output)
 }
 
 fn check_interruption<Host>(host: &mut Host) -> Result<(), Host::Error>
@@ -279,51 +281,22 @@ where
     Ok(())
 }
 
-fn cli_result_from_output(exit_code: i32, stdout: &str, stderr: &str) -> CliRunResult {
-    let output = CliOutputBuffer::from_frontend_output(stdout, stderr);
-    CliRunResult { exit_code, stdout_chunks: output.stdout_chunks, stderr_chunks: output.stderr_chunks }
-}
-
-fn initialize_process_logging_runtime_policy<Host>(
+fn open_compatible_native_run_session<Host>(
     host: &mut Host,
-    logging_policy: &LoggingRuntimePolicyPayload,
-) -> Result<(), Host::Error>
+    policy: NativeRunSessionPolicy,
+) -> Result<NativeRunSession, Host::Error>
 where
     Host: NativeRunHost,
 {
-    let setup = logging_setup(logging_policy).map_err(|message| host.native_runtime_error(message))?;
     let runtime_state = global_process_runtime_state();
-    let mut state = lock_runtime_state(runtime_state).map_err(|message| host.native_runtime_error(message))?;
-    state
-        .require_compatible_logging_policy(logging_policy)
-        .map_err(|error| host.native_runtime_error(error.to_string()))?;
-    let logging_config = g_runtime::LoggingSinkConfig {
-        log_filter: Some(setup.log_filter.as_str()),
-        log_file: setup.log_file.as_deref().map(Path::new),
-        log_stderr: setup.log_stderr,
-        log_queue_size: setup.log_queue_size,
-        log_lossy: setup.log_lossy,
-        include_source_location: setup.include_source_location,
-        include_span_events: setup.include_span_events,
-        trace_file: setup.trace_file.as_deref().map(Path::new),
-        trace_filter: Some(setup.trace_filter.as_str()),
-        trace_event_cap: setup.trace_event_cap,
-    };
-    match g_runtime::initialize_logging_sinks(logging_config, || host.install_python_logging()) {
-        Ok(_initialized) => {}
-        Err(g_runtime::LoggingSinkInitializationError::HostLogging(error)) => return Err(error),
-        Err(g_runtime::LoggingSinkInitializationError::Sink(error)) => {
-            return Err(host.native_runtime_error(error.to_string()));
-        }
-    }
-    state.record_logging_policy(logging_policy.clone());
-    Ok(())
+    let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
+    NativeRunSession::new(&mut state.native, policy).map_err(|error| host.run_error(error.to_string()))
 }
 
 fn configure_process_runtime<Host>(
     host: &mut Host,
     run_plan: &g_plan::RunPlan,
-    logging_policy: &LoggingRuntimePolicyPayload,
+    logging_policy: &NativeRunSessionPolicy,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
 ) -> Result<(), Host::Error>
@@ -332,78 +305,78 @@ where
 {
     let bgen_decode_tile_variant_count = run_plan.compute.bgen_decode_tile_variant_count;
     let rayon_thread_count = run_plan.compute.cpu_thread_count.map(i64::from);
-    let jax_policy = g_runtime::build_jax_runtime_policy_payload(run_plan)
-        .map_err(|error| host.native_runtime_error(error.to_string()))?;
+    let jax_policy = build_jax_runtime_policy(run_plan).map_err(|error| host.run_error(error.to_string()))?;
     let runtime_state = global_process_runtime_state();
-    lock_runtime_state(runtime_state)
-        .map_err(|message| host.native_runtime_error(message))?
-        .require_compatible_runtime_policy(logging_policy, rayon_thread_count, &jax_policy)
-        .map_err(|error| host.native_runtime_error(error.to_string()))?;
-    g_runtime::emit_run_diagnostic_event(&g_runtime::build_native_runtime_knobs_configured_diagnostic_payload(
-        i64::from(bgen_decode_tile_variant_count),
-        rayon_thread_count,
-    ))
-    .map_err(|error| host.native_runtime_error(format!("Failed to serialize runtime diagnostic event: {error}")))?;
-    let mut setup_session = {
-        let mut state = lock_runtime_state(runtime_state).map_err(|message| host.native_runtime_error(message))?;
+    {
+        let state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
+        state
+            .native
+            .require_compatible_runtime_policy(logging_policy, rayon_thread_count)
+            .map_err(|error| host.run_error(error.to_string()))?;
+        state.jax.require_compatible(&jax_policy).map_err(|error| host.run_error(error.to_string()))?;
+    }
+    g_runtime::emit_diagnostic_event(
+        "debug",
+        "native_runtime_knobs_configured",
+        "Configuring native runtime knobs.",
+        &NativeRuntimeKnobsDiagnosticFields {
+            bgen_decode_tile_variant_count: i64::from(bgen_decode_tile_variant_count),
+            threads: rayon_thread_count,
+        },
+    )
+    .map_err(|error| host.run_error(format!("Failed to serialize runtime diagnostic event: {error}")))?;
+    let setup_preparation_required = {
+        let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
         if let Some(thread_count) = rayon_thread_count {
             state
+                .native
                 .configure_rayon_thread_pool(thread_count)
-                .map_err(|error| host.native_runtime_error(error.to_string()))?;
+                .map_err(|error| host.run_error(error.to_string()))?;
         }
-        state
-            .build_jax_runtime_setup_session_resolving_cache_directory(&jax_policy)
-            .map_err(|error| host.native_runtime_error(error.to_string()))?
+        state.jax.setup_preparation_required(&jax_policy).map_err(|error| host.run_error(error.to_string()))?
     };
-    let should_configure_jax = setup_session.should_configure();
+    if setup_preparation_required {
+        jax_policy.create_cache_directory_if_configured().map_err(|error| host.run_error(error.to_string()))?;
+    }
+    let mut setup_session = {
+        let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
+        state.jax.reserve_setup(&jax_policy).map_err(|error| host.run_error(error.to_string()))?
+    };
+    let should_configure_jax = setup_session.should_configure;
     configure_jax_runtime(host, &mut setup_session, telemetry_session, thread_name)?;
-    let mut state = lock_runtime_state(runtime_state).map_err(|message| host.native_runtime_error(message))?;
+    let gpu_validation_status = setup_session.gpu_validation_status;
+    let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
     state
-        .require_compatible_runtime_policy(logging_policy, rayon_thread_count, &jax_policy)
-        .map_err(|error| host.native_runtime_error(error.to_string()))?;
+        .native
+        .require_compatible_runtime_policy(logging_policy, rayon_thread_count)
+        .map_err(|error| host.run_error(error.to_string()))?;
     if should_configure_jax {
         state
-            .complete_jax_runtime_setup_session(jax_policy, &setup_session)
-            .map_err(|error| host.native_runtime_error(error.to_string()))?;
+            .jax
+            .complete_setup(jax_policy, gpu_validation_status)
+            .map_err(|error| host.run_error(error.to_string()))?;
+    } else {
+        state.jax.require_compatible(&jax_policy).map_err(|error| host.run_error(error.to_string()))?;
     }
     Ok(())
 }
 
 fn configure_jax_runtime<Host>(
     host: &mut Host,
-    setup_session: &mut JaxRuntimeSetupSession,
+    setup_session: &mut JaxRuntimeSetupSession<'_>,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
 ) -> Result<(), Host::Error>
 where
     Host: NativeRunHost,
 {
-    if !setup_session.should_configure() {
+    if !setup_session.should_configure {
         return Ok(());
     }
-    setup_session
-        .create_cache_directory_if_configured()
-        .map_err(|error| host.native_runtime_error(error.to_string()))?;
-    let config_updates = setup_session
-        .config_updates()
-        .into_iter()
-        .map(|update| JaxRuntimeConfigUpdate {
-            setting_name: update.setting_name,
-            value: match update.value {
-                g_runtime::JaxRuntimeConfigValue::Boolean(value) => JaxRuntimeConfigValue::Boolean(value),
-                g_runtime::JaxRuntimeConfigValue::Integer(value) => JaxRuntimeConfigValue::Integer(value),
-                g_runtime::JaxRuntimeConfigValue::Text(value) => JaxRuntimeConfigValue::Text(value),
-            },
-        })
-        .collect::<Vec<_>>();
+    let config_updates = plan_jax_runtime_config_updates(setup_session);
     host.apply_jax_config_updates(&config_updates)?;
-    if setup_session.setup().gpu_validation_status == "pending" {
-        let probe_paths = g_runtime::default_nvidia_driver_probe_paths();
-        let nvidia_driver_visible = g_runtime::nvidia_driver_files_are_visible(
-            Path::new(&probe_paths.control_device_path),
-            Path::new(&probe_paths.uvm_device_path),
-            Path::new(&probe_paths.driver_directory_path),
-        );
+    if setup_session.gpu_validation_status == crate::jax_runtime::JaxGpuValidationStatus::Pending {
+        let nvidia_driver_visible = nvidia_driver_files_are_visible();
         let (backend_initialization_failed, devices) = if nvidia_driver_visible {
             match host.observe_jax_devices() {
                 Ok(devices) => (false, devices),
@@ -412,89 +385,37 @@ where
         } else {
             (false, Vec::new())
         };
-        let runtime_devices = devices
-            .iter()
-            .map(|device| g_runtime::JaxDeviceObservation {
-                platform: device.platform.clone(),
-                description: device.description.clone(),
-            })
-            .collect::<Vec<_>>();
-        let validation_plan =
-            g_runtime::plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &runtime_devices);
-        setup_session.complete_validation(&validation_plan.status, Some(validation_plan.message.as_str()));
-        if validation_plan.should_raise {
-            return Err(host.native_runtime_error(validation_plan.message));
+        let validation_plan = plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &devices);
+        if validation_plan.status == crate::jax_runtime::JaxGpuValidationStatus::Failed {
+            return Err(host.run_error(validation_plan.message.into_owned()));
         }
+        setup_session.complete_gpu_validation(validation_plan.status, validation_plan.message);
     }
-    for event in setup_session.diagnostic_events() {
-        let record_plan = g_runtime::plan_jax_runtime_diagnostic_record(&event.level);
-        let fields = JaxRuntimeDiagnosticFields::new(&event.fields);
-        g_runtime::emit_diagnostic_event(
-            &record_plan.logging_level_name.to_lowercase(),
-            &event.event_name,
-            &event.message,
-            &fields,
-        )
-        .map_err(|error| {
-            host.native_runtime_error(format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
-        })?;
-        telemetry_session
-            .emit_current_event(thread_name, &event.event_name, &record_plan.telemetry_level, &fields)
-            .map_err(|error| host.native_runtime_error(error.to_string()))?;
-    }
-    Ok(())
+    emit_jax_runtime_setup_diagnostics(setup_session, telemetry_session, thread_name)
+        .map_err(|message| host.run_error(message))
 }
 
-fn logging_setup(logging_policy: &LoggingRuntimePolicyPayload) -> Result<LoggingSetup, String> {
-    Ok(LoggingSetup {
-        log_filter: logging_policy.log_filter.clone(),
-        log_file: logging_policy.log_file.clone(),
-        log_stderr: logging_policy.log_stderr,
-        log_queue_size: non_negative_i64_to_usize(logging_policy.log_queue_size, "log_queue_size")?,
-        log_lossy: logging_policy.log_lossy,
-        include_source_location: logging_policy.include_source_location,
-        include_span_events: logging_policy.include_span_events,
-        trace_file: logging_policy.trace_file.clone(),
-        trace_filter: logging_policy.trace_filter.clone(),
-        trace_event_cap: logging_policy
-            .trace_event_cap
-            .map(|value| non_negative_i64_to_usize(value, "trace_event_cap"))
-            .transpose()?,
-    })
-}
-
-fn non_negative_i64_to_usize(value: i64, field_name: &str) -> Result<usize, String> {
-    if value < 0 {
-        return Err(format!("{field_name} must be non-negative. Observed {value}."));
-    }
-    usize::try_from(value).map_err(|_| format!("{field_name} does not fit into native usize."))
-}
-
-fn global_process_runtime_state() -> &'static Mutex<ProcessRuntimeState> {
-    GLOBAL_PROCESS_RUNTIME_STATE.get_or_init(|| Mutex::new(ProcessRuntimeState::default()))
+fn global_process_runtime_state() -> &'static Mutex<RunnerProcessRuntimeState> {
+    GLOBAL_PROCESS_RUNTIME_STATE.get_or_init(|| Mutex::new(RunnerProcessRuntimeState::default()))
 }
 
 fn lock_runtime_state(
-    runtime_state: &Mutex<ProcessRuntimeState>,
-) -> Result<MutexGuard<'_, ProcessRuntimeState>, String> {
+    runtime_state: &Mutex<RunnerProcessRuntimeState>,
+) -> Result<MutexGuard<'_, RunnerProcessRuntimeState>, String> {
     runtime_state.lock().map_err(|_| "Runtime state mutex was poisoned.".to_string())
 }
 
 fn completed_terminal_result<Host>(
     host: &mut Host,
-    artifacts: &[g_runtime::PhenotypeRunArtifacts],
-) -> Result<CliTerminalResult, Host::Error>
+    artifacts: &[g_engine::PhenotypeRunArtifact],
+) -> Result<CliRunResult, Host::Error>
 where
     Host: NativeRunHost,
 {
-    let terminal_result = CliTerminalResult {
-        exit_code: 0,
-        stdout_lines: g_runtime::render_run_completed_lines(artifacts),
-        stderr_lines: Vec::new(),
-    };
-    record_terminal_lines(&terminal_result.stdout_lines, g_runtime::build_native_cli_completed_line_diagnostic_payload)
-        .map_err(|message| host.native_runtime_error(message))?;
-    Ok(terminal_result)
+    let stdout_lines = render_completed_lines(artifacts);
+    record_terminal_lines(&stdout_lines, "info", "native_cli_completed_line", "Native CLI completion detail.")
+        .map_err(|message| host.run_error(message))?;
+    Ok(CliRunResult::from_lines(0, stdout_lines, Vec::new()))
 }
 
 fn terminal_result_from_error<Host>(
@@ -502,7 +423,7 @@ fn terminal_result_from_error<Host>(
     telemetry_session: Option<&TelemetryRunSession>,
     thread_name: &str,
     error: &Host::Error,
-) -> CliTerminalResult
+) -> CliRunResult
 where
     Host: NativeRunHost,
 {
@@ -512,23 +433,16 @@ where
     failed_terminal_result(host, telemetry_session, error, Some(thread_name))
 }
 
-fn interrupted_terminal_result(interruption: NativeRunInterruption) -> CliTerminalResult {
+fn interrupted_terminal_result(interruption: NativeRunInterruption) -> CliRunResult {
     let (signal_name, exit_code, flushed_for_resume) = match interruption {
         NativeRunInterruption::Sigterm => ("SIGTERM", 143, true),
         NativeRunInterruption::Sigint => ("SIGINT", 130, false),
         NativeRunInterruption::FlushedSigint => ("SIGINT", 130, true),
     };
-    let interrupted_event = g_runtime::build_run_interrupted_event_payload(signal_name, exit_code, flushed_for_resume);
-    let terminal_result = CliTerminalResult {
-        exit_code: interrupted_event.exit_code,
-        stdout_lines: Vec::new(),
-        stderr_lines: g_runtime::render_run_interrupted_lines(&interrupted_event),
-    };
-    let _ = record_terminal_lines(
-        &terminal_result.stderr_lines,
-        g_runtime::build_native_cli_interrupted_line_diagnostic_payload,
-    );
-    terminal_result
+    let stderr_lines = render_interrupted_lines(signal_name, flushed_for_resume);
+    let _ =
+        record_terminal_lines(&stderr_lines, "warn", "native_cli_interrupted_line", "Native CLI interruption detail.");
+    CliRunResult::from_lines(exit_code, Vec::new(), stderr_lines)
 }
 
 fn failed_terminal_result<Host>(
@@ -536,67 +450,54 @@ fn failed_terminal_result<Host>(
     telemetry_session: Option<&TelemetryRunSession>,
     error: &Host::Error,
     thread_name: Option<&str>,
-) -> CliTerminalResult
+) -> CliRunResult
 where
     Host: NativeRunHost,
 {
     let failure = host.failed_event(error);
-    let failed_event = g_runtime::build_run_failed_event_payload(&failure.error_type, &failure.error_message);
     if let Some(telemetry_session) = telemetry_session
         && let Some(thread_name) = thread_name
     {
-        let _ = telemetry_session.emit_run_failed_event(thread_name, &failed_event);
+        let _ = telemetry_session.emit_current_event(
+            thread_name,
+            RUN_FAILED_EVENT_NAME,
+            "error",
+            &RunFailedTelemetryFields {
+                failure_kind: "exception",
+                error_type: &failure.error_type,
+                error_message: &failure.error_message,
+            },
+        );
     }
-    let terminal_result = CliTerminalResult {
-        exit_code: CLI_RUNTIME_FAILURE_EXIT_CODE,
-        stdout_lines: Vec::new(),
-        stderr_lines: g_runtime::render_run_failed_lines(&failed_event),
-    };
-    let _ = record_terminal_lines(
-        &terminal_result.stderr_lines,
-        g_runtime::build_native_cli_failed_line_diagnostic_payload,
-    );
-    terminal_result
+    let stderr_lines = render_failed_lines(&failure.error_type, &failure.error_message);
+    let _ = record_terminal_lines(&stderr_lines, "error", "native_cli_failed_line", "Native CLI failure detail.");
+    CliRunResult::from_lines(CLI_RUNTIME_FAILURE_EXIT_CODE, Vec::new(), stderr_lines)
 }
 
 fn finish_telemetry_result(
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
     current_exit_code: i32,
-) -> CliTerminalResult {
+) -> CliRunResult {
     match telemetry_session.finish(thread_name) {
-        Ok(()) => {
-            CliTerminalResult { exit_code: current_exit_code, stdout_lines: Vec::new(), stderr_lines: Vec::new() }
-        }
-        Err(error) => telemetry_close_failure_result(current_exit_code, &error),
+        Ok(()) => CliRunResult { exit_code: current_exit_code, ..CliRunResult::default() },
+        Err(error) => runtime_close_failure_result(current_exit_code, "TelemetryRunError", &error.to_string()),
     }
 }
 
-fn telemetry_close_failure_result(current_exit_code: i32, error: &g_runtime::TelemetryRunError) -> CliTerminalResult {
-    let failed_event = g_runtime::build_run_failed_event_payload("TelemetryRunError", &error.to_string());
-    let terminal_result = if current_exit_code == 0 {
-        CliTerminalResult {
-            exit_code: CLI_RUNTIME_FAILURE_EXIT_CODE,
-            stdout_lines: Vec::new(),
-            stderr_lines: g_runtime::render_run_failed_lines(&failed_event),
-        }
+fn runtime_close_failure_result(current_exit_code: i32, error_type: &str, error_message: &str) -> CliRunResult {
+    if current_exit_code == 0 {
+        let stderr_lines = render_failed_lines(error_type, error_message);
+        let _ = record_terminal_lines(&stderr_lines, "error", "native_cli_failed_line", "Native CLI failure detail.");
+        CliRunResult::from_lines(CLI_RUNTIME_FAILURE_EXIT_CODE, Vec::new(), stderr_lines)
     } else {
-        CliTerminalResult { exit_code: current_exit_code, stdout_lines: Vec::new(), stderr_lines: Vec::new() }
-    };
-    let _ = record_terminal_lines(
-        &terminal_result.stderr_lines,
-        g_runtime::build_native_cli_failed_line_diagnostic_payload,
-    );
-    terminal_result
+        CliRunResult { exit_code: current_exit_code, ..CliRunResult::default() }
+    }
 }
 
-fn record_terminal_lines(
-    lines: &[String],
-    diagnostic: fn(&str) -> g_runtime::RunDiagnosticEventPayload,
-) -> Result<(), String> {
+fn record_terminal_lines(lines: &[String], level: &str, event_name: &str, message: &str) -> Result<(), String> {
     for line in lines {
-        let payload = diagnostic(line);
-        g_runtime::emit_run_diagnostic_event(&payload)
+        g_runtime::emit_diagnostic_event(level, event_name, message, &TerminalLineDiagnosticFields { line })
             .map_err(|error| format!("Failed to serialize terminal diagnostic event: {error}"))?;
     }
     Ok(())

@@ -5,7 +5,7 @@
 use std::error::Error;
 use std::fmt;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct RuntimeCompatibilityError {
     message: String,
 }

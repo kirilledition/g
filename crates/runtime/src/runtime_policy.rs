@@ -1,70 +1,79 @@
-//! Deterministic process runtime policy helpers.
+//! Generic native-session and process logging policy.
+
+use std::borrow::Cow;
+use std::path::PathBuf;
+
+/// Resolved resources and formatting policy for one native run.
+///
+/// The runner projects this policy from its application plan. Runtime owns
+/// only the concrete resources and never interprets application planning
+/// enums or output layout.
+#[derive(Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct NativeRunSessionPolicy {
+    pub log_filter: String,
+    pub log_stderr: bool,
+    pub log_file: Option<PathBuf>,
+    pub telemetry_stream_file: Option<PathBuf>,
+    pub stage_timing_file: Option<PathBuf>,
+    pub profile_summary_file: Option<PathBuf>,
+    pub queue_size: usize,
+    pub lossy: bool,
+    pub include_source_location: bool,
+    pub include_span_events: bool,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
-pub struct LoggingRuntimePolicyPayload {
-    pub log_filter: String,
-    pub log_file: Option<String>,
-    pub log_stderr: bool,
-    pub log_queue_size: i64,
-    pub log_lossy: bool,
-    pub include_source_location: bool,
-    pub include_span_events: bool,
-    pub trace_file: Option<String>,
-    pub trace_filter: String,
-    pub trace_event_cap: Option<i64>,
+pub(crate) struct LoggingSubscriberPolicy<'policy> {
+    pub(crate) log_filter: Cow<'policy, str>,
+    pub(crate) log_stderr: bool,
+    pub(crate) log_file_enabled: bool,
+    pub(crate) structured_log_enabled: bool,
+    pub(crate) include_source_location: bool,
+    pub(crate) include_span_events: bool,
 }
 
-#[must_use]
-pub(crate) fn build_logging_runtime_policy(
-    run_plan: &g_plan::RunPlan,
-    telemetry_paths: &crate::telemetry_policy::TelemetryPathsPayload,
-) -> LoggingRuntimePolicyPayload {
-    let diagnostics = &run_plan.diagnostics;
-    let telemetry_stream_file = telemetry_paths.stream_file.clone();
-    let telemetry_stream_file_is_some = telemetry_stream_file.is_some();
-    let resolved_log_file = if telemetry_stream_file_is_some { None } else { diagnostics.log_file.clone() };
-    let resolved_trace_file = telemetry_stream_file.or_else(|| diagnostics.trace_file.clone());
-    let resolved_trace_filter = diagnostics.log_filter.clone();
-    let resolved_trace_event_cap = None;
-    LoggingRuntimePolicyPayload {
-        log_filter: diagnostics.log_filter.clone(),
-        log_file: resolved_log_file,
-        log_stderr: diagnostics.log_to_stderr,
-        log_queue_size: i64::from(diagnostics.log_queue_size),
-        log_lossy: diagnostics.lossy_logging,
-        include_source_location: diagnostics.include_source_location,
-        include_span_events: diagnostics.include_span_events,
-        trace_file: resolved_trace_file,
-        trace_filter: resolved_trace_filter,
-        trace_event_cap: resolved_trace_event_cap,
+impl NativeRunSessionPolicy {
+    #[must_use]
+    pub(crate) fn subscriber_policy(&self) -> LoggingSubscriberPolicy<'_> {
+        LoggingSubscriberPolicy {
+            log_filter: Cow::Borrowed(&self.log_filter),
+            log_stderr: self.log_stderr,
+            log_file_enabled: self.log_file.is_some(),
+            structured_log_enabled: self.telemetry_stream_file.is_some(),
+            include_source_location: self.include_source_location,
+            include_span_events: self.include_span_events,
+        }
+    }
+}
+
+impl LoggingSubscriberPolicy<'_> {
+    #[must_use]
+    pub(crate) fn into_owned(self) -> LoggingSubscriberPolicy<'static> {
+        LoggingSubscriberPolicy {
+            log_filter: Cow::Owned(self.log_filter.into_owned()),
+            log_stderr: self.log_stderr,
+            log_file_enabled: self.log_file_enabled,
+            structured_log_enabled: self.structured_log_enabled,
+            include_source_location: self.include_source_location,
+            include_span_events: self.include_span_events,
+        }
     }
 }
 
 #[must_use]
-pub fn describe_logging_runtime_policy(policy: &LoggingRuntimePolicyPayload) -> String {
+pub(crate) fn describe_logging_subscriber_policy(policy: &LoggingSubscriberPolicy<'_>) -> String {
     format!(
-        "log-filter={}, log-file={}, log-stderr={}, log-queue-size={}, log-lossy={}, \
-         include-source-location={}, include-span-events={}, trace-file={}, trace-filter={}, trace-event-cap={}",
+        "log-filter={}, log-stderr={}, log-file-enabled={}, structured-log-enabled={}, \
+         include-source-location={}, include-span-events={}",
         policy.log_filter,
-        optional_text(policy.log_file.as_deref()),
         python_bool(policy.log_stderr),
-        policy.log_queue_size,
-        python_bool(policy.log_lossy),
+        python_bool(policy.log_file_enabled),
+        python_bool(policy.structured_log_enabled),
         python_bool(policy.include_source_location),
         python_bool(policy.include_span_events),
-        optional_text(policy.trace_file.as_deref()),
-        policy.trace_filter,
-        optional_i64_text(policy.trace_event_cap),
     )
-}
-
-fn optional_text(value: Option<&str>) -> &str {
-    value.unwrap_or("<none>")
-}
-
-fn optional_i64_text(value: Option<i64>) -> String {
-    value.map_or_else(|| "<none>".to_string(), |number| number.to_string())
 }
 
 fn python_bool(value: bool) -> &'static str {

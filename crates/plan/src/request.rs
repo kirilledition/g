@@ -9,7 +9,7 @@ use crate::enums::{
 };
 use crate::numeric::{DosageThreshold, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct RunPlan {
     pub association_mode: AssociationMode,
     pub input: InputPlan,
@@ -23,7 +23,7 @@ pub struct RunPlan {
     pub phenotype_compute_groups: Vec<PhenotypeComputeGroup>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct InputPlan {
     pub bgen_path: String,
     pub sample_path: String,
@@ -34,13 +34,13 @@ pub struct InputPlan {
     pub sample_key_mode: SampleKeyMode,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AnalysisPlan {
     pub trait_type: RegenieTraitType,
     pub chunk_size: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct ComputePlan {
     pub device: Device,
     pub cpu_thread_count: Option<u32>,
@@ -55,7 +55,7 @@ pub struct ComputePlan {
     pub kernels: KernelPlan,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct KernelPlan {
     pub linear: LinearKernelPlan,
     pub binary_null: BinaryNullKernelPlan,
@@ -117,7 +117,7 @@ pub struct CorrectionPlan {
     pub firth_se: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct OutputPlan {
     pub output_prefix: String,
     pub output_run_root: String,
@@ -128,7 +128,7 @@ pub struct OutputPlan {
     pub chunks_per_parquet_file: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct RuntimePlan {
     pub jax_cache_directory: Option<String>,
     pub jax_matmul_precision: Option<JaxMatmulPrecision>,
@@ -139,7 +139,7 @@ pub struct RuntimePlan {
     pub transfer_guard_enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[expect(clippy::struct_excessive_bools, reason = "Diagnostics flags are independent runtime policies.")]
 pub struct DiagnosticsPlan {
     pub telemetry: TelemetryMode,
@@ -149,23 +149,20 @@ pub struct DiagnosticsPlan {
     pub log_file: Option<String>,
     pub log_to_stderr: bool,
     pub profile_summary_path: Option<String>,
-    pub trace_file: Option<String>,
-    pub trace_filter: String,
-    pub trace_event_cap: u32,
     pub log_queue_size: u32,
     pub lossy_logging: bool,
     pub include_source_location: bool,
     pub include_span_events: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PhenotypeRunPlan {
     pub phenotype_index: u32,
     pub phenotype_name: String,
     pub output_directory_name: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PhenotypeComputeGroup {
     pub group_mode: PhenotypeComputeGroupMode,
     pub phenotype_indices: Vec<u32>,

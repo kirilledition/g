@@ -8,14 +8,19 @@ publish.workspace = true
 [dependencies]
 crossbeam-channel = { workspace = true }
 g-genotype = { workspace = true }
+g-genotype-contracts = { workspace = true }
 g-input = { workspace = true }
 g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
+hex = { workspace = true }
 nalgebra = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,17 +1,15 @@
 //! Native run output-header preparation.
 
-use g_output::{CurrentRunManifestHeaderInput, ManifestFileFingerprintCache};
+use std::sync::Arc;
 
-use crate::output_manifest::build_prediction_loco_file_fingerprints_with_cache;
+use g_output::CurrentRunManifestHeaderInput;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PipelineOutputPreparationError {
-    #[error("Unknown planned phenotype '{phenotype_name}'.")]
-    UnknownPlannedPhenotype { phenotype_name: String },
     #[error("Resolved GPU genotype format cannot remain auto during output preparation.")]
     UnresolvedGpuGenotypeFormat,
-    #[error(transparent)]
-    Output(#[from] g_output::OutputError),
+    #[error("Phenotype index {phenotype_index} has no resolved LOCO prediction file.")]
+    MissingPredictionLocoFile { phenotype_index: u32 },
 }
 
 pub(crate) struct RuntimeOutputPlan {
@@ -34,55 +32,60 @@ pub(crate) struct RuntimeOutputGroupInput<'a> {
 /// Returns an error when a grouped phenotype is unknown, manifest header
 /// construction fails, or output preparation inputs are inconsistent.
 pub(crate) fn build_runtime_output_initializations(
-    run_plan: &g_plan::RunPlan,
     output_group: &RuntimeOutputGroupInput<'_>,
     runtime_plan: &RuntimeOutputPlan,
-    fingerprint_cache: &mut ManifestFileFingerprintCache,
+    all_prediction_loco_files: &Arc<[g_output::PredictionLocoFileFingerprint]>,
 ) -> Result<Vec<CurrentRunManifestHeaderInput>, PipelineOutputPreparationError> {
-    for phenotype_name in &output_group.phenotype_group.phenotype_names {
-        if !run_plan.phenotype_runs.iter().any(|run| run.phenotype_name == *phenotype_name) {
-            return Err(PipelineOutputPreparationError::UnknownPlannedPhenotype {
-                phenotype_name: phenotype_name.clone(),
-            });
-        }
-    }
-    output_group
-        .phenotype_group
-        .phenotype_names
-        .iter()
-        .map(|phenotype_name| {
-            build_current_header_input(run_plan, phenotype_name, output_group, runtime_plan, fingerprint_cache)
-        })
-        .collect()
-}
-
-fn build_current_header_input(
-    run_plan: &g_plan::RunPlan,
-    phenotype_name: &str,
-    output_group: &RuntimeOutputGroupInput<'_>,
-    runtime_plan: &RuntimeOutputPlan,
-    fingerprint_cache: &mut ManifestFileFingerprintCache,
-) -> Result<CurrentRunManifestHeaderInput, PipelineOutputPreparationError> {
     if runtime_plan.resolved_gpu_genotype_format == g_plan::GpuGenotypeFormat::Auto {
         return Err(PipelineOutputPreparationError::UnresolvedGpuGenotypeFormat);
     }
     let phenotype_compute_group = output_group.phenotype_group;
-    Ok(CurrentRunManifestHeaderInput {
-        phenotype_name: phenotype_name.to_string(),
-        covariate_names: output_group.covariate_names.to_vec(),
-        prediction_loco_files: build_prediction_loco_file_fingerprints_with_cache(
-            &run_plan.input.prediction_list_path,
-            &phenotype_compute_group.phenotype_names,
-            fingerprint_cache,
-        )?,
-        sample_count: output_group.sample_count,
-        variant_count: runtime_plan.variant_count,
-        effective_trusted_no_missing_diploid: runtime_plan.effective_trusted_no_missing_diploid,
-        resolved_gpu_genotype_format: runtime_plan.resolved_gpu_genotype_format,
-        output_sample_mode: output_group.output_sample_mode,
-        phenotype_compute_group_id: g_plan::build_phenotype_compute_group_id(phenotype_compute_group),
-        sample_set_fingerprint: phenotype_compute_group.sample_set_fingerprint.clone(),
-        covariate_design_fingerprint: phenotype_compute_group.covariate_design_fingerprint.clone(),
-        prediction_alignment_fingerprint: phenotype_compute_group.prediction_alignment_fingerprint.clone(),
-    })
+    let prediction_loco_files = if phenotype_compute_group.phenotype_indices.len() == all_prediction_loco_files.len()
+        && phenotype_compute_group
+            .phenotype_indices
+            .iter()
+            .enumerate()
+            .all(|(expected_index, phenotype_index)| usize::try_from(*phenotype_index) == Ok(expected_index))
+    {
+        Arc::clone(all_prediction_loco_files)
+    } else {
+        phenotype_compute_group
+            .phenotype_indices
+            .iter()
+            .map(|phenotype_index| {
+                usize::try_from(*phenotype_index)
+                    .ok()
+                    .and_then(|index| all_prediction_loco_files.get(index))
+                    .cloned()
+                    .ok_or(PipelineOutputPreparationError::MissingPredictionLocoFile {
+                        phenotype_index: *phenotype_index,
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into()
+    };
+    let covariate_names: Arc<[String]> = output_group.covariate_names.to_vec().into();
+    let phenotype_compute_group_id: Arc<str> = g_plan::build_phenotype_compute_group_id(phenotype_compute_group).into();
+    let sample_set_fingerprint = phenotype_compute_group.sample_set_fingerprint.as_deref().map(Arc::from);
+    let covariate_design_fingerprint = phenotype_compute_group.covariate_design_fingerprint.as_deref().map(Arc::from);
+    let prediction_alignment_fingerprint =
+        phenotype_compute_group.prediction_alignment_fingerprint.as_deref().map(Arc::from);
+    Ok(phenotype_compute_group
+        .phenotype_names
+        .iter()
+        .map(|phenotype_name| CurrentRunManifestHeaderInput {
+            phenotype_name: phenotype_name.clone(),
+            covariate_names: Arc::clone(&covariate_names),
+            prediction_loco_files: Arc::clone(&prediction_loco_files),
+            sample_count: output_group.sample_count,
+            variant_count: runtime_plan.variant_count,
+            effective_trusted_no_missing_diploid: runtime_plan.effective_trusted_no_missing_diploid,
+            resolved_gpu_genotype_format: runtime_plan.resolved_gpu_genotype_format,
+            output_sample_mode: output_group.output_sample_mode,
+            phenotype_compute_group_id: Arc::clone(&phenotype_compute_group_id),
+            sample_set_fingerprint: sample_set_fingerprint.as_ref().map(Arc::clone),
+            covariate_design_fingerprint: covariate_design_fingerprint.as_ref().map(Arc::clone),
+            prediction_alignment_fingerprint: prediction_alignment_fingerprint.as_ref().map(Arc::clone),
+        })
+        .collect())
 }

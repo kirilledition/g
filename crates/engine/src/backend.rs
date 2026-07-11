@@ -1,119 +1,71 @@
 //! Python-free association backend contract.
 
-/// Borrowed trait-major phenotype values with shape `traits x samples`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TraitMajorPhenotypeMatrixView<'view> {
-    pub values: &'view [f32],
+/// Owned trait-major values with shape `traits x samples`.
+#[derive(Debug, PartialEq)]
+pub struct TraitMajorMatrix {
+    pub values: Vec<f32>,
     pub trait_count: usize,
     pub sample_count: usize,
 }
 
-/// Borrowed sample-major covariate values with shape `samples x covariates`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SampleMajorCovariateMatrixView<'view> {
-    pub values: &'view [f32],
+/// Owned sample-major covariate values with shape `samples x covariates`.
+#[derive(Debug, PartialEq)]
+pub struct SampleMajorCovariateMatrix {
+    pub values: Vec<f32>,
     pub sample_count: usize,
     pub covariate_count: usize,
 }
 
 /// Backend inputs shared by every chromosome in one phenotype group.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GroupPreparationInput<'view> {
-    pub phenotypes: TraitMajorPhenotypeMatrixView<'view>,
-    pub covariates: SampleMajorCovariateMatrixView<'view>,
-}
-
-/// Borrowed trait-major LOCO predictions with shape `traits x samples`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TraitMajorPredictionMatrixView<'view> {
-    pub values: &'view [f32],
-    pub trait_count: usize,
-    pub sample_count: usize,
+#[derive(Debug, PartialEq)]
+pub struct GroupPreparationInput {
+    pub phenotypes: TraitMajorMatrix,
+    pub covariates: SampleMajorCovariateMatrix,
 }
 
 /// Prepared chromosome state and null-logistic convergence policy input.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PreparedChromosome<State> {
     pub state: State,
     pub null_logistic_converged: Option<Vec<bool>>,
 }
 
-/// Borrowed variant-major dosage values with shape `variants x samples`.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct VariantMajorDosageMatrixView<'view> {
-    pub values: &'view [f32],
+/// Owned variant-major genotype allocation transferred into the backend.
+#[derive(Debug, PartialEq)]
+pub enum OwnedGenotypeBuffer {
+    /// Dosage values with shape `variants x samples`.
+    Dosage(Vec<f32>),
+    /// BGEN probability pairs with shape `variants x samples x 2`.
+    Packed8(Vec<u8>),
+}
+
+/// Owned per-variant statistics transferred into association kernels.
+#[derive(Debug, PartialEq)]
+pub struct GenotypeBatchStatistics {
+    pub genotype_mean: Vec<f32>,
+    pub imputed_dosage_square_sum: Option<Vec<f32>>,
+    pub sparse_candidate_mask: Option<Vec<bool>>,
+}
+
+/// One genotype batch submitted to the device backend.
+#[derive(Debug, PartialEq)]
+pub struct GenotypeBatchInput {
     pub variant_count: usize,
     pub sample_count: usize,
-}
-
-/// Borrowed variant-major packed probability pairs.
-///
-/// Values have shape `variants x samples x 2`; the final dimension contains
-/// the two stored BGEN probabilities for one sample and variant.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VariantMajorPacked8MatrixView<'view> {
-    pub values: &'view [u8],
-    pub variant_count: usize,
-    pub sample_count: usize,
-}
-
-/// Supported host genotype representations at the compute boundary.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GenotypeMatrixView<'view> {
-    Dosage(VariantMajorDosageMatrixView<'view>),
-    Packed8(VariantMajorPacked8MatrixView<'view>),
-}
-
-/// Borrowed per-variant statistics required by association kernels.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GenotypeBatchStatisticsView<'view> {
-    pub dosage_sum: &'view [f32],
-    pub observation_count: &'view [i32],
-    pub imputed_dosage_square_sum: Option<&'view [f32]>,
-    pub sparse_candidate_mask: Option<&'view [bool]>,
-}
-
-/// One borrowed genotype batch submitted to the device backend.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GenotypeBatchInput<'view> {
-    pub variant_start_index: usize,
-    pub genotypes: GenotypeMatrixView<'view>,
-    pub statistics: GenotypeBatchStatisticsView<'view>,
-}
-
-/// Materialization policy applied on-device before transfer to the host.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MaterializationInput<'view> {
-    pub active_trait_indices: &'view [usize],
-}
-
-/// Trait-major association statistic matrices with shape `traits x variants`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HostAssociationStatisticMatrix<Statistic> {
-    pub trait_count: usize,
-    pub variant_count: usize,
-    pub beta: Vec<Statistic>,
-    pub standard_error: Vec<Statistic>,
-    pub chi_squared: Vec<Statistic>,
-    pub log10_p_value: Vec<Statistic>,
-}
-
-/// Float32 association statistics materialized from the device.
-pub type HostAssociationStatistics = HostAssociationStatisticMatrix<f32>;
-
-/// Trait-major binary correction codes with shape `traits x variants`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HostCorrectionCodeMatrix {
-    pub trait_count: usize,
-    pub variant_count: usize,
-    pub values: Vec<i32>,
+    pub genotypes: OwnedGenotypeBuffer,
+    pub statistics: GenotypeBatchStatistics,
 }
 
 /// One fully materialized host association batch.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct HostAssociationBatch {
-    pub statistics: HostAssociationStatistics,
-    pub correction_codes: Option<HostCorrectionCodeMatrix>,
+    pub trait_count: usize,
+    pub variant_count: usize,
+    pub beta: Vec<f32>,
+    pub standard_error: Vec<f32>,
+    pub chi_squared: Vec<f32>,
+    pub log10_p_value: Vec<f32>,
+    pub correction_codes: Option<Vec<u8>>,
 }
 
 /// Chunk-oriented association compute implemented by the device runtime.
@@ -128,7 +80,12 @@ pub trait AssociationBackend: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when the phenotype or covariate data cannot be prepared.
-    fn prepare_group(&self, input: GroupPreparationInput<'_>) -> Result<Self::GroupState, Self::Error>;
+    fn prepare_group(&self, input: GroupPreparationInput) -> Result<Self::GroupState, Self::Error>;
+
+    /// Release group state after its final chromosome has been prepared.
+    fn release_group(&self, group: Self::GroupState) {
+        drop(group);
+    }
 
     /// Prepare reusable state and null-logistic policy input for one chromosome.
     ///
@@ -139,8 +96,17 @@ pub trait AssociationBackend: Send + Sync {
     fn prepare_chromosome(
         &self,
         group: &Self::GroupState,
-        predictions: TraitMajorPredictionMatrixView<'_>,
+        predictions: TraitMajorMatrix,
     ) -> Result<PreparedChromosome<Self::ChromosomeState>, Self::Error>;
+
+    /// Release one chromosome state on the backend execution thread.
+    ///
+    /// Backends with thread- or runtime-affine reference management can
+    /// override this hook. The scheduler calls it only after every submitted
+    /// batch using the state has been materialized and received.
+    fn release_chromosome(&self, chromosome: Self::ChromosomeState) {
+        drop(chromosome);
+    }
 
     /// Submit one genotype batch and return an opaque device result.
     ///
@@ -151,7 +117,7 @@ pub trait AssociationBackend: Send + Sync {
     fn compute_batch(
         &self,
         chromosome: &Self::ChromosomeState,
-        input: GenotypeBatchInput<'_>,
+        input: GenotypeBatchInput,
     ) -> Result<Self::DeviceResult, Self::Error>;
 
     /// Select active traits, narrow statistics, and transfer one result to host.
@@ -163,6 +129,6 @@ pub trait AssociationBackend: Send + Sync {
     fn materialize_batch(
         &self,
         result: Self::DeviceResult,
-        input: MaterializationInput<'_>,
+        active_trait_indices: Option<&[usize]>,
     ) -> Result<HostAssociationBatch, Self::Error>;
 }

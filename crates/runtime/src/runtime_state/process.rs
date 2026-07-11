@@ -1,10 +1,7 @@
-use crate::runtime_policy::LoggingRuntimePolicyPayload;
+use crate::runtime_policy::LoggingSubscriberPolicy;
 
-use super::JaxRuntimePolicyPayload;
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct ProcessRuntimeState {
-    pub(super) logging_policy: Option<LoggingRuntimePolicyPayload>,
+    pub(super) logging_subscriber_policy: Option<LoggingSubscriberPolicy<'static>>,
     pub(super) rayon_thread_count: Option<i64>,
-    pub(super) jax_policy: Option<JaxRuntimePolicyPayload>,
 }

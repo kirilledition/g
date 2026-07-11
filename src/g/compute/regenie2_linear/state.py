@@ -39,8 +39,6 @@ class Regenie2MultiLinearChromosomeState:
     """Chromosome-specific multi-trait linear state.
 
     Attributes:
-        whitened_covariate_transpose: Cholesky-whitened covariate transpose.
-        adjusted_residual_matrix: Trait-major residuals after covariate residualization and LOCO subtraction.
         adjusted_residual_projection_coordinate_matrix: Per-trait projection onto whitened covariates.
         score_left_hand_matrix: Stacked left-hand matrix multiplied by genotype chunks.
         adjusted_residual_sum_squares: Per-trait sums of squares after removing covariate projections.
@@ -48,8 +46,6 @@ class Regenie2MultiLinearChromosomeState:
 
     """
 
-    whitened_covariate_transpose: jax.Array
-    adjusted_residual_matrix: jax.Array
     adjusted_residual_projection_coordinate_matrix: jax.Array
     score_left_hand_matrix: jax.Array
     adjusted_residual_sum_squares: jax.Array
@@ -123,8 +119,6 @@ def build_multi_linear_chromosome_state(
         axis=0,
     )
     return Regenie2MultiLinearChromosomeState(
-        whitened_covariate_transpose=state.whitened_covariate_transpose,
-        adjusted_residual_matrix=adjusted_residual_matrix,
         adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
         score_left_hand_matrix=score_left_hand_matrix,
         adjusted_residual_sum_squares=adjusted_residual_sum_squares,

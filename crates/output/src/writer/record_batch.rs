@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
 
-use arrow::array::{Array, ArrayRef, DictionaryArray, Int32Array, RecordBatch, StringArray, UInt8Array};
+use arrow::array::{Array, ArrayRef, DictionaryArray, RecordBatch, StringArray, UInt8Array};
 use arrow::datatypes::{Schema, UInt8Type};
 
 use super::{OutputResult, RegenieStep2ChunkJob, RegenieStep2RecordBatchBuildTiming};
 use crate::error::OutputError;
+use crate::timing::start_optional_timing;
 
 pub(super) const CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY: u8 = 1;
 pub(super) const CORRECTION_STATUS_SUCCESS_KEY: u8 = 0;
@@ -62,38 +62,37 @@ pub(super) fn build_regenie_step2_record_batch(
     chunk_job: RegenieStep2ChunkJob,
     chunk_schema: Arc<Schema>,
     array_cache: &mut RegenieStep2RecordBatchArrayCache,
+    collect_stage_timings: bool,
 ) -> OutputResult<RegenieStep2SingleRecordBatchBuildResult> {
     let row_count = chunk_job.chunk_handle.row_count();
-    let metadata_array_build_start_time = Instant::now();
-    let cached_writer_arrays = chunk_job.chunk_handle.writer_arrays();
-    let chromosome_array = Arc::clone(&cached_writer_arrays.chromosome);
-    let position_array = Arc::clone(&cached_writer_arrays.position);
-    let variant_identifier_array = Arc::clone(&cached_writer_arrays.variant_identifier);
-    let allele_two_array = Arc::clone(&cached_writer_arrays.allele_two);
-    let allele_one_array = Arc::clone(&cached_writer_arrays.allele_one);
-    let metadata_array_build_seconds = metadata_array_build_start_time.elapsed().as_secs_f64();
+    let metadata_array_build_start_time = start_optional_timing(collect_stage_timings);
+    let cached_writer_arrays = &chunk_job.chunk_handle.writer_arrays;
+    let metadata_arrays = cached_writer_arrays.metadata.arrays();
+    let chromosome_array = Arc::clone(&metadata_arrays.chromosome);
+    let position_array = Arc::clone(&metadata_arrays.position);
+    let variant_identifier_array = Arc::clone(&metadata_arrays.variant_identifier);
+    let allele_two_array = Arc::clone(&metadata_arrays.allele_two);
+    let allele_one_array = Arc::clone(&metadata_arrays.allele_one);
+    let metadata_array_build_seconds =
+        metadata_array_build_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
 
-    let statistic_array_build_start_time = Instant::now();
+    let statistic_array_build_start_time = start_optional_timing(collect_stage_timings);
     let allele_one_frequency_array = Arc::clone(&cached_writer_arrays.allele_one_frequency);
     let info_score_array = Arc::clone(&cached_writer_arrays.info_score);
     let observation_count_array = Arc::clone(&cached_writer_arrays.observation_count);
-    let statistic_array_build_seconds = statistic_array_build_start_time.elapsed().as_secs_f64();
+    let statistic_array_build_seconds =
+        statistic_array_build_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
 
-    let result_array_build_start_time = Instant::now();
+    let result_array_build_start_time = start_optional_timing(collect_stage_timings);
     let beta_array = chunk_job.beta;
     let standard_error_array = chunk_job.se;
     let chi_squared_array = chunk_job.chisq;
     let log10_p_value_array = chunk_job.log10p;
-    let result_array_build_seconds = result_array_build_start_time.elapsed().as_secs_f64();
+    let result_array_build_seconds =
+        result_array_build_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
 
-    let correction_code_array = chunk_job.correction_code;
-    let correction_method_array = build_correction_method_dictionary_array(
-        correction_code_array.as_ref().map(Arc::clone),
-        row_count,
-        array_cache,
-    )?;
-    let correction_status_array =
-        build_correction_status_dictionary_array(correction_code_array, row_count, array_cache)?;
+    let correction_dictionary_arrays =
+        build_correction_dictionary_arrays(chunk_job.correction_code, row_count, array_cache)?;
 
     let columns: Vec<ArrayRef> = vec![
         chromosome_array,
@@ -108,15 +107,20 @@ pub(super) fn build_regenie_step2_record_batch(
         standard_error_array,
         chi_squared_array,
         log10_p_value_array,
-        correction_method_array,
-        correction_status_array,
+        correction_dictionary_arrays.method,
+        correction_dictionary_arrays.status,
     ];
-    let arrow_array_memory_bytes = columns.iter().fold(0_u64, |total, column| {
-        total.saturating_add(u64::try_from(column.get_array_memory_size()).unwrap_or(u64::MAX))
-    });
-    let record_batch_try_new_start_time = Instant::now();
+    let arrow_array_memory_bytes = if collect_stage_timings {
+        columns.iter().fold(0_u64, |total, column| {
+            total.saturating_add(u64::try_from(column.get_array_memory_size()).unwrap_or(u64::MAX))
+        })
+    } else {
+        0
+    };
+    let record_batch_try_new_start_time = start_optional_timing(collect_stage_timings);
     let record_batch = RecordBatch::try_new(chunk_schema, columns).map_err(OutputError::runtime)?;
-    let record_batch_try_new_seconds = record_batch_try_new_start_time.elapsed().as_secs_f64();
+    let record_batch_try_new_seconds =
+        record_batch_try_new_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
     Ok(RegenieStep2SingleRecordBatchBuildResult {
         record_batch,
         timing: RegenieStep2RecordBatchBuildTiming {
@@ -129,103 +133,153 @@ pub(super) fn build_regenie_step2_record_batch(
     })
 }
 
-fn build_correction_method_dictionary_array(
-    correction_code: Option<ArrayRef>,
-    row_count: usize,
-    array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> OutputResult<ArrayRef> {
-    build_correction_dictionary_array(
-        correction_code,
-        row_count,
-        array_cache,
-        CorrectionDictionaryKind::Method,
-        Arc::clone(&CORRECTION_METHOD_DICTIONARY_VALUES),
-        "correction method",
-        |correction_code_value| match correction_code_value {
-            0 | 1 => Some(CORRECTION_METHOD_SCORE_KEY),
-            2 | 3 => Some(CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY),
-            _ => None,
-        },
-    )
+struct CorrectionDictionaryArrays {
+    method: ArrayRef,
+    status: ArrayRef,
 }
 
-fn build_correction_status_dictionary_array(
-    correction_code: Option<ArrayRef>,
-    row_count: usize,
-    array_cache: &mut RegenieStep2RecordBatchArrayCache,
-) -> OutputResult<ArrayRef> {
-    build_correction_dictionary_array(
-        correction_code,
-        row_count,
-        array_cache,
-        CorrectionDictionaryKind::Status,
-        Arc::clone(&CORRECTION_STATUS_DICTIONARY_VALUES),
-        "correction status",
-        |correction_code_value| match correction_code_value {
-            0 | 2 => Some(CORRECTION_STATUS_SUCCESS_KEY),
-            1 | 3 => Some(CORRECTION_STATUS_FAILED_KEY),
-            _ => None,
-        },
-    )
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct CorrectionDictionaryKeys {
+    method: u8,
+    status: u8,
 }
 
-fn build_correction_dictionary_array(
-    correction_code: Option<ArrayRef>,
-    row_count: usize,
-    array_cache: &mut RegenieStep2RecordBatchArrayCache,
-    dictionary_kind: CorrectionDictionaryKind,
-    dictionary_values: ArrayRef,
-    label_kind: &str,
-    key_for_code: impl Fn(i32) -> Option<u8>,
-) -> OutputResult<ArrayRef> {
-    let Some(correction_code_array) = correction_code else {
-        return array_cache.constant_correction_dictionary_array(
-            CorrectionDictionaryArrayCacheKey { row_count, dictionary_kind, dictionary_key: 0 },
-            dictionary_values,
-        );
-    };
-    let correction_code_values = correction_code_array.as_any().downcast_ref::<Int32Array>().ok_or_else(|| {
-        OutputError::InvalidInput(format!("REGENIE step 2 {label_kind} code must be an int32 array."))
-    })?;
-    if correction_code_values.len() != row_count {
-        return Err(OutputError::InvalidInput(format!(
-            "REGENIE step 2 {label_kind} row count does not match metadata row count."
-        )));
-    }
+#[derive(Default)]
+struct CorrectionDictionaryKeyColumn {
+    first_key: Option<u8>,
+    mixed_keys: Option<Vec<u8>>,
+}
 
-    let mut dictionary_keys = Vec::with_capacity(row_count);
-    let mut first_dictionary_key: Option<u8> = None;
-    let mut all_keys_same = true;
-    for row_index in 0..correction_code_values.len() {
-        let dictionary_key = if correction_code_values.is_null(row_index) {
-            0
-        } else {
-            let correction_code_value = correction_code_values.value(row_index);
-            key_for_code(correction_code_value).ok_or_else(|| {
-                OutputError::InvalidInput(format!(
-                    "Unsupported REGENIE step 2 correction code: {correction_code_value}"
-                ))
-            })?
+impl CorrectionDictionaryKeyColumn {
+    fn push(&mut self, dictionary_key: u8, row_index: usize, row_count: usize) {
+        let Some(first_key) = self.first_key else {
+            self.first_key = Some(dictionary_key);
+            return;
         };
-        if let Some(previous_dictionary_key) = first_dictionary_key {
-            all_keys_same &= previous_dictionary_key == dictionary_key;
-        } else {
-            first_dictionary_key = Some(dictionary_key);
+        if let Some(keys) = self.mixed_keys.as_mut() {
+            keys.push(dictionary_key);
+        } else if dictionary_key != first_key {
+            let mut keys = Vec::with_capacity(row_count);
+            keys.resize(row_index, first_key);
+            keys.push(dictionary_key);
+            self.mixed_keys = Some(keys);
         }
-        dictionary_keys.push(dictionary_key);
     }
 
-    if all_keys_same {
-        return array_cache.constant_correction_dictionary_array(
+    fn build_array(
+        self,
+        row_count: usize,
+        dictionary_kind: CorrectionDictionaryKind,
+        dictionary_values: ArrayRef,
+        array_cache: &mut RegenieStep2RecordBatchArrayCache,
+    ) -> OutputResult<ArrayRef> {
+        if let Some(keys) = self.mixed_keys {
+            return build_uint8_dictionary_array(keys, dictionary_values);
+        }
+        array_cache.constant_correction_dictionary_array(
             CorrectionDictionaryArrayCacheKey {
                 row_count,
                 dictionary_kind,
-                dictionary_key: first_dictionary_key.unwrap_or(0),
+                dictionary_key: self.first_key.unwrap_or(0),
             },
             dictionary_values,
-        );
+        )
     }
-    build_uint8_dictionary_array(dictionary_keys, dictionary_values)
+}
+
+fn build_correction_dictionary_arrays(
+    correction_code: Option<ArrayRef>,
+    row_count: usize,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
+) -> OutputResult<CorrectionDictionaryArrays> {
+    let Some(correction_code_array) = correction_code else {
+        return build_constant_correction_dictionary_arrays(
+            CorrectionDictionaryKeys { method: CORRECTION_METHOD_SCORE_KEY, status: CORRECTION_STATUS_SUCCESS_KEY },
+            row_count,
+            array_cache,
+        );
+    };
+    let correction_code_values = correction_code_array
+        .as_any()
+        .downcast_ref::<UInt8Array>()
+        .ok_or_else(|| OutputError::InvalidInput("REGENIE step 2 correction code must be a uint8 array.".to_owned()))?;
+    if correction_code_values.len() != row_count {
+        return Err(OutputError::InvalidInput(
+            "REGENIE step 2 correction-code row count does not match metadata row count.".to_owned(),
+        ));
+    }
+
+    let mut method_keys = CorrectionDictionaryKeyColumn::default();
+    let mut status_keys = CorrectionDictionaryKeyColumn::default();
+    for row_index in 0..correction_code_values.len() {
+        let dictionary_keys = if correction_code_values.is_null(row_index) {
+            CorrectionDictionaryKeys { method: CORRECTION_METHOD_SCORE_KEY, status: CORRECTION_STATUS_SUCCESS_KEY }
+        } else {
+            let correction_code_value = correction_code_values.value(row_index);
+            correction_dictionary_keys(correction_code_value)?
+        };
+
+        method_keys.push(dictionary_keys.method, row_index, row_count);
+        status_keys.push(dictionary_keys.status, row_index, row_count);
+    }
+
+    Ok(CorrectionDictionaryArrays {
+        method: method_keys.build_array(
+            row_count,
+            CorrectionDictionaryKind::Method,
+            Arc::clone(&CORRECTION_METHOD_DICTIONARY_VALUES),
+            array_cache,
+        )?,
+        status: status_keys.build_array(
+            row_count,
+            CorrectionDictionaryKind::Status,
+            Arc::clone(&CORRECTION_STATUS_DICTIONARY_VALUES),
+            array_cache,
+        )?,
+    })
+}
+
+fn correction_dictionary_keys(correction_code: u8) -> OutputResult<CorrectionDictionaryKeys> {
+    match correction_code {
+        0 => {
+            Ok(CorrectionDictionaryKeys { method: CORRECTION_METHOD_SCORE_KEY, status: CORRECTION_STATUS_SUCCESS_KEY })
+        }
+        1 => Ok(CorrectionDictionaryKeys { method: CORRECTION_METHOD_SCORE_KEY, status: CORRECTION_STATUS_FAILED_KEY }),
+        2 => Ok(CorrectionDictionaryKeys {
+            method: CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY,
+            status: CORRECTION_STATUS_SUCCESS_KEY,
+        }),
+        3 => Ok(CorrectionDictionaryKeys {
+            method: CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY,
+            status: CORRECTION_STATUS_FAILED_KEY,
+        }),
+        _ => Err(OutputError::InvalidInput(format!("Unsupported REGENIE step 2 correction code: {correction_code}"))),
+    }
+}
+
+fn build_constant_correction_dictionary_arrays(
+    dictionary_keys: CorrectionDictionaryKeys,
+    row_count: usize,
+    array_cache: &mut RegenieStep2RecordBatchArrayCache,
+) -> OutputResult<CorrectionDictionaryArrays> {
+    Ok(CorrectionDictionaryArrays {
+        method: array_cache.constant_correction_dictionary_array(
+            CorrectionDictionaryArrayCacheKey {
+                row_count,
+                dictionary_kind: CorrectionDictionaryKind::Method,
+                dictionary_key: dictionary_keys.method,
+            },
+            Arc::clone(&CORRECTION_METHOD_DICTIONARY_VALUES),
+        )?,
+        status: array_cache.constant_correction_dictionary_array(
+            CorrectionDictionaryArrayCacheKey {
+                row_count,
+                dictionary_kind: CorrectionDictionaryKind::Status,
+                dictionary_key: dictionary_keys.status,
+            },
+            Arc::clone(&CORRECTION_STATUS_DICTIONARY_VALUES),
+        )?,
+    })
 }
 
 fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: ArrayRef) -> OutputResult<ArrayRef> {

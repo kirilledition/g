@@ -159,18 +159,6 @@ impl<Value> RowMajorOutputColumnMut<'_, Value> {
     }
 }
 
-#[derive(Debug)]
-pub(in crate::bgen) struct VariantDecodeResult {
-    pub(in crate::bgen) selected_dosage_total: f32,
-    pub(in crate::bgen) selected_dosage_square_total: f32,
-    pub(in crate::bgen) selected_observation_count: i32,
-    pub(in crate::bgen) zero_count: i32,
-    pub(in crate::bgen) nonzero_count: i32,
-    pub(in crate::bgen) homozygous_reference_count: i32,
-    pub(in crate::bgen) heterozygous_count: i32,
-    pub(in crate::bgen) homozygous_alternate_count: i32,
-}
-
 #[cfg(test)]
 #[derive(Debug)]
 pub(in crate::bgen) struct DosageTileDecodeResult {
@@ -182,10 +170,11 @@ pub(in crate::bgen) struct VariantMajorTileStatsMut<'a> {
     pub(in crate::bgen) dosage_sum: &'a mut [f32],
     pub(in crate::bgen) dosage_square_sum: &'a mut [f32],
     pub(in crate::bgen) observation_count: &'a mut [i32],
+    pub(in crate::bgen) sparse_candidate_counts: Option<VariantMajorSparseCandidateCountsMut<'a>>,
+}
+
+pub(in crate::bgen) struct VariantMajorSparseCandidateCountsMut<'a> {
     pub(in crate::bgen) zero_count: &'a mut [i32],
-    pub(in crate::bgen) nonzero_count: &'a mut [i32],
-    pub(in crate::bgen) homozygous_reference_count: &'a mut [i32],
-    pub(in crate::bgen) heterozygous_count: &'a mut [i32],
     pub(in crate::bgen) homozygous_alternate_count: &'a mut [i32],
 }
 
@@ -201,9 +190,6 @@ pub(super) fn build_variant_decode_result(
         selected_observation_count: 0,
         has_missing_values: false,
         zero_count: 0,
-        nonzero_count: 0,
-        homozygous_reference_count: 0,
-        heterozygous_count: 0,
         homozygous_alternate_count: 0,
     }
 }

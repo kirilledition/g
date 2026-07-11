@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::error::{OutputError, OutputResult};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct RunManifestChunkCommit {
     pub chunk_identifier: i64,
     pub variant_start_index: i64,

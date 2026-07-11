@@ -2,180 +2,197 @@
 
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
 use std::sync::Mutex;
 
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 
+use crate::runtime_policy::NativeRunSessionPolicy;
 use crate::telemetry_writer;
 
 const DEFAULT_LOG_FILTER: &str = "info";
 
-static LOGGING_GUARDS: Mutex<Option<Vec<telemetry_writer::TelemetryWriterGuard>>> = Mutex::new(None);
+static LOGGING_SUBSCRIBER_STATE: Mutex<LoggingSubscriberState> = Mutex::new(LoggingSubscriberState::Uninitialized);
 
-#[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "Logging sink config mirrors the existing runtime policy booleans at the native ownership boundary."
-)]
-pub struct LoggingSinkConfig<'a> {
-    pub log_filter: Option<&'a str>,
-    pub log_file: Option<&'a Path>,
-    pub log_stderr: bool,
-    pub log_queue_size: usize,
-    pub log_lossy: bool,
-    pub include_source_location: bool,
-    pub include_span_events: bool,
-    pub trace_file: Option<&'a Path>,
-    pub trace_filter: Option<&'a str>,
-    pub trace_event_cap: Option<usize>,
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LoggingSubscriberState {
+    Uninitialized,
+    Initialized,
+}
+
+pub(crate) struct RunLoggingSession {
+    stderr_writer: Option<RunLoggingWriter>,
+    file_writer: Option<RunLoggingWriter>,
+}
+
+struct RunLoggingWriter {
+    kind: telemetry_writer::SharedLogWriterKind,
+    writer: Option<tracing_appender::non_blocking::NonBlocking>,
+    guard: Option<telemetry_writer::TelemetryWriterGuard>,
+    is_registered: bool,
 }
 
 #[derive(Debug)]
 pub enum LoggingSinkError {
     InvalidLogFilter { message: String },
-    InvalidTraceFilter { message: String },
     Writer(std::io::Error),
-    LoggingGuardMutexPoisoned,
+    LoggingStateMutexPoisoned,
 }
 
-#[derive(Debug)]
-pub enum LoggingSinkInitializationError<HostLoggingError> {
-    Sink(LoggingSinkError),
-    HostLogging(HostLoggingError),
-}
-
-/// Initialize Rust logging sinks and run the host logging bridge setup.
+/// Install the process-global Rust logging subscriber.
 ///
 /// # Errors
 ///
-/// Returns a sink error when filter parsing, writer setup, or guard locking
-/// fails. Returns a host logging error when the provided bridge setup callback
-/// fails.
-pub fn initialize_logging_sinks<HostLoggingError>(
-    config: LoggingSinkConfig<'_>,
-    setup_host_logging: impl FnOnce() -> Result<(), HostLoggingError>,
-) -> Result<bool, LoggingSinkInitializationError<HostLoggingError>> {
-    let mut logging_guards = lock_logging_guards().map_err(LoggingSinkInitializationError::Sink)?;
-    if logging_guards.is_some() {
-        setup_host_logging().map_err(LoggingSinkInitializationError::HostLogging)?;
-        return Ok(false);
+/// Returns a sink error when filter parsing or subscriber-state locking fails.
+pub(crate) fn initialize_logging_sinks(policy: &NativeRunSessionPolicy) -> Result<(), LoggingSinkError> {
+    let mut subscriber_state = lock_subscriber_state()?;
+    if *subscriber_state != LoggingSubscriberState::Uninitialized {
+        return Ok(());
     }
 
-    let resolved_log_filter =
-        config.log_filter.filter(|candidate_filter| !candidate_filter.trim().is_empty()).unwrap_or(DEFAULT_LOG_FILTER);
-    let environment_filter = EnvFilter::try_new(resolved_log_filter).map_err(|error| {
-        LoggingSinkInitializationError::Sink(LoggingSinkError::InvalidLogFilter { message: error.to_string() })
-    })?;
+    let resolved_log_filter = if policy.log_filter.trim().is_empty() { DEFAULT_LOG_FILTER } else { &policy.log_filter };
+    let environment_filter = EnvFilter::try_new(resolved_log_filter)
+        .map_err(|error| LoggingSinkError::InvalidLogFilter { message: error.to_string() })?;
 
-    let mut worker_guards = Vec::new();
-    let stderr_layer = if config.log_stderr {
-        let (stderr_writer, stderr_guard) = telemetry_writer::build_non_blocking_writer(
-            std::io::stderr(),
-            "g-tracing-stderr",
-            config.log_queue_size,
-            config.log_lossy,
-        );
-        worker_guards.push(stderr_guard);
+    let stderr_layer = if policy.log_stderr {
+        let stderr_writer =
+            telemetry_writer::SharedLogWriterFactory::new(telemetry_writer::SharedLogWriterKind::Stderr);
         let layer = tracing_subscriber::fmt::layer()
             .compact()
             .with_writer(stderr_writer)
             .with_ansi(true)
-            .with_file(config.include_source_location)
-            .with_line_number(config.include_source_location)
-            .with_span_events(resolve_span_events(config.include_span_events));
+            .with_file(policy.include_source_location)
+            .with_line_number(policy.include_source_location)
+            .with_span_events(resolve_span_events(policy.include_span_events));
         Some(layer.boxed())
     } else {
         None
     };
-    let file_layer = if let Some(log_file_path) = config.log_file {
-        let (file_writer, maybe_file_guard) = telemetry_writer::build_shared_or_log_file_writer(
-            log_file_path,
-            config.log_queue_size,
-            config.log_lossy,
-            None,
-        )
-        .map_err(|error| LoggingSinkInitializationError::Sink(LoggingSinkError::Writer(error)))?;
-        if let Some(file_guard) = maybe_file_guard {
-            worker_guards.push(file_guard);
-        }
+    let file_layer = if policy.log_file.is_some() {
+        let file_writer = telemetry_writer::SharedLogWriterFactory::new(telemetry_writer::SharedLogWriterKind::File);
         let layer = tracing_subscriber::fmt::layer()
             .json()
             .flatten_event(true)
             .with_ansi(false)
             .with_writer(file_writer)
-            .with_file(config.include_source_location)
-            .with_line_number(config.include_source_location)
-            .with_span_events(resolve_span_events(config.include_span_events));
+            .with_file(policy.include_source_location)
+            .with_line_number(policy.include_source_location)
+            .with_span_events(resolve_span_events(policy.include_span_events));
         Some(layer.boxed())
     } else {
         None
     };
-    let trace_layer = if let Some(trace_file_path) = config.trace_file {
-        let (trace_writer, maybe_trace_guard) = telemetry_writer::build_shared_or_log_file_writer(
-            trace_file_path,
-            config.log_queue_size,
-            config.log_lossy,
-            telemetry_writer::normalize_event_cap(config.trace_event_cap),
-        )
-        .map_err(|error| LoggingSinkInitializationError::Sink(LoggingSinkError::Writer(error)))?;
-        if let Some(trace_guard) = maybe_trace_guard {
-            worker_guards.push(trace_guard);
-        }
-        let resolved_trace_filter = config
-            .trace_filter
-            .filter(|candidate_filter| !candidate_filter.trim().is_empty())
-            .unwrap_or(resolved_log_filter);
-        let trace_environment_filter = EnvFilter::try_new(resolved_trace_filter).map_err(|error| {
-            LoggingSinkInitializationError::Sink(LoggingSinkError::InvalidTraceFilter { message: error.to_string() })
-        })?;
+    let structured_log_layer = if policy.telemetry_stream_file.is_some() {
+        let structured_log_writer = telemetry_writer::SharedTelemetryWriterFactory;
+        let structured_log_filter = EnvFilter::try_new(resolved_log_filter)
+            .map_err(|error| LoggingSinkError::InvalidLogFilter { message: error.to_string() })?;
         let layer = tracing_subscriber::fmt::layer()
             .json()
             .flatten_event(true)
             .with_ansi(false)
-            .with_writer(trace_writer)
+            .with_writer(structured_log_writer)
             .with_file(true)
             .with_line_number(true)
             .with_span_events(FmtSpan::FULL)
-            .with_filter(trace_environment_filter);
+            .with_filter(structured_log_filter);
         Some(layer.boxed())
     } else {
         None
     };
 
-    let subscriber =
-        tracing_subscriber::registry().with(environment_filter).with(stderr_layer).with(file_layer).with(trace_layer);
-    if subscriber.try_init().is_err() {
-        setup_host_logging().map_err(LoggingSinkInitializationError::HostLogging)?;
-        return Ok(false);
+    let subscriber = tracing_subscriber::registry()
+        .with(environment_filter)
+        .with(stderr_layer)
+        .with(file_layer)
+        .with(structured_log_layer);
+    let subscriber_was_installed = subscriber.try_init().is_ok();
+    *subscriber_state = LoggingSubscriberState::Initialized;
+    drop(subscriber_state);
+    if subscriber_was_installed {
+        tracing::info!(target: "g.logging", "logging initialized");
     }
-
-    setup_host_logging().map_err(LoggingSinkInitializationError::HostLogging)?;
-    *logging_guards = Some(worker_guards);
-    tracing::info!(target: "g.logging", "logging initialized");
-    Ok(true)
+    Ok(())
 }
 
-/// Drop logging sink guards and flush non-blocking writers.
-///
-/// # Errors
-///
-/// Returns an error when the logging guard lock is poisoned.
-pub fn shutdown_logging_sinks() -> Result<(), LoggingSinkError> {
-    let mut logging_guards = lock_logging_guards()?;
-    let _dropped_guards = logging_guards.take();
-    Ok(())
+impl RunLoggingSession {
+    /// Open and register the asynchronous process log writers for one run.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sink error when a file cannot be opened or another run owns a writer.
+    pub fn new(policy: &NativeRunSessionPolicy) -> Result<Self, LoggingSinkError> {
+        let stderr_writer = if policy.log_stderr {
+            let (writer, guard) = telemetry_writer::build_non_blocking_writer(
+                std::io::stderr(),
+                "g-tracing-stderr",
+                policy.queue_size,
+                policy.lossy,
+            );
+            Some(RunLoggingWriter::new(telemetry_writer::SharedLogWriterKind::Stderr, writer, guard)?)
+        } else {
+            None
+        };
+        let file_writer = if let Some(log_file_path) = policy.log_file.as_deref() {
+            let (writer, guard) =
+                telemetry_writer::build_log_file_writer(log_file_path, policy.queue_size, policy.lossy)
+                    .map_err(LoggingSinkError::Writer)?;
+            Some(RunLoggingWriter::new(telemetry_writer::SharedLogWriterKind::File, writer, guard)?)
+        } else {
+            None
+        };
+        Ok(Self { stderr_writer, file_writer })
+    }
+
+    /// Stop routing new records and flush every run-owned logging worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sink error when a dynamic-writer registry is unavailable.
+    pub fn finish(&mut self) -> Result<(), LoggingSinkError> {
+        let stderr_result = self.stderr_writer.as_mut().map_or(Ok(()), RunLoggingWriter::finish);
+        let file_result = self.file_writer.as_mut().map_or(Ok(()), RunLoggingWriter::finish);
+        stderr_result.and(file_result)
+    }
+}
+
+impl RunLoggingWriter {
+    fn new(
+        kind: telemetry_writer::SharedLogWriterKind,
+        writer: tracing_appender::non_blocking::NonBlocking,
+        guard: telemetry_writer::TelemetryWriterGuard,
+    ) -> Result<Self, LoggingSinkError> {
+        telemetry_writer::register_shared_log_writer(kind, writer.clone()).map_err(LoggingSinkError::Writer)?;
+        Ok(Self { kind, writer: Some(writer), guard: Some(guard), is_registered: true })
+    }
+
+    fn finish(&mut self) -> Result<(), LoggingSinkError> {
+        if self.is_registered {
+            telemetry_writer::unregister_shared_log_writer(self.kind).map_err(LoggingSinkError::Writer)?;
+            self.is_registered = false;
+        }
+        let writer = self.writer.take();
+        let guard = self.guard.take();
+        drop(writer);
+        drop(guard);
+        Ok(())
+    }
+}
+
+impl Drop for RunLoggingWriter {
+    fn drop(&mut self) {
+        if self.is_registered {
+            let _ = telemetry_writer::unregister_shared_log_writer(self.kind);
+        }
+    }
 }
 
 impl fmt::Display for LoggingSinkError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidLogFilter { message } => write!(formatter, "Invalid g log filter: {message}"),
-            Self::InvalidTraceFilter { message } => write!(formatter, "Invalid g trace filter: {message}"),
             Self::Writer(error) => write!(formatter, "{error}"),
-            Self::LoggingGuardMutexPoisoned => formatter.write_str("Logging guard mutex was poisoned."),
+            Self::LoggingStateMutexPoisoned => formatter.write_str("Logging subscriber-state mutex was poisoned."),
         }
     }
 }
@@ -184,14 +201,13 @@ impl Error for LoggingSinkError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Writer(error) => Some(error),
-            Self::InvalidLogFilter { .. } | Self::InvalidTraceFilter { .. } | Self::LoggingGuardMutexPoisoned => None,
+            Self::InvalidLogFilter { .. } | Self::LoggingStateMutexPoisoned => None,
         }
     }
 }
 
-fn lock_logging_guards()
--> Result<std::sync::MutexGuard<'static, Option<Vec<telemetry_writer::TelemetryWriterGuard>>>, LoggingSinkError> {
-    LOGGING_GUARDS.lock().map_err(|_| LoggingSinkError::LoggingGuardMutexPoisoned)
+fn lock_subscriber_state() -> Result<std::sync::MutexGuard<'static, LoggingSubscriberState>, LoggingSinkError> {
+    LOGGING_SUBSCRIBER_STATE.lock().map_err(|_| LoggingSinkError::LoggingStateMutexPoisoned)
 }
 
 const fn resolve_span_events(include_span_events: bool) -> FmtSpan {

@@ -7,7 +7,8 @@ mod run;
 mod validation;
 
 pub(crate) use chunks::{RunManifestChunkCommit, read_chunk_commits_from_text};
-pub use fingerprint::{ManifestFileFingerprint, ManifestFileFingerprintCache};
+pub(crate) use fingerprint::ManifestFileFingerprint;
+pub use fingerprint::ManifestFileFingerprintCache;
 pub(crate) use fingerprint::{build_manifest_value_sha256, manifest_file_fingerprint_to_value};
 pub(crate) use header::build_current_run_manifest_header_value_with_cache;
 pub use header::{CurrentRunManifestHeaderInput, PredictionLocoFileFingerprint};

@@ -10,7 +10,7 @@ pub enum NullLogisticNonconvergenceAction {
     Fail,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct NullLogisticNonconvergencePlan {
     pub action: NullLogisticNonconvergenceAction,
     pub failed_trait_indices: Vec<usize>,
@@ -21,13 +21,13 @@ pub struct NullLogisticNonconvergencePlan {
     pub total_fit_count: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 struct NullLogisticNonconvergenceMessage {
     failed_trait_indices: Vec<usize>,
     message: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NullLogisticPolicyError {
     #[error("Null logistic convergence flags must contain at least one value.")]
     EmptyConvergenceFlags,

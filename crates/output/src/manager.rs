@@ -120,12 +120,12 @@ impl OutputManager {
             return Err(OutputError::InvalidInput("Output manager is already initialized.".to_string()));
         }
         let mut headers_by_phenotype = BTreeMap::new();
-        let mut fingerprint_cache = ManifestFileFingerprintCache::new();
+        let mut fingerprint_cache = ManifestFileFingerprintCache::default();
         for current_header_input in current_header_inputs {
             let phenotype_name = current_header_input.phenotype_name.clone();
             let current_header = build_current_run_manifest_header_value_with_cache(
                 &self.run_plan,
-                current_header_input,
+                &current_header_input,
                 &mut fingerprint_cache,
             )?;
             match headers_by_phenotype.entry(phenotype_name) {

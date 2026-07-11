@@ -20,7 +20,7 @@ Parquet dataset output.
 - BGEN 1.2 input with Oxford `.sample` metadata.
 - Native TOML/CLI input compiled into one Rust run request.
 - Chunked Parquet output under each phenotype run's `parts/` directory.
-- Runtime lifecycle telemetry, stage summaries, and trace mode.
+- Runtime lifecycle telemetry and profile-stage summaries.
 
 ## Not Yet Supported
 
@@ -34,8 +34,7 @@ Parquet dataset output.
 
 Roadmap work should be tracked in Linear rather than as unchecked tasks in this
 file. The current docs-task audit generated focused follow-ups for packed8
-custom-kernel profiling, trace-mode event caps, and binary benchmark
-diagnostics. See
+custom-kernel profiling and binary benchmark diagnostics. See
 [Agent Memory](../scratchpad/memory.md) for the audit summary and Linear links.
 
 ## Performance Direction
@@ -74,7 +73,6 @@ g-interface -> g-plan -> g-engine::RunEngine
   compatibility.
 - Keep production telemetry low overhead and free of accidental JAX
   synchronization.
-- Keep profile and trace modes explicitly diagnostic because they may perturb
-  performance.
+- Keep profile mode explicitly diagnostic because it may perturb performance.
 - Follow [Architecture Cleanup](architecture-cleanup.md) for the ordered
   migration and Rust cleanup program.

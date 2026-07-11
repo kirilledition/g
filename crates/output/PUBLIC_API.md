@@ -6,16 +6,16 @@ Output run preparation, manifest compatibility, resume validation, and chunked P
 
 ## Public types
 
-`OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, output writer
-sessions, native chunk metadata/statistics, typed manifest preparation inputs
-and fingerprints, and `OutputError`. Resume mode and statistic dtype use the
-canonical `g-plan` types directly.
+`OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, opaque output
+writer sessions, native chunk handles, typed manifest inputs/fingerprints,
+trait-major statistic batches, and `OutputError`. Resume policy remains owned
+by `g-plan`.
 
 ## Public functions
 
 Open and initialize output runs through `OutputManager`, select delivery state,
-write trait-major chunks, and complete, interrupt, or abort the owned writer
-sessions. Manifest construction and resume validation remain internal details.
+write validated trait-major chunks, and complete, interrupt, or abort the owned
+run. Individual writer-session lifecycle methods remain crate-private.
 
 ## This crate must not expose
 
@@ -26,6 +26,19 @@ telemetry sinks, PyO3 classes, or public administrative submodules.
 
 Write chunk batches through handles and array views. Do not serialize Rust
 crate-to-crate data through JSON; JSON exists only inside manifest persistence.
+Consume canonical `g-genotype-contracts` columns directly; output must not
+depend on the BGEN implementation crate or introduce adapter mirrors.
+Fresh multi-trait chunks select all writer lanes without constructing an
+identity-index vector; only partially resumed chunks carry explicit indices.
+Compatible-sample groups share one output-owned Arrow metadata handle per
+union chunk; only sample-dependent statistics are materialized per group.
+Metadata-handle construction rejects string columns beyond Arrow's 32-bit
+`Utf8` offset limit before lazy writer-side array construction can panic.
+Normal writes do not collect detailed timers or traverse Arrow memory; that
+instrumentation is enabled only for explicit stage timing/profile modes.
+Binary correction codes remain `uint8` through device, host, and Arrow staging;
+the writer maps them to the existing method/status dictionaries only when it
+builds the final record batch.
 Persisted row and chunk counts use checked signed 64-bit arithmetic because the
 manifest contract is JSON integer based; overflow must fail before mutation.
 

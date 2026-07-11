@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 #[derive(Debug)]
-pub enum RayonRuntimeError {
+pub(crate) enum RayonRuntimeError {
     InvalidThreadCount,
     GlobalThreadPool { source: rayon::ThreadPoolBuildError },
 }
@@ -33,7 +33,7 @@ impl Error for RayonRuntimeError {
 ///
 /// Returns an error when the requested thread count is zero or Rayon rejects
 /// global thread-pool initialization for this process.
-pub fn configure_global_rayon_thread_pool(thread_count: usize) -> Result<(), RayonRuntimeError> {
+pub(crate) fn configure_global_rayon_thread_pool(thread_count: usize) -> Result<(), RayonRuntimeError> {
     if thread_count == 0 {
         return Err(RayonRuntimeError::InvalidThreadCount);
     }
@@ -41,12 +41,4 @@ pub fn configure_global_rayon_thread_pool(thread_count: usize) -> Result<(), Ray
         .num_threads(thread_count)
         .build_global()
         .map_err(|source| RayonRuntimeError::GlobalThreadPool { source })
-}
-
-#[must_use]
-pub fn format_global_rayon_thread_pool_configuration_error(thread_count: i64, source_error: &str) -> String {
-    format!(
-        "Unable to configure Rayon global thread pool for configured CPU threads={thread_count}; \
-         existing Rayon settings are unknown: {source_error}"
-    )
 }

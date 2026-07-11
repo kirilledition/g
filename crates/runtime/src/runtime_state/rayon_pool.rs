@@ -7,23 +7,29 @@ use crate::rayon_runtime;
 use super::ProcessRuntimeState;
 
 #[derive(Debug)]
-pub enum RayonThreadPoolConfigurationError {
+pub struct RayonThreadPoolConfigurationError {
+    kind: RayonThreadPoolConfigurationErrorKind,
+}
+
+#[derive(Debug)]
+enum RayonThreadPoolConfigurationErrorKind {
     RuntimeCompatibility(RuntimeCompatibilityError),
     RuntimeConfiguration { thread_count: i64, source: rayon_runtime::RayonRuntimeError },
 }
 
 impl fmt::Display for RayonThreadPoolConfigurationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RuntimeCompatibility(error) => error.fmt(formatter),
-            Self::RuntimeConfiguration { thread_count, source } => {
+        match &self.kind {
+            RayonThreadPoolConfigurationErrorKind::RuntimeCompatibility(error) => error.fmt(formatter),
+            RayonThreadPoolConfigurationErrorKind::RuntimeConfiguration { thread_count, source } => {
                 if matches!(source, rayon_runtime::RayonRuntimeError::InvalidThreadCount) {
                     source.fmt(formatter)
                 } else {
-                    formatter.write_str(&rayon_runtime::format_global_rayon_thread_pool_configuration_error(
-                        *thread_count,
-                        &source.to_string(),
-                    ))
+                    write!(
+                        formatter,
+                        "Unable to configure Rayon global thread pool for configured CPU threads={thread_count}; \
+                         existing Rayon settings are unknown: {source}"
+                    )
                 }
             }
         }
@@ -32,9 +38,9 @@ impl fmt::Display for RayonThreadPoolConfigurationError {
 
 impl Error for RayonThreadPoolConfigurationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::RuntimeCompatibility(error) => Some(error),
-            Self::RuntimeConfiguration { source, .. } => Some(source),
+        match &self.kind {
+            RayonThreadPoolConfigurationErrorKind::RuntimeCompatibility(error) => Some(error),
+            RayonThreadPoolConfigurationErrorKind::RuntimeConfiguration { source, .. } => Some(source),
         }
     }
 }
@@ -76,19 +82,26 @@ impl ProcessRuntimeState {
         &mut self,
         requested_thread_count: i64,
     ) -> Result<(), RayonThreadPoolConfigurationError> {
-        self.require_compatible_rayon_thread_count(Some(requested_thread_count))
-            .map_err(RayonThreadPoolConfigurationError::RuntimeCompatibility)?;
+        self.require_compatible_rayon_thread_count(Some(requested_thread_count)).map_err(|error| {
+            RayonThreadPoolConfigurationError {
+                kind: RayonThreadPoolConfigurationErrorKind::RuntimeCompatibility(error),
+            }
+        })?;
         if self.rayon_thread_count == Some(requested_thread_count) {
             return Ok(());
         }
         let thread_count = requested_thread_count;
-        let runtime_thread_count =
-            usize::try_from(thread_count).map_err(|_| RayonThreadPoolConfigurationError::RuntimeConfiguration {
+        let runtime_thread_count = usize::try_from(thread_count).map_err(|_| RayonThreadPoolConfigurationError {
+            kind: RayonThreadPoolConfigurationErrorKind::RuntimeConfiguration {
                 thread_count,
                 source: rayon_runtime::RayonRuntimeError::InvalidThreadCount,
-            })?;
-        rayon_runtime::configure_global_rayon_thread_pool(runtime_thread_count)
-            .map_err(|source| RayonThreadPoolConfigurationError::RuntimeConfiguration { thread_count, source })?;
+            },
+        })?;
+        rayon_runtime::configure_global_rayon_thread_pool(runtime_thread_count).map_err(|source| {
+            RayonThreadPoolConfigurationError {
+                kind: RayonThreadPoolConfigurationErrorKind::RuntimeConfiguration { thread_count, source },
+            }
+        })?;
         self.rayon_thread_count = Some(thread_count);
         Ok(())
     }

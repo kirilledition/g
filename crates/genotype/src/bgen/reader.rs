@@ -11,11 +11,13 @@ use std::path::PathBuf;
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
+use g_genotype_contracts::{VariantMetadataColumns, VariantMetadataStore};
+
 #[cfg(test)]
 use crate::buffer::{OutputBufferAddress, OutputValueCount, RowMajorDosageBuffer};
+use crate::common::ChunkSpec;
 #[cfg(test)]
 use crate::common::ChunkStats;
-use crate::common::{ChunkSpec, VariantMetadataColumns};
 use crate::error::GenotypeResult;
 #[cfg(test)]
 use crate::preprocess;
@@ -24,14 +26,14 @@ use crate::preprocess;
 use super::decode::{
     DosageTileDecodeResult, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
 };
-use super::decode::{ThreadScratch, read_exact_bytes, read_u32_at, u32_to_usize};
+use super::decode::{ThreadScratch, VariantDecodeFailure, read_exact_bytes, read_u32_at, u32_to_usize};
 use super::error::BgenError;
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
 #[cfg(test)]
 use super::profile::ThreadLocalProfileSnapshot;
 use super::sample_selection::{SampleSelection, build_sample_selection};
-use super::{index, metadata, trusted};
+use super::{index, trusted};
 
 mod variant_major;
 
@@ -40,12 +42,11 @@ pub struct BgenReaderCore {
     mmap: Mmap,
     sample_count: usize,
     variant_count: usize,
-    contains_embedded_samples: bool,
-    sample_identifiers: Vec<String>,
     compression_type: CompressionType,
     trusted_no_missing_diploid: bool,
     trusted_no_missing_diploid_validated: AtomicBool,
     variant_records: Vec<VariantRecord>,
+    variant_metadata: Arc<VariantMetadataStore>,
     chromosome_boundary_indices: Vec<usize>,
     prepared_sample_selection: Mutex<Option<Arc<SampleSelection>>>,
 }
@@ -86,27 +87,23 @@ impl BgenReaderCore {
         let contains_embedded_samples = ((header_flags >> 31) & 1) == 1;
 
         let sample_block_offset = 4 + header_block_length;
-        let sample_identifiers = if contains_embedded_samples {
-            index::parse_sample_identifier_block(&mmap, sample_block_offset, first_variant_offset, sample_count)?
-        } else {
-            Vec::new()
-        };
+        if contains_embedded_samples {
+            index::validate_sample_identifier_block(&mmap, sample_block_offset, first_variant_offset, sample_count)?;
+        }
 
-        let variant_records =
-            index::parse_variant_records(&mmap, first_variant_offset, variant_count, sample_count, compression_type)?;
-        let chromosome_boundary_indices = metadata::build_chromosome_boundary_indices(&variant_records);
+        let parsed_variant_index =
+            index::parse_variant_index(&mmap, first_variant_offset, variant_count, sample_count, compression_type)?;
 
         Ok(Self {
             mmap,
             sample_count,
             variant_count,
-            contains_embedded_samples,
-            sample_identifiers,
             compression_type,
             trusted_no_missing_diploid,
             trusted_no_missing_diploid_validated: AtomicBool::new(false),
-            variant_records,
-            chromosome_boundary_indices,
+            variant_records: parsed_variant_index.variant_records,
+            variant_metadata: parsed_variant_index.variant_metadata,
+            chromosome_boundary_indices: parsed_variant_index.chromosome_boundary_indices,
             prepared_sample_selection: Mutex::new(None),
         })
     }
@@ -117,14 +114,6 @@ impl BgenReaderCore {
 
     pub fn variant_count(&self) -> usize {
         self.variant_count
-    }
-
-    pub fn contains_embedded_samples(&self) -> bool {
-        self.contains_embedded_samples
-    }
-
-    pub fn sample_identifiers(&self) -> &[String] {
-        &self.sample_identifiers
     }
 
     pub fn chromosome_boundary_indices(&self) -> &[usize] {
@@ -169,9 +158,9 @@ impl BgenReaderCore {
         if self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.variant_records.par_iter().try_for_each_init(
+        self.variant_records.par_iter().enumerate().try_for_each_init(
             ThreadScratch::default,
-            |thread_scratch, variant_record| {
+            |thread_scratch, (variant_index, variant_record)| {
                 trusted::validate_variant_compatible_with_trusted_no_missing_diploid(
                     &self.mmap,
                     self.compression_type,
@@ -179,6 +168,7 @@ impl BgenReaderCore {
                     self.sample_count,
                     thread_scratch,
                 )
+                .map_err(|error| self.contextualize_variant_error(variant_index, error))
             },
         )?;
         if self.trusted_no_missing_diploid {
@@ -204,8 +194,7 @@ impl BgenReaderCore {
     ) -> Result<VariantMetadataColumns, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
-        let selected_variant_records = &self.variant_records[variant_start..variant_stop];
-        Ok(metadata::build_variant_metadata_columns(selected_variant_records))
+        Ok(VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop))
     }
 
     #[cfg(test)]
@@ -270,6 +259,27 @@ impl BgenReaderCore {
         Err(BgenError::UnsupportedFormat(
             "Packed8 BGEN probability-pair delivery requires trusted no-missing diploid validation.".to_string(),
         ))
+    }
+
+    fn contextualize_variant_error(&self, variant_index: usize, error: BgenError) -> BgenError {
+        let variant_identifier = self.variant_metadata.variant_identifier(variant_index);
+        match error {
+            BgenError::InvalidFormat(message) => {
+                BgenError::InvalidFormat(format!("Variant '{variant_identifier}': {message}"))
+            }
+            BgenError::UnsupportedFormat(message) => {
+                BgenError::UnsupportedFormat(format!("Variant '{variant_identifier}': {message}"))
+            }
+            BgenError::Range(message) => BgenError::Range(format!("Variant '{variant_identifier}': {message}")),
+            BgenError::Io(source) => BgenError::Io(source),
+        }
+    }
+
+    fn contextualize_variant_decode_failure(&self, variant_start: usize, failure: VariantDecodeFailure) -> BgenError {
+        let Some(relative_variant_index) = failure.relative_variant_index else {
+            return failure.source;
+        };
+        self.contextualize_variant_error(variant_start + relative_variant_index, failure.source)
     }
 
     #[cfg(test)]

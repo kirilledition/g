@@ -10,6 +10,7 @@ g-engine = { workspace = true }
 g-interface = { workspace = true }
 g-plan = { workspace = true }
 g-runtime = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

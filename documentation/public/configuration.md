@@ -203,7 +203,7 @@ TOML-only. Important keys include:
 | JAX cache/runtime | `[compute] jax_cache_dir`, `jax_persistent_cache`, `jax_matmul_precision`, `jax_transfer_guard` |
 | Output | `[output] output_statistic_dtype`, `writer_threads`, `writer_queue_depth`, `chunks_per_parquet_file`, `parquet_compression` |
 | Resume | `[output] resume`, `resume_mode` |
-| Diagnostics | `[diagnostics] telemetry`, `log_dir`, `log_file`, `trace_event_cap` |
+| Diagnostics | `[diagnostics] telemetry` (`off`, `progress`, or `profile`) |
 
 ## Trait And Column Semantics
 

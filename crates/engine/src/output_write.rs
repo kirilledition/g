@@ -2,8 +2,10 @@
 
 use std::sync::Arc;
 
-use g_genotype::{ChunkStats, VariantMetadataColumns};
-use g_output::{NativeChunkHandle, OutputError, OutputWriterSession, Regenie2StatisticBatch};
+use g_genotype_contracts::ChunkOutputStatistics;
+use g_output::{
+    NativeChunkHandle, NativeVariantMetadataHandle, OutputError, OutputWriterSession, Regenie2StatisticBatch,
+};
 
 use crate::backend::HostAssociationBatch;
 
@@ -13,31 +15,22 @@ use crate::backend::HostAssociationBatch;
 ///
 /// Returns an error when result shapes are inconsistent or an output session
 /// rejects the chunk.
-pub fn write_host_association_batch(
+pub(crate) fn write_host_association_batch(
     writer_sessions: &[Arc<OutputWriterSession>],
-    active_trait_indices: &[usize],
+    active_trait_indices: Option<&[usize]>,
     variant_start_index: usize,
-    metadata: VariantMetadataColumns,
-    statistics: ChunkStats,
+    metadata: NativeVariantMetadataHandle,
+    statistics: ChunkOutputStatistics,
     result: HostAssociationBatch,
 ) -> Result<(), OutputError> {
     let chunk_identifier = i64::try_from(variant_start_index)
         .map_err(|_| OutputError::InvalidInput("Variant start index does not fit into int64 output.".to_string()))?;
-    let chunk_handle = NativeChunkHandle::new(metadata, statistics, chunk_identifier);
-    let expected_trait_count = active_trait_indices.len();
+    let chunk_handle = NativeChunkHandle::try_new(metadata, statistics, chunk_identifier)?;
+    let expected_trait_count = active_trait_indices.map_or(writer_sessions.len(), <[usize]>::len);
     let expected_variant_count = chunk_handle.row_count();
-    if let Some(correction_codes) = result.correction_codes.as_ref()
-        && (correction_codes.trait_count != expected_trait_count
-            || correction_codes.variant_count != expected_variant_count)
-    {
-        return Err(OutputError::InvalidInput(
-            "Materialized correction-code shape does not match active traits and variant metadata.".to_string(),
-        ));
-    }
-    let statistics = result.statistics;
     validate_host_statistic_shape(
-        statistics.trait_count,
-        statistics.variant_count,
+        result.trait_count,
+        result.variant_count,
         expected_trait_count,
         expected_variant_count,
     )?;
@@ -46,11 +39,11 @@ pub fn write_host_association_batch(
         active_trait_indices,
         &chunk_handle,
         Regenie2StatisticBatch {
-            beta: statistics.beta,
-            standard_error: statistics.standard_error,
-            chi_squared: statistics.chi_squared,
-            log10_p_value: statistics.log10_p_value,
-            correction_code: result.correction_codes.map(|matrix| matrix.values),
+            beta: result.beta,
+            standard_error: result.standard_error,
+            chi_squared: result.chi_squared,
+            log10_p_value: result.log10_p_value,
+            correction_code: result.correction_codes,
         },
     )
 }

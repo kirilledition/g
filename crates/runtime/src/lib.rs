@@ -4,20 +4,16 @@
 compile_error!("g requires a 64-bit target.");
 
 mod api;
-mod cli_runtime;
+mod diagnostics;
 mod error;
-mod jax_runtime;
 mod logging_sink;
 mod native_run_session;
 mod rayon_runtime;
-mod run_events;
 mod runtime_policy;
 mod runtime_state;
 mod shutdown;
-mod telemetry_policy;
 mod telemetry_session;
 mod telemetry_writer;
 mod timing;
-mod trusted_validation;
 
 pub use api::*;

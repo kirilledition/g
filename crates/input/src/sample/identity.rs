@@ -19,32 +19,56 @@ pub fn load_sample_identifier_data_from_sample_file(
     let mut reader = open_sample_file_reader(sample_path)?;
     let missing_header_error =
         || format!("Sample file '{}' must contain at least two header lines.", sample_path.display());
-    let column_names = reader.read_next_fields()?.ok_or_else(missing_header_error)?;
-    let column_types = reader.read_next_fields()?.ok_or_else(missing_header_error)?;
+    let column_names = reader
+        .read_next_nonempty_line()?
+        .ok_or_else(missing_header_error)?
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let column_types = reader
+        .read_next_nonempty_line()?
+        .ok_or_else(missing_header_error)?
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
     let family_identifier_column_index = 0;
     let individual_identifier_column_index =
         column_names.iter().position(|column_name| column_name == "ID_2").unwrap_or(family_identifier_column_index);
 
-    let mut sample_indices = Vec::with_capacity(expected_sample_count);
     let mut family_identifiers = Vec::with_capacity(expected_sample_count);
     let mut individual_identifiers = Vec::with_capacity(expected_sample_count);
     let mut sample_count = 0usize;
-    while let Some(row_values) = reader.read_next_fields()? {
+    while let Some(row_text) = reader.read_next_nonempty_line()? {
         sample_count += 1;
-        if row_values.len() != column_names.len() {
+        let mut row_value_count = 0;
+        let mut family_identifier = None;
+        let mut individual_identifier = None;
+        for (column_index, value) in row_text.split_whitespace().enumerate() {
+            row_value_count += 1;
+            if column_index == family_identifier_column_index {
+                family_identifier = Some(value.to_owned());
+            }
+            if column_index == individual_identifier_column_index {
+                individual_identifier = Some(value.to_owned());
+            }
+        }
+        if row_value_count != column_names.len() {
             return Err(format!(
                 "Sample file '{}' line {} has {} values, but the header declares {} columns.",
                 sample_path.display(),
                 sample_count + 2,
-                row_values.len(),
+                row_value_count,
                 column_names.len(),
             )
             .into());
         }
-        sample_indices.push(sample_count - 1);
-        family_identifiers.push(row_values[family_identifier_column_index].clone());
-        individual_identifiers.push(row_values[individual_identifier_column_index].clone());
+        family_identifiers.push(family_identifier.ok_or_else(|| {
+            format!("Sample file '{}' row is missing the first identifier column.", sample_path.display())
+        })?);
+        individual_identifiers.push(individual_identifier.ok_or_else(|| {
+            format!("Sample file '{}' row is missing the selected individual identifier column.", sample_path.display())
+        })?);
     }
     if sample_count != expected_sample_count {
         return Err(format!(
@@ -53,7 +77,7 @@ pub fn load_sample_identifier_data_from_sample_file(
         )
         .into());
     }
-    Ok(SampleIdentifierData { sample_indices, family_identifiers, individual_identifiers })
+    Ok(SampleIdentifierData { family_identifiers, individual_identifiers })
 }
 
 fn validate_sample_file_header(
@@ -95,7 +119,7 @@ fn open_sample_file_reader(sample_path: &Path) -> Result<SampleFileReader<BufRea
 }
 
 impl<R: BufRead> SampleFileReader<R> {
-    fn read_next_fields(&mut self) -> Result<Option<Vec<String>>, String> {
+    fn read_next_nonempty_line(&mut self) -> Result<Option<&str>, String> {
         loop {
             self.line_buffer.clear();
             let read_byte_count = self
@@ -105,10 +129,10 @@ impl<R: BufRead> SampleFileReader<R> {
             if read_byte_count == 0 {
                 return Ok(None);
             }
-            let field_values = self.line_buffer.split_whitespace().map(ToString::to_string).collect::<Vec<_>>();
-            if !field_values.is_empty() {
-                return Ok(Some(field_values));
+            if self.line_buffer.split_whitespace().next().is_some() {
+                break;
             }
         }
+        Ok(Some(&self.line_buffer))
     }
 }

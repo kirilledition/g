@@ -5,27 +5,17 @@ use pyo3::prelude::*;
 
 pub(crate) mod cli;
 pub(crate) mod engine;
-pub(crate) mod runtime;
-pub(crate) mod telemetry;
+pub(crate) mod jax_runtime;
+pub(crate) mod logging;
 
 #[allow(clippy::missing_errors_doc)]
 pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__path__", Vec::<String>::new())?;
-    register_submodule(module, "cli", cli::register_module)?;
-    register_submodule(module, "engine", engine::register_module)?;
-    Ok(())
-}
-
-fn register_submodule(
-    module: &Bound<'_, PyModule>,
-    name: &str,
-    register: fn(&Bound<'_, PyModule>) -> PyResult<()>,
-) -> PyResult<()> {
     let py = module.py();
     let module_name = module.name()?;
-    let full_name = format!("{}.{}", module_name.to_str()?, name);
+    let full_name = format!("{}.cli", module_name.to_str()?);
     let submodule = PyModule::new(py, &full_name)?;
-    register(&submodule)?;
+    cli::register_module(&submodule)?;
     module.add_submodule(&submodule)?;
     py.import("sys")?.getattr("modules")?.set_item(full_name, &submodule)?;
     Ok(())

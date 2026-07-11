@@ -5,21 +5,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
-
-const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL: &str = "debug";
-const FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME: &str = "runner_final_timing_outputs_write_started";
-pub const FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE: &str = "Writing final timing outputs.";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FinalTimingOutputsWriteStartedDiagnosticPayload {
-    pub level: &'static str,
-    pub event_name: &'static str,
-    pub message: &'static str,
-    pub stage_timing_path: Option<String>,
-    pub profile_summary_path: Option<String>,
-    pub run_id: Option<String>,
-}
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
 
 #[derive(Debug)]
 pub enum TimingFileError {
@@ -51,36 +38,67 @@ impl Error for TimingFileError {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct StageTimingRecorder {
-    stage_totals_seconds: BTreeMap<String, f64>,
-    stage_counts: BTreeMap<String, u64>,
+    stages: BTreeMap<String, StageTimingAggregate>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct StageTimingAggregate {
+    total_seconds: f64,
+    count: u64,
+}
+
+#[derive(Clone, Copy)]
+enum StageTimingMetric {
+    TotalSeconds,
+    Count,
+}
+
+#[derive(Clone, Copy)]
+struct StageTimingMap<'recorder> {
+    stages: &'recorder BTreeMap<String, StageTimingAggregate>,
+    metric: StageTimingMetric,
 }
 
 #[derive(Serialize)]
 struct ProfileSummaryPayload<'recorder> {
     schema_version: i64,
-    run_id: Option<String>,
-    stage_totals_seconds: &'recorder BTreeMap<String, f64>,
-    stage_counts: &'recorder BTreeMap<String, u64>,
+    run_id: Option<&'recorder str>,
+    stage_totals_seconds: StageTimingMap<'recorder>,
+    stage_counts: StageTimingMap<'recorder>,
 }
 
 #[derive(Serialize)]
 struct StageTimingSnapshotPayload<'recorder> {
-    stage_totals_seconds: &'recorder BTreeMap<String, f64>,
-    stage_counts: &'recorder BTreeMap<String, u64>,
+    stage_totals_seconds: StageTimingMap<'recorder>,
+    stage_counts: StageTimingMap<'recorder>,
+}
+
+impl Serialize for StageTimingMap<'_> {
+    fn serialize<Output>(&self, serializer: Output) -> Result<Output::Ok, Output::Error>
+    where
+        Output: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.stages.len()))?;
+        for (stage_name, aggregate) in self.stages {
+            match self.metric {
+                StageTimingMetric::TotalSeconds => map.serialize_entry(stage_name, &aggregate.total_seconds)?,
+                StageTimingMetric::Count => map.serialize_entry(stage_name, &aggregate.count)?,
+            }
+        }
+        map.end()
+    }
 }
 
 impl StageTimingRecorder {
-    #[must_use]
-    pub fn from_config(stage_timing_path_configured: bool, force: bool) -> Option<Self> {
-        (stage_timing_path_configured || force).then(Self::default)
-    }
-
-    pub fn add_stage_duration(&mut self, stage_name: String, duration_seconds: f64) {
-        *self.stage_totals_seconds.entry(stage_name.clone()).or_insert(0.0) += duration_seconds;
-        let stage_count = self.stage_counts.entry(stage_name).or_insert(0);
-        *stage_count = stage_count.saturating_add(1);
+    pub fn add_stage_duration(&mut self, stage_name: &str, duration_seconds: f64) {
+        if let Some(aggregate) = self.stages.get_mut(stage_name) {
+            aggregate.total_seconds += duration_seconds;
+            aggregate.count = aggregate.count.saturating_add(1);
+            return;
+        }
+        self.stages.insert(stage_name.to_owned(), StageTimingAggregate { total_seconds: duration_seconds, count: 1 });
     }
 
     /// Write every configured final timing output.
@@ -88,18 +106,21 @@ impl StageTimingRecorder {
     /// # Errors
     ///
     /// Returns an error when a timing payload cannot be written.
-    pub fn write_final_timing_outputs(
+    pub(crate) fn write_final_timing_outputs(
         &self,
         stage_timing_path: Option<&Path>,
         profile_summary_path: Option<&Path>,
-        run_id: Option<String>,
+        run_id: Option<&str>,
     ) -> Result<(), TimingFileError> {
         if let Some(path) = stage_timing_path {
             write_pretty_json_payload(
                 path,
                 &StageTimingSnapshotPayload {
-                    stage_totals_seconds: &self.stage_totals_seconds,
-                    stage_counts: &self.stage_counts,
+                    stage_totals_seconds: StageTimingMap {
+                        stages: &self.stages,
+                        metric: StageTimingMetric::TotalSeconds,
+                    },
+                    stage_counts: StageTimingMap { stages: &self.stages, metric: StageTimingMetric::Count },
                 },
             )?;
         }
@@ -109,28 +130,15 @@ impl StageTimingRecorder {
                 &ProfileSummaryPayload {
                     schema_version: 1,
                     run_id,
-                    stage_totals_seconds: &self.stage_totals_seconds,
-                    stage_counts: &self.stage_counts,
+                    stage_totals_seconds: StageTimingMap {
+                        stages: &self.stages,
+                        metric: StageTimingMetric::TotalSeconds,
+                    },
+                    stage_counts: StageTimingMap { stages: &self.stages, metric: StageTimingMetric::Count },
                 },
             )?;
         }
         Ok(())
-    }
-}
-
-#[must_use]
-pub fn build_final_timing_outputs_write_started_diagnostic_payload(
-    stage_timing_path: Option<&str>,
-    profile_summary_path: Option<&str>,
-    run_id: Option<&str>,
-) -> FinalTimingOutputsWriteStartedDiagnosticPayload {
-    FinalTimingOutputsWriteStartedDiagnosticPayload {
-        level: FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_LEVEL,
-        event_name: FINAL_TIMING_OUTPUTS_WRITE_STARTED_EVENT_NAME,
-        message: FINAL_TIMING_OUTPUTS_WRITE_STARTED_MESSAGE,
-        stage_timing_path: stage_timing_path.map(str::to_string),
-        profile_summary_path: profile_summary_path.map(str::to_string),
-        run_id: run_id.map(str::to_string),
     }
 }
 
@@ -144,7 +152,8 @@ where
             source,
         })?;
     }
-    let payload_text = serde_json::to_string_pretty(payload).map_err(|source| TimingFileError::Serialize { source })?;
-    std::fs::write(path, format!("{payload_text}\n"))
-        .map_err(|source| TimingFileError::WriteFile { path: path.to_path_buf(), source })
+    let mut payload_text =
+        serde_json::to_string_pretty(payload).map_err(|source| TimingFileError::Serialize { source })?;
+    payload_text.push('\n');
+    std::fs::write(path, payload_text).map_err(|source| TimingFileError::WriteFile { path: path.to_path_buf(), source })
 }

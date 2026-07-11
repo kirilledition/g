@@ -1,5 +1,6 @@
 //! Prepared native association-run ownership.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,20 +15,18 @@ use crate::delivery::{
 use crate::delivery_execution::{
     AssociationDeliveryReport, DeliveryError, run_association_delivery, run_grouped_union_association_delivery,
 };
+use crate::output_manifest::build_prediction_loco_file_fingerprints_with_cache;
 use crate::pipeline::BgenRunEngine;
-use crate::preflight::{
-    PreflightError, validate_jax_index_capacity, validate_multi_prediction_values,
-    validate_multi_trait_preflight_values,
-};
+use crate::preflight::{PreflightError, validate_jax_index_capacity, validate_multi_trait_preflight_values};
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
-use crate::progress::{DeliveryProgress, RunProgressReporter};
+use crate::progress::{ProgressTotals, RunProgressReporter};
 use crate::trusted_validation::TrustedBgenValidationError;
 
 /// Failure while converting a run plan into a fully prepared native run.
 #[derive(Debug, thiserror::Error)]
-pub enum RunPreparationError {
+pub(crate) enum RunPreparationError {
     #[error(transparent)]
     Bgen(#[from] g_genotype::BgenError),
     #[error(transparent)]
@@ -39,17 +38,11 @@ pub enum RunPreparationError {
     #[error(transparent)]
     Preflight(#[from] PreflightError),
     #[error(transparent)]
-    Prediction(#[from] g_input::PredictionError),
-    #[error(transparent)]
     TrustedValidation(#[from] TrustedBgenValidationError),
-    #[error(transparent)]
-    TrustedValidationCacheDirectory(#[from] g_runtime::TrustedBgenValidationCacheDirectoryError),
     #[error("The run plan contains no phenotype outputs.")]
     EmptyPhenotypePlan,
     #[error("Aligned input produced no phenotype groups.")]
     EmptyPhenotypeGroups,
-    #[error("BGEN chromosome boundary metadata contained no chromosome label.")]
-    MissingChromosomeLabel,
     #[error("Resolved GPU genotype format cannot remain auto during run preparation.")]
     UnresolvedGpuGenotypeFormat,
     #[error("{field_name} must be positive.")]
@@ -156,12 +149,19 @@ impl RunEngine {
             None => open_bgen_engine(&run_plan, chunk_size, variant_limit, effective_trusted_no_missing_diploid)?,
         };
         validate_scanned_variants(&bgen_engine, variant_limit)?;
-        let required_chromosomes = required_chromosomes(&bgen_engine, variant_limit)?;
-        let groups = load_groups(&run_plan, &bgen_engine)?;
-        validate_groups(&run_plan, &groups, &required_chromosomes)?;
+        let phenotype_names = run_plan
+            .phenotype_runs
+            .iter()
+            .map(|phenotype_run| phenotype_run.phenotype_name.clone())
+            .collect::<Vec<_>>();
+        let prediction_loco_paths =
+            g_input::resolve_prediction_loco_paths(Path::new(&run_plan.input.prediction_list_path), &phenotype_names)?;
+        let groups = load_groups(&run_plan, &bgen_engine, &phenotype_names, &prediction_loco_paths)?;
+        validate_groups(&run_plan, &groups)?;
         let prepared_groups = prepare_output_groups(
             &run_plan,
             groups,
+            &prediction_loco_paths,
             &mut output_manager,
             resolved_gpu_genotype_format,
             effective_trusted_no_missing_diploid,
@@ -247,50 +247,78 @@ impl PreparedRun {
         } = self;
         let grouped_union_sample_indices =
             grouped_union_sample_indices(&groups, resolved_gpu_genotype_format, effective_trusted_no_missing_diploid);
-        let association_mode = run_plan.association_mode.as_str().to_string();
-        let requests = groups
-            .into_iter()
-            .map(|prepared_group| {
-                let group_name = prepared_group.group.phenotype_group.phenotype_names.join(",");
-                let progress = progress_reporter
-                    .as_ref()
-                    .map(|reporter| DeliveryProgress::new(Arc::clone(reporter), group_name, association_mode.clone()));
-                AssociationDeliveryRequest {
-                    group: prepared_group.group,
-                    settings: AssociationDeliverySettings {
-                        writer_sessions: prepared_group.output.writer_sessions,
-                        committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
-                        null_logistic_nonconvergence_policy: run_plan.compute.kernels.binary_null.nonconvergence_policy,
-                        staging_depth,
-                        result_in_flight_limit,
-                        progress,
-                        use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-        let delivery_result = if let Some(union_sample_indices) = grouped_union_sample_indices {
-            run_grouped_union_association_delivery(
-                &bgen_engine,
-                &backend,
-                GroupedUnionAssociationDeliveryRequest { groups: requests, union_sample_indices },
-                || hooks.check_interruption(),
-            )
-            .map(|report| vec![report])
-        } else {
-            let mut reports = Vec::with_capacity(requests.len());
-            let mut delivery_error = None;
-            for request in requests {
-                match run_association_delivery(&bgen_engine, &backend, &request, || hooks.check_interruption()) {
-                    Ok(report) => reports.push(report),
-                    Err(error) => {
-                        delivery_error = Some(error);
-                        break;
-                    }
-                }
-            }
-            delivery_error.map_or(Ok(reports), Err)
+        let statistics_policy = match run_plan.association_mode {
+            g_plan::AssociationMode::Regenie2Linear => g_genotype::ChunkStatisticsPolicy {
+                retain_imputed_dosage_square_sum: true,
+                collect_sparse_candidate_mask: false,
+            },
+            g_plan::AssociationMode::Regenie2Binary => g_genotype::ChunkStatisticsPolicy {
+                retain_imputed_dosage_square_sum: false,
+                collect_sparse_candidate_mask: run_plan.correction.method
+                    == g_plan::BinaryFallbackMethod::FirthApproximate,
+            },
         };
+        let delivery_result: Result<Vec<AssociationDeliveryReport>, DeliveryError<Backend::Error, Hooks::Error>> =
+            (|| {
+                let progress_context = if let Some(reporter) = progress_reporter {
+                    let all_chunk_specs = bgen_engine.plan_chunks(&BTreeSet::new())?;
+                    Some((reporter, ProgressTotals::from_chunk_specs(&all_chunk_specs)?))
+                } else {
+                    None
+                };
+                let requests = groups
+                    .into_iter()
+                    .map(|prepared_group| {
+                        let progress = progress_context
+                            .map(|(reporter, totals)| {
+                                reporter.register_delivery(
+                                    prepared_group.group.phenotype_group.phenotype_names.join(","),
+                                    totals,
+                                )
+                            })
+                            .transpose()?;
+                        Ok(AssociationDeliveryRequest {
+                            group: prepared_group.group,
+                            settings: AssociationDeliverySettings {
+                                writer_sessions: prepared_group.output.writer_sessions,
+                                committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
+                                null_logistic_nonconvergence_policy: run_plan
+                                    .compute
+                                    .kernels
+                                    .binary_null
+                                    .nonconvergence_policy,
+                                staging_depth,
+                                result_in_flight_limit,
+                                progress,
+                                use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
+                                statistics_policy,
+                            },
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DeliveryError<Backend::Error, Hooks::Error>>>()?;
+                if let Some(union_sample_indices) = grouped_union_sample_indices {
+                    run_grouped_union_association_delivery(
+                        &bgen_engine,
+                        &backend,
+                        GroupedUnionAssociationDeliveryRequest { groups: requests, union_sample_indices },
+                        || hooks.check_interruption(),
+                    )
+                    .map(|report| vec![report])
+                } else {
+                    let mut reports = Vec::with_capacity(requests.len());
+                    let mut delivery_error = None;
+                    for request in requests {
+                        match run_association_delivery(&bgen_engine, &backend, request, || hooks.check_interruption()) {
+                            Ok(report) => reports.push(report),
+                            Err(error) => {
+                                delivery_error = Some(error);
+                                break;
+                            }
+                        }
+                    }
+                    delivery_error.map_or(Ok(reports), Err)
+                }
+            })();
         drop(backend);
         finish_execution::<Backend::Error, Hooks>(delivery_result, output_manager)
     }
@@ -309,7 +337,7 @@ fn positive_u32_as_usize(value: u32, field_name: &'static str) -> Result<usize, 
 ///
 /// Returns an error when a required count is zero or exceeds the signed int32
 /// domain used by JAX indices, reductions, and loop state.
-pub fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparationError> {
+pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparationError> {
     let kernels = &run_plan.compute.kernels;
     let positive_values = [
         ("analysis chunk size", run_plan.analysis.chunk_size),
@@ -355,10 +383,11 @@ fn open_bgen_engine(
         trusted_no_missing_diploid,
     )?;
     if trusted_no_missing_diploid {
-        let cache_directory = g_runtime::default_trusted_bgen_validation_cache_directory()?;
-        engine.validate_trusted_no_missing_diploid_with_cache_directory(
+        let cache_directory = crate::trusted_validation::default_cache_directory()?;
+        crate::trusted_validation::validate_trusted_no_missing_diploid_with_cache_directory(
+            &engine.reader,
             Path::new(&run_plan.input.bgen_path),
-            run_plan.compute.trusted_bgen_validation_mode.as_str(),
+            run_plan.compute.trusted_bgen_validation_mode,
             &cache_directory,
         )?;
     }
@@ -414,43 +443,21 @@ fn validate_scanned_variants(bgen_engine: &BgenRunEngine, variant_limit: Option<
     Ok(())
 }
 
-fn required_chromosomes(
-    bgen_engine: &BgenRunEngine,
-    variant_limit: Option<usize>,
-) -> Result<Vec<String>, RunPreparationError> {
-    let variant_count = bgen_engine.reader.variant_count();
-    let scanned_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
-    let mut chromosome_labels = Vec::new();
-    for chromosome_boundaries in bgen_engine.reader.chromosome_boundary_indices().windows(2) {
-        let chromosome_start_index = chromosome_boundaries[0];
-        let chromosome_stop_index = chromosome_boundaries[1].min(scanned_variant_count);
-        if chromosome_start_index >= chromosome_stop_index {
-            continue;
-        }
-        let metadata = bgen_engine.reader.variant_metadata_slice(chromosome_start_index, chromosome_start_index + 1)?;
-        let chromosome_label =
-            metadata.chromosome.into_iter().next().ok_or(RunPreparationError::MissingChromosomeLabel)?;
-        chromosome_labels.push(chromosome_label);
-    }
-    Ok(chromosome_labels)
-}
-
 fn load_groups(
     run_plan: &RunPlan,
     bgen_engine: &BgenRunEngine,
+    phenotype_names: &[String],
+    prediction_loco_paths: &[g_input::PredictionLocoPath],
 ) -> Result<Vec<AlignedPhenotypeGroup>, RunPreparationError> {
     let sample_identifiers = load_sample_identifiers(run_plan, bgen_engine)?;
     let groups = g_input::load_aligned_phenotype_groups(&PhenotypeGroupLoadRequest {
-        sample_identifiers,
-        phenotype_path: run_plan.input.phenotype_path.clone(),
-        prediction_list_path: run_plan.input.prediction_list_path.clone(),
-        phenotype_names: run_plan
-            .phenotype_runs
-            .iter()
-            .map(|phenotype_run| phenotype_run.phenotype_name.clone())
-            .collect(),
-        covariate_path: run_plan.input.covariate_path.clone(),
-        covariate_names: Some(run_plan.input.covariate_names.clone()),
+        sample_identifiers: &sample_identifiers,
+        phenotype_path: &run_plan.input.phenotype_path,
+        prediction_list_path: &run_plan.input.prediction_list_path,
+        prediction_loco_paths,
+        phenotype_names,
+        covariate_path: run_plan.input.covariate_path.as_deref(),
+        covariate_names: Some(&run_plan.input.covariate_names),
         is_binary_trait: run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary,
         sample_key_mode: run_plan.input.sample_key_mode,
         sample_mode: run_plan.compute.multi_phenotype_sample_mode,
@@ -471,11 +478,7 @@ fn load_sample_identifiers(
     )?)
 }
 
-fn validate_groups(
-    run_plan: &RunPlan,
-    groups: &[AlignedPhenotypeGroup],
-    required_chromosomes: &[String],
-) -> Result<(), RunPreparationError> {
+fn validate_groups(run_plan: &RunPlan, groups: &[AlignedPhenotypeGroup]) -> Result<(), RunPreparationError> {
     let is_binary_trait = run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary;
     let chunk_size = positive_u32_as_usize(run_plan.analysis.chunk_size, "analysis chunk size")?;
     let firth_candidate_capacity =
@@ -501,15 +504,6 @@ fn validate_groups(
             &group.covariate_values,
             is_binary_trait,
         )?;
-        for chromosome in required_chromosomes {
-            let prediction_matrix = group.chromosome_prediction_matrix(chromosome)?;
-            validate_multi_prediction_values(
-                chromosome,
-                &prediction_matrix.prediction_values,
-                trait_count,
-                sample_count,
-            )?;
-        }
     }
     Ok(())
 }
@@ -517,6 +511,7 @@ fn validate_groups(
 fn prepare_output_groups(
     run_plan: &RunPlan,
     groups: Vec<AlignedPhenotypeGroup>,
+    prediction_loco_paths: &[g_input::PredictionLocoPath],
     output_manager: &mut OutputManager,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
     effective_trusted_no_missing_diploid: bool,
@@ -524,11 +519,12 @@ fn prepare_output_groups(
 ) -> Result<Vec<PreparedAssociationGroup>, RunPreparationError> {
     let runtime_output_plan =
         RuntimeOutputPlan { variant_count, effective_trusted_no_missing_diploid, resolved_gpu_genotype_format };
-    let mut fingerprint_cache = ManifestFileFingerprintCache::new();
+    let mut fingerprint_cache = ManifestFileFingerprintCache::default();
+    let all_prediction_loco_files: Arc<[g_output::PredictionLocoFileFingerprint]> =
+        build_prediction_loco_file_fingerprints_with_cache(prediction_loco_paths, &mut fingerprint_cache)?.into();
     let mut run_initializations = Vec::with_capacity(run_plan.phenotype_runs.len());
     for group in &groups {
         run_initializations.extend(build_runtime_output_initializations(
-            run_plan,
             &RuntimeOutputGroupInput {
                 phenotype_group: &group.phenotype_group,
                 covariate_names: &group.covariate_names,
@@ -536,7 +532,7 @@ fn prepare_output_groups(
                 output_sample_mode: group.phenotype_group.sample_mode,
             },
             &runtime_output_plan,
-            &mut fingerprint_cache,
+            &all_prediction_loco_files,
         )?);
     }
     let collect_stage_timings = run_plan.diagnostics.stage_timings_path.is_some()

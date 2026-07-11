@@ -2,7 +2,7 @@
 
 use nalgebra::DMatrix;
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PreflightError {
     #[error("BGEN input contains no variants.")]
     EmptyBgenInput,
@@ -34,12 +34,6 @@ pub enum PreflightError {
     BinaryPhenotypeMissingClass,
     #[error("{label} exceeds the JAX int32 index domain.")]
     JaxIndexCapacityExceeded { label: &'static str },
-    #[error("Prediction matrix shape for chromosome {chromosome} exceeds native capacity.")]
-    PredictionMatrixShapeOverflow { chromosome: String },
-    #[error(
-        "Prediction matrix for chromosome {chromosome} contains {actual_value_count} values; expected {expected_value_count}."
-    )]
-    PredictionMatrixValueCountMismatch { chromosome: String, actual_value_count: usize, expected_value_count: usize },
 }
 
 pub(crate) fn validate_multi_trait_preflight_values(
@@ -83,25 +77,6 @@ pub(crate) fn validate_multi_trait_preflight_values(
         }
     }
     Ok(())
-}
-
-pub(crate) fn validate_multi_prediction_values(
-    chromosome: &str,
-    prediction_values: &[f32],
-    trait_count: usize,
-    sample_count: usize,
-) -> Result<(), PreflightError> {
-    let expected_value_count = trait_count
-        .checked_mul(sample_count)
-        .ok_or_else(|| PreflightError::PredictionMatrixShapeOverflow { chromosome: chromosome.to_string() })?;
-    if prediction_values.len() != expected_value_count {
-        return Err(PreflightError::PredictionMatrixValueCountMismatch {
-            chromosome: chromosome.to_string(),
-            actual_value_count: prediction_values.len(),
-            expected_value_count,
-        });
-    }
-    validate_finite_values(&format!("Prediction matrix for chromosome {chromosome}"), prediction_values)
 }
 
 pub(crate) fn validate_jax_index_capacity(
@@ -164,8 +139,7 @@ fn validate_binary_phenotype(values: &[f32]) -> Result<(), PreflightError> {
 }
 
 fn validate_covariate_matrix_rank(row_count: usize, column_count: usize, values: &[f32]) -> Result<(), PreflightError> {
-    let rank_values = values.iter().copied().map(f64::from).collect::<Vec<_>>();
-    let rank_matrix = DMatrix::from_row_slice(row_count, column_count, &rank_values);
+    let rank_matrix = DMatrix::from_row_iterator(row_count, column_count, values.iter().copied().map(f64::from));
     let singular_values = rank_matrix.svd(false, false).singular_values;
     let largest_singular_value = singular_values.iter().copied().fold(0.0_f64, f64::max);
     #[allow(clippy::cast_precision_loss)]

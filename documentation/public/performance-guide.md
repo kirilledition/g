@@ -35,6 +35,10 @@ portable guarantee.
 | Output stage slow | Storage throughput, writer threads, queue depth, part grouping, and Parquet compression. |
 | Resume startup slow | Manifest validation mode and strict chunk reconciliation. |
 
+Binary score-only runs prepare only the null-logistic and score state. They do
+not pay the chromosome-level null-Firth fit, full-null deviance, or Firth-state
+memory cost; those operations are exclusive to approximate-Firth runs.
+
 ## Cold, Warm, And Hot Runs
 
 Do not compare timing modes as if they measured the same thing:
@@ -47,6 +51,34 @@ Do not compare timing modes as if they measured the same thing:
 
 Use cold-process timing for batch-job wall-clock expectations. Use warm-cache
 or hot same-process timing only when that is the workflow being measured.
+
+Native decode buffers submitted to JAX transfer their allocation into NumPy;
+there is no full genotype memcpy at the binding boundary. Grouped-union runs
+retain only the union source buffer for projection reuse. Phenotype, covariate,
+and single-use LOCO matrices also transfer their allocations directly into
+NumPy. Native input indexes each selected LOCO file once using byte offsets and
+line numbers. Files with identical headers share one loader-side identifier
+index and one alignment recipe per group; those large header strings are
+discarded after source construction. Resume planning validates only chromosome
+blocks that still need output. When execution reaches one of those blocks,
+input reads, parses, finite-validates, and aligns just that chromosome into its
+final trait-major matrix. File metadata snapshots and raw-row SHA-256 digests
+reject changes between indexing and deferred reading. Fully committed
+chromosomes therefore never allocate or parse prediction values. A repeated
+noncontiguous chromosome block alone keeps one matrix for safe clones until its
+final planned use.
+
+The native association scheduler starts one compute thread, one host-result
+materialization thread, and one bounded channel set for the delivery, independent
+of active phenotype-group count. Per-group state and counters preserve result
+routing. At a chromosome boundary, all results drain and the compute worker
+acknowledges destruction of each replaced JAX state before its successor is built,
+which avoids both per-chromosome worker churn and overlapping chromosome-state
+device memory. Group-level device state is created at first use and released
+after its final chromosome preparation. Fully resumed groups initialize progress but do not select BGEN
+samples, prepare JAX state, or start scheduler workers. Partial resume rebuilds
+the union from groups with pending output; one remaining group or a union without
+sample overlap uses direct delivery instead of union projection.
 
 ## Runtime Knobs
 
@@ -68,7 +100,7 @@ Use the current packaged defaults first. Override only with measurements.
 | `[compute] firth_batch_size` | Approximate-Firth candidate batch size. |
 | `[compute] firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
 | `[compute] jax_persistent_cache`, `jax_cache_dir` | JAX compilation cache behavior. |
-| `[diagnostics] telemetry` | Progress, profile, and trace modes; profile/trace can perturb timing. |
+| `[diagnostics] telemetry` | `off`, `progress`, or `profile`; profile mode can perturb timing. |
 
 `gpu_genotype_format = "auto"` resolves to packed8 only for single-trait binary
 GPU REGENIE Step 2 runs when trusted no-missing diploid BGEN validation passes.
@@ -150,22 +182,7 @@ Profile mode:
 ```toml
 [diagnostics]
 telemetry = "profile"
-log_dir = "/path/to/logs"
 ```
-
-Trace mode is for small or capped runs:
-
-```toml
-[compute]
-variant_limit = 1000
-
-[diagnostics]
-telemetry = "trace"
-trace_event_cap = 1000000
-```
-
-Trace can perturb performance and generate high-volume logs. Use it to diagnose
-a specific small case, not as a production timing mode.
 
 Development benchmark protocols and repository-specific SLURM recipes live in
 [Benchmarking](../development/benchmarking.md) and

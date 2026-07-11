@@ -1,17 +1,35 @@
 //! Reusable host genotype buffers and grouped-sample projection.
 
-use g_genotype::{
-    BgenError, BgenReaderCore, ChunkStats, GenotypeError, GenotypeResult, OutputBufferAddress, OutputValueCount,
-    VariantMetadataColumns,
-};
+use std::sync::Arc;
 
-use crate::association_scheduler::OwnedGenotypeBuffer;
+use g_genotype::{
+    BgenError, BgenReaderCore, ChunkStatisticsPolicy, ChunkStats, GenotypeError, GenotypeResult, OutputBufferAddress,
+    OutputValueCount,
+};
+use g_genotype_contracts::VariantMetadataColumns;
+
+use crate::backend::OwnedGenotypeBuffer;
 
 /// Reusable exact-size buffers for decoded association batches.
 #[derive(Default)]
 pub struct GenotypeBufferPool {
     dosage_buffers: Vec<Vec<f32>>,
     packed8_buffers: Vec<Vec<u8>>,
+}
+
+/// Allocate one exact-size genotype buffer that will transfer into a backend.
+///
+/// # Errors
+///
+/// Returns an error when the packed representation size overflows.
+pub fn allocate_genotype_buffer(value_count: usize, use_packed8: bool) -> GenotypeResult<OwnedGenotypeBuffer> {
+    if use_packed8 {
+        let packed_value_count = value_count
+            .checked_mul(2)
+            .ok_or_else(|| GenotypeError::InvalidInput("Packed8 genotype buffer size overflowed usize.".to_string()))?;
+        return Ok(OwnedGenotypeBuffer::Packed8(vec![0_u8; packed_value_count]));
+    }
+    Ok(OwnedGenotypeBuffer::Dosage(vec![0.0_f32; value_count]))
 }
 
 impl GenotypeBufferPool {
@@ -53,6 +71,7 @@ pub fn decode_genotype_buffer(
     variant_start_index: usize,
     variant_stop_index: usize,
     buffer: &mut OwnedGenotypeBuffer,
+    statistics_policy: ChunkStatisticsPolicy,
 ) -> Result<ChunkStats, BgenError> {
     match buffer {
         OwnedGenotypeBuffer::Dosage(values) => reader.read_preprocessed_variant_major_dosage_f32_into_address_prepared(
@@ -60,6 +79,7 @@ pub fn decode_genotype_buffer(
             variant_stop_index,
             OutputBufferAddress::from_mut_ptr(values.as_mut_ptr()),
             OutputValueCount::new(values.len()),
+            statistics_policy,
         ),
         OwnedGenotypeBuffer::Packed8(values) => reader
             .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
@@ -67,6 +87,7 @@ pub fn decode_genotype_buffer(
                 variant_stop_index,
                 OutputBufferAddress::from_mut_ptr(values.as_mut_ptr()),
                 OutputValueCount::new(values.len()),
+                statistics_policy,
             ),
     }
 }
@@ -77,7 +98,7 @@ pub fn decode_genotype_buffer(
 ///
 /// Returns an error when dimensions overflow, buffer lengths disagree, or a
 /// group sample position is outside the union.
-pub fn project_variant_major_dosages(
+pub(crate) fn project_variant_major_dosages(
     union_dosages: &[f32],
     union_sample_count: usize,
     variant_count: usize,
@@ -102,11 +123,6 @@ pub fn project_variant_major_dosages(
             group_dosages.len()
         )));
     }
-    if let Some(invalid_position) = group_sample_positions.iter().find(|position| **position >= union_sample_count) {
-        return Err(GenotypeError::InvalidInput(format!(
-            "Grouped-union sample position {invalid_position} is out of range for {union_sample_count} samples."
-        )));
-    }
     for (union_row, group_row) in
         union_dosages.chunks_exact(union_sample_count).zip(group_dosages.chunks_exact_mut(group_sample_positions.len()))
     {
@@ -117,31 +133,30 @@ pub fn project_variant_major_dosages(
     Ok(())
 }
 
-/// Resolve the single chromosome represented by one decoded chunk.
+/// Resolve the chromosome represented by one planner-produced chunk.
 ///
 /// # Errors
 ///
-/// Returns an error for empty, inconsistent, or cross-chromosome metadata.
-pub fn homogeneous_chunk_chromosome(metadata: &VariantMetadataColumns, variant_count: usize) -> GenotypeResult<String> {
+/// Returns an error for empty or inconsistent metadata. The chunk planner owns
+/// the chromosome-homogeneity invariant.
+pub(crate) fn homogeneous_chunk_chromosome(
+    metadata: &VariantMetadataColumns,
+    variant_count: usize,
+) -> GenotypeResult<Arc<str>> {
     if variant_count == 0 {
         return Err(GenotypeError::InvalidInput("Association delivery received an empty BGEN chunk.".to_string()));
     }
-    if metadata.chromosome.len() != variant_count {
+    if metadata.len() != variant_count {
         return Err(GenotypeError::InvalidInput(format!(
             "Chromosome metadata contains {} values for a {variant_count}-variant chunk.",
-            metadata.chromosome.len()
+            metadata.len()
         )));
     }
     let chromosome = metadata
-        .chromosome
-        .first()
+        .shared_chromosome(0)
         .ok_or_else(|| GenotypeError::InvalidInput("Association delivery chunk has no chromosome.".to_string()))?;
-    if metadata.chromosome.iter().any(|value| value != chromosome) {
-        return Err(GenotypeError::InvalidInput(
-            "Association delivery received a chunk spanning multiple chromosomes.".to_string(),
-        ));
-    }
-    Ok(chromosome.clone())
+    debug_assert!(metadata.chromosomes().all(|value| value == chromosome.as_ref()));
+    Ok(chromosome)
 }
 
 fn take_matching_buffer<Buffer>(buffers: &mut Vec<Vec<Buffer>>, value_count: usize) -> Option<Vec<Buffer>> {

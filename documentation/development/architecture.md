@@ -20,6 +20,7 @@ g-runner::run_cli
 g-interface -> g-plan -> g-engine::execute_coordinated_run
         |                       |
         |                       +-> g-genotype + g-input
+        |                       +-> g-genotype-contracts
         |                       +-> g-runtime + g-output
         v
 PreparedRun::execute<AssociationBackend> + bounded pipeline
@@ -40,24 +41,46 @@ typed arrays to Rust.
 | --- | --- |
 | CLI parsing, TOML, defaults, validation | `g-interface` |
 | Immutable run contracts and host policy | `g-plan` |
+| Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
 | BGEN mmap/index/decode and genotype preprocessing | `g-genotype` |
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
 | Host buffers, BGEN delivery primitives, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
-| Logging, telemetry, timing, process policy, SIGTERM | `g-runtime` |
-| CLI lifecycle, crate-to-crate orchestration, terminal rendering | `g-runner` |
+| Logging/telemetry transport, timing, Rayon state, SIGTERM | `g-runtime` |
+| CLI lifecycle, process/JAX policy, crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
 | PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation, JAX process calls | root Rust extension under `src/binding` |
 | Device state and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
 
 `g-runner` is the root dependency through which the binding reaches CLI,
-planning, runtime, and execution services. It owns CLI dispatch,
-process-global runtime compatibility, stage timing, terminal rendering, and
-the coarse engine invocation. `RunEngine` owns the shared plan and output
-manager; `PreparedRun` owns aligned groups, BGEN state, resume state, bounded
-scheduling, reusable host buffers, delivery, interruption, abort, and output
-completion. The binding retains only calls that attach to Python, hold opaque
+planning, runtime, and execution services. It owns CLI dispatch, resolves the
+application plan into concrete logging, telemetry, and timing resources,
+process-global runtime compatibility, terminal rendering, and JAX setup before
+the coarse engine invocation. `g-runtime` consumes only that generic resolved
+session policy; it does not import or interpret `g-plan`. `RunEngine` owns the shared plan
+and output manager; `PreparedRun` owns aligned groups, BGEN state, resume state, bounded
+scheduling, move-only backend buffers, reusable grouped-union source buffers,
+delivery, interruption, abort, and output completion. Input retains shared
+LOCO row indexes and compact alignment recipes, then materializes only the next
+post-resume chromosome. Group, genotype, and single-use LOCO matrices move
+directly into NumPy ownership. The binding
+retains only calls that attach to Python, hold opaque
 JAX objects, preserve a concrete `PyErr`, or label telemetry with the current
 Python thread.
+
+Engine resolves the prediction list once into an input-owned path catalog.
+Input indexing/alignment and output-manifest fingerprinting borrow that same
+catalog, so group preparation does not reparse the list or duplicate its path
+strings.
+
+Genotype, engine, and output import one canonical set of data-plane column
+contracts from `g-genotype-contracts`. Genotype retains dictionary-coded
+metadata through a shared store and output builds Arrow metadata lazily, so the
+crate boundary adds no row copies, eager arrays, or adapter DTOs.
+
+Runner holds process runtime state across logging-compatibility validation,
+native session construction, subscriber installation, and topology recording.
+An incompatible repeated run therefore cannot open a log/telemetry file or
+start an asynchronous writer before it is rejected.
 
 `g-runner::run_cli` is the coarse native coordinator used by the binding. It
 owns the call to `g-engine::execute_coordinated_run`, which in turn owns
@@ -82,18 +105,24 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
 
 - Domain crates remain free of PyO3.
 - The JAX boundary is batch-oriented; there are no per-variant Python calls.
-- Rust owns all bounded queues, worker joins, host buffers, and output order.
-- Planning enums have one definition in `g-plan`; runtime/output crates consume
-  those types directly.
+- Rust owns all bounded queues, worker joins, host buffers, and output order;
+  backend-bound genotype allocations move into NumPy without a second matrix.
+- Planning enums have one definition in `g-plan`. Only domain owners interpret
+  them; infrastructure crates such as `g-runtime` receive projected generic
+  policy.
 - Resume commit sets and the immutable `RunPlan` use shared ownership rather
   than per-group clones.
 - CLI validation and help complete before importing JAX-heavy modules.
+- Binary score-only execution does not construct Firth policy, fit a null-Firth
+  model, compute full-null deviance, or retain Firth-only chromosome arrays.
+  Approximate-Firth state composes the compact score state when correction is
+  enabled.
 - First SIGINT/SIGTERM preserves resumable output; a second SIGTERM uses the
   operating system default action.
 - Unsupported REGENIE options are rejected, not silently adapted.
 - Rust host scientific buffers are `f32`; `score_dtype` controls JAX arithmetic
   and result width after device transfer. Firth arithmetic is always `f64`.
-- Production exports are limited to `g._core.cli` and `g._core.engine`.
+- Production exports are limited to `g._core.cli`.
 
 Detailed contracts:
 

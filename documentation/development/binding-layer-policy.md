@@ -20,10 +20,10 @@ src/g       console bootstrap, JAX backend, JAX kernels
 
 ## Allowed
 
-- The two registered PyO3 entrypoints and their typed result/config objects.
+- The registered CLI entrypoint and its typed terminal result.
 - Lazy construction of the Python JAX backend after `g-runner` completed
   native validation and runtime setup.
-- The four backend method invocations and typed NumPy exchange classes.
+- The four backend method invocations with direct typed NumPy arguments.
 - Retention of opaque Python JAX group, chromosome, and device-result handles.
 - Python signal checks, JAX configuration/device observation, and conversion
   of a concrete `PyErr` into runner-host callbacks.
@@ -63,12 +63,11 @@ The complete production namespace is:
 
 ```text
 g._core.cli       run, NativeCliRunResult
-g._core.engine    JAX backend config and typed exchange classes
 ```
 
-Every registered item must appear in `src/g/_core.pyi`, and every stub item must
-be registered. Unregistered Rust structs are implementation details, not a
-compatibility surface.
+Every registered item must appear in `src/g/_core.pyi`, and every stub item
+must be registered. The JAX backend bridge is private and does not create a
+Python extension namespace or exchange-object compatibility surface.
 
 ## Placement Test
 

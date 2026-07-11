@@ -1,15 +1,13 @@
-use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
 use g_plan::SampleKeyMode;
 
-use super::keys::{SampleKey, build_sample_key, duplicate_table_sample_key_error};
+use super::SampleAlignmentResult;
+use super::keys::{ObservedTableSampleKeys, SampleRowIndicesByKey, duplicate_table_sample_key_error};
 
 const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
-
-type SampleAlignmentResult<T> = Result<T, String>;
 
 struct TabularColumnSelection {
     family_identifier_value_index: Option<usize>,
@@ -32,6 +30,7 @@ struct StreamingTabularReader<R: Read> {
     path_text: String,
     source_label: &'static str,
     reader: csv::Reader<R>,
+    current_record: csv::StringRecord,
     current_line_number: usize,
 }
 
@@ -54,7 +53,7 @@ pub(super) fn read_multi_phenotype_table(
     phenotype_names: &[String],
     is_binary_trait: bool,
     sample_key_mode: SampleKeyMode,
-    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     sample_count: usize,
 ) -> SampleAlignmentResult<MultiPhenotypeTable> {
     let mut reader = open_tabular_reader(phenotype_path, "phenotype table", b'\t')?;
@@ -83,21 +82,22 @@ pub(super) fn read_multi_phenotype_table(
         individual_identifier_index,
         &phenotype_column_definitions,
     );
-    let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
+    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_key_mode, sample_count);
     let phenotype_count = phenotype_names.len();
     let mut phenotype_values = vec![0.0; phenotype_count * sample_count];
     let mut phenotype_masks = vec![false; phenotype_count * sample_count];
-    while let Some(record) = reader.read_next_record()? {
-        selection.validate_record(&reader, &record)?;
-        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
+    while reader.read_next_record()? {
+        let record = &reader.current_record;
+        selection.validate_record(&reader, record)?;
+        let individual_identifier = selection.record_value(record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
         }
         let family_identifier = selection
             .family_identifier_value_index
-            .map_or("", |value_index| selection.record_value(&record, value_index));
-        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
-        if !observed_sample_keys.insert(sample_key.clone()) {
+            .map_or("", |value_index| selection.record_value(record, value_index));
+        let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
+        if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
             return Err(duplicate_table_sample_key_error(
                 "phenotype table",
                 sample_key_mode,
@@ -105,11 +105,11 @@ pub(super) fn read_multi_phenotype_table(
                 individual_identifier,
             ));
         }
-        let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
+        let Some(sample_array_index) = sample_array_index else {
             continue;
         };
         for (phenotype_index, phenotype_name) in phenotype_names.iter().enumerate() {
-            let phenotype_value = selection.record_value(&record, selection.data_value_indices[phenotype_index]);
+            let phenotype_value = selection.record_value(record, selection.data_value_indices[phenotype_index]);
             if is_tabular_null_value(phenotype_value) {
                 continue;
             }
@@ -125,7 +125,7 @@ pub(super) fn load_covariate_table(
     covariate_path: Option<&str>,
     covariate_names: Option<&[String]>,
     sample_key_mode: SampleKeyMode,
-    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     parse_candidate_mask: &[bool],
     sample_count: usize,
 ) -> SampleAlignmentResult<CovariateTable> {
@@ -179,9 +179,10 @@ fn read_tabular_header<R: Read>(
     reader: &mut StreamingTabularReader<R>,
     table_path: &Path,
 ) -> SampleAlignmentResult<Vec<String>> {
-    let header_record = reader
-        .read_next_record()?
-        .ok_or_else(|| format!("{} '{}' is empty.", reader.display_source_label(), table_path.display()))?;
+    if !reader.read_next_record()? {
+        return Err(format!("{} '{}' is empty.", reader.display_source_label(), table_path.display()));
+    }
+    let header_record = &reader.current_record;
     let headers = header_record.iter().map(ToString::to_string).collect::<Vec<_>>();
     if headers.is_empty() {
         return Err(format!("{} '{}' must contain a header row.", reader.display_source_label(), table_path.display()));
@@ -197,24 +198,23 @@ impl<R: Read> StreamingTabularReader<R> {
             .has_headers(false)
             .trim(csv::Trim::All)
             .from_reader(source);
-        Self { path_text, source_label, reader, current_line_number: 0 }
+        Self { path_text, source_label, reader, current_record: csv::StringRecord::new(), current_line_number: 0 }
     }
 
-    fn read_next_record(&mut self) -> SampleAlignmentResult<Option<csv::StringRecord>> {
-        let mut record = csv::StringRecord::new();
+    fn read_next_record(&mut self) -> SampleAlignmentResult<bool> {
         loop {
+            self.current_record.clear();
             let has_record = self
                 .reader
-                .read_record(&mut record)
+                .read_record(&mut self.current_record)
                 .map_err(|error| format!("Failed to read {} '{}': {error}.", self.source_label, self.path_text))?;
             if !has_record {
-                return Ok(None);
+                return Ok(false);
             }
             self.current_line_number += 1;
-            if !is_empty_tabular_record(&record) {
-                return Ok(Some(record));
+            if !is_empty_tabular_record(&self.current_record) {
+                return Ok(true);
             }
-            record.clear();
         }
     }
 
@@ -354,7 +354,7 @@ fn read_covariate_table(
     covariate_path: &Path,
     requested_covariate_names: Option<&[String]>,
     sample_key_mode: SampleKeyMode,
-    sample_row_indices_by_key: &HashMap<SampleKey, usize>,
+    sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     parse_candidate_mask: &[bool],
     sample_count: usize,
 ) -> SampleAlignmentResult<CovariateTable> {
@@ -388,21 +388,22 @@ fn read_covariate_table(
         individual_identifier_index,
         &covariate_column_definitions,
     );
-    let mut observed_sample_keys: HashSet<SampleKey> = HashSet::new();
+    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_key_mode, sample_count);
     let selected_covariate_count = selected_covariate_names.len();
     let mut covariate_values = vec![0.0; sample_count * selected_covariate_count];
     let mut covariate_mask = vec![false; sample_count];
-    while let Some(record) = reader.read_next_record()? {
-        selection.validate_record(&reader, &record)?;
-        let individual_identifier = selection.record_value(&record, selection.individual_identifier_value_index);
+    while reader.read_next_record()? {
+        let record = &reader.current_record;
+        selection.validate_record(&reader, record)?;
+        let individual_identifier = selection.record_value(record, selection.individual_identifier_value_index);
         if individual_identifier.is_empty() {
             continue;
         }
         let family_identifier = selection
             .family_identifier_value_index
-            .map_or("", |value_index| selection.record_value(&record, value_index));
-        let sample_key = build_sample_key(sample_key_mode, family_identifier, individual_identifier);
-        if !observed_sample_keys.insert(sample_key.clone()) {
+            .map_or("", |value_index| selection.record_value(record, value_index));
+        let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
+        if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
             return Err(duplicate_table_sample_key_error(
                 "covariate table",
                 sample_key_mode,
@@ -410,15 +411,15 @@ fn read_covariate_table(
                 individual_identifier,
             ));
         }
-        let Some(sample_array_index) = sample_row_indices_by_key.get(&sample_key) else {
+        let Some(sample_array_index) = sample_array_index else {
             continue;
         };
-        if !parse_candidate_mask[*sample_array_index] {
+        if !parse_candidate_mask[sample_array_index] {
             continue;
         }
         let mut row_has_missing_covariates = false;
         for covariate_index in 0..selected_covariate_count {
-            let covariate_value = selection.record_value(&record, selection.data_value_indices[covariate_index]);
+            let covariate_value = selection.record_value(record, selection.data_value_indices[covariate_index]);
             if is_tabular_null_value(covariate_value) {
                 row_has_missing_covariates = true;
                 break;
@@ -427,7 +428,7 @@ fn read_covariate_table(
             covariate_values[value_index] = parse_covariate_value(covariate_value)?;
         }
         if !row_has_missing_covariates {
-            covariate_mask[*sample_array_index] = true;
+            covariate_mask[sample_array_index] = true;
         }
     }
     Ok(CovariateTable { selected_covariate_names, covariate_values, covariate_mask, selected_covariate_count })

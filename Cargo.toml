@@ -9,6 +9,7 @@ members = [
     ".",
     "crates/engine",
     "crates/genotype",
+    "crates/genotype-contracts",
     "crates/input",
     "crates/interface",
     "crates/output",
@@ -38,8 +39,10 @@ criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
+hex = "0.4.3"
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
+g-genotype-contracts = { path = "crates/genotype-contracts" }
 g-input = { path = "crates/input" }
 g-interface = { path = "crates/interface" }
 g-output = { path = "crates/output" }
@@ -77,8 +80,8 @@ pedantic = { level = "warn", priority = -1 }
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 g-engine = { workspace = true }
+g-plan = { workspace = true }
 g-runner = { workspace = true }
-tracing = { workspace = true }
 pyo3-pylogger = { workspace = true }
 
 [features]

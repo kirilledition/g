@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
@@ -13,28 +14,29 @@ use super::{
 
 pub struct CurrentRunManifestHeaderInput {
     pub phenotype_name: String,
-    pub covariate_names: Vec<String>,
-    pub prediction_loco_files: Vec<PredictionLocoFileFingerprint>,
+    pub covariate_names: Arc<[String]>,
+    pub prediction_loco_files: Arc<[PredictionLocoFileFingerprint]>,
     pub sample_count: usize,
     pub variant_count: usize,
     pub effective_trusted_no_missing_diploid: bool,
     pub resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat,
     pub output_sample_mode: g_plan::MultiPhenotypeSampleMode,
-    pub phenotype_compute_group_id: String,
-    pub sample_set_fingerprint: Option<String>,
-    pub covariate_design_fingerprint: Option<String>,
-    pub prediction_alignment_fingerprint: Option<String>,
+    pub phenotype_compute_group_id: Arc<str>,
+    pub sample_set_fingerprint: Option<Arc<str>>,
+    pub covariate_design_fingerprint: Option<Arc<str>>,
+    pub prediction_alignment_fingerprint: Option<Arc<str>>,
 }
 
+#[derive(Clone)]
 pub struct PredictionLocoFileFingerprint {
-    pub phenotype_name: String,
-    pub file_fingerprint: super::ManifestFileFingerprint,
+    pub(crate) phenotype_name: Arc<str>,
+    pub(crate) file_fingerprint: Arc<super::ManifestFileFingerprint>,
 }
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn build_current_run_manifest_header_value_with_cache(
     run_plan: &g_plan::RunPlan,
-    input: CurrentRunManifestHeaderInput,
+    input: &CurrentRunManifestHeaderInput,
     fingerprint_cache: &mut ManifestFileFingerprintCache,
 ) -> Result<Value, OutputError> {
     let bgen_fingerprint = build_required_file_fingerprint_with_cache(
@@ -65,7 +67,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         true,
         "prediction list",
     )?;
-    let prediction_loco_files = prediction_loco_file_fingerprints_to_value(input.prediction_loco_files)?;
+    let prediction_loco_files = prediction_loco_file_fingerprints_to_value(&input.prediction_loco_files)?;
     let prediction_inputs = json!({
         "prediction_list": prediction_list_fingerprint,
         "loco_files": prediction_loco_files,
@@ -118,7 +120,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "phenotype_file": phenotype_file_fingerprint,
         "phenotype_name": input.phenotype_name,
         "covariate_file": covariate_file_fingerprint,
-        "covariate_names": input.covariate_names,
+        "covariate_names": input.covariate_names.as_ref(),
         "prediction_inputs": prediction_inputs,
         "sample_count": sample_count,
         "variant_count": variant_count,
@@ -134,10 +136,10 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "requested_gpu_genotype_format": run_plan.compute.requested_gpu_genotype_format.as_str(),
         "score_dtype": "float32",
         "multi_phenotype_sample_mode": input.output_sample_mode.as_str(),
-        "phenotype_compute_group_id": input.phenotype_compute_group_id,
-        "sample_set_fingerprint": input.sample_set_fingerprint,
-        "covariate_design_fingerprint": input.covariate_design_fingerprint,
-        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint,
+        "phenotype_compute_group_id": input.phenotype_compute_group_id.as_ref(),
+        "sample_set_fingerprint": input.sample_set_fingerprint.as_deref(),
+        "covariate_design_fingerprint": input.covariate_design_fingerprint.as_deref(),
+        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint.as_deref(),
         "output_writer": output_writer,
         "resume_policy": RESUME_POLICY,
     });
@@ -152,20 +154,20 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
 }
 
 fn prediction_loco_file_fingerprints_to_value(
-    fingerprints: Vec<PredictionLocoFileFingerprint>,
+    fingerprints: &[PredictionLocoFileFingerprint],
 ) -> Result<Value, OutputError> {
     let values = fingerprints
-        .into_iter()
+        .iter()
         .map(|fingerprint| {
-            let content_sha256 = fingerprint.file_fingerprint.content_sha256.ok_or_else(|| {
+            let content_sha256 = fingerprint.file_fingerprint.content_sha256.as_deref().ok_or_else(|| {
                 OutputError::Runtime("LOCO prediction file fingerprint must include a content hash.".to_string())
             })?;
             Ok(json!({
-                "phenotype": fingerprint.phenotype_name,
-                "path": fingerprint.file_fingerprint.path,
+                "phenotype": fingerprint.phenotype_name.as_ref(),
+                "path": &fingerprint.file_fingerprint.path,
                 "size": fingerprint.file_fingerprint.size,
                 "mtime_ns": fingerprint.file_fingerprint.mtime_ns,
-                "content_hash_algorithm": fingerprint.file_fingerprint.content_hash_algorithm,
+                "content_hash_algorithm": &fingerprint.file_fingerprint.content_hash_algorithm,
                 "content_sha256": content_sha256,
             }))
         })
@@ -193,5 +195,5 @@ fn build_optional_file_fingerprint_with_cache(
     };
     fingerprint_cache
         .build_file_fingerprint(file_path, include_content_hash)
-        .map(|fingerprint| Some(manifest_file_fingerprint_to_value(&fingerprint)))
+        .map(|fingerprint| Some(manifest_file_fingerprint_to_value(fingerprint.as_ref())))
 }

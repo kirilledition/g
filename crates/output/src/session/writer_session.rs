@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use arrow::array::{ArrayRef, Float32Array};
+use arrow::array::ArrayRef;
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::OutputError;
@@ -70,7 +70,7 @@ impl OutputWriterSession {
         })
     }
 
-    pub fn finish(&self) -> Result<(), OutputError> {
+    pub(crate) fn finish(&self) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.flush_and_commit()?;
         manifest::mark_run_manifest_completed(&self.config.run_directory)?;
@@ -78,7 +78,7 @@ impl OutputWriterSession {
         self.write_stage_timing_snapshot()
     }
 
-    pub fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputError> {
+    pub(crate) fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.flush_and_commit()?;
         manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)?;
@@ -86,7 +86,7 @@ impl OutputWriterSession {
         self.write_stage_timing_snapshot()
     }
 
-    pub fn abort(&self) -> Result<(), OutputError> {
+    pub(crate) fn abort(&self) -> Result<(), OutputError> {
         self.close_and_discard_pending_chunks()?;
         self.completion_tracker.wait()?;
         Ok(())
@@ -116,7 +116,7 @@ impl OutputWriterSession {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn write_regenie2_native_chunk_handle_arrays(
+    pub(crate) fn write_regenie2_native_chunk_handle_arrays(
         &self,
         chunk_handle: NativeChunkHandle,
         beta: ArrayRef,
@@ -125,19 +125,6 @@ impl OutputWriterSession {
         log10_p_value: ArrayRef,
         correction_code: Option<ArrayRef>,
     ) -> Result<(), OutputError> {
-        let row_count = chunk_handle.row_count();
-        validate_column_lengths(row_count, &chunk_handle.writer_arrays().column_lengths())?;
-        validate_column_lengths(
-            row_count,
-            &[beta.len(), standard_error.len(), chi_squared.len(), log10_p_value.len()],
-        )?;
-        validate_statistic_array_type("BETA", &beta)?;
-        validate_statistic_array_type("SE", &standard_error)?;
-        validate_statistic_array_type("CHISQ", &chi_squared)?;
-        validate_statistic_array_type("LOG10P", &log10_p_value)?;
-        if let Some(correction_code_values) = correction_code.as_ref() {
-            validate_column_lengths(row_count, &[correction_code_values.len()])?;
-        }
         let job = RegenieStep2ChunkJob {
             chunk_handle,
             beta,
@@ -157,8 +144,10 @@ impl OutputWriterSession {
                 .as_mut()
                 .ok_or_else(|| OutputError::Runtime("Rust output writer session is already closed.".to_string()))?;
             pending_chunks.push(job);
-            (pending_chunks.len() >= self.config.chunks_per_parquet_file)
-                .then(|| take_pending_chunk_write_batch(pending_chunks))
+            (pending_chunks.len() >= self.config.chunks_per_parquet_file).then(|| {
+                let chunks = std::mem::replace(pending_chunks, Vec::with_capacity(self.config.chunks_per_parquet_file));
+                build_chunk_write_batch(chunks)
+            })
         };
         if let Some(write_batch) = write_batch {
             self.enqueue_write_batch(write_batch)?;
@@ -178,8 +167,8 @@ impl OutputWriterSession {
                 .pending_chunks
                 .lock()
                 .map_err(|_| OutputError::Runtime("Rust output writer pending chunk lock was poisoned.".to_string()))?;
-            pending_chunks_guard.take().and_then(|mut pending_chunks| {
-                (!pending_chunks.is_empty()).then(|| take_pending_chunk_write_batch(&mut pending_chunks))
+            pending_chunks_guard.take().and_then(|pending_chunks| {
+                (!pending_chunks.is_empty()).then(|| build_chunk_write_batch(pending_chunks))
             })
         };
         if let Some(write_batch) = write_batch {
@@ -264,12 +253,12 @@ impl OutputWriterSession {
     }
 }
 
-fn take_pending_chunk_write_batch(pending_chunks: &mut Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
-    let first_chunk_identifier = pending_chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
+fn build_chunk_write_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
+    let first_chunk_identifier = chunks.first().map_or(0, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let last_chunk_identifier =
-        pending_chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
+        chunks.last().map_or(first_chunk_identifier, |chunk_job| chunk_job.chunk_handle.chunk_identifier);
     let chunk_file_name = build_part_file_name(first_chunk_identifier, last_chunk_identifier);
-    RegenieStep2ChunkWriteBatch { chunk_file_name, chunks: std::mem::take(pending_chunks) }
+    RegenieStep2ChunkWriteBatch { chunk_file_name, chunks }
 }
 
 /// Create one native output writer session per run/parts directory pair.
@@ -396,23 +385,4 @@ fn finish_interrupted_output_writer_session_batch(
         }
         Ok(())
     })
-}
-
-pub(super) fn validate_column_lengths(
-    expected_row_count: usize,
-    observed_lengths: &[usize],
-) -> Result<(), OutputError> {
-    if observed_lengths.iter().all(|observed_length| *observed_length == expected_row_count) {
-        return Ok(());
-    }
-    Err(OutputError::InvalidInput(
-        "Rust output writer batch column lengths do not all match the expected row count.".to_string(),
-    ))
-}
-
-pub(super) fn validate_statistic_array_type(column_name: &str, array: &ArrayRef) -> Result<(), OutputError> {
-    if array.as_any().is::<Float32Array>() {
-        return Ok(());
-    }
-    Err(OutputError::InvalidInput(format!("Rust output writer column {column_name} must be float32.",)))
 }

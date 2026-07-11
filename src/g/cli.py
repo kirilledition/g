@@ -10,7 +10,7 @@ import g._core
 
 def run(arguments: typing.Sequence[str]) -> int:
     """Run CLI arguments through the native CLI driver."""
-    result = g._core.cli.run(list(arguments))
+    result = g._core.cli.run(arguments)
     for output_text in result.stdout_chunks:
         print(output_text, end="")
     for output_text in result.stderr_chunks:

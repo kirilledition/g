@@ -3,78 +3,20 @@
 from __future__ import annotations
 
 import functools
+import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 
-from g import types as g_types
 from g.compute.common import dtype as compute_dtype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
-from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Regenie2BinaryState:
-    """Reusable state for REGENIE step 2 binary association.
-
-    Attributes:
-        covariate_matrix: Covariate design matrix including intercept.
-        phenotype_vector: Binary phenotype vector in 0/1 encoding.
-
-    """
-
-    covariate_matrix: jax.Array
-    phenotype_vector: jax.Array
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class Regenie2BinaryChromosomeState:
-    """Chromosome-specific binary null model state.
-
-    Attributes:
-        covariate_matrix: Covariate design matrix including intercept.
-        phenotype_vector: Binary phenotype vector in 0/1 encoding.
-        null_logistic_coefficients: Covariate-only null logistic coefficients.
-        null_firth_offset: Covariate-only null Firth linear predictor plus LOCO offset.
-        score_residual: Raw score residual, ``phenotype - fitted_probability``.
-        loco_offset: LOCO offset in the logistic linear predictor.
-        square_root_weight: Square root of Bernoulli variance.
-        bernoulli_weight: Bernoulli variance.
-        weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
-        score_projection_matrix: Cholesky-whitened score projection matrix.
-        score_right_hand_matrix: Stacked matrix multiplied by genotype chunks in score kernels.
-        score_residual_sum: Sum of score residuals across samples.
-        bernoulli_weight_sum: Sum of Bernoulli weights across samples.
-        score_projection_sum: Sum of score projection columns across samples.
-        full_null_deviance: Full-sample null deviance for approximate-Firth sparse corrections.
-        null_firth_penalized_log_likelihood: Covariate-only Firth null penalized log-likelihood.
-        null_logistic_converged: Whether the null logistic IRLS fit converged.
-
-    """
-
-    covariate_matrix: jax.Array
-    phenotype_vector: jax.Array
-    null_logistic_coefficients: jax.Array
-    null_firth_offset: jax.Array
-    score_residual: jax.Array
-    loco_offset: jax.Array
-    square_root_weight: jax.Array
-    bernoulli_weight: jax.Array
-    weighted_genotype_projection_matrix: jax.Array
-    score_projection_matrix: jax.Array
-    score_right_hand_matrix: jax.Array
-    score_residual_sum: jax.Array
-    bernoulli_weight_sum: jax.Array
-    score_projection_sum: jax.Array
-    full_null_deviance: jax.Array
-    null_firth_penalized_log_likelihood: jax.Array
-    null_logistic_converged: jax.Array
+if typing.TYPE_CHECKING:
+    from g import types as g_types
 
 
 @jax.tree_util.register_dataclass
@@ -94,47 +36,102 @@ class Regenie2MultiBinaryState:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class Regenie2MultiBinaryChromosomeState:
-    """Trait-major chromosome-specific binary null model state.
+class PreparedBinaryTraitState:
+    """Prepared null-logistic quantities shared by score and Firth execution.
 
     Attributes:
-        covariate_matrix: Shared covariate design matrix including intercept.
-        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
-        null_logistic_coefficients: Per-trait null logistic coefficients.
-        null_firth_offset_matrix: Per-trait null Firth linear predictors plus LOCO offsets.
-        score_residual: Per-trait raw score residuals.
-        loco_offset_matrix: Per-trait LOCO offsets.
-        square_root_weight: Per-trait square root Bernoulli variance.
-        bernoulli_weight: Per-trait Bernoulli variance.
-        weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
-        score_projection_matrix: Per-trait score projection matrix.
-        score_right_hand_matrix: Stacked matrix multiplied by genotype chunks in score kernels.
-        score_residual_sum: Per-trait residual sums across samples.
-        bernoulli_weight_sum: Per-trait Bernoulli weight sums across samples.
-        score_projection_sum: Per-trait score projection column sums across samples.
-        full_null_deviance: Per-trait full-sample null deviance for sparse approximate-Firth corrections.
-        null_firth_penalized_log_likelihood: Per-trait Firth null penalized log-likelihood.
-        null_logistic_converged: Per-trait null IRLS convergence flags.
+        phenotype_vector: Binary phenotype vector.
+        null_logistic_coefficients: Covariate-only null logistic coefficients.
+        score_residual: Raw score residual.
+        loco_offset: LOCO offset in the logistic linear predictor.
+        square_root_weight: Square root of Bernoulli variance.
+        bernoulli_weight: Bernoulli variance.
+        weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
+        score_projection_matrix: Cholesky-whitened score projection matrix.
+        null_logistic_converged: Whether null logistic IRLS converged.
 
     """
 
-    covariate_matrix: jax.Array
-    phenotype_matrix: jax.Array
+    phenotype_vector: jax.Array
     null_logistic_coefficients: jax.Array
-    null_firth_offset_matrix: jax.Array
     score_residual: jax.Array
-    loco_offset_matrix: jax.Array
+    loco_offset: jax.Array
     square_root_weight: jax.Array
     bernoulli_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     score_projection_matrix: jax.Array
+    null_logistic_converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryScoreChromosomeState:
+    """Minimal trait-major chromosome state retained by score-only execution.
+
+    Attributes:
+        score_right_hand_matrix: Stacked matrix multiplied by genotype chunks.
+        score_residual_sum: Per-trait score-residual sums.
+        bernoulli_weight_sum: Per-trait Bernoulli-weight sums.
+        score_projection_sum: Per-trait score-projection column sums.
+        null_logistic_converged: Per-trait null IRLS convergence flags.
+
+    """
+
     score_right_hand_matrix: jax.Array
     score_residual_sum: jax.Array
     bernoulli_weight_sum: jax.Array
     score_projection_sum: jax.Array
+    null_logistic_converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class PreparedBinaryFirthTraitState:
+    """Prepared per-trait state required only by approximate Firth.
+
+    Attributes:
+        score_state: Null-logistic quantities shared with score execution.
+        null_firth_offset: Covariate-only null Firth predictor plus LOCO offset.
+        full_null_deviance: Full-sample null deviance.
+        null_firth_penalized_log_likelihood: Covariate-only Firth null likelihood.
+
+    """
+
+    score_state: PreparedBinaryTraitState
+    null_firth_offset: jax.Array
     full_null_deviance: jax.Array
     null_firth_penalized_log_likelihood: jax.Array
-    null_logistic_converged: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class Regenie2MultiBinaryFirthChromosomeState:
+    """Trait-major chromosome state retained by approximate-Firth execution.
+
+    Attributes:
+        score_state: Minimal state consumed by the shared score kernel.
+        covariate_matrix: Shared covariate design matrix including intercept.
+        phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
+        null_logistic_coefficients: Per-trait null logistic coefficients.
+        null_firth_offset_matrix: Per-trait null Firth predictors plus LOCO offsets.
+        loco_offset_matrix: Per-trait LOCO offsets.
+        square_root_weight: Per-trait square root Bernoulli variance.
+        weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
+        full_null_deviance: Per-trait full-sample null deviance.
+        null_firth_penalized_log_likelihood: Per-trait Firth null likelihood.
+
+    """
+
+    score_state: Regenie2MultiBinaryScoreChromosomeState
+    covariate_matrix: jax.Array
+    phenotype_matrix: jax.Array
+    null_logistic_coefficients: jax.Array
+    null_firth_offset_matrix: jax.Array
+    loco_offset_matrix: jax.Array
+    square_root_weight: jax.Array
+    weighted_genotype_projection_matrix: jax.Array
+    full_null_deviance: jax.Array
+    null_firth_penalized_log_likelihood: jax.Array
 
 
 def build_multi_binary_state(
@@ -144,36 +141,117 @@ def build_multi_binary_state(
 ) -> Regenie2MultiBinaryState:
     """Build reusable multi-trait binary step 2 state."""
     jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
-    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jax_dtype)
-    phenotype_matrix_compute = jnp.asarray(phenotype_matrix, dtype=jax_dtype)
     return Regenie2MultiBinaryState(
-        covariate_matrix=covariate_matrix_compute,
-        phenotype_matrix=phenotype_matrix_compute,
+        covariate_matrix=jnp.asarray(covariate_matrix, dtype=jax_dtype),
+        phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jax_dtype),
     )
 
 
-def build_multi_binary_score_right_hand_matrix(
-    *,
-    score_projection_matrix: jax.Array,
-    bernoulli_weight: jax.Array,
-    score_residual: jax.Array,
-) -> jax.Array:
-    """Build the score-kernel right-hand matrix for multiple binary traits."""
-    trait_count = score_residual.shape[0]
-    covariate_count = score_projection_matrix.shape[1]
-    sample_count = score_residual.shape[1]
+def prepare_binary_trait_state(
+    covariate_matrix: jax.Array,
+    phenotype_vector: jax.Array,
+    loco_offset: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryScoreConfig,
+    score_dtype: g_types.FloatingPointDtype,
+) -> PreparedBinaryTraitState:
+    """Prepare shared null-logistic and score quantities for one trait."""
+    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
+    loco_offset_compute = jnp.asarray(loco_offset, dtype=jax_dtype)
+    null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset_compute,
+        kernel_config=kernel_config,
+    )
+    null_logistic_coefficients = null_logistic_fit_state.coefficients
+    fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
+        covariate_matrix @ null_logistic_coefficients + loco_offset_compute,
+        kernel_config,
+    )
+    bernoulli_weight = jnp.maximum(
+        fitted_probability * (1.0 - fitted_probability),
+        kernel_config.numerical.minimum_variance,
+    )
+    square_root_weight = jnp.sqrt(bernoulli_weight)
+    weighted_covariate_matrix = square_root_weight[:, None] * covariate_matrix
+    weighted_covariate_transpose = weighted_covariate_matrix.T
+    weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
+    cholesky_factor = jnp.linalg.cholesky(
+        weighted_covariate_crossproduct
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jax_dtype) * kernel_config.numerical.minimum_variance
+    )
+    weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
+        cholesky_factor,
+        weighted_covariate_transpose,
+        left_side=True,
+        lower=True,
+    )
+    score_residual = phenotype_vector - fitted_probability
+    return PreparedBinaryTraitState(
+        phenotype_vector=phenotype_vector,
+        null_logistic_coefficients=null_logistic_coefficients,
+        score_residual=score_residual,
+        loco_offset=loco_offset_compute,
+        square_root_weight=square_root_weight,
+        bernoulli_weight=bernoulli_weight,
+        weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
+        score_projection_matrix=weighted_genotype_projection_matrix * square_root_weight[None, :],
+        null_logistic_converged=null_logistic_fit_state.converged,
+    )
+
+
+def build_multi_binary_score_chromosome_state_from_traits(
+    trait_states: PreparedBinaryTraitState,
+) -> Regenie2MultiBinaryScoreChromosomeState:
+    """Assemble the minimal trait-major score state from prepared traits."""
+    trait_count = trait_states.score_residual.shape[0]
+    covariate_count = trait_states.score_projection_matrix.shape[1]
+    sample_count = trait_states.score_residual.shape[1]
     flattened_projection_matrix = jnp.reshape(
-        score_projection_matrix,
+        trait_states.score_projection_matrix,
         (trait_count * covariate_count, sample_count),
     )
-    return jnp.concatenate(
-        [
-            flattened_projection_matrix,
-            bernoulli_weight,
-            score_residual,
-        ],
-        axis=0,
+    return Regenie2MultiBinaryScoreChromosomeState(
+        score_right_hand_matrix=jnp.concatenate(
+            [flattened_projection_matrix, trait_states.bernoulli_weight, trait_states.score_residual],
+            axis=0,
+        ),
+        score_residual_sum=jnp.sum(trait_states.score_residual, axis=1),
+        bernoulli_weight_sum=jnp.sum(trait_states.bernoulli_weight, axis=1),
+        score_projection_sum=jnp.sum(trait_states.score_projection_matrix, axis=2),
+        null_logistic_converged=trait_states.null_logistic_converged,
     )
+
+
+def prepare_binary_traits(
+    state: Regenie2MultiBinaryState,
+    loco_offset_matrix: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryScoreConfig,
+    score_dtype: g_types.FloatingPointDtype,
+) -> PreparedBinaryTraitState:
+    """Prepare shared null-logistic quantities for every requested trait."""
+    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))
+    return jax.vmap(
+        lambda phenotype_vector, loco_offset: prepare_binary_trait_state(
+            state.covariate_matrix,
+            phenotype_vector,
+            loco_offset,
+            kernel_config,
+            score_dtype,
+        )
+    )(state.phenotype_matrix, loco_offset_matrix_compute)
+
+
+@functools.partial(jax.jit, static_argnames=("kernel_config", "score_dtype"))
+def build_multi_binary_score_chromosome_state(
+    state: Regenie2MultiBinaryState,
+    loco_offset_matrix: jax.Array,
+    kernel_config: regenie2_binary_config.BinaryScoreConfig,
+    score_dtype: g_types.FloatingPointDtype,
+) -> Regenie2MultiBinaryScoreChromosomeState:
+    """Build chromosome state containing only binary score-kernel operands."""
+    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config, score_dtype)
+    return build_multi_binary_score_chromosome_state_from_traits(trait_states)
 
 
 def compute_full_null_deviance(phenotype_vector: jax.Array, null_firth_offset: jax.Array) -> jax.Array:
@@ -188,141 +266,45 @@ def compute_full_null_deviance(phenotype_vector: jax.Array, null_firth_offset: j
     )
 
 
-def build_binary_chromosome_state(
-    state: Regenie2BinaryState,
-    loco_offset: jax.Array,
-    correction_plan: g_types.BinaryCorrectionPlan,
+@functools.partial(jax.jit, static_argnames=("kernel_config", "score_dtype"))
+def build_multi_binary_firth_chromosome_state(
+    state: Regenie2MultiBinaryState,
+    loco_offset_matrix: jax.Array,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     score_dtype: g_types.FloatingPointDtype,
-) -> Regenie2BinaryChromosomeState:
-    """Build chromosome-specific binary null model state reused across chunks."""
-    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
-    loco_offset_compute = jnp.asarray(loco_offset, dtype=jax_dtype)
-    null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
-        covariate_matrix=state.covariate_matrix,
-        phenotype_vector=state.phenotype_vector,
-        loco_offset=loco_offset_compute,
-        maximum_iterations=None,
-        kernel_config=kernel_config,
-    )
-    null_logistic_coefficients = null_logistic_fit_state.coefficients
-    fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
-        state.covariate_matrix @ null_logistic_coefficients + loco_offset_compute,
-        kernel_config,
-    )
-    bernoulli_variance = jnp.maximum(
-        fitted_probability * (1.0 - fitted_probability),
-        kernel_config.numerical.minimum_variance,
-    )
-    square_root_weight = jnp.sqrt(bernoulli_variance)
-    score_residual = state.phenotype_vector - fitted_probability
-    weighted_covariate_matrix = square_root_weight[:, None] * state.covariate_matrix
-    weighted_covariate_transpose = weighted_covariate_matrix.T
-    weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
-    cholesky_factor = jnp.linalg.cholesky(
-        weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jax_dtype) * kernel_config.numerical.minimum_variance
-    )
-    weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
-        cholesky_factor,
-        weighted_covariate_transpose,
-        left_side=True,
-        lower=True,
-    )
-    score_projection_matrix = weighted_genotype_projection_matrix * square_root_weight[None, :]
-    if correction_plan.method == g_types.BinaryFallbackMethod.SCORE_ONLY:
-        null_firth_coefficients = jnp.asarray(null_logistic_coefficients, dtype=jnp.float64)
-        null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_coefficients + jnp.asarray(
-            loco_offset_compute, dtype=jnp.float64
-        )
-        null_firth_result = regenie2_binary_firth_types.NullFirthFitResult(
-            coefficients=null_firth_coefficients,
-            penalized_log_likelihood=jnp.asarray(0.0, dtype=jnp.float64),
-            converged=jnp.asarray(1, dtype=jnp.bool_),
-        )
-    else:
+) -> Regenie2MultiBinaryFirthChromosomeState:
+    """Build chromosome state with score operands and approximate-Firth null state."""
+    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config, score_dtype)
+
+    def prepare_firth_trait(score_state: PreparedBinaryTraitState) -> PreparedBinaryFirthTraitState:
         null_firth_result = regenie2_binary_firth_null.fit_covariate_only_firth_null_model(
             covariate_matrix=state.covariate_matrix,
-            phenotype_vector=state.phenotype_vector,
-            loco_offset=loco_offset_compute,
-            initial_coefficients=null_logistic_coefficients,
+            phenotype_vector=score_state.phenotype_vector,
+            loco_offset=score_state.loco_offset,
+            initial_coefficients=score_state.null_logistic_coefficients,
             kernel_config=kernel_config,
         )
         null_firth_offset = state.covariate_matrix.astype(jnp.float64) @ null_firth_result.coefficients + jnp.asarray(
-            loco_offset_compute, dtype=jnp.float64
+            score_state.loco_offset, dtype=jnp.float64
         )
-    score_right_hand_matrix = jnp.concatenate(
-        [
-            score_projection_matrix,
-            bernoulli_variance[None, :],
-            score_residual[None, :],
-        ],
-        axis=0,
-    )
-    full_null_deviance = compute_full_null_deviance(state.phenotype_vector, null_firth_offset)
-    return Regenie2BinaryChromosomeState(
-        covariate_matrix=state.covariate_matrix,
-        phenotype_vector=state.phenotype_vector,
-        null_logistic_coefficients=null_logistic_coefficients,
-        null_firth_offset=null_firth_offset,
-        score_residual=score_residual,
-        loco_offset=loco_offset_compute,
-        square_root_weight=square_root_weight,
-        bernoulli_weight=bernoulli_variance,
-        weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
-        score_projection_matrix=score_projection_matrix,
-        score_right_hand_matrix=score_right_hand_matrix,
-        score_residual_sum=jnp.sum(score_residual),
-        bernoulli_weight_sum=jnp.sum(bernoulli_variance),
-        score_projection_sum=jnp.sum(score_projection_matrix, axis=1),
-        full_null_deviance=full_null_deviance,
-        null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
-        null_logistic_converged=null_logistic_fit_state.converged,
-    )
-
-
-@functools.partial(jax.jit, static_argnames=("correction_plan", "kernel_config", "score_dtype"))
-def build_multi_binary_chromosome_state(
-    state: Regenie2MultiBinaryState,
-    loco_offset_matrix: jax.Array,
-    correction_plan: g_types.BinaryCorrectionPlan,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype,
-) -> Regenie2MultiBinaryChromosomeState:
-    """Build chromosome-specific null logistic state for all requested binary traits."""
-    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))
-
-    def prepare_one_trait(
-        phenotype_vector: jax.Array,
-        loco_offset: jax.Array,
-    ) -> Regenie2BinaryChromosomeState:
-        trait_state = Regenie2BinaryState(
-            covariate_matrix=state.covariate_matrix,
-            phenotype_vector=phenotype_vector,
+        return PreparedBinaryFirthTraitState(
+            score_state=score_state,
+            null_firth_offset=null_firth_offset,
+            full_null_deviance=compute_full_null_deviance(score_state.phenotype_vector, null_firth_offset),
+            null_firth_penalized_log_likelihood=null_firth_result.penalized_log_likelihood,
         )
-        return build_binary_chromosome_state(trait_state, loco_offset, correction_plan, kernel_config, score_dtype)
 
-    chromosome_states = jax.vmap(prepare_one_trait)(state.phenotype_matrix, loco_offset_matrix_compute)
-    return Regenie2MultiBinaryChromosomeState(
+    firth_trait_states = jax.vmap(prepare_firth_trait)(trait_states)
+    score_trait_states = firth_trait_states.score_state
+    return Regenie2MultiBinaryFirthChromosomeState(
+        score_state=build_multi_binary_score_chromosome_state_from_traits(score_trait_states),
         covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,
-        null_logistic_coefficients=chromosome_states.null_logistic_coefficients,
-        null_firth_offset_matrix=chromosome_states.null_firth_offset,
-        score_residual=chromosome_states.score_residual,
-        loco_offset_matrix=chromosome_states.loco_offset,
-        square_root_weight=chromosome_states.square_root_weight,
-        bernoulli_weight=chromosome_states.bernoulli_weight,
-        weighted_genotype_projection_matrix=chromosome_states.weighted_genotype_projection_matrix,
-        score_projection_matrix=chromosome_states.score_projection_matrix,
-        score_right_hand_matrix=build_multi_binary_score_right_hand_matrix(
-            score_projection_matrix=chromosome_states.score_projection_matrix,
-            bernoulli_weight=chromosome_states.bernoulli_weight,
-            score_residual=chromosome_states.score_residual,
-        ),
-        score_residual_sum=chromosome_states.score_residual_sum,
-        bernoulli_weight_sum=chromosome_states.bernoulli_weight_sum,
-        score_projection_sum=chromosome_states.score_projection_sum,
-        full_null_deviance=chromosome_states.full_null_deviance,
-        null_firth_penalized_log_likelihood=chromosome_states.null_firth_penalized_log_likelihood,
-        null_logistic_converged=chromosome_states.null_logistic_converged,
+        null_logistic_coefficients=score_trait_states.null_logistic_coefficients,
+        null_firth_offset_matrix=firth_trait_states.null_firth_offset,
+        loco_offset_matrix=score_trait_states.loco_offset,
+        square_root_weight=score_trait_states.square_root_weight,
+        weighted_genotype_projection_matrix=score_trait_states.weighted_genotype_projection_matrix,
+        full_null_deviance=firth_trait_states.full_null_deviance,
+        null_firth_penalized_log_likelihood=firth_trait_states.null_firth_penalized_log_likelihood,
     )

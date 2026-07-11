@@ -11,13 +11,13 @@ use super::{RUN_MANIFEST_FILE_NAME, chunks, validation};
 use crate::error::{OutputError, OutputResult};
 use crate::resume;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct OutputRunPaths {
     pub run_directory: PathBuf,
     pub parts_directory: PathBuf,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct PreparedOutputRun {
     pub output_run_paths: OutputRunPaths,
     pub existing_manifest_json: Option<String>,

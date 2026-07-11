@@ -1,14 +1,46 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use g_genotype_contracts::VariantMetadataStore;
+
 use super::BgenError;
 use super::decode::{ThreadScratch, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at, u32_to_usize};
 use super::format::{ALLELE_LENGTH_SIZE_IN_BYTES, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES};
 use super::metadata::VariantRecord;
 
-pub(super) fn parse_sample_identifier_block(
+pub(super) struct ParsedVariantIndex {
+    pub(super) variant_records: Vec<VariantRecord>,
+    pub(super) variant_metadata: Arc<VariantMetadataStore>,
+    pub(super) chromosome_boundary_indices: Vec<usize>,
+}
+
+#[derive(Default)]
+struct StringDictionaryBuilder {
+    values: Vec<Arc<str>>,
+    codes_by_value: HashMap<Arc<str>, u32>,
+}
+
+impl StringDictionaryBuilder {
+    fn intern(&mut self, bytes: &[u8]) -> Result<u32, BgenError> {
+        let text = String::from_utf8_lossy(bytes);
+        if let Some(code) = self.codes_by_value.get(text.as_ref()) {
+            return Ok(*code);
+        }
+        let code = u32::try_from(self.values.len())
+            .map_err(|_| BgenError::Range("BGEN metadata dictionary exceeds the uint32 index domain.".to_string()))?;
+        let value = Arc::<str>::from(text.into_owned());
+        self.codes_by_value.insert(Arc::clone(&value), code);
+        self.values.push(value);
+        Ok(code)
+    }
+}
+
+pub(super) fn validate_sample_identifier_block(
     mmap: &[u8],
     sample_block_offset: usize,
     first_variant_offset: usize,
     expected_sample_count: usize,
-) -> Result<Vec<String>, BgenError> {
+) -> Result<(), BgenError> {
     let block_length = u32_to_usize(read_u32_at(mmap, sample_block_offset)?)?;
     let sample_block_stop = sample_block_offset + block_length;
     if sample_block_stop > first_variant_offset {
@@ -25,12 +57,10 @@ pub(super) fn parse_sample_identifier_block(
     }
 
     let mut cursor = sample_block_offset + 8;
-    let mut sample_identifiers = Vec::with_capacity(expected_sample_count);
     for _sample_index in 0..expected_sample_count {
         let identifier_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let identifier_bytes = read_exact_bytes(mmap, cursor, identifier_length)?;
-        sample_identifiers.push(String::from_utf8_lossy(identifier_bytes).into_owned());
+        let _identifier_bytes = read_exact_bytes(mmap, cursor, identifier_length)?;
         cursor += identifier_length;
     }
     if cursor != sample_block_stop {
@@ -39,37 +69,46 @@ pub(super) fn parse_sample_identifier_block(
         ));
     }
 
-    Ok(sample_identifiers)
+    Ok(())
 }
 
-pub(super) fn parse_variant_records(
+pub(super) fn parse_variant_index(
     mmap: &[u8],
     first_variant_offset: usize,
     variant_count: usize,
     sample_count: usize,
     compression_type: CompressionType,
-) -> Result<Vec<VariantRecord>, BgenError> {
+) -> Result<ParsedVariantIndex, BgenError> {
     let mut cursor = first_variant_offset;
     let mut variant_records = Vec::with_capacity(variant_count);
+    let mut chromosome_codes = Vec::with_capacity(variant_count);
+    let mut variant_identifier_text = String::new();
+    let mut variant_identifier_offsets = Vec::with_capacity(variant_count.saturating_add(1));
+    variant_identifier_offsets.push(0_u32);
+    let mut position = Vec::with_capacity(variant_count);
+    let mut allele_one_codes = Vec::with_capacity(variant_count);
+    let mut allele_two_codes = Vec::with_capacity(variant_count);
+    let mut chromosome_boundary_indices = Vec::with_capacity(variant_count.min(256) + 1);
+    chromosome_boundary_indices.push(0);
+    let mut metadata_text_dictionary = StringDictionaryBuilder::default();
 
     for variant_index in 0..variant_count {
         let variant_identifier_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let variant_identifier =
-            String::from_utf8_lossy(read_exact_bytes(mmap, cursor, variant_identifier_length)?).into_owned();
+        let variant_identifier_bytes = read_exact_bytes(mmap, cursor, variant_identifier_length)?;
         cursor += variant_identifier_length;
 
         let rsid_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let rsid = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, rsid_length)?).into_owned();
+        let rsid_bytes = read_exact_bytes(mmap, cursor, rsid_length)?;
         cursor += rsid_length;
 
         let chromosome_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let chromosome = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, chromosome_length)?).into_owned();
+        let chromosome_code = metadata_text_dictionary.intern(read_exact_bytes(mmap, cursor, chromosome_length)?)?;
         cursor += chromosome_length;
 
-        let position = i64::from(read_u32_at(mmap, cursor)?);
+        let variant_position = i64::from(read_u32_at(mmap, cursor)?);
         cursor += 4;
 
         let allele_count = read_u16_at(mmap, cursor)?;
@@ -80,14 +119,8 @@ pub(super) fn parse_variant_records(
             )));
         }
 
-        let mut allele_values = Vec::with_capacity(usize::from(allele_count));
-        for _allele_index in 0..usize::from(allele_count) {
-            let allele_length = u32_to_usize(read_u32_at(mmap, cursor)?)?;
-            cursor += ALLELE_LENGTH_SIZE_IN_BYTES;
-            let allele_value = String::from_utf8_lossy(read_exact_bytes(mmap, cursor, allele_length)?).into_owned();
-            cursor += allele_length;
-            allele_values.push(allele_value);
-        }
+        let reference_allele_code = read_allele(mmap, &mut cursor, &mut metadata_text_dictionary)?;
+        let counted_allele_code = read_allele(mmap, &mut cursor, &mut metadata_text_dictionary)?;
 
         let genotype_block_offset = cursor;
         let total_block_length = u32_to_usize(read_u32_at(mmap, genotype_block_offset)?)?;
@@ -112,46 +145,56 @@ pub(super) fn parse_variant_records(
             )));
         }
 
-        if variant_index == 0 {
-            validate_variant_probability_block(
-                mmap,
-                compression_type,
-                &VariantRecord {
-                    probability_payload_offset,
-                    probability_payload_length,
-                    declared_uncompressed_block_length,
-                    chromosome: chromosome.clone(),
-                    resolved_variant_identifier: if rsid.is_empty() {
-                        variant_identifier.clone()
-                    } else {
-                        rsid.clone()
-                    },
-                    position,
-                    counted_allele: allele_values[1].clone(),
-                    reference_allele: allele_values[0].clone(),
-                },
-                sample_count,
-                "first variant",
-            )?;
-        }
-
-        let reference_allele = allele_values[0].clone();
-        let counted_allele = allele_values[1].clone();
-        let resolved_variant_identifier = if rsid.is_empty() { variant_identifier } else { rsid.clone() };
-
-        variant_records.push(VariantRecord {
+        let resolved_identifier_bytes = if rsid_bytes.is_empty() { variant_identifier_bytes } else { rsid_bytes };
+        variant_identifier_text.push_str(&String::from_utf8_lossy(resolved_identifier_bytes));
+        let variant_identifier_stop = u32::try_from(variant_identifier_text.len()).map_err(|_| {
+            BgenError::Range("BGEN variant identifiers exceed the four-gibibyte metadata arena limit.".to_string())
+        })?;
+        variant_identifier_offsets.push(variant_identifier_stop);
+        let variant_record = VariantRecord {
             probability_payload_offset,
             probability_payload_length,
             declared_uncompressed_block_length,
-            chromosome,
-            resolved_variant_identifier,
-            position,
-            counted_allele,
-            reference_allele,
-        });
+        };
+        if variant_index == 0 {
+            validate_variant_probability_block(mmap, compression_type, &variant_record, sample_count, "first variant")?;
+        }
+        if chromosome_codes.last().is_some_and(|previous_code| *previous_code != chromosome_code) {
+            chromosome_boundary_indices.push(variant_index);
+        }
+        chromosome_codes.push(chromosome_code);
+        position.push(variant_position);
+        allele_one_codes.push(counted_allele_code);
+        allele_two_codes.push(reference_allele_code);
+        variant_records.push(variant_record);
     }
 
-    Ok(variant_records)
+    chromosome_boundary_indices.push(variant_count);
+    Ok(ParsedVariantIndex {
+        variant_records,
+        variant_metadata: Arc::new(VariantMetadataStore::from_parts(
+            metadata_text_dictionary.values.into_boxed_slice(),
+            chromosome_codes.into_boxed_slice(),
+            variant_identifier_text.into_boxed_str(),
+            variant_identifier_offsets.into_boxed_slice(),
+            position.into_boxed_slice(),
+            allele_one_codes.into_boxed_slice(),
+            allele_two_codes.into_boxed_slice(),
+        )),
+        chromosome_boundary_indices,
+    })
+}
+
+fn read_allele(
+    mmap: &[u8],
+    cursor: &mut usize,
+    metadata_text_dictionary: &mut StringDictionaryBuilder,
+) -> Result<u32, BgenError> {
+    let allele_length = u32_to_usize(read_u32_at(mmap, *cursor)?)?;
+    *cursor += ALLELE_LENGTH_SIZE_IN_BYTES;
+    let allele_code = metadata_text_dictionary.intern(read_exact_bytes(mmap, *cursor, allele_length)?)?;
+    *cursor += allele_length;
+    Ok(allele_code)
 }
 
 fn validate_variant_probability_block(

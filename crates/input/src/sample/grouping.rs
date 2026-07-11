@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::error::InputResult;
 
@@ -8,36 +8,40 @@ where
     Groups: IntoIterator<Item = SampleIndices>,
     SampleIndices: AsRef<[usize]>,
 {
-    let mut seen_sample_indices: HashSet<usize> = HashSet::new();
-    let mut union_sample_indices: Vec<usize> = Vec::new();
+    let mut union_sample_indices = Vec::new();
     for sample_indices in sample_indices_by_group {
-        for sample_index in sample_indices.as_ref() {
-            if seen_sample_indices.insert(*sample_index) {
-                union_sample_indices.push(*sample_index);
-            }
-        }
+        union_sample_indices.extend_from_slice(sample_indices.as_ref());
     }
+    union_sample_indices.sort_unstable();
+    union_sample_indices.dedup();
     union_sample_indices
 }
 
-pub fn build_group_sample_position_array(
+pub fn build_group_sample_position_arrays<Groups, SampleIndices>(
     union_sample_indices: &[usize],
-    group_sample_indices: &[usize],
-) -> InputResult<Vec<isize>> {
-    let mut union_position_by_sample_index: HashMap<usize, isize> = HashMap::with_capacity(union_sample_indices.len());
+    sample_indices_by_group: Groups,
+) -> InputResult<Vec<Vec<usize>>>
+where
+    Groups: IntoIterator<Item = SampleIndices>,
+    SampleIndices: AsRef<[usize]>,
+{
+    let mut union_position_by_sample_index: HashMap<usize, usize> = HashMap::with_capacity(union_sample_indices.len());
     for (sample_position, sample_index) in union_sample_indices.iter().enumerate() {
-        let sample_position = isize::try_from(sample_position)
-            .map_err(|_| "Union sample position exceeds platform index capacity.".to_string())?;
         union_position_by_sample_index.insert(*sample_index, sample_position);
     }
-    group_sample_indices
-        .iter()
-        .map(|sample_index| {
-            union_position_by_sample_index
-                .get(sample_index)
-                .copied()
-                .ok_or_else(|| format!("Group sample index {sample_index} is absent from the union sample index set."))
+    sample_indices_by_group
+        .into_iter()
+        .map(|group_sample_indices| {
+            group_sample_indices
+                .as_ref()
+                .iter()
+                .map(|sample_index| {
+                    union_position_by_sample_index.get(sample_index).copied().ok_or_else(|| {
+                        format!("Group sample index {sample_index} is absent from the union sample index set.")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect::<Result<Vec<_>, _>>()
+        .collect::<Result<Vec<Vec<_>>, _>>()
         .map_err(Into::into)
 }

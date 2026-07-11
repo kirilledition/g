@@ -732,11 +732,11 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "g-engine",
+ "g-plan",
  "g-runner",
  "numpy",
  "pyo3",
  "pyo3-pylogger",
- "tracing",
 ]
 
 [[package]]
@@ -745,14 +745,19 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "g-genotype",
+ "g-genotype-contracts",
  "g-input",
  "g-output",
  "g-plan",
  "g-runtime",
+ "hex",
  "nalgebra",
+ "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -761,10 +766,15 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "flate2",
+ "g-genotype-contracts",
  "memmap2",
  "rayon",
  "thiserror",
 ]
+
+[[package]]
+name = "g-genotype-contracts"
+version = "0.1.0"
 
 [[package]]
 name = "g-input"
@@ -772,6 +782,7 @@ version = "0.1.0"
 dependencies = [
  "csv",
  "g-plan",
+ "hex",
  "sha2",
  "thiserror",
 ]
@@ -783,6 +794,7 @@ dependencies = [
  "clap",
  "criterion",
  "g-plan",
+ "hex",
  "serde",
  "sha2",
  "toml",
@@ -795,8 +807,9 @@ dependencies = [
  "arrow",
  "criterion",
  "crossbeam-channel",
- "g-genotype",
+ "g-genotype-contracts",
  "g-plan",
+ "hex",
  "parquet",
  "serde",
  "serde_json",
@@ -808,6 +821,7 @@ dependencies = [
 name = "g-plan"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
  "sha2",
@@ -821,6 +835,7 @@ dependencies = [
  "g-interface",
  "g-plan",
  "g-runtime",
+ "serde",
 ]
 
 [[package]]
@@ -828,12 +843,10 @@ name = "g-runtime"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "g-plan",
  "memchr",
  "rayon",
  "serde",
  "serde_json",
- "sha2",
  "signal-hook",
  "tracing",
  "tracing-appender",
@@ -922,6 +935,12 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hybrid-array"

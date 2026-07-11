@@ -11,7 +11,7 @@ mod variant_major;
 #[cfg(test)]
 pub(super) use matrix::DosageTileDecodeResult;
 pub(super) use matrix::{
-    ThreadScratch, VariantDecodeResult, VariantMajorOutputMatrix, VariantMajorTileStatsMut,
+    ThreadScratch, VariantMajorOutputMatrix, VariantMajorSparseCandidateCountsMut, VariantMajorTileStatsMut,
     packed_eight_bit_probability_index, read_eight_bit_probability_pair, selected_sample_count_to_i32,
     unphased_eight_bit_dosage_lookup,
 };
@@ -21,6 +21,11 @@ pub(super) use probability::{
 #[cfg(test)]
 pub(super) use row_major::decode_variant_dosage_tile_into_row_major_matrix;
 pub(super) use variant_major::{decode_variant_major_dosage_tile, validate_variant_major_tile_stats_lengths};
+
+pub(super) struct VariantDecodeFailure {
+    pub(super) relative_variant_index: Option<usize>,
+    pub(super) source: BgenError,
+}
 
 const DEFAULT_DECODE_TILE_VARIANT_COUNT: usize = 64;
 static DECODE_TILE_VARIANT_COUNT: AtomicUsize = AtomicUsize::new(DEFAULT_DECODE_TILE_VARIANT_COUNT);

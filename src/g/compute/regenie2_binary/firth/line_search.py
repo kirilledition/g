@@ -74,11 +74,6 @@ def run_firth_step_halving(
                 state.next_coefficient_step,
                 state.accepted_coefficient_step,
             ),
-            accepted_coefficients=jnp.where(
-                accepted,
-                candidate_coefficients,
-                state.accepted_coefficients,
-            ),
             accepted_penalized_log_likelihood=jnp.where(
                 accepted,
                 candidate_penalized_log_likelihood,
@@ -94,7 +89,6 @@ def run_firth_step_halving(
             attempt_count=jnp.asarray(0, dtype=jnp.int32),
             next_coefficient_step=coefficient_step,
             accepted_coefficient_step=jnp.zeros_like(coefficient_step),
-            accepted_coefficients=current_coefficients,
             accepted_penalized_log_likelihood=current_penalized_log_likelihood,
             accepted=jnp.asarray(0, dtype=jnp.bool_),
         ),
@@ -102,8 +96,7 @@ def run_firth_step_halving(
     exhausted = ~final_state.accepted
     return regenie2_binary_firth_types.FirthBacktrackingResult(
         coefficient_step=final_state.accepted_coefficient_step,
-        coefficients=final_state.accepted_coefficients,
+        coefficients=current_coefficients + final_state.accepted_coefficient_step,
         penalized_log_likelihood=final_state.accepted_penalized_log_likelihood,
-        accepted=final_state.accepted,
         exhausted=exhausted,
     )
