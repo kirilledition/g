@@ -6,23 +6,21 @@ use g_plan as plan;
 use super::super::overlay::ConfigLayer;
 use super::super::{ConfigError, ConfigResult};
 
-#[derive(Clone, Debug)]
 pub(crate) struct ParsedRegenieCli {
     pub(crate) config_path: Option<String>,
     pub(crate) cli_layer: ConfigLayer,
 }
 
 pub(crate) fn parse_regenie_cli(args: &[String], program_name: &'static str) -> ConfigResult<ParsedRegenieCli> {
-    let mut clap_arguments = Vec::with_capacity(args.len() + 1);
-    clap_arguments.push(program_name.to_string());
-    clap_arguments.extend(args.iter().cloned());
-    let parsed_cli = RegenieCli::try_parse_from(clap_arguments).map_err(|error| ConfigError::new(error.to_string()))?;
-    let config_path = parsed_cli.config.clone();
+    let mut parsed_cli =
+        RegenieCli::try_parse_from(std::iter::once(program_name).chain(args.iter().map(String::as_str)))
+            .map_err(|error| ConfigError::new(error.to_string()))?;
+    let config_path = parsed_cli.config.take();
     let cli_layer = parsed_cli.into_config_layer()?;
     Ok(ParsedRegenieCli { config_path, cli_layer })
 }
 
-#[derive(Clone, Debug, Parser)]
+#[derive(Parser)]
 #[command(about = "Run a REGENIE-compatible step 2 association scan.", disable_version_flag = true)]
 pub(crate) struct RegenieCli {
     #[arg(long = "config", help_heading = "Config")]
@@ -37,7 +35,7 @@ pub(crate) struct RegenieCli {
     pub(crate) out: Option<String>,
 }
 
-#[derive(Clone, Debug, Args)]
+#[derive(Args)]
 pub(crate) struct TraitCli {
     #[arg(long = "qt", action = ArgAction::SetTrue, help_heading = "Trait")]
     pub(crate) qt: bool,
@@ -47,7 +45,7 @@ pub(crate) struct TraitCli {
     pub(crate) bsize: Option<NonZeroU32>,
 }
 
-#[derive(Clone, Debug, Args)]
+#[derive(Args)]
 pub(crate) struct InputCli {
     #[arg(long = "bgen", help_heading = "Input")]
     pub(crate) bgen: Option<String>,
@@ -65,7 +63,7 @@ pub(crate) struct InputCli {
     pub(crate) pred: Option<String>,
 }
 
-#[derive(Clone, Debug, Args)]
+#[derive(Args)]
 pub(crate) struct BinaryCli {
     #[arg(long = "binary-fallback", help_heading = "Binary")]
     pub(crate) fallback_method: Option<plan::BinaryFallbackMethod>,
