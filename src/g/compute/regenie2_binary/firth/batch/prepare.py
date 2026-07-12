@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
@@ -13,9 +12,6 @@ from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_pl
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
-
-if typing.TYPE_CHECKING:
-    from g import types as g_types
 
 
 @jax.tree_util.register_dataclass
@@ -116,39 +112,6 @@ def select_multi_firth_candidate_rows(
             jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
             flat_variant_indices,
             axis=0,
-        ),
-    )
-
-
-def select_multi_firth_candidate_rows_from_packed8(
-    *,
-    packed_probability_pairs_by_variant: jax.Array,
-    candidate_mask: jax.Array,
-    candidate_capacity: int,
-    firth_batch_size: int,
-    score_dtype: g_types.FloatingPointDtype,
-) -> SelectedMultiFirthCandidateRows:
-    """Select and decode fixed-capacity candidate rows from packed8 probabilities."""
-    variant_count = packed_probability_pairs_by_variant.shape[0]
-    batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
-        candidate_mask.reshape((-1,)),
-        candidate_capacity=candidate_capacity,
-        firth_batch_size=firth_batch_size,
-    )
-    flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
-    flat_variant_indices = flat_fallback_indices % variant_count
-    packed_candidate_probability_pairs_by_variant = jnp.take(
-        packed_probability_pairs_by_variant,
-        flat_variant_indices,
-        axis=0,
-    )
-    return SelectedMultiFirthCandidateRows(
-        flat_active_mask=batch_plan.fallback_active_mask_matrix.reshape((-1,)),
-        flat_trait_indices=flat_fallback_indices // variant_count,
-        flat_variant_indices=flat_variant_indices,
-        genotype_matrix_by_variant=compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
-            packed_candidate_probability_pairs_by_variant,
-            score_dtype,
         ),
     )
 

@@ -209,7 +209,8 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
             chromosome_state=chromosome_state,
             genotype_matrix_by_variant=jax.device_put(dosage_matrix),
             firth_candidate_p_threshold=None,
-            kernel_config=self.score_config,
+            minimum_variance=self.score_config.numerical.minimum_variance,
+            relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
             native_genotype_mean=jax.device_put(genotype_mean),
             score_dtype=SCORE_DTYPE,
         )
@@ -225,7 +226,8 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
             chromosome_state=chromosome_state,
             packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities),
             firth_candidate_p_threshold=None,
-            kernel_config=self.score_config,
+            minimum_variance=self.score_config.numerical.minimum_variance,
+            relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
             native_genotype_mean=jax.device_put(genotype_mean),
             score_dtype=SCORE_DTYPE,
         )
