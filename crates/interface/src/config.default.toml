@@ -12,7 +12,7 @@ device = "cpu"
 # Optional native Rayon worker count. When omitted, Rayon selects the CPU count.
 # cpu_threads = 8
 multi_phenotype_sample_mode = "per-phenotype"
-firth_batch_size = 2048
+firth_batch_size = 1024
 firth_candidate_capacity = 16384
 binary_null_maximum_iterations = 50
 binary_null_coefficient_tolerance = 1.0e-6

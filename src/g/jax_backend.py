@@ -13,7 +13,6 @@ from g.compute.regenie2_binary import api as regenie2_binary
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_linear import api as regenie2_linear
-from g.compute.regenie2_linear import config as regenie2_linear_config
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
@@ -76,10 +75,8 @@ class LinearJaxBackend(JaxBackendBase):
         relative_variance_tolerance: float,
     ) -> None:
         """Initialize the linear numerical policy."""
-        self.linear_config = regenie2_linear_config.LinearNumericalConfig(
-            minimum_variance=minimum_variance,
-            relative_variance_tolerance=relative_variance_tolerance,
-        )
+        self.minimum_variance = minimum_variance
+        self.relative_variance_tolerance = relative_variance_tolerance
 
     def prepare_group(
         self,
@@ -121,8 +118,8 @@ class LinearJaxBackend(JaxBackendBase):
             native_genotype_mean=jax.device_put(genotype_mean),
             genotype_imputed_dosage_square_sum=jax.device_put(imputed_dosage_square_sum),
             score_dtype=SCORE_DTYPE,
-            linear_minimum_variance=self.linear_config.minimum_variance,
-            linear_relative_variance_tolerance=self.linear_config.relative_variance_tolerance,
+            linear_minimum_variance=self.minimum_variance,
+            linear_relative_variance_tolerance=self.relative_variance_tolerance,
         )
 
     def compute_packed8_batch(
@@ -139,8 +136,8 @@ class LinearJaxBackend(JaxBackendBase):
             native_genotype_mean=jax.device_put(genotype_mean),
             genotype_imputed_dosage_square_sum=jax.device_put(imputed_dosage_square_sum),
             score_dtype=SCORE_DTYPE,
-            linear_minimum_variance=self.linear_config.minimum_variance,
-            linear_relative_variance_tolerance=self.linear_config.relative_variance_tolerance,
+            linear_minimum_variance=self.minimum_variance,
+            linear_relative_variance_tolerance=self.relative_variance_tolerance,
         )
 
 

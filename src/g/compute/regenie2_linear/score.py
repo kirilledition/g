@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.common import dtype as compute_dtype
-from g.compute.common import genotype, pvalue
+from g.compute.common import genotype, linalg, pvalue
 from g.compute.common import result as association_result
 
 if typing.TYPE_CHECKING:
@@ -18,21 +18,6 @@ if typing.TYPE_CHECKING:
 
 
 type Regenie2MultiLinearChunkResult = association_result.AssociationResult[jax.Array, None]
-
-
-def compute_positive_residual_variance_mask(
-    variance: jax.Array,
-    reference_sum_squares: jax.Array,
-    *,
-    minimum_variance: float,
-    relative_variance_tolerance: float,
-) -> jax.Array:
-    """Return a stable positive residual-variance mask after covariate projection."""
-    variance_floor = jnp.maximum(
-        minimum_variance,
-        reference_sum_squares * relative_variance_tolerance,
-    )
-    return variance > variance_floor
 
 
 @functools.partial(
@@ -90,7 +75,7 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         covariate_projection_coordinates,
     )
     genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares_compute - projection_sum_squares, 0.0)
-    positive_genotype_residual_mask = compute_positive_residual_variance_mask(
+    positive_genotype_residual_mask = linalg.compute_positive_residual_variance_mask(
         genotype_residual_sum_squares,
         genotype_sum_squares_compute,
         minimum_variance=linear_minimum_variance,
