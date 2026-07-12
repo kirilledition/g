@@ -116,11 +116,15 @@ def apply_device_candidate_corrections_multi_firth_variant_major_with_device_dis
             lambda _: jax.lax.cond(
                 fallback_count <= small_candidate_capacity,
                 apply_small_corrections,
-                lambda __: jax.lax.cond(
-                    fallback_count <= bounded_candidate_capacity,
-                    apply_bounded_corrections,
-                    apply_overflow_corrections,
-                    operand=None,
+                lambda __: (
+                    apply_bounded_corrections(None)
+                    if bounded_candidate_capacity == overflow_candidate_capacity
+                    else jax.lax.cond(
+                        fallback_count <= bounded_candidate_capacity,
+                        apply_bounded_corrections,
+                        apply_overflow_corrections,
+                        operand=None,
+                    )
                 ),
                 operand=None,
             ),
