@@ -1,8 +1,13 @@
+[build]
+jobs = 30
+
 [env]
 PYO3_PYTHON = "python3.14"
 
 [target.'cfg(target_os = "linux")']
+linker = "cc"
 rustflags = [
     "--allow=non-local-definitions",
     "-Ctarget-cpu=native",
+    "-Clink-arg=-fuse-ld=mold",
 ]

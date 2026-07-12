@@ -6,6 +6,8 @@
 
 Some development environments for this repo have `uv` and `maturin` available
 but do not expose `nix`, `cargo`, `rustfmt`, or `cargo-clippy` directly.
+Linux native builds also require a `cc` compiler driver plus `mold` and
+`ld.mold` on `PATH`; the repo Cargo configuration uses them by default.
 
 If `just` is installed, use the local no-Nix lane for day-to-day iteration:
 
@@ -46,8 +48,9 @@ just slurm-cpu-rust-test
 ```
 
 The CPU SLURM recipes derive Cargo and pytest worker counts from the allocation.
-Local `test-local` remains serial by default so focused failures are easy to
-read and do not queue a SLURM job.
+Outside SLURM, Cargo defaults to 30 build jobs. Local `test-local` remains
+serial by default so focused failures are easy to read and do not queue a SLURM
+job.
 
 Full Rust formatting and clippy checks still require an environment with the
 Rust toolchain available:

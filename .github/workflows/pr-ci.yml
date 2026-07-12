@@ -14,6 +14,7 @@ permissions:
   contents: read
 
 env:
+  CARGO_BUILD_JOBS: "4"
   PYTHON_VERSION: "3.14"
   RUST_VERSION: "1.96.0"
   RUST_MSRV: "1.96.0"
@@ -139,6 +140,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Install project and test dependencies
@@ -185,6 +192,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
 
       - uses: Swatinem/rust-cache@v2
 
@@ -240,6 +253,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Install project and test dependencies
@@ -285,6 +304,12 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: clippy
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
@@ -311,6 +336,12 @@ jobs:
         with:
           toolchain: beta
           components: clippy
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
 
       - uses: Swatinem/rust-cache@v2
 
@@ -339,6 +370,12 @@ jobs:
         with:
           toolchain: nightly
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Check Rust documentation
@@ -363,6 +400,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
 
       - uses: Swatinem/rust-cache@v2
 
@@ -419,6 +462,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
         with:
           env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
@@ -447,6 +496,12 @@ jobs:
         with:
           toolchain: ${{ env.RUST_MSRV }}
 
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Check minimum supported Rust version
@@ -470,6 +525,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
 
       - uses: Swatinem/rust-cache@v2
 
@@ -527,6 +588,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
 
       - uses: Swatinem/rust-cache@v2
         with:

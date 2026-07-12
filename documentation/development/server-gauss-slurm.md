@@ -20,7 +20,7 @@ Install or make available on `PATH`:
 - `srun`
 - `zstd`
 
-The repo-local dev-bootstrap installs `just`, `cargo`, `rustc`, `plink`,
+The repo-local dev-bootstrap installs `just`, Mold, `cargo`, `rustc`, `plink`,
 `plink2`, and `regenie` into `.tools/`. Python itself does not need to be
 preinstalled globally if `uv python install` works in your account.
 
@@ -29,9 +29,15 @@ preinstalled globally if `uv python install` works in your account.
 First-run setup before `just` is available:
 
 ```bash
-UV_CACHE_DIR=/tmp/g-uv-cache uv run --group dev python -m tooling.cli.server tool.name=bootstrap_tools
+UV_CACHE_DIR=/tmp/g-uv-cache uv run --no-project \
+  --with 'hydra-core>=1.3.2' \
+  --with 'pooch>=1.8.2' \
+  python -m tooling.cli.server --config-name server_bootstrap_tools
 source tooling/server/server_env.sh
 ```
+
+`--no-project` is required for this first run: it prevents `uv` from trying to
+compile `g` before the bootstrap has installed Mold.
 
 CPU-oriented login-node setup after the first-run dev-bootstrap:
 
@@ -144,13 +150,11 @@ just slurm-cpu-just rust-test
 
 Inside CPU SLURM jobs, `tooling/server/server_env.sh` derives
 `GWAS_ENGINE_ALLOCATED_CPU_COUNT` from `SLURM_CPUS_PER_TASK`,
-`SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` to that count unless
-already configured; and sets `GWAS_ENGINE_PYTEST_WORKERS` for pytest. Rust
-build recipes call `gwas_engine_configure_rust_build_environment` for Cargo job
-parallelism only; set linker and rustc-wrapper environment variables explicitly
-when a run needs them. The maintained `maturin develop` entrypoints pass the
-resolved `CARGO_BUILD_JOBS` value with `-j` so the explicit compile cap reaches
-Cargo.
+`SLURM_CPUS_ON_NODE`, or `nproc`; sets `CARGO_BUILD_JOBS` from an available
+SLURM CPU count unless already configured; and sets
+`GWAS_ENGINE_PYTEST_WORKERS` for pytest. Outside SLURM, Cargo uses the
+repo-configured default of 30 jobs. `CARGO_BUILD_JOBS` and Cargo's `--jobs`
+option remain explicit overrides.
 Python tests default to at most 8 xdist workers because the suite imports JAX
 and the native extension, so one pytest worker per core can oversubscribe
 process-level JAX/native thread pools. Override after measuring:
@@ -169,12 +173,17 @@ Build-environment defaults:
 - Do not share one global Rust `target/` directory across Symphony worktrees by
   default; that can reduce cold builds but risks cross-worktree contention and
   confusing invalidation during unattended branch work.
+- SLURM jobs default to `target/slurm/<node>/` because `target-cpu=native`
+  artifacts are not safe to reuse across heterogeneous nodes. Set
+  `CARGO_TARGET_DIR` explicitly to override this location.
 - Do not push every focused test through SLURM; local `check-local`,
   `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
 - Cargo uses the repo-local `.cargo/config.toml` for Linux Rust builds:
-  `target-cpu=native` is always enabled. The repo does not choose a linker or
-  rustc wrapper; set `RUSTFLAGS`, `CARGO_TARGET_*_LINKER`, `RUSTC_WRAPPER`, and
-  cache variables explicitly for isolated experiments.
+  `target-cpu=native` is enabled and `cc` selects Mold with
+  `-fuse-ld=mold`. Run `just server-setup-tools` when `mold` or `ld.mold` is
+  missing. `just doctor-server` also verifies that the installed `cc` driver
+  accepts the Mold option. The repo does not choose a rustc wrapper; set
+  `RUSTC_WRAPPER` and cache variables explicitly for isolated experiments.
 
 ## GPU Workflow Through SLURM
 
@@ -218,8 +227,8 @@ just slurm-gpu-just legacy-profile-regenie-comparison-gpu
 
 `slurm-gpu-run` and `slurm-gpu-shell` start in the repository root and call
 `gwas_engine_configure_rust_build_environment` before the requested command.
-That keeps GPU-side `maturin`, Cargo, clippy, or profiler-tool builds on the
-same `CARGO_BUILD_JOBS` policy used by CPU jobs.
+That keeps GPU-side `maturin`, Cargo, clippy, or profiler-tool builds within the
+GPU allocation's CPU count instead of the repo's otherwise-default 30 jobs.
 
 Run standard performance harness entrypoints:
 
@@ -299,5 +308,6 @@ data/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run
   must not be committed.
 - `tooling/server/server_env.sh` sets repo-local tools on `PATH`,
   `UV_CACHE_DIR=/tmp/g-uv-cache`, `UV_LINK_MODE=copy`, repo-local Rust homes
-  unless those variables are already set, and CPU allocation-derived variables
-  when a CPU SLURM wrapper calls `gwas_engine_configure_cpu_parallelism`.
+  unless those variables are already set, and SLURM allocation-derived build
+  parallelism when a scheduler wrapper calls
+  `gwas_engine_configure_cpu_parallelism`.

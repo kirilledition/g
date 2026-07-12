@@ -61,7 +61,7 @@ PROFILE_WORKLOAD_KEYS: tuple[ProfileWorkloadKey, ...] = (
 class CampaignBudgetSectionName(enum.StrEnum):
     """Budget accounting sections in execution order."""
 
-    BGEN_PRE_SWEEP = "bgen_pre_sweep"
+    THREAD_CANDIDATES = "thread_candidates"
     TUNING = "tuning"
     FINALISTS = "finalists"
     HEADLINE_TRIALS = "headline_trials"
@@ -71,7 +71,7 @@ class CampaignBudgetSectionName(enum.StrEnum):
 
 
 CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
-    CampaignBudgetSectionName.BGEN_PRE_SWEEP: "BGEN pre-sweep",
+    CampaignBudgetSectionName.THREAD_CANDIDATES: "Native thread candidates",
     CampaignBudgetSectionName.TUNING: "Tuning",
     CampaignBudgetSectionName.FINALISTS: "Finalists",
     CampaignBudgetSectionName.HEADLINE_TRIALS: "Headline trials",
@@ -132,17 +132,9 @@ class ProfileArguments:
         enable_logging_perturbation: Whether the profile runs telemetry/logging perturbation trials.
         rust_benchmarks: Comma-separated Rust Criterion benchmark names.
         chunk_sizes: Comma-separated step 2 chunk-size values.
-        staging_depths: Comma-separated staging-depth values.
-        native_callback_batch_sizes: Comma-separated native callback batch sizes.
-        result_in_flight_limits: Comma-separated result in-flight limits, or default.
-        dosage_buffer_limits: Comma-separated dosage buffer limits, or default.
         output_writer_thread_counts: Comma-separated writer thread-count values.
-        writer_queue_depth_multipliers: Comma-separated queue-depth multipliers.
         firth_batch_sizes: Comma-separated binary Firth batch sizes.
-        bgen_decode_tile_variant_counts: Comma-separated BGEN decode tile sizes.
         rayon_thread_counts: Comma-separated Rayon thread-count values.
-        bgen_benchmark_chunk_size: Chunk size for BGEN pre-sweep cases.
-        top_bgen_candidates: Number of BGEN candidates kept.
         top_finalists: Number of finalists kept.
         tuning_warmups: Warmup count for tuning trials.
         tuning_trials: Measured count for tuning trials.
@@ -200,17 +192,9 @@ class ProfileArguments:
     enable_logging_perturbation: bool
     rust_benchmarks: str
     chunk_sizes: str
-    staging_depths: str
-    native_callback_batch_sizes: str
-    result_in_flight_limits: str
-    dosage_buffer_limits: str
     output_writer_thread_counts: str
-    writer_queue_depth_multipliers: str
     firth_batch_sizes: str
-    bgen_decode_tile_variant_counts: str
     rayon_thread_counts: str
-    bgen_benchmark_chunk_size: int
-    top_bgen_candidates: int
     top_finalists: int
     tuning_warmups: int
     tuning_trials: int
@@ -262,26 +246,16 @@ class Step2Candidate:
     trait_type: str
     device: str
     chunk_size: int
-    staging_depth: int
-    native_callback_batch_size: int
-    result_in_flight_limit: int | None
-    dosage_buffer_limit: int | None
     output_writer_thread_count: int
-    output_writer_queue_depth: int
-    bgen_decode_tile_variant_count: int | None
     rayon_thread_count: int | None
     firth_batch_size: int | None
 
 
 @dataclasses.dataclass(frozen=True)
-class BgenCandidateSummary:
-    """Measured BGEN reader candidate summary."""
+class NativeThreadCandidate:
+    """Native Rayon worker-count candidate for application tuning."""
 
-    decode_tile_variant_count: int | None
     rayon_thread_count: int | None
-    median_seconds: float
-    mean_seconds: float
-    durations_seconds: list[float]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -466,6 +440,7 @@ class TrialResult:
     device: str
     status: str
     wall_time_seconds: float | None
+    process_wall_time_seconds: float | None
     output_row_count: int | None
     stdout_log_path: str
     stderr_log_path: str
@@ -473,6 +448,7 @@ class TrialResult:
     environment_overrides: dict[str, str]
     output_path: str | None = None
     stage_timing_path: str | None = None
+    profile_summary_path: str | None = None
     regenie_profile_path: str | None = None
     profiler_artifact_path: str | None = None
     application_output_prefix: str | None = None
@@ -536,6 +512,7 @@ class AggregateResult:
     trials: list[TrialResult]
     warmup_trials: list[TrialResult] = dataclasses.field(default_factory=list)
     jax_cold_warm_summary: JaxColdWarmDiagnostics | None = None
+    candidate: Step2Candidate | None = None
 
 
 @dataclasses.dataclass(frozen=True)

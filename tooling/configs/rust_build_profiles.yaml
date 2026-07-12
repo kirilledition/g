@@ -3,20 +3,14 @@ defaults:
 
 tool:
   labels:
-    - dev-fast
-    - dev-opt
+    - dev
     - release
-    - perf-thin-cgu8
-    - perf-thin-cgu1
-    - perf-fat-cgu1
-    - perf-o2-thin-cgu8
-    - perf-o3-thin-cgu8
   output_parent: results/perf/rust-build-profiles
   clean_build: true
   incremental_touch_paths:
     - src/binding/mod.rs
-    - src/genotype/bgen/reader.rs
-    - src/output/session.rs
+    - crates/genotype/src/bgen/reader.rs
+    - crates/output/src/session.rs
   build_timeout_seconds: null
   runtime_timeout_seconds: 120
   run_import_timing: true

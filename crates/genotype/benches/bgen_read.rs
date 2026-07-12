@@ -2,9 +2,13 @@ use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use g_genotype::{BgenReaderCore, OutputBufferAddress, OutputValueCount, set_bgen_row_major_direct_write_enabled};
+use g_genotype::{BgenReaderCore, ChunkStatisticsPolicy, OutputBufferAddress, OutputValueCount};
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
+const DOSAGE_STATISTICS_POLICY: ChunkStatisticsPolicy =
+    ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: false };
+const PACKED8_STATISTICS_POLICY: ChunkStatisticsPolicy =
+    ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true };
 
 fn benchmark_bgen_path() -> PathBuf {
     std::env::var_os("GWAS_ENGINE_DATA_DIR")
@@ -59,9 +63,10 @@ fn benchmark_preprocessed_variant_major_read(
                             *selected_variant_count,
                             OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
                             OutputValueCount::new(output_buffer.len()),
+                            DOSAGE_STATISTICS_POLICY,
                         )
                         .expect("prepared native Rust variant-major BGEN read should succeed");
-                    std::hint::black_box(chunk_stats.observation_count.len());
+                    std::hint::black_box(chunk_stats.output.observation_count.len());
                 });
             },
         );
@@ -93,131 +98,29 @@ fn benchmark_preprocessed_variant_major_packed8_read(
                             *selected_variant_count,
                             OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
                             OutputValueCount::new(output_buffer.len()),
+                            PACKED8_STATISTICS_POLICY,
                         )
                         .expect("prepared native Rust packed8 BGEN read should succeed");
-                    std::hint::black_box(chunk_stats.observation_count.len());
+                    std::hint::black_box(chunk_stats.output.observation_count.len());
                 });
             },
         );
     }
     variant_group.finish();
-}
-
-fn benchmark_row_major_direct_write_mode(
-    criterion: &mut Criterion,
-    reader: &BgenReaderCore,
-    group_name: &str,
-    direct_write_enabled: bool,
-) {
-    set_bgen_row_major_direct_write_enabled(direct_write_enabled);
-    let mut variant_group = criterion.benchmark_group(group_name);
-    for chunk_size in CHUNK_SIZES {
-        let selected_variant_count = chunk_size.min(reader.variant_count());
-        let mut output_buffer = vec![0.0_f32; reader.sample_count() * selected_variant_count];
-        variant_group.throughput(Throughput::Elements(
-            u64::try_from(selected_variant_count).expect("variant count should fit u64"),
-        ));
-        variant_group.bench_with_input(
-            BenchmarkId::from_parameter(chunk_size),
-            &selected_variant_count,
-            |benchmark, selected_variant_count| {
-                benchmark.iter(|| {
-                    reader
-                        .read_preprocessed_dosage_f32_into_address_prepared(
-                            0,
-                            *selected_variant_count,
-                            OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
-                            OutputValueCount::new(output_buffer.len()),
-                        )
-                        .expect("prepared native Rust row-major BGEN read should succeed");
-                });
-            },
-        );
-    }
-    variant_group.finish();
-    set_bgen_row_major_direct_write_enabled(false);
 }
 
 #[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
-    if !bgen_path.exists() {
-        return;
-    }
-
     let reader = BgenReaderCore::open(&bgen_path, false).expect("native Rust BGEN reader should open benchmark input");
     prepare_full_sample_selection(&reader);
-
-    {
-        let mut variant_group = criterion.benchmark_group("bgen_read_full_sample_variants");
-        for chunk_size in CHUNK_SIZES {
-            let selected_variant_count = chunk_size.min(reader.variant_count());
-            let mut output_buffer = vec![0.0_f32; reader.sample_count() * selected_variant_count];
-            variant_group.throughput(Throughput::Elements(
-                u64::try_from(selected_variant_count).expect("variant count should fit u64"),
-            ));
-            variant_group.bench_with_input(
-                BenchmarkId::from_parameter(chunk_size),
-                &selected_variant_count,
-                |benchmark, selected_variant_count| {
-                    benchmark.iter(|| {
-                        reader
-                            .read_preprocessed_dosage_f32_into_address_prepared(
-                                0,
-                                *selected_variant_count,
-                                OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
-                                OutputValueCount::new(output_buffer.len()),
-                            )
-                            .expect("prepared native Rust BGEN read should succeed");
-                    });
-                },
-            );
-        }
-        variant_group.finish();
-    }
-    {
-        let mut byte_group = criterion.benchmark_group("bgen_read_full_sample_bytes");
-        for chunk_size in CHUNK_SIZES {
-            let selected_variant_count = chunk_size.min(reader.variant_count());
-            let mut output_buffer = vec![0.0_f32; reader.sample_count() * selected_variant_count];
-            let output_byte_count = reader
-                .sample_count()
-                .checked_mul(selected_variant_count)
-                .and_then(|value_count| value_count.checked_mul(std::mem::size_of::<f32>()))
-                .expect("output byte count should fit usize");
-            byte_group.throughput(Throughput::Bytes(
-                u64::try_from(output_byte_count).expect("output byte count should fit u64"),
-            ));
-            byte_group.bench_with_input(
-                BenchmarkId::from_parameter(chunk_size),
-                &selected_variant_count,
-                |benchmark, selected_variant_count| {
-                    benchmark.iter(|| {
-                        reader
-                            .read_preprocessed_dosage_f32_into_address_prepared(
-                                0,
-                                *selected_variant_count,
-                                OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
-                                OutputValueCount::new(output_buffer.len()),
-                            )
-                            .expect("prepared native Rust BGEN read should succeed");
-                    });
-                },
-            );
-        }
-        byte_group.finish();
-    }
 
     benchmark_preprocessed_variant_major_read(
         criterion,
         &reader,
-        "bgen_preprocessed_variant_major_trusted_disabled",
+        "bgen_variant_major_dosage_full_samples",
         reader.sample_count(),
     );
-
-    prepare_full_sample_selection(&reader);
-    benchmark_row_major_direct_write_mode(criterion, &reader, "bgen_row_major_tile_copy", false);
-    benchmark_row_major_direct_write_mode(criterion, &reader, "bgen_row_major_direct_write", true);
 
     let contiguous_subset_sample_count = reader.sample_count() / 2;
     prepare_contiguous_prefix_sample_selection(&reader, contiguous_subset_sample_count);

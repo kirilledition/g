@@ -182,12 +182,11 @@ JAX tracing.
 `tooling.cli.profile_regenie2_deep`
 
 Runs the deep landau profiling campaign for original REGENIE and `g` REGENIE
-step 2. It includes BGEN pre-sweeps, candidate tuning, headline trials,
-optional perf/py-spy/cProfile/JAX trace runs, and a smoke mode. Exact
-stage-timing runs add compact binary correction diagnostics to `summary.md` and
-machine-readable headline/finalist aggregates to `summary.json`; runs with
-`telemetry.stage_timing_mode=off` mark those diagnostics unavailable instead of
-emitting per-chunk timing artifacts.
+step 2. It includes public application candidate tuning, headline trials,
+optional perf/py-spy/cProfile/JAX/Nsight/Scalene/Memray runs, and a smoke mode.
+Native Criterion benches use the separate CPU-node recipe. Exact stage-timing
+runs copy the current Rust output-stage artifact into the campaign report;
+runner-wide timing comes from native profile telemetry.
 
 The large profile workflow is being split behind the stable CLI. Shared
 deep-profile enums, argument dataclasses, candidate/result models, budget
@@ -302,9 +301,9 @@ This is the standard profiling task:
 
 > Run full documented profiling of the app with JAX tracing, JAX memory
 > profiles, Python cProfile, py-spy sampling, optional Scalene/Memray/Nsight
-> passes, Linux perf native stack samples, Rust Criterion benches, stage
-> timings, logs, telemetry perturbation runs, bottleneck summaries, and a
-> Markdown report.
+> passes, Linux perf native stack samples, stage timings, logs, telemetry
+> perturbation runs, bottleneck summaries, and a Markdown report; then run the
+> native Criterion benches on a CPU node.
 
 Use the full app profiling recipe. It is backed by
 `tooling.cli.profile_regenie2_deep` and the saved Hydra config
@@ -332,8 +331,10 @@ just profile-deep-dry \
 ```
 
 The plan reports section-level candidate/case counts and subprocess estimates
-for BGEN pre-sweep, tuning, finalists, headline trials, deep profilers, logging
-perturbation, and Rust Criterion. Non-dry runs fail before input validation when
+for native thread choices, tuning, finalists, headline trials, deep profilers,
+logging perturbation, and Rust Criterion. The harness does not reach into BGEN
+reader internals through the Python binding; Criterion owns that profiling.
+Non-dry runs fail before input validation when
 the estimate exceeds `tool.max_subprocess_runs` or
 `tool.max_major_profiler_runs`. Use `tool.allow_over_budget=true` only for an
 intentional large campaign submitted to the correct SLURM node.
@@ -388,10 +389,10 @@ performance counters on the GPU nodes.
 Use `just bench-rust-build-profiles` when comparing native extension build
 profiles. The recipe is backed by `tooling/configs/rust_build_profiles.yaml`,
 writes reports under `results/perf/rust-build-profiles`, and configures build
-parallelism through `tooling/server/server_env.sh`.
-The default config does not choose a linker or rustc wrapper; supply those
-through environment variables when a benchmark needs to compare external build
-tooling.
+parallelism through Cargo's 30-job default or the active SLURM allocation. The
+default labels compare the built-in `dev` and `release` profiles. Linux builds
+use the repo-configured `cc` plus Mold linker; rustc wrappers remain external
+environment policy.
 Scalene and Memray are Python profilers, so the harness runs them through
 `uv run --no-sync --with ...` when they are not importable in the project
 environment. This keeps JAX, Polars, and the installed `g` package visible to
@@ -411,40 +412,22 @@ Run a small end-to-end smoke profile before spending a full SLURM allocation:
 just slurm-gpu-just profile-app-full-smoke tool.output_dir=data/profiles/app_profile_smoke
 ```
 
-The smoke recipe sets `tool.enable_rust_criterion=false` so it validates the
-JAX/Python/native-profiler workflow without spending time in Criterion. The
-full `profile-app-full` recipe keeps Criterion enabled.
+The smoke and full application-profile recipes keep
+`tool.enable_rust_criterion=false` so Criterion runs remain isolated from GPU
+profiling. Use `just profile-rust-criterion` for the native Criterion passes.
 
-The `profile-app-full` and `profile-app-full` recipes use a
-bounded 12-hour `landau` default instead of the broad exploratory grid. This is
-the practical recipe used for the successful `data/profiles/deep-20260608-final-full`
-campaign:
+The focused chr22 recipe uses a bounded 12-hour `landau` allocation and one
+configuration from the application-owned option surface:
 
 ```bash
-just profile-app-full \
-  tool.output_dir=data/profiles/deep-20260608-final-full \
-  tool.chunk_sizes=[2048,4096] \
-  tool.staging_depths=[1,2] \
-  tool.output_writer_thread_counts=[1,4] \
-  tool.writer_queue_depth_multipliers=[1,2] \
-  tool.firth_batch_sizes=[32] \
-  tool.bgen_decode_tile_variant_counts=[64,128] \
-  tool.rayon_thread_counts=[4,8] \
-  tool.top_bgen_candidates=1 \
-  tool.top_finalists=2 \
-  tool.tuning_warmups=0 \
-  tool.tuning_trials=1 \
-  tool.finalist_warmups=0 \
-  tool.finalist_trials=2 \
-  tool.headline_warmups=0 \
-  tool.headline_trials=3
+just profile-chr22-binary-gpu-full \
+  tool.output_dir=data/profiles/chr22_binary_gpu_current
 ```
 
-With all four workload keys selected and original REGENIE disabled, this plan is
-about 130 subprocess runs and 18 major profiler or Criterion runs. Override
-`tool.workload_keys` to split the same bounded campaign across multiple jobs,
-for example <code>tool.workload_keys=[binary_gpu]</code> on one node and
-<code>tool.workload_keys=[quantitative_gpu]</code> on another.
+The saved focused config profiles binary approximate Firth on GPU with chunk
+size 16,384, four output writers, eight Rayon workers, and Firth batch size
+2,048. Removed scheduling, callback, buffer, decode-tile, and writer-queue knobs
+are not exposed as fake tuning dimensions.
 
 Run the full profile bundle on `landau`:
 
@@ -467,7 +450,8 @@ The full run writes:
 - `logs/*.stdout.log` and `logs/*.stderr.log`: subprocess logs.
   `g` subprocess stderr logs enable documented JAX persistent-cache DEBUG
   logging and compile logging for cache-hit and cache-miss diagnostics.
-- `bgen_sweep/bgen_sweep.json`: native BGEN reader pre-sweep.
+- `thread_candidates/thread_candidates.json`: Rayon worker-count choices used by
+  application tuning.
 - `tuning_*.json`: candidate tuning grids and finalists.
 - `headline_runs/`: winning `g` outputs, plus original REGENIE outputs when
   `tool.include_regenie_baseline=true`.
@@ -497,14 +481,14 @@ The full run writes:
   output root and `profile_*_<profiler>.stage_timings.json`, while the primary
   profiler artifacts above keep stable names such as `*.scalene.json` and
   `*.memray.bin`.
-- Rust Criterion output for `bgen_read` and `preprocess` when
-  `tool.enable_rust_criterion=true`.
+- Rust Criterion output under `target/slurm/<node>/criterion` from the separate
+  `profile-rust-criterion` CPU-node recipe, unless `CARGO_TARGET_DIR` is
+  explicitly set.
 
 ### Profile JAX Cache Locations
 
-The deep profile harness always passes an explicit `--jax_cache_dir` to each
-`g` child process, but the effective persistent-cache location is selected by
-device:
+The deep profile harness writes an explicit `compute.jax_cache_dir` into each
+trial TOML file. The effective persistent-cache location is selected by device:
 
 - CPU profile children use
   `${G_PROFILE_CPU_JAX_CACHE_PARENT:-/tmp/g-jax-cpu-profile-cache}/host-<hostname>/features-<cpu-fingerprint>/<logical-cache-name>-<logical-path-hash>`.
@@ -545,16 +529,20 @@ just profile-app-full-dry \
   tool.linear_prediction_list=baselines_chr10/regenie_step1_qt_pred.list
 ```
 
-For the complete extensive profiling suite focused on the production
-`g regenie --step 2 --bt --device gpu` (binary Firth/approx) path using the
-real chr10 1KG workload, use the dedicated Justfile targets. These force the
-`binary_gpu` workload only and enable memray, scalene, nsight-systems,
-nsight-compute, py-spy, linux perf, cProfile, JAX trace/memory, and Rust
-Criterion:
+For the complete suite focused on the current native binary approximate-Firth
+GPU path, use the dedicated Justfile targets. The child calls `g.cli.run()` with
+the public Rust-owned CLI arguments and a per-trial TOML file; it does not use a
+second Python orchestration API. The focused configs enable Memray, Scalene,
+Nsight Systems, Nsight Compute, py-spy, Linux perf, cProfile, and JAX
+trace/memory. Run CPU-only Criterion profiles separately so they do not consume
+a reserved Landau GPU:
 
 ```bash
 just profile-chr10-binary-gpu-dry tool.output_dir=...
 just profile-chr10-binary-gpu-full tool.output_dir=...
+just profile-chr22-binary-gpu-dry tool.output_dir=...
+just profile-chr22-binary-gpu-full tool.output_dir=...
+just profile-rust-criterion
 ```
 
 The full recipe submits the suite as a long GPU SLURM job using the configured
@@ -568,8 +556,8 @@ exceptions to be listed in `tooling/debug/integer_cast_allowlist.txt`.
 
 Useful overrides:
 
-- `tool.variant_limit=1000`: cap variants for smoke work.
-- `tool.smoke=true`: shrink sweeps, warmups, and trial counts.
+- `tool.smoke=true`: shrink warmups and trial counts. The production CLI has no
+  variant-limit option; use a physically reduced BGEN for bounded input work.
 - `tool.skip_deep_profiles=true`: run sweeps/headlines but skip profiler
   captures.
 - `tool.enable_linux_perf=false`: skip perf when the node disallows it.
@@ -591,16 +579,10 @@ Useful overrides:
 - <code>tool.workload_keys=[binary_cpu,binary_gpu]</code>: tune only selected `g`
   trait/device workloads. Defaults to all four quantitative/binary CPU/GPU
   workloads.
-- <code>tool.result_in_flight_limits=[default,4]</code>: include explicit result
-  in-flight slot limits in the candidate grid. `default` keeps the runtime
-  derived capacity of `staging_depth + 1`.
-- <code>tool.dosage_buffer_limits=[default,4]</code>: include explicit reusable native
-  dosage buffer pool limits in the candidate grid. `default` keeps the runtime
-  derived capacity of `staging_depth + 1`.
-- `tool.native_callback_batch_size=2`: set the opt-in native-to-Python dosage
-  callback handoff batch size for binary hot benchmark trials.
-- <code>tool.native_callback_batch_sizes=[2]</code>: restrict deep-profile tuning to the
-  same callback handoff batch size.
+- <code>tool.chunk_sizes=[8192,16384]</code>: tune public block sizes.
+- <code>tool.output_writer_thread_counts=[2,4]</code>: tune public output writer counts.
+- <code>tool.rayon_thread_counts=[4,8]</code>: tune native CPU worker counts.
+- <code>tool.firth_batch_sizes=[1024,2048]</code>: tune approximate-Firth GPU batches.
 - <code>tool.rust_benchmarks=[bgen_read]</code>: limit Rust Criterion benches.
 - `tool.include_regenie_baseline=true`: also run original REGENIE headline
   trials when `regenie` is available.
@@ -611,26 +593,15 @@ Useful overrides:
   quantitative pair.
 - `tool.regenie_baseline_trials=1`: keep paired REGENIE runtime evidence small;
   increase only for dedicated baseline campaigns.
-- `tool.regenie_baseline_variant_limit=1000`: override the baseline bound. When
-  unset, bounded smoke runs reuse `tool.variant_limit`; the harness writes a
-  REGENIE `--extract` list from the first variants in the matching `.pvar` or
-  `.bim` file so the original REGENIE run is comparable to `g`'s first-N
-variant workload.
+- `tool.regenie_baseline_variant_limit=1000`: bound only an optional original
+  REGENIE baseline by writing an `--extract` list. It does not alter the `g`
+  application input.
 
-Queue timings in `*.stage_timings.json` need direction-aware interpretation:
-`result_queue:put` and blocked `result_in_flight_slots:acquire` are producer
-backpressure signals. `result_queue:consumer_wait` is normally the writer
-thread sleeping while JAX/native work is still upstream, so it is expected idle
-time unless paired with blocked producer puts. `dosage_buffer_pool:consumer_wait`
-blocks native callback delivery while waiting for a reusable decode buffer; tune
-`tool.staging_depths`, `tool.result_in_flight_limits`, and
-`tool.dosage_buffer_limits` before treating that wait as lost wall time.
-In the GLA-47 binary sweep, larger dosage-buffer capacity removed most
-`dosage_buffer_pool:consumer_wait`, but the same runs shifted time into
-`dosage_queue:producer_blocking` because the bounded staging queue correctly
-throttled native delivery behind JAX compute. With `result_queue:put` still at
-zero blocked seconds and mixed CPU/GPU headline results, that pattern did not
-justify increasing packaged queue-capacity defaults.
+Current `*.stage_timings.json` files report the Rust output stages that the app
+still owns, including enqueue, record-batch construction, Parquet writing,
+manifest commits, and finish time. Runner-wide JAX initialization,
+configuration, native execution, and total time live in
+`logs/profile.summary.json` when telemetry is `profile`.
 
 The summary separates successful direct ratios from unsupported comparisons
 such as disabled baselines, missing REGENIE binaries, or missing `.pvar`/`.bim`
@@ -1109,8 +1080,7 @@ For direct Hydra execution, use:
 ```bash
 uv run --no-sync python -m tooling.cli.profile_regenie2_deep \
   machine=landau_gpu \
-  tool.smoke=true \
-  tool.variant_limit=1000
+  tool.smoke=true
 ```
 
 ### Quantitative Startup Amortization
@@ -1213,13 +1183,14 @@ stage sweep defaults.
 `profile_regenie2_deep.yaml`
 
 Default full app profile campaign. Uses `dataset=local_1kg`,
-`machine=landau_gpu`, chr22 inputs, BGEN pre-sweeps, candidate tuning, headline
-trials, JAX trace capture, JAX memory profiling, Python cProfile, py-spy,
-Linux perf, and Rust Criterion benches for `bgen_read` and `preprocess`. Set
-`tool.dry_run=true` to write only `profile_plan.json` and `profile_plan.md`.
-Set `tool.smoke=true` for the small smoke campaign. The config default includes
-original REGENIE headline trials; the `profile-app-full-*` Justfile recipes
-override `tool.include_regenie_baseline=false` for app-only profiling.
+`machine=landau_gpu`, chr22 inputs, public application candidate tuning,
+headline trials, JAX trace capture, JAX memory profiling, Python cProfile,
+py-spy, and Linux perf. Run `just profile-rust-criterion` separately for the
+`bgen_read` and `preprocess` Criterion benches. Set `tool.dry_run=true` to write
+only `profile_plan.json` and `profile_plan.md`. Set `tool.smoke=true` for the
+small smoke campaign. The config default includes original REGENIE headline
+trials; the `profile-app-full-*` Justfile recipes override
+`tool.include_regenie_baseline=false` for app-only profiling.
 
 `run_regenie2_chr10_matrix.yaml`
 

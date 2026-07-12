@@ -65,7 +65,13 @@ gwas_engine_default_pytest_worker_count() {
 gwas_engine_configure_cpu_parallelism() {
   allocated_cpu_count="$(gwas_engine_allocated_cpu_count)"
   export GWAS_ENGINE_ALLOCATED_CPU_COUNT="${GWAS_ENGINE_ALLOCATED_CPU_COUNT:-${allocated_cpu_count}}"
-  export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-${allocated_cpu_count}}"
+  if [ -z "${CARGO_BUILD_JOBS:-}" ]; then
+    if gwas_engine_is_positive_integer "${SLURM_CPUS_PER_TASK:-}"; then
+      export CARGO_BUILD_JOBS="${SLURM_CPUS_PER_TASK}"
+    elif gwas_engine_is_positive_integer "${SLURM_CPUS_ON_NODE:-}"; then
+      export CARGO_BUILD_JOBS="${SLURM_CPUS_ON_NODE}"
+    fi
+  fi
   if [ -z "${GWAS_ENGINE_PYTEST_WORKERS:-}" ]; then
     if [ -n "${GWAS_ENGINE_CPU_PYTEST_WORKERS:-}" ]; then
       export GWAS_ENGINE_PYTEST_WORKERS="${GWAS_ENGINE_CPU_PYTEST_WORKERS}"
@@ -77,11 +83,30 @@ gwas_engine_configure_cpu_parallelism() {
 
 gwas_engine_configure_rust_build_environment() {
   gwas_engine_configure_cpu_parallelism
+  if [ -z "${CARGO_TARGET_DIR:-}" ] && [ -n "${SLURMD_NODENAME:-}" ]; then
+    export CARGO_TARGET_DIR="${repository_root}/target/slurm/${SLURMD_NODENAME}"
+  fi
+}
+
+gwas_engine_verify_mold_linker() {
+  if [ "$(uname -s)" != "Linux" ]; then
+    return
+  fi
+  local probe_binary
+  probe_binary="$(mktemp "${TMPDIR:-/tmp}/g-mold-probe.XXXXXX")"
+  if ! cc -fuse-ld=mold -x c -o "${probe_binary}" - <<<'int main(void) { return 0; }'; then
+    rm -f "${probe_binary}"
+    echo "The cc compiler driver cannot link with -fuse-ld=mold." >&2
+    return 1
+  fi
+  rm -f "${probe_binary}"
 }
 
 gwas_engine_log_rust_build_environment() {
   echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT:-unset}"
-  echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-unset}"
+  echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-30 (Cargo config default)}"
+  echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target (Cargo default)}"
+  echo "RUST_LINKER=cc with mold"
   echo "RUSTC_WRAPPER=${RUSTC_WRAPPER:-unset}"
   if [ -n "${SCCACHE_DIR:-}" ]; then
     echo "SCCACHE_DIR=${SCCACHE_DIR}"

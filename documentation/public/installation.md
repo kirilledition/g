@@ -20,12 +20,16 @@ Install or load these tools before syncing the Python environment:
 | `git` | Clone the repository | [Git install guide](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) |
 | `uv` | Create the isolated Python environment and install Python `3.14` | [uv installation](https://docs.astral.sh/uv/getting-started/installation/) |
 | Rust/Cargo | Build the native extension from source | [rustup installation](https://rustup.rs/) |
-| C/C++ build tools | Compile native dependencies used by Rust crates | [GCC binaries](https://gcc.gnu.org/install/binaries.html) or your cluster module guide |
+| C/C++ build tools | Compile native dependencies used by Rust crates; Linux `cc` must accept `-fuse-ld=mold` (GCC 12.1+ or a compatible Clang driver) | [GCC binaries](https://gcc.gnu.org/install/binaries.html) or your cluster module guide |
+| Mold and `ld.mold` | Link Linux native builds | [Mold installation](https://github.com/rui314/mold#installation) |
 | NVIDIA driver and a CUDA-capable node | GPU runs only | [JAX installation](https://docs.jax.dev/en/latest/installation.html) |
 | upstream `regenie` | Produce Step 1 prediction lists for `--pred` | [REGENIE installation](https://rgcgithub.github.io/regenie/install/) |
 | SLURM | Cluster job submission | [SLURM `sbatch`](https://slurm.schedmd.com/sbatch.html) |
 
 `just` is not required to run `g`; it is a development task runner for this repository.
+Linux source builds use the `cc` compiler driver with Mold by default. Cargo
+uses up to 30 build jobs unless `CARGO_BUILD_JOBS` or `--jobs` overrides it.
+Run `just doctor` to verify that the installed compiler driver can invoke Mold.
 
 ## Supported Platforms
 
@@ -86,19 +90,19 @@ uv run g regenie --help
 
 ## GPU Install From Source
 
-First make sure the cluster node or workstation has a compatible NVIDIA driver. Then install the
-repository GPU dependency group:
+First make sure the cluster node or workstation has a compatible NVIDIA driver. CUDA-enabled JAX
+is a base project dependency, so no separate GPU dependency group is required:
 
 ```bash
 git clone https://github.com/kirilledition/g.git
 cd g
 uv python install 3.14
-uv sync --python 3.14 --no-dev --group gpu
+uv sync --python 3.14 --no-dev
 uv run python -c "import jax; print(jax.devices())"
 ```
 
-The `gpu` group installs the CUDA-enabled JAX extra declared by this checkout. If JAX does not list
-the expected GPU, compare the installed extra with the current [JAX installation
+The base environment installs the CUDA-enabled JAX extra declared by this checkout. If JAX does not
+list the expected GPU, compare the installed extra with the current [JAX installation
 matrix](https://docs.jax.dev/en/latest/installation.html), then adjust the environment before
 measuring performance.
 

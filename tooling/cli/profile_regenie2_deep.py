@@ -11,10 +11,10 @@ import logging
 import os
 import shlex
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
-import textwrap
 import time
 import typing
 from datetime import UTC, datetime
@@ -22,16 +22,15 @@ from pathlib import Path
 
 import hydra
 
-import tooling.cli.benchmark_bgen_reader as benchmark_bgen_reader
 from tooling.benchmark import benchmark as baseline_benchmark
 from tooling.benchmark import comparison as comparison_benchmark
 from tooling.common import artifact_format as tooling_artifact_format
-from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import logging as tooling_logging
 from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 from tooling.profile_deep import budget as profile_deep_budget
+from tooling.profile_deep import commands as profile_deep_commands
 from tooling.profile_deep import config as profile_deep_config
 from tooling.profile_deep import jax_cache as profile_deep_jax_cache
 from tooling.profile_deep import models as profile_deep_models
@@ -62,7 +61,6 @@ ARTIFACT_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
 DEFAULT_OUTPUT_PARENT = profile_deep_config.DEFAULT_OUTPUT_PARENT
 DEFAULT_VARIANT_COUNT = 418_943
 JAX_XLA_AUTOTUNE_CACHE = "xla_gpu_per_fusion_autotune_cache_dir"
-ENABLE_XLA_AUTOTUNE_CACHE = os.environ.get("G_PROFILE_ENABLE_XLA_AUTOTUNE_CACHE") == "1"
 GPU_JAX_CACHE_PARENT_DEFAULT = profile_deep_jax_cache.GPU_JAX_CACHE_PARENT_DEFAULT
 JAX_DEBUG_LOG_MODULES = "jax._src.compiler,jax._src.lru_cache"
 JAX_LOG_SAMPLE_LINE_LIMIT = profile_deep_jax_cache.JAX_LOG_SAMPLE_LINE_LIMIT
@@ -102,7 +100,7 @@ ProfileArguments = profile_deep_models.ProfileArguments
 ProfilerToolStatus = profile_deep_models.ProfilerToolStatus
 LoggingPerturbationCase = profile_deep_models.LoggingPerturbationCase
 Step2Candidate = profile_deep_models.Step2Candidate
-BgenCandidateSummary = profile_deep_models.BgenCandidateSummary
+NativeThreadCandidate = profile_deep_models.NativeThreadCandidate
 JaxCacheSnapshot = profile_deep_models.JaxCacheSnapshot
 JaxCompileLogSummary = profile_deep_models.JaxCompileLogSummary
 JaxCacheDiagnostics = profile_deep_models.JaxCacheDiagnostics
@@ -120,15 +118,12 @@ RegenieBaselineScopeStatus = profile_deep_models.RegenieBaselineScopeStatus
 RegenieBaselineScope = profile_deep_models.RegenieBaselineScope
 RuntimeComparisonNotes = profile_deep_models.RuntimeComparisonNotes
 parse_int_list = profile_deep_budget.parse_int_list
-parse_optional_int_list = profile_deep_budget.parse_optional_int_list
 parse_string_list = profile_deep_budget.parse_string_list
 parse_regenie_baseline_trait_types = profile_deep_budget.parse_regenie_baseline_trait_types
 parse_profile_workload_keys = profile_deep_budget.parse_profile_workload_keys
 selected_regenie_baseline_trait_types = profile_deep_budget.selected_regenie_baseline_trait_types
-build_queue_depth_values = profile_deep_budget.build_queue_depth_values
 build_logging_perturbation_cases = profile_deep_budget.build_logging_perturbation_cases
 build_campaign_budget_section = profile_deep_budget.build_campaign_budget_section
-count_queue_depth_grid = profile_deep_budget.count_queue_depth_grid
 count_step2_tuning_candidates = profile_deep_budget.count_step2_tuning_candidates
 count_enabled_deep_profiler_modes = profile_deep_budget.count_enabled_deep_profiler_modes
 campaign_budget_is_over_limit = profile_deep_budget.campaign_budget_is_over_limit
@@ -355,11 +350,16 @@ def collect_profiler_run_manifest_entries(
             output_directory=output_directory,
             path_value=profile.get("stage_timing_path"),
         )
+        profile_summary_path = manifest_path_value(
+            output_directory=output_directory,
+            path_value=profile.get("profile_summary_path"),
+        )
         if (
             profiler_artifact_path is None
             and application_output_prefix is None
             and application_output_run_directory is None
             and stage_timing_path is None
+            and profile_summary_path is None
         ):
             continue
         profiler_runs.append(
@@ -371,6 +371,7 @@ def collect_profiler_run_manifest_entries(
                 "application_output_prefix": application_output_prefix,
                 "application_output_run_directory": application_output_run_directory,
                 "stage_timing_path": stage_timing_path,
+                "profile_summary_path": profile_summary_path,
             }
         )
     return profiler_runs
@@ -936,11 +937,17 @@ def profile_summary_artifact_status(
     if not headline_results:
         return tooling_artifact_format.ToolArtifactStatus.FAILED
     aggregate_statuses = {str(result.get("status", "")) for result in headline_results}
-    if aggregate_statuses == {"success"}:
-        return tooling_artifact_format.ToolArtifactStatus.SUCCESS
-    if "success" in aggregate_statuses or "partial" in aggregate_statuses:
+    if "success" not in aggregate_statuses and "partial" not in aggregate_statuses:
+        return tooling_artifact_format.ToolArtifactStatus.FAILED
+    trial_statuses = {str(payload.get("status", "")) for payload in collect_summary_trial_payloads(summary_payload)}
+    deep_profiles = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
+    criterion_failed = any(
+        isinstance(result.get("returncode"), int) and result["returncode"] != 0
+        for result in typing.cast("list[dict[str, typing.Any]]", deep_profiles.get("rust_criterion", []))
+    )
+    if aggregate_statuses != {"success"} or trial_statuses.intersection({"failed", "partial"}) or criterion_failed:
         return tooling_artifact_format.ToolArtifactStatus.PARTIAL
-    return tooling_artifact_format.ToolArtifactStatus.FAILED
+    return tooling_artifact_format.ToolArtifactStatus.SUCCESS
 
 
 def write_standard_profile_artifacts(
@@ -1322,17 +1329,7 @@ def build_candidate_slug(candidate: Step2Candidate) -> str:
         candidate.trait_type,
         candidate.device,
         f"chunk{candidate.chunk_size}",
-        f"staging{candidate.staging_depth}",
-        f"callbackbatch{candidate.native_callback_batch_size}",
-        f"inflight{candidate.result_in_flight_limit if candidate.result_in_flight_limit is not None else 'default'}",
-        f"buffer{candidate.dosage_buffer_limit if candidate.dosage_buffer_limit is not None else 'default'}",
         f"writer{candidate.output_writer_thread_count}",
-        f"queue{candidate.output_writer_queue_depth}",
-        (
-            f"tile{candidate.bgen_decode_tile_variant_count}"
-            if candidate.bgen_decode_tile_variant_count is not None
-            else "tiledefault"
-        ),
         f"rayon{candidate.rayon_thread_count if candidate.rayon_thread_count is not None else 'default'}",
     ]
     if candidate.firth_batch_size is not None:
@@ -1344,66 +1341,28 @@ def build_step2_candidates(
     *,
     trait_type: str,
     device: str,
-    bgen_candidates: tuple[BgenCandidateSummary, ...],
+    thread_candidates: tuple[NativeThreadCandidate, ...],
     chunk_sizes: tuple[int, ...],
-    staging_depths: tuple[int, ...],
-    native_callback_batch_sizes: tuple[int, ...],
-    result_in_flight_limits: tuple[int | None, ...],
-    dosage_buffer_limits: tuple[int | None, ...],
     writer_thread_counts: tuple[int, ...],
-    queue_depth_multipliers: tuple[int, ...],
     firth_batch_sizes: tuple[int, ...],
 ) -> tuple[Step2Candidate, ...]:
-    """Build the g step 2 candidate grid."""
+    """Build candidates from settings still exposed by the application."""
     candidates: list[Step2Candidate] = []
-    for bgen_candidate in bgen_candidates:
+    for thread_candidate in thread_candidates:
         for chunk_size in chunk_sizes:
-            for staging_depth in staging_depths:
-                for native_callback_batch_size in native_callback_batch_sizes:
-                    for result_in_flight_limit in result_in_flight_limits:
-                        for dosage_buffer_limit in dosage_buffer_limits:
-                            for writer_thread_count in writer_thread_counts:
-                                for queue_depth in build_queue_depth_values(
-                                    writer_thread_count,
-                                    queue_depth_multipliers,
-                                ):
-                                    if trait_type == "binary":
-                                        for firth_batch_size in firth_batch_sizes:
-                                            candidates.append(
-                                                Step2Candidate(
-                                                    trait_type=trait_type,
-                                                    device=device,
-                                                    chunk_size=chunk_size,
-                                                    staging_depth=staging_depth,
-                                                    native_callback_batch_size=native_callback_batch_size,
-                                                    result_in_flight_limit=result_in_flight_limit,
-                                                    dosage_buffer_limit=dosage_buffer_limit,
-                                                    output_writer_thread_count=writer_thread_count,
-                                                    output_writer_queue_depth=queue_depth,
-                                                    bgen_decode_tile_variant_count=(
-                                                        bgen_candidate.decode_tile_variant_count
-                                                    ),
-                                                    rayon_thread_count=bgen_candidate.rayon_thread_count,
-                                                    firth_batch_size=firth_batch_size,
-                                                )
-                                            )
-                                        continue
-                                    candidates.append(
-                                        Step2Candidate(
-                                            trait_type=trait_type,
-                                            device=device,
-                                            chunk_size=chunk_size,
-                                            staging_depth=staging_depth,
-                                            native_callback_batch_size=native_callback_batch_size,
-                                            result_in_flight_limit=result_in_flight_limit,
-                                            dosage_buffer_limit=dosage_buffer_limit,
-                                            output_writer_thread_count=writer_thread_count,
-                                            output_writer_queue_depth=queue_depth,
-                                            bgen_decode_tile_variant_count=bgen_candidate.decode_tile_variant_count,
-                                            rayon_thread_count=bgen_candidate.rayon_thread_count,
-                                            firth_batch_size=None,
-                                        )
-                                    )
+            for writer_thread_count in writer_thread_counts:
+                active_firth_batch_sizes = firth_batch_sizes if trait_type == "binary" else (None,)
+                for firth_batch_size in active_firth_batch_sizes:
+                    candidates.append(
+                        Step2Candidate(
+                            trait_type=trait_type,
+                            device=device,
+                            chunk_size=chunk_size,
+                            output_writer_thread_count=writer_thread_count,
+                            rayon_thread_count=thread_candidate.rayon_thread_count,
+                            firth_batch_size=firth_batch_size,
+                        )
+                    )
     return tuple(candidates)
 
 
@@ -1435,211 +1394,19 @@ def build_g_step2_child_command(
     memory_profile_path: Path | None = None,
     diagnostic_options: dict[str, object] | None = None,
 ) -> list[str]:
-    """Build one isolated Python child command for a g REGENIE step 2 run."""
+    """Build one isolated child command for the current native CLI."""
     jax_cache_directory = resolve_profile_jax_cache_directory(candidate, cache_directory)
-    regenie_run_spec = build_g_step2_regenie_run_spec(
+    return profile_deep_commands.build_g_step2_child_command(
         baseline_paths=baseline_paths,
         candidate=candidate,
         output_prefix=output_prefix,
         variant_limit=variant_limit,
-        jax_cache_directory=jax_cache_directory,
+        cache_directory=jax_cache_directory,
         stage_timing_path=stage_timing_path,
+        trace_directory=trace_directory,
+        memory_profile_path=memory_profile_path,
+        diagnostic_options=diagnostic_options,
     )
-    regenie_options = tooling_g_regenie.render_python_api_options(regenie_run_spec)
-    rendered_diagnostics = typing.cast("dict[str, object]", regenie_options.setdefault("diagnostics", {}))
-    rendered_diagnostics.update(diagnostic_options or {})
-    regenie_options_payload = json.dumps(tooling_reports.to_jsonable(regenie_options), sort_keys=True)
-    jax_cache_directory_payload = str(jax_cache_directory) if jax_cache_directory is not None else None
-    child_code = textwrap.dedent(
-        """
-        import json
-        import time
-        from pathlib import Path
-
-        import jax
-        import polars as pl
-
-        from g import api, types
-
-        def configure_jax_profile_diagnostics():
-            for setting_name, value in (
-                ("jax_explain_cache_misses", True),
-                ("jax_logging_level", "DEBUG"),
-                ("jax_log_compiles", True),
-            ):
-                try:
-                    jax.config.update(setting_name, value)
-                except Exception:
-                    pass
-
-        def count_artifact_rows(artifacts):
-            artifact_values = artifacts.phenotype_artifacts or (artifacts,)
-            output_paths = []
-            output_row_count = 0
-            for artifact in artifact_values:
-                if artifact.final_parquet is not None:
-                    output_paths.append(str(artifact.final_parquet))
-                    output_row_count += pl.scan_parquet(artifact.final_parquet).select(pl.len()).collect().item()
-                    continue
-                if artifact.output_run_directory is None:
-                    continue
-                output_run_directory = Path(artifact.output_run_directory)
-                parquet_paths = sorted((output_run_directory / "parts").glob("*.parquet"))
-                arrow_paths = sorted((output_run_directory / "chunks").glob("*.arrow"))
-                for parquet_path in parquet_paths:
-                    output_paths.append(str(parquet_path))
-                    output_row_count += pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
-                for arrow_path in arrow_paths:
-                    output_paths.append(str(arrow_path))
-                    output_row_count += pl.scan_ipc(arrow_path).select(pl.len()).collect().item()
-            if not output_paths:
-                raise RuntimeError("No readable output artifacts were produced.")
-            return output_row_count, output_paths
-
-        configure_jax_profile_diagnostics()
-        trace_directory = {trace_directory!r}
-        memory_profile_path = {memory_profile_path!r}
-        if trace_directory is not None:
-            jax.profiler.start_trace(trace_directory)
-        try:
-            start_time = time.perf_counter()
-            regenie_options = json.loads({regenie_options_payload!r})
-            artifacts = api.regenie.from_options(regenie_options)
-            wall_time_seconds = time.perf_counter() - start_time
-            output_row_count, output_paths = count_artifact_rows(artifacts)
-            probe_array = jax.device_put(0)
-            probe_device = next(iter(probe_array.devices()))
-            if memory_profile_path is not None:
-                jax.profiler.save_device_memory_profile(memory_profile_path)
-            print(json.dumps({{
-                "wall_time_seconds": wall_time_seconds,
-                "output_path": output_paths[0],
-                "output_paths": output_paths,
-                "output_row_count": int(output_row_count),
-                "jax_devices": [str(device) for device in jax.devices()],
-                "jax_probe_device": str(probe_device),
-                "jax_probe_device_platform": getattr(probe_device, "platform", None),
-                "jax_cache_directory": {jax_cache_directory_payload!r},
-                "jax_persistent_cache_used": True,
-            }}))
-        finally:
-            if trace_directory is not None:
-                jax.profiler.stop_trace()
-        """
-    ).format(
-        trace_directory=str(trace_directory) if trace_directory is not None else None,
-        memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
-        regenie_options_payload=regenie_options_payload,
-        jax_cache_directory_payload=jax_cache_directory_payload,
-    )
-    return [sys.executable, "-c", child_code]
-
-
-def build_g_step2_regenie_run_spec(
-    *,
-    baseline_paths: typing.Any,
-    candidate: Step2Candidate,
-    output_prefix: Path,
-    variant_limit: int | None,
-    jax_cache_directory: Path | None,
-    stage_timing_path: Path | None,
-) -> tooling_g_regenie.RegenieRunSpec:
-    """Build the shared REGENIE run spec for a deep-profile child command."""
-    is_binary_trait = candidate.trait_type == "binary"
-    phenotype_path = (
-        baseline_paths.binary_phenotype_path if is_binary_trait else baseline_paths.continuous_phenotype_path
-    )
-    phenotype_name = "phenotype_binary" if is_binary_trait else "phenotype_continuous"
-    prediction_path = (
-        baseline_paths.regenie_prediction_list_path
-        if is_binary_trait
-        else baseline_paths.regenie_qt_prediction_list_path
-    )
-    return tooling_g_regenie.RegenieRunSpec(
-        trait_kind=(
-            tooling_g_regenie.RegenieTraitKind.BINARY
-            if is_binary_trait
-            else tooling_g_regenie.RegenieTraitKind.QUANTITATIVE
-        ),
-        command_prefix=(sys.executable, "-m", "g", "regenie"),
-        inputs=tooling_g_regenie.RegenieInputSpec(
-            bgen_path=baseline_paths.bgen_path,
-            sample_path=baseline_paths.sample_path,
-            phenotype_path=phenotype_path,
-            phenotype_columns=(phenotype_name,),
-            covariate_path=baseline_paths.covariate_path,
-            covariate_columns=("age", "sex"),
-            prediction_list_path=prediction_path,
-            output_prefix=output_prefix,
-        ),
-        compute=tooling_g_regenie.RegenieComputeOptions(
-            device=tooling_g_regenie.RegenieDevice(candidate.device),
-            bsize=candidate.chunk_size,
-            threads=candidate.rayon_thread_count,
-            staging_depth=candidate.staging_depth,
-            native_callback_batch_size=candidate.native_callback_batch_size,
-            result_in_flight_limit=candidate.result_in_flight_limit,
-            dosage_buffer_limit=candidate.dosage_buffer_limit,
-            variant_limit=variant_limit,
-            trusted_no_missing_diploid=None,
-            trusted_bgen_validation_mode=None,
-            bgen_decode_tile_variant_count=candidate.bgen_decode_tile_variant_count or 64,
-            firth_batch_size=candidate.firth_batch_size or 1024,
-            firth_candidate_capacity=None,
-            gpu_genotype_format=None,
-            jax_cache_dir=jax_cache_directory,
-            jax_persistent_cache=True,
-            jax_persistent_cache_min_entry_size_bytes=-1,
-            jax_persistent_cache_min_compile_time_seconds=0,
-            jax_xla_autotune_cache=ENABLE_XLA_AUTOTUNE_CACHE,
-        ),
-        output=tooling_g_regenie.RegenieOutputOptions(
-            output_format="parquet",
-            output_run_directory=None,
-            writer_threads=candidate.output_writer_thread_count,
-            writer_queue_depth=candidate.output_writer_queue_depth,
-            chunks_per_arrow_file=None,
-            arrow_compression=None,
-            parquet_compression=None,
-            output_statistic_dtype=None,
-            finalize_parquet=None,
-        ),
-        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
-            telemetry=None,
-            log_dir=None,
-            stage_timings_json=stage_timing_path,
-            profile_summary_json=None,
-            log_file=None,
-            log_filter=None,
-            log_stderr=None,
-            progress_interval_seconds=None,
-            progress_interval_chunks=None,
-        ),
-        binary=(
-            tooling_g_regenie.RegenieBinaryOptions(
-                firth=True,
-                approx=True,
-                firth_se=None,
-                p_threshold=None,
-            )
-            if is_binary_trait
-            else None
-        ),
-    )
-
-
-def build_application_output_run_directory(output_prefix: Path) -> Path:
-    """Return the default g output run directory for an output prefix."""
-    return output_prefix.with_name(f"{output_prefix.name}.g")
-
-
-def subprocess_output_text(output: str | bytes | None) -> str:
-    """Return subprocess output as text for logs and diagnostics."""
-    if output is None:
-        return ""
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return output
 
 
 def run_logged_command(
@@ -1669,27 +1436,28 @@ def run_logged_command(
     status = "success"
     notes: str | None = None
     timeout_reached = False
+    process = subprocess.Popen(
+        command_arguments,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+        start_new_session=True,
+    )
     try:
-        completed_process = subprocess.run(
-            command_arguments,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=environment,
-            timeout=timeout_seconds,
-        )
-        command_stdout = subprocess_output_text(completed_process.stdout)
-        command_stderr = subprocess_output_text(completed_process.stderr)
-        status = "success" if completed_process.returncode == 0 else "failed"
-        if completed_process.returncode != 0:
+        command_stdout, command_stderr = process.communicate(timeout=timeout_seconds)
+        status = "success" if process.returncode == 0 else "failed"
+        if process.returncode != 0:
             notes = command_stderr.strip() or command_stdout.strip()
-    except subprocess.TimeoutExpired as error:
+    except subprocess.TimeoutExpired:
         timeout_reached = True
-        command_stdout = subprocess_output_text(error.stdout)
-        command_stderr = subprocess_output_text(error.stderr)
-        notes = (
-            f"{name} timed out after {float(timeout_seconds or 0):.3f}s with no completion (limit={timeout_seconds}s)."
-        )
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            command_stdout, command_stderr = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            command_stdout, command_stderr = process.communicate()
+        notes = f"{name} timed out after {float(timeout_seconds or 0):.3f}s; the profiler process group was terminated."
         status = "failed"
     wall_time_seconds = time.perf_counter() - start_time
     stdout_log_path.write_text(command_stdout, encoding="utf-8")
@@ -1716,6 +1484,7 @@ def run_logged_command(
         device=device,
         status=status,
         wall_time_seconds=wall_time_seconds,
+        process_wall_time_seconds=wall_time_seconds,
         output_row_count=None,
         stdout_log_path=str(stdout_log_path),
         stderr_log_path=str(stderr_log_path),
@@ -1733,6 +1502,16 @@ def permission_blocked_profiler_note(*, stdout: str, stderr: str) -> str | None:
             "Nsight Compute connected to the CUDA process, but the NVIDIA driver restricts GPU performance "
             "counter access to admin users. Ask the cluster administrator to allow non-admin GPU performance "
             "counters on the GPU nodes, or keep using Nsight Systems/JAX traces for CUDA timelines."
+        )
+    if (
+        "perf_event_open" in combined_output
+        or "No permission to enable" in combined_output
+        or "Access to performance monitoring" in combined_output
+        or "perf_event_paranoid setting is" in combined_output
+    ):
+        return (
+            "Linux perf is blocked by this node's perf_event policy. Ask the cluster administrator to lower "
+            "perf_event_paranoid for profiling jobs."
         )
     return None
 
@@ -1760,6 +1539,7 @@ def skipped_profile_result(
         device=device,
         status="skipped",
         wall_time_seconds=None,
+        process_wall_time_seconds=None,
         output_row_count=None,
         stdout_log_path=str(stdout_log_path),
         stderr_log_path=str(stderr_log_path),
@@ -1825,7 +1605,7 @@ def build_deep_profiler_run_paths(
     stage_timing_path = profile_directory / f"{profile_name}.stage_timings.json" if emit_stage_timings else None
     return DeepProfilerRunPaths(
         application_output_prefix=application_output_prefix,
-        application_output_run_directory=build_application_output_run_directory(application_output_prefix),
+        application_output_run_directory=application_output_prefix.with_name(f"{application_output_prefix.name}.g"),
         stage_timing_path=stage_timing_path,
         profile_script_path=profile_directory / f"{profile_name}_child.py",
     )
@@ -1867,6 +1647,158 @@ def build_deep_profiler_child_command(
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class GTrialApplicationMetadata:
+    """Application metadata emitted by an isolated g trial.
+
+    Attributes:
+        wall_time_seconds: Wall time measured inside the application child.
+        output_row_count: Rows committed by the application run.
+        output_path: First readable output artifact produced by the run.
+        application_output_run_directory: Concrete per-trait application run directory.
+        profile_summary_path: Existing application profile-summary path.
+        device_diagnostics: Configured device, association backend, and genotype format.
+        child_reported_cache_directory: JAX cache directory reported by the application child.
+
+    """
+
+    wall_time_seconds: float | None
+    output_row_count: int | None
+    output_path: str | None
+    application_output_run_directory: str
+    profile_summary_path: str | None
+    device_diagnostics: dict[str, typing.Any] | None
+    child_reported_cache_directory: str | None
+
+
+def read_g_trial_child_payload(stdout_log_path: str) -> dict[str, typing.Any] | None:
+    """Read the application payload from a direct or profiler-wrapped stdout log."""
+    try:
+        stdout_lines = Path(stdout_log_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for stdout_line in reversed(stdout_lines):
+        try:
+            raw_payload: object = json.loads(stdout_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = {key: value for key, value in raw_payload.items() if isinstance(key, str)}
+        if "wall_time_seconds" in payload and "application_output_run_directory" in payload:
+            return payload
+    return None
+
+
+def collect_g_trial_application_metadata(
+    *,
+    stdout_log_path: str,
+    expected_output_root: Path,
+    require_child_artifacts: bool,
+) -> GTrialApplicationMetadata:
+    """Recover application metadata from child stdout and its run manifest."""
+    child_payload = read_g_trial_child_payload(stdout_log_path)
+    if child_payload is None and require_child_artifacts:
+        message = f"Successful g trial did not emit an application payload in {stdout_log_path}."
+        raise RuntimeError(message)
+    child_payload = child_payload or {}
+    raw_run_directory = child_payload.get("application_output_run_directory")
+    if isinstance(raw_run_directory, str):
+        application_run_directory = Path(raw_run_directory)
+    else:
+        discovered_run_directories = sorted(expected_output_root.glob("*.run"))
+        application_run_directory = (
+            discovered_run_directories[0] if len(discovered_run_directories) == 1 else expected_output_root
+        )
+
+    run_manifest: dict[str, typing.Any] | None = None
+    run_manifest_path = application_run_directory / "run_manifest.json"
+    if run_manifest_path.exists():
+        try:
+            raw_run_manifest: object = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+        except OSError, json.JSONDecodeError:
+            raw_run_manifest = None
+        if isinstance(raw_run_manifest, dict):
+            run_manifest = {key: value for key, value in raw_run_manifest.items() if isinstance(key, str)}
+    if run_manifest is None and require_child_artifacts:
+        message = f"Successful g trial did not produce a readable run manifest at {run_manifest_path}."
+        raise RuntimeError(message)
+
+    output_row_count: int | None = None
+    if run_manifest is not None:
+        committed_chunks = run_manifest.get("committed_chunks")
+        if isinstance(committed_chunks, list):
+            row_counts = [
+                chunk.get("row_count")
+                for chunk in committed_chunks
+                if isinstance(chunk, dict)
+                and isinstance(chunk.get("row_count"), int)
+                and not isinstance(chunk.get("row_count"), bool)
+            ]
+            if row_counts:
+                output_row_count = sum(row_counts)
+    if output_row_count is None:
+        raw_output_row_count = child_payload.get("output_row_count")
+        if isinstance(raw_output_row_count, int) and not isinstance(raw_output_row_count, bool):
+            output_row_count = raw_output_row_count
+
+    raw_output_path = child_payload.get("output_path")
+    output_path = raw_output_path if isinstance(raw_output_path, str) else None
+    if output_path is None:
+        final_output_path = application_run_directory / "final.parquet"
+        output_candidates = [
+            *sorted((application_run_directory / "parts").glob("*.parquet")),
+            *sorted((application_run_directory / "chunks").glob("*.arrow")),
+        ]
+        if final_output_path.exists():
+            output_path = str(final_output_path)
+        elif output_candidates:
+            output_path = str(output_candidates[0])
+
+    raw_profile_summary_path = child_payload.get("profile_summary_path")
+    profile_summary_candidates = [
+        Path(raw_profile_summary_path) if isinstance(raw_profile_summary_path, str) else None,
+        expected_output_root / "logs" / "profile.summary.json",
+        application_run_directory.parent / "logs" / "profile.summary.json",
+    ]
+    profile_summary_path = next(
+        (str(path) for path in profile_summary_candidates if path is not None and path.exists()),
+        None,
+    )
+
+    device_diagnostics: dict[str, typing.Any] | None = None
+    if run_manifest is not None:
+        runtime = run_manifest.get("runtime")
+        execution_plan = run_manifest.get("execution_plan")
+        runtime_payload = runtime if isinstance(runtime, dict) else {}
+        execution_plan_payload = execution_plan if isinstance(execution_plan, dict) else {}
+        association_backend = execution_plan_payload.get("association_backend")
+        association_backend_payload = association_backend if isinstance(association_backend, dict) else {}
+        device_diagnostics = {
+            "configured_device": runtime_payload.get("device"),
+            "association_backend": association_backend_payload.get("kind"),
+            "gpu_genotype_format": association_backend_payload.get("genotype_format"),
+        }
+
+    raw_wall_time_seconds = child_payload.get("wall_time_seconds")
+    wall_time_seconds = (
+        float(raw_wall_time_seconds)
+        if isinstance(raw_wall_time_seconds, (int, float)) and not isinstance(raw_wall_time_seconds, bool)
+        else None
+    )
+    raw_cache_directory = child_payload.get("jax_cache_directory")
+    child_reported_cache_directory = raw_cache_directory if isinstance(raw_cache_directory, str) else None
+    return GTrialApplicationMetadata(
+        wall_time_seconds=wall_time_seconds,
+        output_row_count=output_row_count,
+        output_path=output_path,
+        application_output_run_directory=str(application_run_directory),
+        profile_summary_path=profile_summary_path,
+        device_diagnostics=device_diagnostics,
+        child_reported_cache_directory=child_reported_cache_directory,
+    )
+
+
 def attach_deep_profiler_metadata(
     *,
     result: TrialResult,
@@ -1874,12 +1806,30 @@ def attach_deep_profiler_metadata(
     profiler_artifact_path: Path | None,
 ) -> TrialResult:
     """Attach profiler artifact and application output metadata to a result."""
+    application_metadata = collect_g_trial_application_metadata(
+        stdout_log_path=result.stdout_log_path,
+        expected_output_root=run_paths.application_output_run_directory,
+        require_child_artifacts=False,
+    )
     return dataclasses.replace(
         result,
+        wall_time_seconds=(
+            application_metadata.wall_time_seconds
+            if application_metadata.wall_time_seconds is not None
+            else result.wall_time_seconds
+        ),
+        output_row_count=application_metadata.output_row_count,
+        output_path=application_metadata.output_path,
         profiler_artifact_path=str(profiler_artifact_path) if profiler_artifact_path is not None else None,
         application_output_prefix=str(run_paths.application_output_prefix),
-        application_output_run_directory=str(run_paths.application_output_run_directory),
-        stage_timing_path=str(run_paths.stage_timing_path) if run_paths.stage_timing_path is not None else None,
+        application_output_run_directory=application_metadata.application_output_run_directory,
+        stage_timing_path=(
+            str(run_paths.stage_timing_path)
+            if run_paths.stage_timing_path is not None and run_paths.stage_timing_path.exists()
+            else None
+        ),
+        profile_summary_path=application_metadata.profile_summary_path,
+        device_diagnostics=application_metadata.device_diagnostics,
     )
 
 
@@ -1903,6 +1853,7 @@ def build_scalene_command_arguments(
             "-m",
             "scalene",
             "run",
+            "--profile-all",
             "--outfile",
             str(output_path),
             str(profile_script_path),
@@ -1916,6 +1867,7 @@ def build_scalene_command_arguments(
             "scalene",
             "scalene",
             "run",
+            "--profile-all",
             "--outfile",
             str(output_path),
             str(profile_script_path),
@@ -1923,6 +1875,7 @@ def build_scalene_command_arguments(
     return [
         tool_status.executable_path or "scalene",
         "run",
+        "--profile-all",
         "--outfile",
         str(output_path),
         str(profile_script_path),
@@ -1941,6 +1894,7 @@ def build_memray_command_arguments(
         "memray",
         "run",
         "--force",
+        "--aggregate",
         "--native",
         "--output",
         str(output_path),
@@ -1962,6 +1916,7 @@ def build_memray_command_arguments(
         tool_status.executable_path or "memray",
         "run",
         "--force",
+        "--aggregate",
         "--native",
         "--output",
         str(output_path),
@@ -2009,19 +1964,44 @@ def append_logged_profile_result(
     timeout_seconds: int | None = None,
 ) -> None:
     """Run and append one external profiler result."""
+    profile_result = run_logged_command(
+        name=name,
+        implementation=implementation,
+        trait_type=trait_type,
+        device=device,
+        command_arguments=command_arguments,
+        environment_overrides=environment_overrides,
+        log_directory=log_directory,
+        timeout_seconds=timeout_seconds,
+    )
+    if (
+        implementation == "Nsight Systems"
+        and profile_result.status == "success"
+        and profile_result.notes is not None
+        and "TargetProfilingFailed" in profile_result.notes
+    ):
+        profile_result = dataclasses.replace(
+            profile_result,
+            status="partial",
+            notes=(
+                "Nsight Systems produced a CUDA report and summary tables, but its importer reported "
+                "non-fatal target metadata errors for this driver/GPU combination."
+            ),
+        )
+    if (
+        profile_result.status in {"success", "partial"}
+        and profiler_artifact_path is not None
+        and not profiler_artifact_path.exists()
+    ):
+        profile_result = dataclasses.replace(
+            profile_result,
+            status="failed",
+            notes=f"Profiler exited successfully but did not create {profiler_artifact_path}.",
+        )
     results["sampling_profiles"].append(
         dataclasses.asdict(
             attach_deep_profiler_metadata(
-                result=run_logged_command(
-                    name=name,
-                    implementation=implementation,
-                    trait_type=trait_type,
-                    device=device,
-                    command_arguments=command_arguments,
-                    environment_overrides=environment_overrides,
-                    log_directory=log_directory,
-                    timeout_seconds=timeout_seconds,
-                ),
+                result=profile_result,
                 run_paths=run_paths,
                 profiler_artifact_path=profiler_artifact_path,
             )
@@ -2074,23 +2054,14 @@ def run_g_trial(
         log_directory=log_directory,
     )
     after_cache_snapshot = collect_jax_cache_snapshot(resolved_cache_directory)
-    output_row_count = None
-    output_path = None
-    device_diagnostics = None
-    child_reported_cache_directory = None
-    if result.status == "success":
-        output_payload = json.loads(Path(result.stdout_log_path).read_text(encoding="utf-8").strip().splitlines()[-1])
-        output_row_count = int(output_payload["output_row_count"])
-        output_path = str(output_payload["output_path"])
-        child_reported_cache_directory = typing.cast("str | None", output_payload.get("jax_cache_directory"))
-        device_diagnostics = {
-            "jax_devices": output_payload.get("jax_devices"),
-            "jax_probe_device": output_payload.get("jax_probe_device"),
-            "jax_probe_device_platform": output_payload.get("jax_probe_device_platform"),
-        }
+    application_metadata = collect_g_trial_application_metadata(
+        stdout_log_path=result.stdout_log_path,
+        expected_output_root=output_prefix.with_name(f"{output_prefix.name}.g"),
+        require_child_artifacts=result.status == "success",
+    )
     jax_cache_diagnostics = build_jax_cache_diagnostics(
         cache_directory=resolved_cache_directory,
-        child_reported_cache_directory=child_reported_cache_directory,
+        child_reported_cache_directory=application_metadata.child_reported_cache_directory,
         persistent_cache_used=True,
         before_snapshot=before_cache_snapshot,
         after_snapshot=after_cache_snapshot,
@@ -2098,12 +2069,20 @@ def run_g_trial(
     )
     return dataclasses.replace(
         result,
-        output_row_count=output_row_count,
-        output_path=output_path,
-        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
+        wall_time_seconds=(
+            application_metadata.wall_time_seconds
+            if application_metadata.wall_time_seconds is not None
+            else result.wall_time_seconds
+        ),
+        output_row_count=application_metadata.output_row_count,
+        output_path=application_metadata.output_path,
+        stage_timing_path=str(stage_timing_path)
+        if stage_timing_path is not None and stage_timing_path.exists()
+        else None,
+        profile_summary_path=application_metadata.profile_summary_path,
         application_output_prefix=str(output_prefix),
-        application_output_run_directory=str(build_application_output_run_directory(output_prefix)),
-        device_diagnostics=device_diagnostics,
+        application_output_run_directory=application_metadata.application_output_run_directory,
+        device_diagnostics=application_metadata.device_diagnostics,
         jax_cache_diagnostics=jax_cache_diagnostics,
     )
 
@@ -2158,6 +2137,7 @@ def aggregate_trial_results(
     warmup_count: int,
     trial_results: list[TrialResult],
     warmup_trials: list[TrialResult] | None = None,
+    candidate: Step2Candidate | None = None,
 ) -> AggregateResult:
     """Aggregate successful measured trial results."""
     observed_warmup_trials = [] if warmup_trials is None else warmup_trials
@@ -2188,6 +2168,7 @@ def aggregate_trial_results(
             trials=trial_results,
             warmup_trials=observed_warmup_trials,
             jax_cold_warm_summary=jax_cold_warm_summary,
+            candidate=candidate,
         )
     wall_times = [typing.cast("float", trial_result.wall_time_seconds) for trial_result in successful_trials]
     row_counts = [
@@ -2214,6 +2195,7 @@ def aggregate_trial_results(
         trials=trial_results,
         warmup_trials=observed_warmup_trials,
         jax_cold_warm_summary=jax_cold_warm_summary,
+        candidate=candidate,
     )
 
 
@@ -2266,6 +2248,7 @@ def run_repeated_g_trials(
         warmup_count=warmup_count,
         trial_results=trial_results,
         warmup_trials=warmup_results,
+        candidate=candidate,
     )
 
 
@@ -2319,81 +2302,39 @@ def run_repeated_regenie_trials(
     )
 
 
-def summarize_bgen_case(case_report: typing.Any) -> BgenCandidateSummary:
-    """Summarize one BGEN reader benchmark case."""
-    matching_results = [
-        path_result
-        for path_result in case_report.path_results
-        if path_result.path_mode == benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value
-    ]
-    if len(matching_results) != 1:
-        message = "Expected exactly one variant-major buffered BGEN result."
-        raise ValueError(message)
-    path_result = matching_results[0]
-    return BgenCandidateSummary(
-        decode_tile_variant_count=case_report.decode_tile_variant_count,
-        rayon_thread_count=case_report.rayon_thread_count,
-        median_seconds=statistics.median(path_result.durations_seconds),
-        mean_seconds=path_result.mean_seconds,
-        durations_seconds=list(path_result.durations_seconds),
-    )
-
-
-def run_bgen_sweep(
+def build_native_thread_candidates(
     *,
     arguments: ProfileArguments,
-    baseline_paths: typing.Any,
     output_directory: Path,
-) -> tuple[BgenCandidateSummary, ...]:
-    """Run BGEN reader sweeps over decode tile size and Rayon threads."""
-    summaries: list[BgenCandidateSummary] = []
-    variant_limit = arguments.variant_limit or 16_384
-    sweep_directory = output_directory / "bgen_sweep"
-    sweep_directory.mkdir(parents=True, exist_ok=True)
-    for decode_tile_variant_count in parse_int_list(arguments.bgen_decode_tile_variant_counts):
-        for rayon_thread_count in parse_int_list(arguments.rayon_thread_counts):
-            benchmark_arguments = benchmark_bgen_reader.BenchmarkArguments(
-                bgen=baseline_paths.bgen_path,
-                sample=baseline_paths.sample_path,
-                chunk_size=arguments.bgen_benchmark_chunk_size,
-                chunk_sizes=str(arguments.bgen_benchmark_chunk_size),
-                variant_limit=variant_limit,
-                repeat_count=arguments.tuning_trials,
-                path_modes=benchmark_bgen_reader.BenchmarkPathMode.VARIANT_MAJOR_BUFFERED.value,
-                sample_selection_mode=benchmark_bgen_reader.SampleSelectionMode.FULL.value,
-                sample_selection_modes="",
-                decode_tile_variant_count=decode_tile_variant_count,
-                decode_tile_variant_counts="",
-                rayon_thread_count=rayon_thread_count,
-                rayon_thread_counts="",
-                trusted_no_missing_diploid=False,
-                trusted_no_missing_diploid_modes="",
-                emit_case_json=True,
-                json_summary_path=None,
-                markdown_summary_path=None,
-            )
-            case_report = benchmark_bgen_reader.run_case_subprocess(
-                benchmark_arguments,
-                arguments.bgen_benchmark_chunk_size,
-                decode_tile_variant_count,
-                rayon_thread_count,
-                trusted_no_missing_diploid=False,
-                sample_selection_mode=benchmark_bgen_reader.SampleSelectionMode.FULL,
-            )
-            summaries.append(summarize_bgen_case(case_report))
-    summaries = sorted(summaries, key=lambda summary: (summary.median_seconds, summary.mean_seconds))
-    (sweep_directory / "bgen_sweep.json").write_text(
-        json.dumps([dataclasses.asdict(summary) for summary in summaries], indent=2) + "\n",
+) -> tuple[NativeThreadCandidate, ...]:
+    """Record native Rayon worker-count candidates."""
+    candidate_directory = output_directory / "thread_candidates"
+    candidate_directory.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        NativeThreadCandidate(
+            rayon_thread_count=rayon_thread_count,
+        )
+        for rayon_thread_count in parse_int_list(arguments.rayon_thread_counts)
+    ]
+    (candidate_directory / "thread_candidates.json").write_text(
+        json.dumps(
+            {
+                "notes": "The application exposes Rayon threads; internal reader profiling remains in Criterion.",
+                "thread_candidates": [dataclasses.asdict(candidate) for candidate in candidates],
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
-    return tuple(summaries)
+    return tuple(candidates)
 
 
 def run_candidate_tuning(
     *,
     arguments: ProfileArguments,
     baseline_paths: typing.Any,
-    bgen_summaries: tuple[BgenCandidateSummary, ...],
+    thread_candidates: tuple[NativeThreadCandidate, ...],
     output_directory: Path,
     cache_directory: Path,
 ) -> CandidateTuningResults:
@@ -2402,26 +2343,15 @@ def run_candidate_tuning(
     finalist_results_by_key: dict[str, list[AggregateResult]] = {}
     emit_stage_timings = should_emit_stage_timings(arguments)
     chunk_sizes = parse_int_list(arguments.chunk_sizes)
-    staging_depths = parse_int_list(arguments.staging_depths)
-    native_callback_batch_sizes = parse_int_list(arguments.native_callback_batch_sizes)
-    result_in_flight_limits = parse_optional_int_list(arguments.result_in_flight_limits)
-    dosage_buffer_limits = parse_optional_int_list(arguments.dosage_buffer_limits)
     writer_thread_counts = parse_int_list(arguments.output_writer_thread_counts)
-    queue_depth_multipliers = parse_int_list(arguments.writer_queue_depth_multipliers)
     firth_batch_sizes = parse_int_list(arguments.firth_batch_sizes)
-    selected_bgen_summaries = bgen_summaries[: arguments.top_bgen_candidates]
     for workload_key in parse_profile_workload_keys(arguments.workload_keys):
         candidates = build_step2_candidates(
             trait_type=workload_key.trait_type,
             device=workload_key.device,
-            bgen_candidates=selected_bgen_summaries,
+            thread_candidates=thread_candidates,
             chunk_sizes=chunk_sizes,
-            staging_depths=staging_depths,
-            native_callback_batch_sizes=native_callback_batch_sizes,
-            result_in_flight_limits=result_in_flight_limits,
-            dosage_buffer_limits=dosage_buffer_limits,
             writer_thread_counts=writer_thread_counts,
-            queue_depth_multipliers=queue_depth_multipliers,
             firth_batch_sizes=firth_batch_sizes,
         )
         if arguments.smoke:
@@ -2574,55 +2504,11 @@ def run_headline_trials(
 
 
 def candidate_from_aggregate_name(winner_key: str, aggregate_result: AggregateResult) -> Step2Candidate:
-    """Reconstruct a winner candidate from its child environment and command."""
-    trial = aggregate_result.trials[0]
-    trait_type, device = winner_key.rsplit("_", maxsplit=1)
-    command = trial.command_arguments
-    code = command[2] if len(command) >= 3 and command[1] == "-c" else ""
-
-    def read_scalar(marker: str) -> str | None:
-        marker_index = code.find(marker)
-        if marker_index < 0:
-            return None
-        value_start = marker_index + len(marker)
-        value_end_candidates = [
-            candidate_index
-            for candidate_index in (
-                code.find(",", value_start),
-                code.find("}", value_start),
-                code.find("\n", value_start),
-            )
-            if candidate_index >= 0
-        ]
-        value_end = min(value_end_candidates) if value_end_candidates else len(code)
-        return code[value_start:value_end].strip()
-
-    def read_int(marker: str, default_value: int) -> int:
-        raw_value = read_scalar(marker)
-        if raw_value is None:
-            return default_value
-        return int(raw_value)
-
-    def read_optional_int(marker: str) -> int | None:
-        raw_value = read_scalar(marker)
-        if raw_value is None or raw_value in {"None", "null"}:
-            return None
-        return int(raw_value)
-
-    return Step2Candidate(
-        trait_type=trait_type,
-        device=device,
-        chunk_size=read_int('"bsize": ', 8192),
-        staging_depth=read_int('"staging_depth": ', 1),
-        native_callback_batch_size=read_int('"native_callback_batch_size": ', 1),
-        result_in_flight_limit=read_optional_int('"result_in_flight_limit": '),
-        dosage_buffer_limit=read_optional_int('"dosage_buffer_limit": '),
-        output_writer_thread_count=read_int('"writer_threads": ', 8),
-        output_writer_queue_depth=read_int('"writer_queue_depth": ', 4),
-        bgen_decode_tile_variant_count=read_int('"bgen_decode_tile_variant_count": ', 64),
-        rayon_thread_count=read_int('"threads": ', 0) or None,
-        firth_batch_size=read_int('"firth_batch_size": ', 1024),
-    )
+    """Return the candidate retained with an aggregate result."""
+    if aggregate_result.candidate is None:
+        message = f"Aggregate {winner_key!r} does not retain its tuning candidate."
+        raise ValueError(message)
+    return aggregate_result.candidate
 
 
 def build_runtime_comparisons(aggregate_results: list[AggregateResult]) -> dict[str, dict[str, float]]:
@@ -2736,12 +2622,18 @@ def read_json_file(path: str | None) -> dict[str, typing.Any] | None:
 
 def collect_trial_stage_totals(trial: TrialResult) -> dict[str, float]:
     """Collect raw stage totals for one g or REGENIE trial."""
-    stage_payload = read_json_file(trial.stage_timing_path)
-    if stage_payload is None:
-        stage_payload = read_json_file(trial.regenie_profile_path)
-    if stage_payload is None:
-        return {}
-    return {stage_name: float(seconds) for stage_name, seconds in stage_payload.get("stage_totals_seconds", {}).items()}
+    stage_totals: dict[str, float] = {}
+    for profile_path in (trial.stage_timing_path, trial.profile_summary_path, trial.regenie_profile_path):
+        stage_payload = read_json_file(profile_path)
+        if stage_payload is None:
+            continue
+        stage_totals.update(
+            {
+                stage_name: float(seconds)
+                for stage_name, seconds in stage_payload.get("stage_totals_seconds", {}).items()
+            }
+        )
+    return stage_totals
 
 
 def collect_stage_totals(aggregate_results: list[AggregateResult]) -> dict[str, float]:
@@ -3882,7 +3774,9 @@ def run_deep_profiles(
     if arguments.enable_rust_criterion and profiler_tool_status["rust_criterion"].available:
         for benchmark_name in parse_string_list(arguments.rust_benchmarks):
             logger.info("Running Rust Criterion benchmark %s", benchmark_name)
-            results["rust_criterion"].append(command_output(["cargo", "bench", "--bench", benchmark_name]))
+            results["rust_criterion"].append(
+                command_output(["cargo", "bench", "-p", "g-genotype", "--bench", benchmark_name])
+            )
     elif arguments.enable_rust_criterion:
         results["rust_criterion"].append(dataclasses.asdict(profiler_tool_status["rust_criterion"]))
     for winner_key, winner in sorted(winners.items()):
@@ -3979,6 +3873,10 @@ def run_deep_profiles(
             command_arguments = [
                 py_spy_status.executable_path or "py-spy",
                 "record",
+                "--native",
+                "--threads",
+                "--rate",
+                "10",
                 "--format",
                 "speedscope",
                 "--output",
@@ -4090,6 +3988,7 @@ def run_deep_profiles(
         nsight_systems_status = profiler_tool_status["nsight_systems"]
         if arguments.enable_nsight_systems and nsight_systems_status.available:
             nsight_report_prefix = profile_directory / f"{winner_key}_nsys"
+            nsight_report_path = Path(f"{nsight_report_prefix}.nsys-rep")
             nsight_systems_child_command = build_deep_profiler_child_command(
                 profile_directory=profile_directory,
                 profile_name=f"profile_{winner_key}_nsys",
@@ -4120,7 +4019,7 @@ def run_deep_profiles(
                 environment_overrides=nsight_systems_child_command.environment_overrides,
                 log_directory=output_directory / "logs",
                 run_paths=nsight_systems_child_command.run_paths,
-                profiler_artifact_path=nsight_report_prefix,
+                profiler_artifact_path=nsight_report_path,
                 timeout_seconds=arguments.nsight_systems_timeout_seconds,
             )
         elif arguments.enable_nsight_systems:
@@ -4135,7 +4034,8 @@ def run_deep_profiles(
             )
         nsight_compute_status = profiler_tool_status["nsight_compute"]
         if arguments.enable_nsight_compute and nsight_compute_status.available:
-            nsight_compute_report_path = profile_directory / f"{winner_key}_ncu"
+            nsight_compute_report_prefix = profile_directory / f"{winner_key}_ncu"
+            nsight_compute_report_path = Path(f"{nsight_compute_report_prefix}.ncu-rep")
             nsight_compute_child_command = build_deep_profiler_child_command(
                 profile_directory=profile_directory,
                 profile_name=f"profile_{winner_key}_ncu",
@@ -4158,7 +4058,7 @@ def run_deep_profiles(
                     "--set",
                     "default",
                     "--export",
-                    str(nsight_compute_report_path),
+                    str(nsight_compute_report_prefix),
                     *nsight_compute_child_command.command_arguments,
                 ],
                 environment_overrides=nsight_compute_child_command.environment_overrides,
@@ -4192,7 +4092,8 @@ def run_deep_profiles(
             command_arguments = [
                 perf_status.executable_path or "perf",
                 "record",
-                "-g",
+                "--call-graph",
+                "dwarf,16384",
                 "-o",
                 str(perf_path),
                 "--",
@@ -4248,10 +4149,6 @@ def run_logging_perturbation_profiles(
             smoke=arguments.smoke,
         ):
             diagnostic_options = dict(perturbation_case.diagnostic_options)
-            if diagnostic_options.get("telemetry") != "off":
-                diagnostic_options["log_dir"] = str(
-                    perturbation_directory / f"{winner_key}_{perturbation_case.name}_logs"
-                )
             trial_result = run_g_trial(
                 name=f"logging_{winner_key}_{perturbation_case.name}",
                 baseline_paths=baseline_paths,
@@ -4473,6 +4370,12 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
 def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the landau deep profiling campaign."""
     arguments = apply_smoke_overrides(arguments)
+    if arguments.variant_limit is not None:
+        message = (
+            "tool.variant_limit is not supported by the current application. "
+            "Use a physically bounded input dataset or set it to null."
+        )
+        raise ValueError(message)
     output_directory = build_output_directory(arguments)
     output_directory.mkdir(parents=True, exist_ok=True)
     log_directory = output_directory / "logs"
@@ -4577,17 +4480,16 @@ def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | N
     preflight_metadata = collect_environment_metadata(baseline_paths, regenie_executable)
     (output_directory / "preflight.json").write_text(json.dumps(preflight_metadata, indent=2) + "\n", encoding="utf-8")
 
-    logger.info("Running BGEN reader pre-sweep")
-    bgen_summaries = run_bgen_sweep(
+    logger.info("Recording native thread candidates")
+    thread_candidates = build_native_thread_candidates(
         arguments=arguments,
-        baseline_paths=baseline_paths,
         output_directory=output_directory,
     )
     logger.info("Running candidate tuning")
     tuning_results = run_candidate_tuning(
         arguments=arguments,
         baseline_paths=baseline_paths,
-        bgen_summaries=bgen_summaries,
+        thread_candidates=thread_candidates,
         output_directory=output_directory,
         cache_directory=cache_directory,
     )
@@ -4638,7 +4540,7 @@ def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | N
         "preflight": preflight_metadata,
         "campaign_budget": dataclasses.asdict(campaign_budget),
         "setup_results": [dataclasses.asdict(result) for result in setup_results],
-        "bgen_summaries": [dataclasses.asdict(summary) for summary in bgen_summaries],
+        "thread_candidates": [dataclasses.asdict(candidate) for candidate in thread_candidates],
         "winners": {key: dataclasses.asdict(value) for key, value in winners.items()},
         "headline_results": [dataclasses.asdict(result) for result in headline_results],
         "regenie_baseline_scope": serialize_regenie_baseline_scope(regenie_baseline_scope),

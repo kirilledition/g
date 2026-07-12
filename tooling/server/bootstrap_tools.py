@@ -54,6 +54,7 @@ class ToolArchive:
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TOOLS_DIRECTORY = REPOSITORY_ROOT / ".tools"
 JUST_VERSION = "1.51.0"
+MOLD_VERSION = "2.41.0"
 RUST_TOOLCHAIN_VERSION = "1.96.0"
 RUSTUP_INIT_SHA256 = "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
 RUSTUP_INIT_URL = "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
@@ -68,6 +69,25 @@ TOOL_ARCHIVES = (
         expected_sha256="c8f085ca3e885723c341d06243fc291b5abfdc8bbe3b2c076b117de490387b59",
         archive_format=ArchiveFormat.TAR_GZIP,
         binary_members=(BinaryMember(archive_member_name="just", installed_name="just"),),
+    ),
+    ToolArchive(
+        tool_name="mold",
+        download_url=(
+            f"https://github.com/rui314/mold/releases/download/v{MOLD_VERSION}/mold-{MOLD_VERSION}-x86_64-linux.tar.gz"
+        ),
+        archive_filename=f"mold-{MOLD_VERSION}-x86_64-linux.tar.gz",
+        expected_sha256="a3696680d99e692970590a178bc3a33d78d60d1c6dc9db7a11b557b02b751f5d",
+        archive_format=ArchiveFormat.TAR_GZIP,
+        binary_members=(
+            BinaryMember(
+                archive_member_name=f"mold-{MOLD_VERSION}-x86_64-linux/bin/mold",
+                installed_name="mold",
+            ),
+            BinaryMember(
+                archive_member_name=f"mold-{MOLD_VERSION}-x86_64-linux/bin/ld.mold",
+                installed_name="ld.mold",
+            ),
+        ),
     ),
     ToolArchive(
         tool_name="plink",
@@ -320,7 +340,7 @@ def run_tool(arguments: BootstrapToolsArguments) -> None:
     install_rust_toolchain(tools_directory, downloads_directory)
     install_rust_components(tools_directory)
 
-    for command_name in ("just", "plink", "plink2", "regenie"):
+    for command_name in ("just", "mold", "ld.mold", "plink", "plink2", "regenie"):
         ensure_installed_command(command_name, bin_directory)
     for command_name in ("cargo", "cargo-clippy", "cargo-fmt", "rustc", "rustfmt"):
         if shutil.which(command_name, path=str(tools_directory / "rust" / "cargo" / "bin")) is None:

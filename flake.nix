@@ -94,26 +94,28 @@
         };
       in {
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            uv
-            just
-            time
-            zstd
-            zlib
-            rustToolchain
-            cargo-llvm-cov
-            pkg-config
-            cacert
-            openssl
-            python314
-            openjdk11_headless
-            openblas
-            lapack
-            poppler-utils
-            plink1Package
-            plink2Package
-            regeniePackage
-          ];
+          packages = with pkgs;
+            [
+              uv
+              just
+              time
+              zstd
+              zlib
+              rustToolchain
+              cargo-llvm-cov
+              pkg-config
+              cacert
+              openssl
+              python314
+              openjdk11_headless
+              openblas
+              lapack
+              poppler-utils
+              plink1Package
+              plink2Package
+              regeniePackage
+            ]
+            ++ lib.optionals stdenv.isLinux [ mold ];
 
           shellHook = ''
             export UV_PYTHON=python3.14

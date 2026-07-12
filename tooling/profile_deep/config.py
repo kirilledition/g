@@ -64,15 +64,11 @@ def apply_smoke_overrides(
         return arguments
     return dataclasses.replace(
         arguments,
-        variant_limit=1000 if arguments.variant_limit is None else arguments.variant_limit,
+        variant_limit=None,
         chunk_sizes="2048",
-        staging_depths="1",
         output_writer_thread_counts="1",
-        writer_queue_depth_multipliers="1",
         firth_batch_sizes="32",
-        bgen_decode_tile_variant_counts="64",
         rayon_thread_counts="1",
-        top_bgen_candidates=1,
         top_finalists=1,
         tuning_warmups=0,
         tuning_trials=1,
@@ -157,21 +153,9 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> profile_deep_mo
         enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
         rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
-        staging_depths=tooling_hydra_arguments.comma_join(tool_values["staging_depths"]),
-        native_callback_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["native_callback_batch_sizes"]),
-        result_in_flight_limits=tooling_hydra_arguments.comma_join(tool_values["result_in_flight_limits"]),
-        dosage_buffer_limits=tooling_hydra_arguments.comma_join(tool_values["dosage_buffer_limits"]),
         output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
-        writer_queue_depth_multipliers=tooling_hydra_arguments.comma_join(
-            tool_values["writer_queue_depth_multipliers"]
-        ),
         firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),
-        bgen_decode_tile_variant_counts=tooling_hydra_arguments.comma_join(
-            tool_values["bgen_decode_tile_variant_counts"]
-        ),
         rayon_thread_counts=tooling_hydra_arguments.comma_join(tool_values["rayon_thread_counts"]),
-        bgen_benchmark_chunk_size=int(tool_values["bgen_benchmark_chunk_size"]),
-        top_bgen_candidates=int(tool_values["top_bgen_candidates"]),
         top_finalists=int(tool_values["top_finalists"]),
         tuning_warmups=int(tool_values["tuning_warmups"]),
         tuning_trials=int(tool_values["tuning_trials"]),

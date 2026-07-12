@@ -37,9 +37,7 @@ just doctor-server
 just dev-bootstrap
 just dev-bootstrap-gpu
 just dev-install
-just dev-install-opt
-just dev-install-perf
-just dev-install-perf-max
+just dev-install-release
 just check-local
 just check-artifact-schema data/profiles/example/report.json
 just check-rust-architecture
@@ -50,10 +48,15 @@ just docs-build
 just docs-check
 ```
 
-The `dev-install*` recipes configure Rust build parallelism first, then pass
-the resolved `CARGO_BUILD_JOBS` value to `maturin develop -j`. Set
-`CARGO_BUILD_JOBS` before invoking the recipe when a host needs a tighter
-compile cap.
+`server-setup-tools` runs in a minimal `uv --no-project` environment so it can
+install Mold before any Linux build attempts to compile the project itself.
+
+`dev-install` uses Cargo's fast `dev` profile. `dev-install-release` uses the
+FatLTO, single-codegen-unit `release` profile used by benchmarks and final
+builds. Cargo defaults to 30 build jobs through `.cargo/config.toml`;
+`CARGO_BUILD_JOBS` or an explicit `--jobs` option can impose a different cap.
+SLURM jobs use the scheduler allocation unless `CARGO_BUILD_JOBS` is already
+set.
 
 Use SLURM for CPU-heavy validation:
 
@@ -115,12 +118,15 @@ just slurm-gpu-bench-tensorqtl-chr22
 ```
 
 `rust-bench` runs Criterion benchmarks through `cargo bench --workspace` so
-workspace-owned benches are discovered from their owning crates.
-`bench-rust-build-profiles` uses the repo Cargo configuration by default, so
-Linux Rust builds enable `target-cpu=native` without per-recipe `RUSTFLAGS`.
-Linker and rustc-wrapper choices stay outside the repo and should be supplied
-through environment variables when needed. When `CARGO_BUILD_JOBS` is
-configured, its Maturin build commands pass that value with `-j`.
+workspace-owned benches are discovered from their owning crates. Cargo's
+`bench` profile inherits the maximum-performance `release` profile.
+`bench-rust-build-profiles` compares the built-in `dev` and `release` profiles.
+The repo Cargo configuration defaults to 30 build jobs and, on Linux, enables
+`target-cpu=native` and links through Mold using the `cc` compiler driver.
+`doctor` verifies the compiler driver can complete a tiny Mold link. SLURM jobs
+isolate native Cargo artifacts under `target/slurm/<node>/`; an explicit
+`CARGO_TARGET_DIR` still takes precedence.
+`RUSTC_WRAPPER` remains an environment-specific choice.
 
 Historical external baseline comparisons remain available under `legacy-*`:
 
@@ -187,18 +193,21 @@ submit through SLURM and use saved benchmark configs for output locations.
 ```bash
 just profile-deep-dry
 just profile-deep-smoke
+just profile-rust-criterion
 just profile-app-full-dry
 just profile-app-full-smoke
 just profile-app-full
 just profile-chr10-binary-gpu-dry
 just profile-chr10-binary-gpu-smoke
 just profile-chr10-binary-gpu-full
+just profile-chr22-binary-gpu-dry
+just profile-chr22-binary-gpu-full
 ```
 
-The full profile recipes submit GPU work through SLURM. The chr10 binary GPU
-full profile uses `profile_chr10_binary_gpu_full.yaml`, which contains the
-previous profiler selection and campaign budget settings that used to live in
-the Justfile.
+The full profile recipes submit GPU work through SLURM. Native Criterion
+profiles use the configured CPU compute node. The focused chr10 and chr22
+binary GPU recipes keep their profiler selection and campaign budgets in saved
+Hydra configs rather than in the Justfile.
 
 ## SLURM Substrates
 

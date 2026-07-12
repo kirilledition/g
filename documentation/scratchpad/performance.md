@@ -33,14 +33,11 @@ Next:
 Profiles:
 
 ```text
-dev-fast   fast PyO3 iteration
-dev-opt    mildly optimized local checks
-perf       routine benchmark profile
-perf-max   expensive final benchmark profile
-perf-o2    opt-level=2 comparison profile
+dev       fast PyO3 iteration
+release   expensive maximum-performance builds and benchmarks
 ```
 
-Rules: no fat LTO for normal iteration; `dev-fast` for quick `maturin develop`; `perf`/`perf-max` only for evidence; keep profiler symbols; measure clean+incremental build; test app runtime, not compile-only.
+Rules: use `dev` for quick `maturin develop`; use `release` for benchmark evidence and final builds; keep profiler symbols; measure clean+incremental build; test app runtime, not compile-only.
 
 Knobs:
 
@@ -48,7 +45,7 @@ Knobs:
 - `codegen-units` 1, 4, 8, 16.
 - `opt-level=2` versus `opt-level=3`.
 - `target-cpu=native` on server-local builds.
-- Linker and `sccache` policy through environment, not hard-coded repo logic.
+- Mold is the default Linux linker; `sccache` remains environment policy.
 - PGO only for serious release-candidate evidence.
 
 Per profile measure clean build, incremental rebuild, shared-object size, import smoke, BGEN throughput, binary-hot GPU smoke, profiler symbols. Use `just bench-rust-build-profiles`.

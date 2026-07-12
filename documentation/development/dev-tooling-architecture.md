@@ -52,16 +52,16 @@ uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 Native extension build-profile measurements use the same pattern:
 
 ```bash
-uv run --no-sync python -m tooling.cli.rust_build_profiles tool.labels=[dev-fast]
+uv run --no-sync python -m tooling.cli.rust_build_profiles tool.labels=[dev]
 ```
 
 The build-profile harness writes timestamped JSON/Markdown summaries under
 `results/perf/rust-build-profiles/`, stores command logs beside each summary,
 and keeps per-profile Cargo artifacts isolated under `target/rust-build-profiles/`.
-Default build-profile labels use the repo Cargo configuration. Linux Rust
-builds enable `target-cpu=native`, while linker and rustc-wrapper choices stay
-outside the repo and should be supplied through environment variables when
-needed.
+The default labels compare Cargo's built-in `dev` and `release` profiles. The
+repo Cargo configuration defaults to 30 jobs and Linux builds use
+`target-cpu=native` with Mold through the `cc` compiler driver. Rustc-wrapper
+choices remain environment-specific.
 
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 

@@ -55,6 +55,7 @@ python-source = "src"
 
 [tool.uv]
 cache-keys = [
+    { file = ".cargo/config.toml" },
     { file = "pyproject.toml" },
     { file = "src/**/*.rs" },
     { file = "crates/**/*.rs" },

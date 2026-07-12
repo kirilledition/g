@@ -54,7 +54,7 @@ tool:
   linux_perf_timeout_seconds: 1200
   nsight_systems_timeout_seconds: 1800
   nsight_compute_timeout_seconds: 1800
-  enable_rust_criterion: true
+  enable_rust_criterion: false
   enable_logging_perturbation: true
   rust_benchmarks:
     - bgen_read
@@ -64,39 +64,20 @@ tool:
     - 4096
     - 8192
     - 16384
-  staging_depths:
-    - 1
-    - 2
-  native_callback_batch_sizes:
-    - 1
-  result_in_flight_limits:
-    - null
-  dosage_buffer_limits:
-    - null
   output_writer_thread_counts:
     - 1
     - 2
     - 4
     - 8
-  writer_queue_depth_multipliers:
-    - 1
-    - 2
   firth_batch_sizes:
     - 512
     - 1024
     - 2048
-  bgen_decode_tile_variant_counts:
-    - 32
-    - 64
-    - 128
-    - 256
   rayon_thread_counts:
     - 1
     - 2
     - 4
     - 8
-  bgen_benchmark_chunk_size: 8192
-  top_bgen_candidates: 3
   top_finalists: 3
   tuning_warmups: 1
   tuning_trials: 3

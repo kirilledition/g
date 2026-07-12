@@ -30,14 +30,8 @@ if typing.TYPE_CHECKING:
 class BuildProfileLabel(enum.StrEnum):
     """Build profile labels accepted by the benchmark harness."""
 
-    DEV_FAST = "dev-fast"
-    DEV_OPT = "dev-opt"
+    DEV = "dev"
     RELEASE = "release"
-    PERF_THIN_CGU8 = "perf-thin-cgu8"
-    PERF_THIN_CGU1 = "perf-thin-cgu1"
-    PERF_FAT_CGU1 = "perf-fat-cgu1"
-    PERF_O2_THIN_CGU8 = "perf-o2-thin-cgu8"
-    PERF_O3_THIN_CGU8 = "perf-o3-thin-cgu8"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -217,14 +211,9 @@ class RuntimeCommandReports:
 
 
 PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
-    BuildProfileLabel.DEV_FAST: BuildProfileSpec(
-        label=BuildProfileLabel.DEV_FAST,
-        cargo_profile="dev-fast",
-        rustflags="",
-    ),
-    BuildProfileLabel.DEV_OPT: BuildProfileSpec(
-        label=BuildProfileLabel.DEV_OPT,
-        cargo_profile="dev-opt",
+    BuildProfileLabel.DEV: BuildProfileSpec(
+        label=BuildProfileLabel.DEV,
+        cargo_profile="dev",
         rustflags="",
     ),
     BuildProfileLabel.RELEASE: BuildProfileSpec(
@@ -232,36 +221,10 @@ PROFILE_SPECS: dict[BuildProfileLabel, BuildProfileSpec] = {
         cargo_profile="release",
         rustflags="",
     ),
-    BuildProfileLabel.PERF_THIN_CGU8: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_THIN_CGU8,
-        cargo_profile="perf",
-        rustflags="",
-    ),
-    BuildProfileLabel.PERF_THIN_CGU1: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_THIN_CGU1,
-        cargo_profile="perf-thin-cgu1",
-        rustflags="",
-    ),
-    BuildProfileLabel.PERF_FAT_CGU1: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_FAT_CGU1,
-        cargo_profile="perf-max",
-        rustflags="",
-    ),
-    BuildProfileLabel.PERF_O2_THIN_CGU8: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_O2_THIN_CGU8,
-        cargo_profile="perf-o2",
-        rustflags="",
-    ),
-    BuildProfileLabel.PERF_O3_THIN_CGU8: BuildProfileSpec(
-        label=BuildProfileLabel.PERF_O3_THIN_CGU8,
-        cargo_profile="perf",
-        rustflags="",
-    ),
 }
 IMPORT_TIMING_PROGRAM = (
     "import time; start_time = time.perf_counter(); import g._core; print(time.perf_counter() - start_time)"
 )
-CARGO_BUILD_JOBS_ENVIRONMENT_VARIABLE = "CARGO_BUILD_JOBS"
 
 
 def parse_profile_labels(raw_labels: typing.Any) -> tuple[BuildProfileLabel, ...]:
@@ -385,14 +348,6 @@ def build_environment(spec: BuildProfileSpec, target_directory: Path) -> dict[st
     return environment
 
 
-def maturin_develop_job_arguments() -> tuple[str, ...]:
-    """Return the explicit Maturin job-count arguments for the configured build."""
-    job_count = os.environ.get(CARGO_BUILD_JOBS_ENVIRONMENT_VARIABLE)
-    if job_count is None or not job_count.strip():
-        return ()
-    return ("-j", job_count.strip())
-
-
 def maturin_develop_command(spec: BuildProfileSpec) -> tuple[str, ...]:
     """Return the Maturin develop command for one profile.
 
@@ -409,7 +364,6 @@ def maturin_develop_command(spec: BuildProfileSpec) -> tuple[str, ...]:
         "--no-sync",
         "maturin",
         "develop",
-        *maturin_develop_job_arguments(),
         "--profile",
         spec.cargo_profile,
         "--uv",

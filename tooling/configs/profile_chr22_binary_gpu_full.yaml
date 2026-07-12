@@ -30,24 +30,21 @@ tool:
   regenie_baseline_warmups: 0
   regenie_baseline_trials: 1
   workload_keys:
-    - quantitative_cpu
-    - quantitative_gpu
-    - binary_cpu
     - binary_gpu
   max_subprocess_runs: 1000
   max_major_profiler_runs: 64
   allow_over_budget: false
-  smoke: true
+  smoke: false
   skip_deep_profiles: false
   enable_jax_trace: true
   enable_jax_memory_profile: true
   enable_python_cprofile: true
   enable_py_spy: true
-  enable_scalene: false
-  enable_memray: false
+  enable_scalene: true
+  enable_memray: true
   enable_linux_perf: true
-  enable_nsight_systems: false
-  enable_nsight_compute: false
+  enable_nsight_systems: true
+  enable_nsight_compute: true
   py_spy_timeout_seconds: 1800
   scalene_timeout_seconds: 1800
   memray_timeout_seconds: 1800
@@ -55,28 +52,25 @@ tool:
   nsight_systems_timeout_seconds: 1800
   nsight_compute_timeout_seconds: 1800
   enable_rust_criterion: false
-  enable_logging_perturbation: true
+  enable_logging_perturbation: false
   rust_benchmarks:
     - bgen_read
     - preprocess
   chunk_sizes:
-    - 2048
-    - 4096
+    - 16384
   output_writer_thread_counts:
-    - 1
     - 4
   firth_batch_sizes:
-    - 32
+    - 2048
   rayon_thread_counts:
-    - 4
     - 8
-  top_finalists: 2
+  top_finalists: 1
   tuning_warmups: 0
   tuning_trials: 1
   finalist_warmups: 0
-  finalist_trials: 2
+  finalist_trials: 1
   headline_warmups: 0
-  headline_trials: 3
+  headline_trials: 1
 
 hydra:
   output_subdir: null

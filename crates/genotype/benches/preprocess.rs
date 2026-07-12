@@ -2,6 +2,11 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use g_genotype as native_genotype;
 use std::hint;
 
+const BINARY_STATISTICS_POLICY: native_genotype::ChunkStatisticsPolicy = native_genotype::ChunkStatisticsPolicy {
+    retain_imputed_dosage_square_sum: false,
+    collect_sparse_candidate_mask: true,
+};
+
 fn dense_variant_major_dosages(selected_variant_count: usize, selected_sample_count: usize) -> Vec<f32> {
     let mut dosage_values = Vec::with_capacity(selected_variant_count * selected_sample_count);
     for variant_index in 0..selected_variant_count {
@@ -31,6 +36,7 @@ fn benchmark_variant_major_summary(criterion: &mut Criterion) {
                         hint::black_box(&dosage_values),
                         selected_sample_count,
                         selected_variant_count,
+                        BINARY_STATISTICS_POLICY,
                     )
                     .expect("variant-major summary should compute"),
                 );

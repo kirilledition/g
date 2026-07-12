@@ -91,8 +91,7 @@ extension-module = ["pyo3/extension-module"]
 [lints]
 workspace = true
 
-[profile.dev-fast]
-inherits = "dev"
+[profile.dev]
 opt-level = 0
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
@@ -100,54 +99,10 @@ incremental = true
 codegen-units = 256
 lto = "off"
 
-[profile.dev-opt]
-inherits = "dev"
-opt-level = 1
-debug = "line-tables-only"
-split-debuginfo = "unpacked"
-incremental = true
-codegen-units = 256
-lto = "off"
-
-[profile.perf]
-inherits = "release"
-opt-level = 3
-codegen-units = 8
-debug = "line-tables-only"
-lto = "thin"
-strip = "none"
-incremental = false
-
-[profile.perf-thin-cgu1]
-inherits = "release"
-opt-level = 3
-codegen-units = 1
-debug = "line-tables-only"
-lto = "thin"
-strip = "none"
-incremental = false
-
-[profile.perf-max]
-inherits = "release"
+[profile.release]
 opt-level = 3
 codegen-units = 1
 debug = "line-tables-only"
 lto = "fat"
 strip = "none"
 incremental = false
-
-[profile.perf-o2]
-inherits = "release"
-opt-level = 2
-codegen-units = 8
-debug = "line-tables-only"
-lto = "thin"
-strip = "none"
-incremental = false
-
-[profile.bench]
-opt-level = 3
-codegen-units = 8
-debug = "line-tables-only"
-lto = "thin"
-strip = "none"
