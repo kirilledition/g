@@ -7,8 +7,8 @@ use g_genotype::{BgenError, BgenReaderCore, ChunkSpec, GenotypeError};
 
 pub(crate) struct BgenRunEngine {
     pub(crate) reader: BgenReaderCore,
-    chunk_size: usize,
-    variant_limit: Option<usize>,
+    pub(crate) chunk_size: usize,
+    pub(crate) variant_limit: Option<usize>,
 }
 
 impl BgenRunEngine {

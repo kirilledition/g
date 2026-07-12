@@ -68,6 +68,14 @@ chromosomes therefore never allocate or parse prediction values. A repeated
 noncontiguous chromosome block alone keeps one matrix for safe clones until its
 final planned use.
 
+Packed8 GPU delivery keeps one device-compute variant shape across a run. A
+short chromosome-boundary or final chunk is padded only after exact BGEN decode
+to `min(bsize, effective scan size)`; metadata, statistics written to output,
+and result rows retain the logical variant count. This trades a bounded amount
+of final-chunk transfer and compute for one reusable JAX executable. A small
+`variant_limit` also caps the compute shape, so smoke runs do not expand to the
+configured production chunk size.
+
 The native association scheduler starts one compute thread, one host-result
 materialization thread, and one bounded channel set for the delivery, independent
 of active phenotype-group count. Per-group state and counters preserve result

@@ -17,19 +17,42 @@ pub struct GenotypeBufferPool {
     packed8_buffers: Vec<Vec<u8>>,
 }
 
-/// Allocate one exact-size genotype buffer that will transfer into a backend.
+/// Allocate one logical-size genotype buffer with capacity for its compute shape.
 ///
 /// # Errors
 ///
-/// Returns an error when the packed representation size overflows.
-pub fn allocate_genotype_buffer(value_count: usize, use_packed8: bool) -> GenotypeResult<OwnedGenotypeBuffer> {
+/// Returns an error when dimensions or the packed representation overflow.
+pub(crate) fn allocate_genotype_buffer(
+    logical_variant_count: usize,
+    compute_variant_count: usize,
+    sample_count: usize,
+    use_packed8: bool,
+) -> GenotypeResult<OwnedGenotypeBuffer> {
+    if compute_variant_count < logical_variant_count {
+        return Err(GenotypeError::InvalidInput(format!(
+            "Compute variant count {compute_variant_count} is smaller than logical variant count {logical_variant_count}."
+        )));
+    }
+    let value_count = logical_variant_count
+        .checked_mul(sample_count)
+        .ok_or_else(|| GenotypeError::InvalidInput("Logical genotype dimensions overflowed usize.".to_string()))?;
+    let value_capacity = compute_variant_count
+        .checked_mul(sample_count)
+        .ok_or_else(|| GenotypeError::InvalidInput("Compute genotype dimensions overflowed usize.".to_string()))?;
     if use_packed8 {
         let packed_value_count = value_count
             .checked_mul(2)
             .ok_or_else(|| GenotypeError::InvalidInput("Packed8 genotype buffer size overflowed usize.".to_string()))?;
-        return Ok(OwnedGenotypeBuffer::Packed8(vec![0_u8; packed_value_count]));
+        let packed_value_capacity = value_capacity.checked_mul(2).ok_or_else(|| {
+            GenotypeError::InvalidInput("Packed8 genotype buffer capacity overflowed usize.".to_string())
+        })?;
+        let mut values = Vec::with_capacity(packed_value_capacity);
+        values.resize(packed_value_count, 0_u8);
+        return Ok(OwnedGenotypeBuffer::Packed8(values));
     }
-    Ok(OwnedGenotypeBuffer::Dosage(vec![0.0_f32; value_count]))
+    let mut values = Vec::with_capacity(value_capacity);
+    values.resize(value_count, 0.0_f32);
+    Ok(OwnedGenotypeBuffer::Dosage(values))
 }
 
 impl GenotypeBufferPool {
@@ -61,19 +84,21 @@ impl GenotypeBufferPool {
     }
 }
 
-/// Decode one prepared BGEN interval into an acquired scheduler buffer.
+/// Decode one prepared BGEN interval and pad packed8 compute inputs in place.
 ///
 /// # Errors
 ///
 /// Returns an error when the reader cannot decode the requested interval.
-pub fn decode_genotype_buffer(
+pub(crate) fn decode_genotype_buffer(
     reader: &BgenReaderCore,
     variant_start_index: usize,
     variant_stop_index: usize,
     buffer: &mut OwnedGenotypeBuffer,
     statistics_policy: ChunkStatisticsPolicy,
+    compute_variant_count: usize,
+    sample_count: usize,
 ) -> Result<ChunkStats, BgenError> {
-    match buffer {
+    let mut statistics = match buffer {
         OwnedGenotypeBuffer::Dosage(values) => reader.read_preprocessed_variant_major_dosage_f32_into_address_prepared(
             variant_start_index,
             variant_stop_index,
@@ -89,7 +114,32 @@ pub fn decode_genotype_buffer(
                 OutputValueCount::new(values.len()),
                 statistics_policy,
             ),
+    }?;
+    if let OwnedGenotypeBuffer::Packed8(values) = buffer {
+        let logical_variant_count = statistics.compute.genotype_mean.len();
+        if compute_variant_count != logical_variant_count {
+            let logical_value_count = values.len();
+            let compute_value_count = compute_variant_count
+                .checked_mul(sample_count)
+                .and_then(|value| value.checked_mul(2))
+                .expect("compute dimensions were validated during allocation");
+            debug_assert!(compute_variant_count > logical_variant_count);
+            debug_assert!(values.capacity() >= compute_value_count);
+            values.resize(compute_value_count, 0_u8);
+            // Packed `[255, 0]` pairs decode to monomorphic zero dosage.
+            for probability_pair in values[logical_value_count..].chunks_exact_mut(2) {
+                probability_pair[0] = u8::MAX;
+            }
+            statistics.compute.genotype_mean.resize(compute_variant_count, 0.0_f32);
+            if let Some(imputed_dosage_square_sum) = statistics.compute.imputed_dosage_square_sum.as_mut() {
+                imputed_dosage_square_sum.resize(compute_variant_count, 0.0_f32);
+            }
+            if let Some(sparse_candidate_mask) = statistics.compute.sparse_candidate_mask.as_mut() {
+                sparse_candidate_mask.resize(compute_variant_count, false);
+            }
+        }
     }
+    Ok(statistics)
 }
 
 /// Project one variant-major union-sample matrix into a group sample order.

@@ -222,6 +222,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
         &self,
         result: Self::DeviceResult,
         active_trait_indices: Option<&[usize]>,
+        logical_variant_count: usize,
     ) -> Result<native_engine::HostAssociationBatch, Self::Error> {
         Python::attach(|py| {
             let active_trait_indices = active_trait_indices.map(|indices| {
@@ -237,7 +238,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
                 .bind(py)
                 .call_method1("materialize_batch", (result, active_trait_indices))
                 .map_err(PyJaxBackendError::Python)?;
-            parse_host_association_batch(py, &materialized).map_err(PyJaxBackendError::Python)
+            parse_host_association_batch(py, &materialized, logical_variant_count).map_err(PyJaxBackendError::Python)
         })
     }
 }
@@ -336,6 +337,7 @@ fn into_python_genotype_batch(
 fn parse_host_association_batch(
     py: Python<'_>,
     payload: &Bound<'_, PyAny>,
+    logical_variant_count: usize,
 ) -> PyResult<native_engine::HostAssociationBatch> {
     let beta_object = payload.getattr("beta")?;
     let standard_error_object = payload.getattr("standard_error")?;
@@ -372,39 +374,85 @@ fn parse_host_association_batch(
             )));
         }
     }
-    let (trait_count, variant_count) = (expected_shape[0], expected_shape[1]);
+    let (trait_count, materialized_variant_count) = (expected_shape[0], expected_shape[1]);
+    if logical_variant_count > materialized_variant_count {
+        return Err(PyValueError::new_err(format!(
+            "logical variant count {logical_variant_count} exceeds materialized variant count {materialized_variant_count}."
+        )));
+    }
     let correction_code_object = payload.getattr("correction_code")?;
     let correction_codes = if correction_code_object.is_none() {
         None
     } else {
-        Some(parse_correction_codes(py, correction_code_object.cast::<PyUntypedArray>()?, trait_count, variant_count)?)
+        Some(parse_correction_codes(
+            py,
+            correction_code_object.cast::<PyUntypedArray>()?,
+            trait_count,
+            materialized_variant_count,
+            logical_variant_count,
+        )?)
     };
     Ok(native_engine::HostAssociationBatch {
         trait_count,
-        variant_count,
-        beta: beta.as_slice()?.to_vec(),
-        standard_error: standard_error.as_slice()?.to_vec(),
-        chi_squared: chi_squared.as_slice()?.to_vec(),
-        log10_p_value: log10_p_value.as_slice()?.to_vec(),
+        variant_count: logical_variant_count,
+        beta: trim_trait_major_values(beta.as_slice()?, trait_count, materialized_variant_count, logical_variant_count),
+        standard_error: trim_trait_major_values(
+            standard_error.as_slice()?,
+            trait_count,
+            materialized_variant_count,
+            logical_variant_count,
+        ),
+        chi_squared: trim_trait_major_values(
+            chi_squared.as_slice()?,
+            trait_count,
+            materialized_variant_count,
+            logical_variant_count,
+        ),
+        log10_p_value: trim_trait_major_values(
+            log10_p_value.as_slice()?,
+            trait_count,
+            materialized_variant_count,
+            logical_variant_count,
+        ),
         correction_codes,
     })
+}
+
+fn trim_trait_major_values<Value: Copy>(
+    values: &[Value],
+    trait_count: usize,
+    materialized_variant_count: usize,
+    logical_variant_count: usize,
+) -> Vec<Value> {
+    if logical_variant_count == materialized_variant_count {
+        return values.to_vec();
+    }
+    let output_value_count = trait_count
+        .checked_mul(logical_variant_count)
+        .expect("logical result shape is bounded by the materialized shape");
+    let mut output = Vec::with_capacity(output_value_count);
+    for trait_values in values.chunks_exact(materialized_variant_count) {
+        output.extend_from_slice(&trait_values[..logical_variant_count]);
+    }
+    output
 }
 
 fn parse_correction_codes(
     py: Python<'_>,
     values: &Bound<'_, PyUntypedArray>,
     trait_count: usize,
-    variant_count: usize,
+    materialized_variant_count: usize,
+    logical_variant_count: usize,
 ) -> PyResult<Vec<u8>> {
     if !values.dtype().is_equiv_to(&dtype::<u8>(py)) {
         return Err(PyValueError::new_err("correction_code must use uint8 dtype."));
     }
     let values = values.cast::<PyArray<u8, Ix2>>()?.readonly();
-    if values.shape() != [trait_count, variant_count] {
+    if values.shape() != [trait_count, materialized_variant_count] {
         return Err(PyValueError::new_err(format!(
-            "correction_code shape {:?} does not match statistic shape ({trait_count}, {variant_count}).",
+            "correction_code shape {:?} does not match statistic shape ({trait_count}, {materialized_variant_count}).",
             values.shape()
         )));
     }
-    Ok(values.as_slice()?.to_vec())
+    Ok(trim_trait_major_values(values.as_slice()?, trait_count, materialized_variant_count, logical_variant_count))
 }

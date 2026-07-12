@@ -161,6 +161,10 @@ where
         let mut current_chromosome = None;
         let mut processed_chunk_count = 0_usize;
         let mut warnings = Vec::new();
+        let packed8_compute_variant_count = request
+            .settings
+            .use_packed8
+            .then(|| engine.chunk_size.min(engine.variant_limit.unwrap_or_else(|| engine.reader.variant_count())));
 
         for chunk_spec in chunk_specs {
             check_interruption().map_err(DeliveryError::Interrupted)?;
@@ -202,20 +206,25 @@ where
                 ));
             }
             let sample_count = request.group.sample_indices.len();
-            let genotype_value_count = variant_count
-                .checked_mul(sample_count)
-                .ok_or_else(|| DeliveryError::InvalidInput("genotype batch dimensions overflow usize".to_string()))?;
-            let mut genotype_buffer = allocate_genotype_buffer(genotype_value_count, request.settings.use_packed8)?;
+            let compute_variant_count = packed8_compute_variant_count.unwrap_or(variant_count);
+            let mut genotype_buffer = allocate_genotype_buffer(
+                variant_count,
+                compute_variant_count,
+                sample_count,
+                request.settings.use_packed8,
+            )?;
             let statistics = decode_genotype_buffer(
                 &engine.reader,
                 chunk_spec.variant_start_index,
                 chunk_spec.variant_stop_index,
                 &mut genotype_buffer,
                 request.settings.statistics_policy,
+                compute_variant_count,
+                sample_count,
             )?;
             let scheduled_batch = ScheduledAssociationBatch {
                 variant_start_index: chunk_spec.variant_start_index,
-                variant_count,
+                compute_variant_count,
                 sample_count,
                 metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
                 statistics,
@@ -873,10 +882,7 @@ where
             continue;
         }
         let sample_count = group_runtime.sample_positions.len();
-        let genotype_value_count = variant_count
-            .checked_mul(sample_count)
-            .ok_or_else(|| DeliveryError::InvalidInput("projected genotype dimensions overflow usize".to_string()))?;
-        let genotype_buffer = allocate_genotype_buffer(genotype_value_count, false)?;
+        let genotype_buffer = allocate_genotype_buffer(variant_count, variant_count, sample_count, false)?;
         let OwnedGenotypeBuffer::Dosage(mut group_dosages) = genotype_buffer else {
             return Err(DeliveryError::InvalidInput(
                 "grouped-union delivery acquired a packed group buffer".to_string(),
@@ -897,7 +903,7 @@ where
         )?;
         let scheduled_batch = ScheduledAssociationBatch {
             variant_start_index,
-            variant_count,
+            compute_variant_count: variant_count,
             sample_count,
             metadata: output_metadata.clone(),
             statistics,

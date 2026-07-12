@@ -27,7 +27,7 @@ const MATERIALIZATION_WORKER: &str = "materialization";
 #[derive(Debug)]
 pub(crate) struct ScheduledAssociationBatch {
     pub(crate) variant_start_index: usize,
-    pub(crate) variant_count: usize,
+    pub(crate) compute_variant_count: usize,
     pub(crate) sample_count: usize,
     pub(crate) metadata: NativeVariantMetadataHandle,
     pub(crate) statistics: ChunkStats,
@@ -37,8 +37,17 @@ pub(crate) struct ScheduledAssociationBatch {
 
 impl ScheduledAssociationBatch {
     fn validate<BackendError>(&self) -> SchedulerResult<(), BackendError> {
+        let logical_variant_count = self.metadata.row_count();
+        if self.compute_variant_count < logical_variant_count {
+            return Err(SchedulerError::InvalidBatch {
+                message: format!(
+                    "compute variant count {} is smaller than logical variant count {}",
+                    self.compute_variant_count, logical_variant_count
+                ),
+            });
+        }
         let genotype_value_count =
-            self.variant_count.checked_mul(self.sample_count).ok_or_else(|| SchedulerError::InvalidBatch {
+            self.compute_variant_count.checked_mul(self.sample_count).ok_or_else(|| SchedulerError::InvalidBatch {
                 message: "variant and sample counts overflow the host index width".to_string(),
             })?;
         let expected_genotype_value_count = match &self.genotype_buffer {
@@ -60,39 +69,38 @@ impl ScheduledAssociationBatch {
                 ),
             });
         }
-        validate_variant_column_length("metadata", self.metadata.row_count(), self.variant_count)?;
         validate_variant_column_length(
             "allele one frequency",
             self.statistics.output.allele_one_frequency.len(),
-            self.variant_count,
+            logical_variant_count,
         )?;
         validate_variant_column_length(
             "INFO score",
             self.statistics.output.info_score.values.len(),
-            self.variant_count,
+            logical_variant_count,
         )?;
         validate_variant_column_length(
             "genotype mean",
             self.statistics.compute.genotype_mean.len(),
-            self.variant_count,
+            self.compute_variant_count,
         )?;
         validate_variant_column_length(
             "observation count",
             self.statistics.output.observation_count.len(),
-            self.variant_count,
+            logical_variant_count,
         )?;
         if let Some(imputed_dosage_square_sum) = self.statistics.compute.imputed_dosage_square_sum.as_ref() {
             validate_variant_column_length(
                 "imputed dosage square sum",
                 imputed_dosage_square_sum.len(),
-                self.variant_count,
+                self.compute_variant_count,
             )?;
         }
         if let Some(sparse_candidate_mask) = self.statistics.compute.sparse_candidate_mask.as_ref() {
             validate_variant_column_length(
                 "rare sparse Firth candidate mask",
                 sparse_candidate_mask.len(),
-                self.variant_count,
+                self.compute_variant_count,
             )?;
         }
         Ok(())
@@ -756,7 +764,7 @@ fn run_compute_worker<Backend>(
         };
         let ScheduledAssociationBatch {
             variant_start_index,
-            variant_count,
+            compute_variant_count,
             sample_count,
             metadata,
             statistics,
@@ -765,7 +773,7 @@ fn run_compute_worker<Backend>(
         } = scheduled_batch;
         let ChunkStats { output: output_statistics, compute: compute_statistics } = statistics;
         let input = GenotypeBatchInput {
-            variant_count,
+            variant_count: compute_variant_count,
             sample_count,
             genotypes: genotype_buffer,
             statistics: GenotypeBatchStatistics {
@@ -821,13 +829,15 @@ fn run_materialization_worker<Backend>(
             ActiveTraitSelection::All => None,
             ActiveTraitSelection::Indices(indices) => Some(indices.as_slice()),
         };
-        let result = match backend.materialize_batch(device_batch.device_result, active_trait_indices) {
-            Ok(result) => result,
-            Err(source) => {
-                control.record_error(SchedulerError::Backend { stage: MATERIALIZATION_WORKER, source });
-                break;
-            }
-        };
+        let logical_variant_count = device_batch.output.metadata.row_count();
+        let result =
+            match backend.materialize_batch(device_batch.device_result, active_trait_indices, logical_variant_count) {
+                Ok(result) => result,
+                Err(source) => {
+                    control.record_error(SchedulerError::Backend { stage: MATERIALIZATION_WORKER, source });
+                    break;
+                }
+            };
         let event = AssociationSchedulerEvent::Completed(CompletedAssociationBatch {
             group_index: device_batch.group_index,
             output: device_batch.output,

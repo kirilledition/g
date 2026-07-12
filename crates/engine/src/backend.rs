@@ -120,7 +120,8 @@ pub trait AssociationBackend: Send + Sync {
         input: GenotypeBatchInput,
     ) -> Result<Self::DeviceResult, Self::Error>;
 
-    /// Select active traits, narrow statistics, and transfer one result to host.
+    /// Select active traits, transfer one result to host, and retain only its
+    /// logical variant rows.
     ///
     /// # Errors
     ///
@@ -130,5 +131,6 @@ pub trait AssociationBackend: Send + Sync {
         &self,
         result: Self::DeviceResult,
         active_trait_indices: Option<&[usize]>,
+        logical_variant_count: usize,
     ) -> Result<HostAssociationBatch, Self::Error>;
 }
