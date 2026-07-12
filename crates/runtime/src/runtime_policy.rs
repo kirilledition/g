@@ -3,6 +3,8 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+use crate::error::RuntimeCompatibilityError;
+
 /// Resolved resources and formatting policy for one native run.
 ///
 /// The runner projects this policy from its application plan. Runtime owns
@@ -35,6 +37,27 @@ pub(crate) struct LoggingSubscriberPolicy<'policy> {
 }
 
 impl NativeRunSessionPolicy {
+    /// Require another run to use the same process-global logging policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when subscriber configuration differs.
+    pub fn require_compatible_process_logging_policy(
+        &self,
+        requested_policy: &Self,
+    ) -> Result<(), RuntimeCompatibilityError> {
+        let configured_subscriber_policy = self.subscriber_policy();
+        let requested_subscriber_policy = requested_policy.subscriber_policy();
+        if configured_subscriber_policy == requested_subscriber_policy {
+            return Ok(());
+        }
+        Err(RuntimeCompatibilityError::new(format!(
+            "Process-global logging policies differ. Configured policy: {}. Requested policy: {}.",
+            describe_logging_subscriber_policy(&configured_subscriber_policy),
+            describe_logging_subscriber_policy(&requested_subscriber_policy),
+        )))
+    }
+
     #[must_use]
     pub(crate) fn subscriber_policy(&self) -> LoggingSubscriberPolicy<'_> {
         LoggingSubscriberPolicy {

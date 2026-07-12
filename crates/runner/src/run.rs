@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use g_engine::{AssociationBackend, RunHooks};
-use g_interface::CliDispatch;
+use g_interface::{CliDispatch, CompiledCliRun};
 use g_runtime::{NativeRunSession, NativeRunSessionPolicy, ProcessRuntimeState, TelemetryRunSession};
 use serde::Serialize;
 
@@ -174,10 +174,95 @@ where
         CliDispatch::Exit { exit_code, stdout, stderr } => {
             Ok(CliRunResult::from_frontend_output(exit_code, &stdout, &stderr))
         }
-        CliDispatch::Run(compiled_run) => {
-            run_compiled_cli(compiled_run.run_plan, compiled_run.effective_config_toml, host)
+        CliDispatch::Runs(compiled_runs) => run_compiled_runs(compiled_runs, host),
+    }
+}
+
+fn run_compiled_runs<Host>(mut compiled_runs: Vec<CompiledCliRun>, host: &mut Host) -> Result<CliRunResult, Host::Error>
+where
+    Host: NativeRunHost,
+    Host::Backend: AssociationBackend + 'static,
+    <Host::Backend as AssociationBackend>::ChromosomeState: 'static,
+    <Host::Backend as AssociationBackend>::DeviceResult: 'static,
+{
+    if compiled_runs.len() == 1 {
+        let compiled_run = compiled_runs.pop().expect("one compiled run was checked");
+        return run_compiled_cli(compiled_run.run_plan, compiled_run.effective_config_toml, host);
+    }
+    if let Err(error) = preflight_compiled_runs(&compiled_runs, host) {
+        return Ok(failed_terminal_result(host, None, &error, None));
+    }
+    let mut output = CliRunResult::default();
+    for (run_index, compiled_run) in compiled_runs.into_iter().enumerate() {
+        let run_result = run_compiled_cli(compiled_run.run_plan, compiled_run.effective_config_toml, host)?;
+        let run_failed = run_result.exit_code != 0;
+        output.append(run_result);
+        if run_failed {
+            output.stderr_chunks.push(format!("Run {} stopped.\n", run_index + 1));
+            break;
         }
     }
+    Ok(output)
+}
+
+fn preflight_compiled_runs<Host>(compiled_runs: &[CompiledCliRun], host: &mut Host) -> Result<(), Host::Error>
+where
+    Host: NativeRunHost,
+{
+    if compiled_runs.is_empty() {
+        return Err(host.run_error("Execution requires at least one compiled run.".to_string()));
+    }
+    let native_session_policies = compiled_runs
+        .iter()
+        .map(|compiled_run| project_native_run_session_policy(&compiled_run.run_plan))
+        .collect::<Vec<_>>();
+    let mut native_policies = compiled_runs.iter().zip(&native_session_policies);
+    let Some((first_compiled_run, first_native_session_policy)) = native_policies.next() else {
+        return Err(host.run_error("Execution requires at least one native runtime policy.".to_string()));
+    };
+    let first_rayon_thread_count = first_compiled_run.run_plan.compute.cpu_thread_count.map(i64::from);
+    for (run_index, (compiled_run, native_session_policy)) in native_policies.enumerate() {
+        first_native_session_policy
+            .require_compatible_process_logging_policy(native_session_policy)
+            .map_err(|error| host.run_error(format!("Run 1 and run {}: {error}", run_index + 2)))?;
+        let rayon_thread_count = compiled_run.run_plan.compute.cpu_thread_count.map(i64::from);
+        if first_rayon_thread_count != rayon_thread_count {
+            let first_thread_description = first_rayon_thread_count
+                .map_or_else(|| "automatic".to_string(), |thread_count| thread_count.to_string());
+            let requested_thread_description =
+                rayon_thread_count.map_or_else(|| "automatic".to_string(), |thread_count| thread_count.to_string());
+            return Err(host.run_error(format!(
+                "Run 1 requested Rayon threads={first_thread_description}, but run {} requested Rayon \
+                 threads={requested_thread_description}. Rayon thread policy is process-global.",
+                run_index + 2,
+            )));
+        }
+    }
+
+    let mut jax_policies = Vec::with_capacity(compiled_runs.len());
+    for (run_index, compiled_run) in compiled_runs.iter().enumerate() {
+        let jax_policy = build_jax_runtime_policy(&compiled_run.run_plan)
+            .map_err(|error| host.run_error(format!("Run {}: {error}", run_index + 1)))?;
+        jax_policies.push(jax_policy);
+    }
+    JaxRuntimeState::require_mutually_compatible(&jax_policies).map_err(|error| host.run_error(error.to_string()))?;
+
+    let runtime_state = global_process_runtime_state();
+    let state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
+    for (run_index, ((compiled_run, native_session_policy), jax_policy)) in
+        compiled_runs.iter().zip(&native_session_policies).zip(&jax_policies).enumerate()
+    {
+        let rayon_thread_count = compiled_run.run_plan.compute.cpu_thread_count.map(i64::from);
+        state
+            .native
+            .require_compatible_runtime_policy(native_session_policy, rayon_thread_count)
+            .map_err(|error| host.run_error(format!("Run {}: {error}", run_index + 1)))?;
+        state
+            .jax
+            .require_compatible(jax_policy)
+            .map_err(|error| host.run_error(format!("Run {}: {error}", run_index + 1)))?;
+    }
+    Ok(())
 }
 
 fn run_compiled_cli<Host>(

@@ -11,6 +11,12 @@ pub(crate) struct ParsedRegenieCli {
     pub(crate) cli_layer: ConfigLayer,
 }
 
+pub(crate) fn parse_batch_cli(args: &[String], program_name: &'static str) -> ConfigResult<Vec<String>> {
+    BatchCli::try_parse_from(std::iter::once(program_name).chain(args.iter().map(String::as_str)))
+        .map(|parsed_cli| parsed_cli.config_paths)
+        .map_err(|error| ConfigError::new(error.to_string()))
+}
+
 pub(crate) fn parse_regenie_cli(args: &[String], program_name: &'static str) -> ConfigResult<ParsedRegenieCli> {
     let mut parsed_cli =
         RegenieCli::try_parse_from(std::iter::once(program_name).chain(args.iter().map(String::as_str)))
@@ -33,6 +39,19 @@ pub(crate) struct RegenieCli {
     pub(crate) binary: BinaryCli,
     #[arg(long = "out", help_heading = "Output")]
     pub(crate) out: Option<String>,
+}
+
+#[derive(Parser)]
+#[command(about = "Run complete REGENIE configurations sequentially in one process.", disable_version_flag = true)]
+pub(crate) struct BatchCli {
+    #[arg(
+        long = "config",
+        action = ArgAction::Append,
+        required = true,
+        value_name = "PATH",
+        help_heading = "Config"
+    )]
+    pub(crate) config_paths: Vec<String>,
 }
 
 #[derive(Args)]

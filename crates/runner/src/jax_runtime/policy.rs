@@ -50,6 +50,27 @@ pub(crate) fn build_jax_runtime_policy(
 }
 
 impl JaxRuntimeState {
+    pub(crate) fn require_mutually_compatible<'policy>(
+        policies: impl IntoIterator<Item = &'policy JaxRuntimePolicy>,
+    ) -> Result<(), RuntimeCompatibilityError> {
+        let mut indexed_policies = policies.into_iter().enumerate();
+        let Some((_, first_policy)) = indexed_policies.next() else {
+            return Ok(());
+        };
+        for (run_index, requested_policy) in indexed_policies {
+            if first_policy != requested_policy {
+                return Err(RuntimeCompatibilityError::new(format!(
+                    "Run 1 and run {} request incompatible process-global JAX settings. \
+                     First policy: {}. Requested policy: {}.",
+                    run_index + 1,
+                    describe_jax_runtime_policy(first_policy),
+                    describe_jax_runtime_policy(requested_policy),
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn require_compatible(
         &self,
         requested_policy: &JaxRuntimePolicy,

@@ -24,6 +24,7 @@ and merge behavior, see [Configuration](configuration.md).
 ```text
 g [OPTIONS] COMMAND [ARGS]...
 g regenie [--config PATH] [supported REGENIE-style options]
+g batch --config PATH [--config PATH ...]
 ```
 
 ## Commands
@@ -31,6 +32,31 @@ g regenie [--config PATH] [supported REGENIE-style options]
 | Command | Purpose |
 | --- | --- |
 | `g regenie` | Run a REGENIE-compatible Step 2 association scan. |
+| `g batch` | Run complete configurations sequentially while reusing one process. |
+
+## Batch Runs
+
+Use `g batch` for compatible scans that would otherwise start separate Python
+and JAX processes:
+
+```bash
+uv run g batch \
+  --config chromosome_21.toml \
+  --config chromosome_22.toml
+```
+
+Each path must contain a complete configuration, including its input and output
+paths. Batch mode does not accept per-run CLI overrides. Before starting the
+first scan, `g` constructs every frontend config, rejects equal or nested output
+run roots including aliases through existing symlink ancestors, and verifies
+that process-global logging, native thread, device, and JAX cache policies are
+compatible. Input files, sample and prediction compatibility, existing output
+state, and resume manifests are checked by each entry's engine preflight when
+that entry starts.
+
+Runs execute in argument order. The batch stops on the first runtime failure or
+interruption; outputs completed by earlier entries remain valid, and later
+entries are not started.
 
 ## Required Scan Inputs
 
@@ -151,10 +177,10 @@ resume, and diagnostics settings use canonical snake_case TOML fields. This
 keeps a REGENIE-compatible CLI without duplicating the full native config
 surface as command-line aliases.
 
-Logging sinks, `--threads`, and JAX runtime settings are process-global inside
-one Python process. Single CLI invocations are isolated by their process. Python
-callers that run multiple jobs in one process must reuse compatible settings or
-start a fresh process when `g` reports an incompatible runtime policy. Once a
+Logging sinks, native thread policy, and JAX runtime settings are process-global
+inside one Python process. Separate `g regenie` invocations are isolated by
+their process. `g batch` verifies these policies across every requested run
+before starting work. Once a
 JAX configuration attempt begins, a configuration update, device validation, or
 setup-diagnostic failure requires a fresh process because JAX may already be
 partially configured. Cache-directory creation occurs before that transition,
@@ -178,9 +204,12 @@ For the supported compatibility surface, see [Compatibility](compatibility.md).
 
 | Situation | Expected result |
 | --- | --- |
-| `g --help`, `g regenie --help` | Exit `0` and print help. |
+| `g --help`, `g regenie --help`, `g batch --help` | Exit `0` and print help. |
 | Missing command, invalid option, invalid value, or validation error | Non-zero usage/error exit; invalid root usage exits `2`. |
 | Successful `g regenie` run | Exit `0` and print generated artifact paths. |
+| Successful `g batch` run | Exit `0` after every config completes and print each run's artifact paths in order. |
+| Batch-wide config, output-root, or process-policy failure | Exit before creating output for any batch entry. |
+| Per-entry preflight or runtime failure during `g batch` | Stop at the failing entry, preserve earlier completed outputs, and do not start later entries. |
 | Runtime failure during `g regenie` | Exit `1` and print a concise `Error: ...` line without a Python traceback. Configured logs and telemetry contain structured failure details. |
 | First SIGINT or SIGTERM during `g regenie` | Flush queued chunks for resume, print an interruption message, and exit with `128 + signal_number` such as `130` for SIGINT. |
 | Second SIGTERM during graceful drain | Terminate immediately with the operating system's default SIGTERM action. |

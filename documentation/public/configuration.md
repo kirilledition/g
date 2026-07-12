@@ -39,6 +39,24 @@ uv run g regenie \
   --out /path/to/output/phenotype_b
 ```
 
+## Run Compatible Configs In One Process
+
+Batch mode accepts complete config files only:
+
+```bash
+uv run g batch \
+  --config chromosome_21.toml \
+  --config chromosome_22.toml
+```
+
+Every frontend config is resolved and validated before execution. Output run
+roots must be disjoint after existing symlink ancestors are resolved, and
+process-global device, JAX, logging, and native-thread policy must match.
+Configs may otherwise select different inputs, traits, chromosomes, and kernel
+shapes. Engine checks for input availability, sample and prediction
+compatibility, existing output state, and resume manifests remain per entry; a
+later entry can therefore fail after earlier outputs have completed.
+
 ## Layering Patterns
 
 A common cluster pattern is to keep technical runtime policy in one TOML file
@@ -254,7 +272,9 @@ Config construction rejects:
 
 Run preflight then checks file availability, sample and column contracts,
 prediction-list compatibility, output directory state, and resume manifest
-compatibility.
+compatibility. In batch mode these engine checks run when each entry starts;
+only frontend config construction, disjoint output roots, and process-global
+policy compatibility are checked across the complete batch before execution.
 
 ## Defaults Policy
 

@@ -52,6 +52,21 @@ Do not compare timing modes as if they measured the same thing:
 Use cold-process timing for batch-job wall-clock expectations. Use warm-cache
 or hot same-process timing only when that is the workflow being measured.
 
+For several compatible production scans, use the native batch command to make
+the hot same-process path explicit:
+
+```bash
+uv run --no-sync g batch \
+  --config chromosome_21.toml \
+  --config chromosome_22.toml
+```
+
+Batch mode constructs every frontend config and checks output-root and
+process-policy compatibility before starting. Run-owned input, output, and
+resume preflight remains per entry. The process reuses only process-global
+JAX/CUDA state and compiled executables. Shape changes may compile an additional
+executable, so group configs with stable shapes when throughput is the priority.
+
 Native decode buffers submitted to JAX transfer their allocation into NumPy;
 there is no full genotype memcpy at the binding boundary. Grouped-union runs
 retain only the union source buffer for projection reuse. Phenotype, covariate,
