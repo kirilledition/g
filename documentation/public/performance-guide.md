@@ -131,10 +131,12 @@ It falls back to dosage for CPU, linear, grouped, multi-phenotype, and
 incompatible BGEN cases. Explicit `packed8` keeps fail-fast validation behavior.
 
 Current default values are in `crates/interface/src/config.default.toml`.
-The current Firth batch default is tuned for hot same-process throughput on the
-V100 reference node. Larger batches can reduce some separate-process cache-load
-overhead while increasing device execution time, so compare complete workflows
-rather than choosing from compile or kernel timing alone.
+The V100-tuned binary path uses 512-lane Firth batches and a
+1,024-candidate-per-trait middle dispatch tier. Larger candidate sets retain
+the full-chunk overflow path.
+Larger batches can reduce some separate-process cache-load overhead while
+increasing device execution time, so compare complete workflows rather than
+choosing from compile or kernel timing alone.
 
 Project profiling recipes isolate CPU JAX caches by host and CPU feature
 fingerprint under `/tmp/g-jax-cpu-profile-cache` by default. This avoids reusing

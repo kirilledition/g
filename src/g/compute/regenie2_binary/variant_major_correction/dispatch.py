@@ -74,7 +74,7 @@ def apply_device_candidate_corrections_multi_firth_variant_major_donating_result
                 candidate_mask=candidate_mask,
                 fallback_count=fallback_count,
                 candidate_capacity=small_candidate_capacity,
-                order_candidates=False,
+                order_candidates=small_candidate_capacity > kernel_config.firth_candidate.batch_size,
                 kernel_config=kernel_config,
                 sparse_candidate_mask=sparse_candidate_mask,
                 native_genotype_mean=native_genotype_mean,

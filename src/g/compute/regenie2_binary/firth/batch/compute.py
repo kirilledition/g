@@ -36,6 +36,7 @@ def compute_scalar_firth_multi_variantwise(
     phenotype_matrix: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     carrier_sample_mask: jax.Array,
+    full_null_deviance: jax.Array,
     skip_firth_mask: jax.Array,
     sparse_correction_mask: jax.Array,
     null_failed_mask: jax.Array,
@@ -51,6 +52,7 @@ def compute_scalar_firth_multi_variantwise(
         null_firth_offset: jax.Array,
         genotype_vector: jax.Array,
         lane_carrier_sample_mask: jax.Array,
+        lane_full_null_deviance: jax.Array,
         skip_firth: jax.Array,
         sparse_correction: jax.Array,
         null_failed: jax.Array,
@@ -60,6 +62,7 @@ def compute_scalar_firth_multi_variantwise(
             genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
             offset_vector=jnp.asarray(null_firth_offset, dtype=jnp.float64),
             carrier_sample_mask=lane_carrier_sample_mask,
+            full_null_deviance=jnp.asarray(lane_full_null_deviance, dtype=jnp.float64),
             sparse_correction=sparse_correction,
             warm_start_beta=jnp.asarray(0.0, dtype=jnp.float64),
             skip_firth=skip_firth,
@@ -72,6 +75,7 @@ def compute_scalar_firth_multi_variantwise(
         null_firth_offset_matrix,
         genotype_matrix_by_variant,
         carrier_sample_mask,
+        full_null_deviance,
         skip_firth_mask,
         sparse_correction_mask,
         null_failed_mask,
@@ -269,6 +273,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
     phenotype_matrix: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     carrier_sample_mask: jax.Array,
+    full_null_deviance: jax.Array,
     active_mask: jax.Array,
     sparse_correction_mask: jax.Array,
     fallback_count: jax.Array,
@@ -283,6 +288,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
     phenotype_batches = phenotype_matrix.reshape((batch_count, firth_batch_size, -1))
     genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
     carrier_sample_mask_batches = carrier_sample_mask.reshape((batch_count, firth_batch_size, -1))
+    full_null_deviance_batches = full_null_deviance.reshape((batch_count, firth_batch_size))
     active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
     sparse_correction_mask_batches = sparse_correction_mask.reshape((batch_count, firth_batch_size))
     null_failed_mask_batches = null_failed_mask.reshape((batch_count, firth_batch_size))
@@ -300,6 +306,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
                 phenotype_matrix=phenotype_batches[batch_index],
                 genotype_matrix_by_variant=genotype_batches[batch_index],
                 carrier_sample_mask=carrier_sample_mask_batches[batch_index],
+                full_null_deviance=full_null_deviance_batches[batch_index],
                 skip_firth_mask=~active_mask_batches[batch_index],
                 sparse_correction_mask=sparse_correction_mask_batches[batch_index],
                 null_failed_mask=null_failed_mask_batches[batch_index],
@@ -394,6 +401,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
             phenotype_matrix=candidate_inputs.lanes.phenotype_matrix,
             genotype_matrix_by_variant=candidate_inputs.genotype_matrix_by_variant,
             carrier_sample_mask=candidate_inputs.carrier_sample_mask,
+            full_null_deviance=candidate_inputs.full_null_deviance,
             active_mask=active_mask,
             sparse_correction_mask=candidate_inputs.sparse_correction_mask,
             fallback_count=fallback_count,
@@ -438,6 +446,11 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
                     ),
                     carrier_sample_mask=jnp.take(
                         candidate_inputs.carrier_sample_mask,
+                        dense_stream_plan.lane_indices,
+                        axis=0,
+                    ),
+                    full_null_deviance=jnp.take(
+                        candidate_inputs.full_null_deviance,
                         dense_stream_plan.lane_indices,
                         axis=0,
                     ),

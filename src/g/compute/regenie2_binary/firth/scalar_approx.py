@@ -603,6 +603,7 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     genotype_vector: jax.Array,
     offset_vector: jax.Array,
     carrier_sample_mask: jax.Array,
+    full_null_deviance: jax.Array,
     sparse_correction: jax.Array,
     warm_start_beta: jax.Array,
     skip_firth: jax.Array,
@@ -613,12 +614,10 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
     offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
+    full_null_deviance = jnp.asarray(full_null_deviance, dtype=jnp.float64)
     all_sample_mask = jnp.ones_like(phenotype_vector, dtype=jnp.bool_)
     active_sample_mask = jnp.where(sparse_correction, carrier_sample_mask, all_sample_mask)
     null_probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(offset_vector)
-    full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
-        phenotype_vector, null_probability_vector, all_sample_mask
-    )
     active_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
         phenotype_vector, null_probability_vector, active_sample_mask
     )

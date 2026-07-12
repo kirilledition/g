@@ -11,7 +11,7 @@ from g.compute.common import genotype as compute_genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 
 TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 64
-SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 256
+SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 1024
 JAX_INT32_INDEX_MAXIMUM = 2_147_483_647
 
 
@@ -310,11 +310,8 @@ def group_scalar_firth_candidate_batch_inputs(
     *,
     candidate_inputs: ScalarFirthCandidateBatchInputs,
     heuristic_firth_mask: jax.Array,
-    order_candidates: bool,
 ) -> ScalarFirthCandidateBatchInputs:
     """Group likely long-running scalar Firth lanes before fixed-size batching."""
-    if not order_candidates:
-        return candidate_inputs
     sort_order = build_firth_candidate_bucket_order(
         flat_active_mask=candidate_inputs.lanes.flat_active_mask,
         heuristic_firth_mask=heuristic_firth_mask,

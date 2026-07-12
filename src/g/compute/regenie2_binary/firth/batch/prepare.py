@@ -179,13 +179,6 @@ def prepare_scalar_firth_candidate_batch(
         chromosome_state=chromosome_state,
         selected_rows=selected_rows,
     )
-    heuristic_firth_mask = (
-        regenie2_binary_candidate_planning.compute_multi_firth_pre_dispatch_mask_without_mask(
-            genotype_matrix_by_lane=raw_genotype_matrix_by_variant,
-            phenotype_matrix_by_lane=lanes.phenotype_matrix,
-        )
-        | flat_sparse_candidate_mask
-    ) & selected_rows.flat_active_mask
     genotype_matrix_by_variant = residualize_and_scale_multi_genotypes_for_approximate_firth(
         square_root_weight=jnp.take(
             chromosome_state.square_root_weight,
@@ -222,10 +215,18 @@ def prepare_scalar_firth_candidate_batch(
         ),
         null_failed_mask=~jnp.isfinite(null_firth_penalized_log_likelihood),
     )
+    if not order_candidates:
+        return candidate_inputs
+    heuristic_firth_mask = (
+        regenie2_binary_candidate_planning.compute_multi_firth_pre_dispatch_mask_without_mask(
+            genotype_matrix_by_lane=raw_genotype_matrix_by_variant,
+            phenotype_matrix_by_lane=lanes.phenotype_matrix,
+        )
+        | flat_sparse_candidate_mask
+    ) & selected_rows.flat_active_mask
     return regenie2_binary_candidate_planning.group_scalar_firth_candidate_batch_inputs(
         candidate_inputs=candidate_inputs,
         heuristic_firth_mask=heuristic_firth_mask,
-        order_candidates=order_candidates,
     )
 
 
