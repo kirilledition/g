@@ -7,56 +7,21 @@ use super::partial::PartialConfig;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ConfigProvenance {
-    pub(crate) trait_config: TraitConfigProvenance,
-    pub(crate) binary: BinaryConfigProvenance,
-}
-
-impl ConfigProvenance {
-    pub(crate) fn from_partial_config(partial_config: &PartialConfig) -> Self {
-        Self {
-            trait_config: TraitConfigProvenance {
-                trait_type: partial_config.trait_config.trait_type.is_some(),
-                qt: partial_config.trait_config.qt.is_some(),
-                bt: partial_config.trait_config.bt.is_some(),
-            },
-            binary: BinaryConfigProvenance {
-                fallback_method: partial_config.binary.fallback_method.is_some(),
-                p_threshold: partial_config.binary.p_threshold.is_some(),
-                firth_se: partial_config.binary.firth_se.is_some(),
-            },
-        }
-    }
-
-    pub(crate) fn overlay(&mut self, override_provenance: Self) {
-        self.trait_config.overlay(override_provenance.trait_config);
-        self.binary.overlay(override_provenance.binary);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TraitConfigProvenance {
-    pub(crate) trait_type: bool,
-    pub(crate) qt: bool,
-    pub(crate) bt: bool,
-}
-
-impl TraitConfigProvenance {
-    fn overlay(&mut self, override_provenance: Self) {
-        self.trait_type |= override_provenance.trait_type;
-        self.qt |= override_provenance.qt;
-        self.bt |= override_provenance.bt;
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BinaryConfigProvenance {
     pub(crate) fallback_method: bool,
     pub(crate) p_threshold: bool,
     pub(crate) firth_se: bool,
 }
 
-impl BinaryConfigProvenance {
-    fn overlay(&mut self, override_provenance: Self) {
+impl ConfigProvenance {
+    pub(crate) fn from_partial_config(partial_config: &PartialConfig) -> Self {
+        Self {
+            fallback_method: partial_config.binary.fallback_method.is_some(),
+            p_threshold: partial_config.binary.p_threshold.is_some(),
+            firth_se: partial_config.binary.firth_se.is_some(),
+        }
+    }
+
+    pub(crate) fn overlay(&mut self, override_provenance: Self) {
         self.fallback_method |= override_provenance.fallback_method;
         self.p_threshold |= override_provenance.p_threshold;
         self.firth_se |= override_provenance.firth_se;

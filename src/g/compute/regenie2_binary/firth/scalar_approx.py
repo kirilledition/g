@@ -675,6 +675,7 @@ def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
     )
 
 
+@jax.jit(inline=True)
 def fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_parameters(
     *,
     phenotype_vector: jax.Array,

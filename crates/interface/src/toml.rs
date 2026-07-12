@@ -53,13 +53,13 @@ fn clear_effective_default_binary_provenance(
 ) -> ConfigResult<()> {
     let default_binary_config = load_default_config_data()?.partial_config.binary;
     if partial_config.binary.fallback_method == default_binary_config.fallback_method {
-        provenance.binary.fallback_method = false;
+        provenance.fallback_method = false;
     }
     if partial_config.binary.p_threshold == default_binary_config.p_threshold {
-        provenance.binary.p_threshold = false;
+        provenance.p_threshold = false;
     }
     if partial_config.binary.firth_se == default_binary_config.firth_se {
-        provenance.binary.firth_se = false;
+        provenance.firth_se = false;
     }
     Ok(())
 }

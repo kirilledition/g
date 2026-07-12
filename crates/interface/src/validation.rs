@@ -72,13 +72,13 @@ fn validate_quantitative_binary_config(config: &RegenieConfigData) -> ConfigResu
         return Ok(());
     }
     let mut binary_only_option_names = Vec::new();
-    if config.provenance.binary.fallback_method {
+    if config.provenance.fallback_method {
         binary_only_option_names.push("binary-fallback");
     }
-    if config.provenance.binary.firth_se {
+    if config.provenance.firth_se {
         binary_only_option_names.push("firth-se");
     }
-    if config.provenance.binary.p_threshold {
+    if config.provenance.p_threshold {
         binary_only_option_names.push("pThresh");
     }
     raise_for_quantitative_binary_only_options(&binary_only_option_names)
