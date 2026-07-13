@@ -746,6 +746,7 @@ dependencies = [
 name = "g-engine"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "crossbeam-channel",
  "g-genotype",
  "g-genotype-contracts",
