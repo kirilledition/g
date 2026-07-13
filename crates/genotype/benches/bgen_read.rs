@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use g_genotype::{BgenReaderCore, ChunkStatisticsPolicy, OutputBufferAddress, OutputValueCount};
+use g_genotype::{BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8Compatibility};
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 const DOSAGE_STATISTICS_POLICY: ChunkStatisticsPolicy =
@@ -11,44 +11,39 @@ const PACKED8_STATISTICS_POLICY: ChunkStatisticsPolicy =
     ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true };
 
 fn benchmark_bgen_path() -> PathBuf {
-    std::env::var_os("GWAS_ENGINE_DATA_DIR")
-        .map_or_else(|| PathBuf::from("data"), PathBuf::from)
-        .join("1kg_chr22_full.bgen")
+    std::env::var_os("GWAS_ENGINE_BGEN_BENCHMARK_PATH").map_or_else(
+        || {
+            std::env::var_os("GWAS_ENGINE_DATA_DIR")
+                .map_or_else(|| PathBuf::from("data"), PathBuf::from)
+                .join("1kg_chr22_full.bgen")
+        },
+        PathBuf::from,
+    )
 }
 
-fn prepare_full_sample_selection(reader: &BgenReaderCore) {
-    let all_sample_indices: Vec<usize> = (0..reader.sample_count()).collect();
-    reader
-        .prepare_sample_selection(&all_sample_indices)
-        .expect("prepared sample selection should succeed for benchmark input");
+fn full_sample_indices(reader: &BgenReaderCore) -> Vec<usize> {
+    (0..reader.sample_count()).collect()
 }
 
-fn prepare_contiguous_prefix_sample_selection(reader: &BgenReaderCore, selected_sample_count: usize) {
-    let sample_indices: Vec<usize> = (0..selected_sample_count).collect();
-    reader
-        .prepare_sample_selection(&sample_indices)
-        .expect("prepared contiguous sample selection should succeed for benchmark input");
+fn contiguous_prefix_sample_indices(reader: &BgenReaderCore) -> Vec<usize> {
+    (0..reader.sample_count() / 2).collect()
 }
 
-fn prepare_strided_half_sample_selection(reader: &BgenReaderCore) -> usize {
-    let sample_indices: Vec<usize> = (0..reader.sample_count()).step_by(2).collect();
-    let selected_sample_count = sample_indices.len();
-    reader
-        .prepare_sample_selection(&sample_indices)
-        .expect("prepared non-contiguous sample selection should succeed for benchmark input");
-    selected_sample_count
+fn strided_half_sample_indices(reader: &BgenReaderCore) -> Vec<usize> {
+    (0..reader.sample_count()).step_by(2).collect()
 }
 
-fn benchmark_preprocessed_variant_major_read(
+fn benchmark_variant_major_read(
     criterion: &mut Criterion,
     reader: &BgenReaderCore,
+    read_session: &BgenReadSession<'_>,
     group_name: &str,
-    selected_sample_count: usize,
+    use_packed8: bool,
+    statistics_policy: ChunkStatisticsPolicy,
 ) {
     let mut variant_group = criterion.benchmark_group(group_name);
     for chunk_size in CHUNK_SIZES {
         let selected_variant_count = chunk_size.min(reader.variant_count());
-        let mut output_buffer = vec![0.0_f32; selected_sample_count * selected_variant_count];
         variant_group.throughput(Throughput::Elements(
             u64::try_from(selected_variant_count).expect("variant count should fit u64"),
         ));
@@ -57,51 +52,17 @@ fn benchmark_preprocessed_variant_major_read(
             &selected_variant_count,
             |benchmark, selected_variant_count| {
                 benchmark.iter(|| {
-                    let chunk_stats = reader
-                        .read_preprocessed_variant_major_dosage_f32_into_address_prepared(
-                            0,
-                            *selected_variant_count,
-                            OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
-                            OutputValueCount::new(output_buffer.len()),
-                            DOSAGE_STATISTICS_POLICY,
-                        )
-                        .expect("prepared native Rust variant-major BGEN read should succeed");
-                    std::hint::black_box(chunk_stats.output.observation_count.len());
-                });
-            },
-        );
-    }
-    variant_group.finish();
-}
-
-fn benchmark_preprocessed_variant_major_packed8_read(
-    criterion: &mut Criterion,
-    reader: &BgenReaderCore,
-    group_name: &str,
-    selected_sample_count: usize,
-) {
-    let mut variant_group = criterion.benchmark_group(group_name);
-    for chunk_size in CHUNK_SIZES {
-        let selected_variant_count = chunk_size.min(reader.variant_count());
-        let mut output_buffer = vec![0_u8; selected_sample_count * selected_variant_count * 2];
-        variant_group.throughput(Throughput::Elements(
-            u64::try_from(selected_variant_count).expect("variant count should fit u64"),
-        ));
-        variant_group.bench_with_input(
-            BenchmarkId::from_parameter(chunk_size),
-            &selected_variant_count,
-            |benchmark, selected_variant_count| {
-                benchmark.iter(|| {
-                    let chunk_stats = reader
-                        .read_preprocessed_variant_major_packed8_probability_pairs_into_address_prepared(
-                            0,
-                            *selected_variant_count,
-                            OutputBufferAddress::from_mut_ptr(output_buffer.as_mut_ptr()),
-                            OutputValueCount::new(output_buffer.len()),
-                            PACKED8_STATISTICS_POLICY,
-                        )
-                        .expect("prepared native Rust packed8 BGEN read should succeed");
-                    std::hint::black_box(chunk_stats.output.observation_count.len());
+                    std::hint::black_box(
+                        read_session
+                            .decode_variant_major_batch(
+                                0,
+                                *selected_variant_count,
+                                *selected_variant_count,
+                                use_packed8,
+                                statistics_policy,
+                            )
+                            .expect("native Rust variant-major BGEN read should succeed"),
+                    );
                 });
             },
         );
@@ -112,77 +73,70 @@ fn benchmark_preprocessed_variant_major_packed8_read(
 #[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
-    let reader = BgenReaderCore::open(&bgen_path, false).expect("native Rust BGEN reader should open benchmark input");
-    prepare_full_sample_selection(&reader);
+    let reader = BgenReaderCore::open(&bgen_path).expect("native Rust BGEN reader should open benchmark input");
 
-    benchmark_preprocessed_variant_major_read(
+    let full_sample_indices = full_sample_indices(&reader);
+    let full_sample_session =
+        reader.read_session(&full_sample_indices).expect("full-sample BGEN read session should build");
+    benchmark_variant_major_read(
         criterion,
         &reader,
+        &full_sample_session,
         "bgen_variant_major_dosage_full_samples",
-        reader.sample_count(),
+        false,
+        DOSAGE_STATISTICS_POLICY,
     );
 
-    let contiguous_subset_sample_count = reader.sample_count() / 2;
-    prepare_contiguous_prefix_sample_selection(&reader, contiguous_subset_sample_count);
-    benchmark_preprocessed_variant_major_read(
+    let contiguous_sample_indices = contiguous_prefix_sample_indices(&reader);
+    let contiguous_sample_session =
+        reader.read_session(&contiguous_sample_indices).expect("contiguous-subset BGEN read session should build");
+    benchmark_variant_major_read(
         criterion,
         &reader,
-        "bgen_preprocessed_variant_major_contiguous_subset_trusted_disabled",
-        contiguous_subset_sample_count,
+        &contiguous_sample_session,
+        "bgen_variant_major_dosage_contiguous_half",
+        false,
+        DOSAGE_STATISTICS_POLICY,
     );
 
-    let strided_subset_sample_count = prepare_strided_half_sample_selection(&reader);
-    benchmark_preprocessed_variant_major_read(
+    let strided_sample_indices = strided_half_sample_indices(&reader);
+    let strided_sample_session =
+        reader.read_session(&strided_sample_indices).expect("strided-subset BGEN read session should build");
+    benchmark_variant_major_read(
         criterion,
         &reader,
-        "bgen_preprocessed_variant_major_strided_subset_trusted_disabled",
-        strided_subset_sample_count,
+        &strided_sample_session,
+        "bgen_variant_major_dosage_strided_half",
+        false,
+        DOSAGE_STATISTICS_POLICY,
     );
 
-    let trusted_reader =
-        BgenReaderCore::open(&bgen_path, true).expect("trusted native Rust BGEN reader should open benchmark input");
-    prepare_full_sample_selection(&trusted_reader);
-    if trusted_reader.validate_trusted_no_missing_diploid().is_ok() {
-        benchmark_preprocessed_variant_major_read(
+    if reader.packed8_compatibility_with_cache().expect("packed8 compatibility scan should succeed")
+        == Packed8Compatibility::Compatible
+    {
+        benchmark_variant_major_read(
             criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_trusted_no_missing_diploid",
-            trusted_reader.sample_count(),
+            &reader,
+            &full_sample_session,
+            "bgen_variant_major_packed8_full_samples",
+            true,
+            PACKED8_STATISTICS_POLICY,
         );
-        benchmark_preprocessed_variant_major_packed8_read(
+        benchmark_variant_major_read(
             criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_packed8_trusted_no_missing_diploid",
-            trusted_reader.sample_count(),
+            &reader,
+            &contiguous_sample_session,
+            "bgen_variant_major_packed8_contiguous_half",
+            true,
+            PACKED8_STATISTICS_POLICY,
         );
-
-        let contiguous_subset_sample_count = trusted_reader.sample_count() / 2;
-        prepare_contiguous_prefix_sample_selection(&trusted_reader, contiguous_subset_sample_count);
-        benchmark_preprocessed_variant_major_read(
+        benchmark_variant_major_read(
             criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_contiguous_subset_trusted_no_missing_diploid",
-            contiguous_subset_sample_count,
-        );
-        benchmark_preprocessed_variant_major_packed8_read(
-            criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_packed8_contiguous_subset_trusted_no_missing_diploid",
-            contiguous_subset_sample_count,
-        );
-
-        let strided_subset_sample_count = prepare_strided_half_sample_selection(&trusted_reader);
-        benchmark_preprocessed_variant_major_read(
-            criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_strided_subset_trusted_no_missing_diploid",
-            strided_subset_sample_count,
-        );
-        benchmark_preprocessed_variant_major_packed8_read(
-            criterion,
-            &trusted_reader,
-            "bgen_preprocessed_variant_major_packed8_strided_subset_trusted_no_missing_diploid",
-            strided_subset_sample_count,
+            &reader,
+            &strided_sample_session,
+            "bgen_variant_major_packed8_strided_half",
+            true,
+            PACKED8_STATISTICS_POLICY,
         );
     }
 }

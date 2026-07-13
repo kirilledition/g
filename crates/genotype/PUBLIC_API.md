@@ -2,7 +2,8 @@
 
 ## This crate owns
 
-BGEN mmap/index/decode, immutable per-delivery read sessions,
+BGEN mmap/index/decode for uncompressed, zlib, and Zstandard Layout 2 files,
+immutable per-delivery read sessions,
 chromosome-homogeneous chunk planning, owned decoded genotype batches, and
 genotype preprocessing summaries.
 

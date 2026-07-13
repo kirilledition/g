@@ -27,7 +27,8 @@ CLI names and TOML mapping, see [CLI](cli.md) and [Configuration](configuration.
 
 Supported:
 
-- BGEN 1.2 genotype input.
+- BGEN 1.2 Layout 2 genotype input with uncompressed, zlib, or
+  Zstandard variant blocks.
 - Oxford `.sample` files through `--sample`.
 
 `--sample` is required. Sample identities are loaded from that Oxford `.sample`
@@ -54,7 +55,7 @@ delivery, so a source changed during a run fails. Cache-directory lookup or pers
 failures trigger an uncached scan and do not disable packed8. Otherwise-supported
 biallelic diploid Layout-2 variants with missing values, phased probabilities,
 or a bit depth other than 8 fall back to dosage delivery. Multiallelic,
-non-diploid, Zstandard-compressed, or otherwise unsupported input fails instead
+non-diploid or otherwise unsupported input fails instead
 of falling back. Compatibility validation and packed8 selection are internal
 policies rather than configuration keys.
 

@@ -128,7 +128,7 @@ pub(super) fn parse_variant_index(
         let (probability_payload_offset, probability_payload_length, declared_uncompressed_block_length) =
             match compression_type {
                 CompressionType::None => (block_payload_offset, total_block_length, total_block_length),
-                CompressionType::Zlib => {
+                CompressionType::Zlib | CompressionType::Zstandard => {
                     let declared_uncompressed_block_length = u32_to_usize(read_u32_at(mmap, block_payload_offset)?)?;
                     let probability_payload_length = total_block_length.checked_sub(4).ok_or_else(|| {
                         BgenError::InvalidFormat(
