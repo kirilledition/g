@@ -282,10 +282,11 @@ fn decompress_zstandard_block_into_scratch(
     ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
     let zstandard_decompressor =
         thread_scratch.zstandard_decompressor.get_or_insert_with(zstd::bulk::Decompressor::default);
-    let decompressed_length = zstandard_decompressor.decompress_to_buffer(
-        compressed_payload,
-        &mut thread_scratch.decompressed_probability_block[..expected_length],
-    )?;
+    let decompressed_length = zstandard_decompressor
+        .decompress_to_buffer(compressed_payload, &mut thread_scratch.decompressed_probability_block[..expected_length])
+        .map_err(|error| {
+            BgenError::InvalidFormat(format!("Zstandard-compressed BGEN block contains invalid data: {error}"))
+        })?;
     if decompressed_length != expected_length {
         return Err(BgenError::InvalidFormat(format!(
             "Zstandard-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
