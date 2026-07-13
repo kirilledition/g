@@ -1,6 +1,5 @@
+use std::ptr::NonNull;
 use std::sync::OnceLock;
-
-use flate2::Decompress;
 
 use super::super::BgenError;
 use super::probability::read_exact_bytes;
@@ -66,17 +65,33 @@ pub(in crate::bgen) fn read_eight_bit_probability_pair(buffer: &[u8], offset: us
 }
 
 pub(in crate::bgen) struct ThreadScratch {
-    pub(super) zlib_decompressor: Decompress,
+    pub(super) zlib_decompressor: NonNull<libdeflate_sys::libdeflate_decompressor>,
     pub(super) zstandard_decompressor: Option<zstd::bulk::Decompressor<'static>>,
     pub(super) decompressed_probability_block: Vec<u8>,
 }
 
 impl Default for ThreadScratch {
     fn default() -> Self {
+        // SAFETY: libdeflate owns the returned allocation until the matching
+        // free call in `Drop`.
+        let zlib_decompressor = unsafe { libdeflate_sys::libdeflate_alloc_decompressor() };
         Self {
-            zlib_decompressor: Decompress::new(true),
+            zlib_decompressor: NonNull::new(zlib_decompressor)
+                .expect("libdeflate could not allocate a zlib decompressor"),
             zstandard_decompressor: None,
             decompressed_probability_block: Vec::new(),
         }
     }
 }
+
+impl Drop for ThreadScratch {
+    fn drop(&mut self) {
+        // SAFETY: the pointer was allocated by libdeflate, remains live, and
+        // this destructor runs exactly once.
+        unsafe { libdeflate_sys::libdeflate_free_decompressor(self.zlib_decompressor.as_ptr()) };
+    }
+}
+
+// SAFETY: ownership of the native decompressor moves with the scratch state,
+// which is borrowed exclusively before invoking libdeflate.
+unsafe impl Send for ThreadScratch {}
