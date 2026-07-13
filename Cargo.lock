@@ -782,6 +782,8 @@ version = "0.1.0"
 name = "g-input"
 version = "0.1.0"
 dependencies = [
+ "ahash",
+ "criterion",
  "csv",
  "g-plan",
  "hex",

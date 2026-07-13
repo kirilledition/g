@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 pub(super) struct SampleRowIndicesByKey<'identifier> {
     sample_row_indices: HashMap<(&'identifier str, &'identifier str), usize>,

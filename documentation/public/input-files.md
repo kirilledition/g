@@ -68,7 +68,9 @@ phenotype rows, covariate rows, and prediction rows.
 The Oxford `.sample` header must contain `ID_1` and `ID_2`, and its following
 type row must mark both columns with type `0`. `ID_1` supplies `FID` and `ID_2`
 supplies `IID` for the other inputs. The columns may appear anywhere in the
-sample header; their names and types are required.
+sample header; their names and types are required. Fields are separated by
+ASCII whitespace, as defined by the Oxford format; Unicode whitespace is not a
+delimiter.
 
 ## Phenotypes And Covariates
 
@@ -109,7 +111,9 @@ Each prediction-list row maps one phenotype to one LOCO prediction file. Relativ
 LOCO paths are resolved from the prediction-list directory. Run manifests record
 the prediction-list content hash and the content hash of each selected LOCO file
 for the phenotype or compatible compute group, so changing a referenced LOCO file
-prevents resume even when the prediction-list file itself is unchanged.
+prevents resume even when the prediction-list file itself is unchanged. Prediction
+lists and LOCO files use ASCII whitespace delimiters; Unicode whitespace is not a
+delimiter.
 
 Each LOCO header starts with `FID_IID`; every following sample token must encode
 non-empty FID and IID values separated by an underscore, and each resulting
