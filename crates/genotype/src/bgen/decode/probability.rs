@@ -229,9 +229,7 @@ fn decompress_zlib_block_into_scratch(
     expected_length: usize,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), BgenError> {
-    if thread_scratch.decompressed_probability_block.len() < expected_length {
-        thread_scratch.decompressed_probability_block.resize(expected_length, 0);
-    }
+    ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
     thread_scratch.zlib_decompressor.reset(true);
     let total_input_before = thread_scratch.zlib_decompressor.total_in();
     let total_output_before = thread_scratch.zlib_decompressor.total_out();
@@ -268,9 +266,7 @@ fn decompress_zstandard_block_into_scratch(
     expected_length: usize,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), BgenError> {
-    if thread_scratch.decompressed_probability_block.len() < expected_length {
-        thread_scratch.decompressed_probability_block.resize(expected_length, 0);
-    }
+    ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
     let zstandard_decompressor =
         thread_scratch.zstandard_decompressor.get_or_insert_with(zstd::bulk::Decompressor::default);
     let decompressed_length = zstandard_decompressor.decompress_to_buffer(
@@ -282,6 +278,19 @@ fn decompress_zstandard_block_into_scratch(
             "Zstandard-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
         )));
     }
+    Ok(())
+}
+
+fn ensure_decompression_buffer_length(buffer: &mut Vec<u8>, expected_length: usize) -> Result<(), BgenError> {
+    if buffer.len() >= expected_length {
+        return Ok(());
+    }
+    buffer.try_reserve_exact(expected_length - buffer.len()).map_err(|source| {
+        BgenError::Range(format!(
+            "Could not reserve {expected_length} bytes for BGEN probability decompression: {source}.",
+        ))
+    })?;
+    buffer.resize(expected_length, 0);
     Ok(())
 }
 

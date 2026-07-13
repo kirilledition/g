@@ -8,6 +8,9 @@ use super::decode::{ThreadScratch, read_exact_bytes, read_probability_block, rea
 use super::format::{ALLELE_LENGTH_SIZE_IN_BYTES, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES};
 use super::metadata::VariantRecord;
 
+const LAYOUT_TWO_FIXED_PROBABILITY_BLOCK_LENGTH: usize = 10;
+const MAXIMUM_SUPPORTED_PROBABILITY_BLOCK_BYTES_PER_SAMPLE: usize = 9;
+
 pub(super) struct ParsedVariantIndex {
     pub(super) variant_records: Vec<VariantRecord>,
     pub(super) variant_metadata: Arc<VariantMetadataStore>,
@@ -79,6 +82,7 @@ pub(super) fn parse_variant_index(
     sample_count: usize,
     compression_type: CompressionType,
 ) -> Result<ParsedVariantIndex, BgenError> {
+    let maximum_block_length = maximum_supported_probability_block_length(sample_count)?;
     let mut cursor = first_variant_offset;
     let mut variant_records = Vec::with_capacity(variant_count);
     let mut chromosome_codes = Vec::with_capacity(variant_count);
@@ -125,19 +129,20 @@ pub(super) fn parse_variant_index(
         let genotype_block_offset = cursor;
         let total_block_length = u32_to_usize(read_u32_at(mmap, genotype_block_offset)?)?;
         let block_payload_offset = genotype_block_offset + 4;
-        let (probability_payload_offset, probability_payload_length, declared_uncompressed_block_length) =
-            match compression_type {
-                CompressionType::None => (block_payload_offset, total_block_length, total_block_length),
-                CompressionType::Zlib | CompressionType::Zstandard => {
-                    let declared_uncompressed_block_length = u32_to_usize(read_u32_at(mmap, block_payload_offset)?)?;
-                    let probability_payload_length = total_block_length.checked_sub(4).ok_or_else(|| {
-                        BgenError::InvalidFormat(
-                            "Compressed BGEN blocks must include a four-byte uncompressed length prefix.".to_string(),
-                        )
-                    })?;
-                    (block_payload_offset + 4, probability_payload_length, declared_uncompressed_block_length)
-                }
-            };
+        let (probability_payload_offset, probability_payload_length, uncompressed_block_length) = match compression_type
+        {
+            CompressionType::None => (block_payload_offset, total_block_length, total_block_length),
+            CompressionType::Zlib | CompressionType::Zstandard => {
+                let uncompressed_block_length = u32_to_usize(read_u32_at(mmap, block_payload_offset)?)?;
+                let probability_payload_length = total_block_length.checked_sub(4).ok_or_else(|| {
+                    BgenError::InvalidFormat(
+                        "Compressed BGEN blocks must include a four-byte uncompressed length prefix.".to_string(),
+                    )
+                })?;
+                (block_payload_offset + 4, probability_payload_length, uncompressed_block_length)
+            }
+        };
+        validate_block_length(uncompressed_block_length, maximum_block_length, variant_index)?;
         cursor += 4 + total_block_length;
         if cursor > mmap.len() {
             return Err(BgenError::InvalidFormat(format!(
@@ -154,7 +159,7 @@ pub(super) fn parse_variant_index(
         let variant_record = VariantRecord {
             probability_payload_offset,
             probability_payload_length,
-            declared_uncompressed_block_length,
+            declared_uncompressed_block_length: uncompressed_block_length,
         };
         if variant_index == 0 {
             validate_variant_probability_block(mmap, compression_type, &variant_record, sample_count, "first variant")?;
@@ -183,6 +188,30 @@ pub(super) fn parse_variant_index(
         )),
         chromosome_boundary_indices,
     })
+}
+
+fn maximum_supported_probability_block_length(sample_count: usize) -> Result<usize, BgenError> {
+    sample_count
+        .checked_mul(MAXIMUM_SUPPORTED_PROBABILITY_BLOCK_BYTES_PER_SAMPLE)
+        .and_then(|sample_bytes| sample_bytes.checked_add(LAYOUT_TWO_FIXED_PROBABILITY_BLOCK_LENGTH))
+        .ok_or_else(|| {
+            BgenError::Range(
+                "BGEN sample count overflows the maximum supported Layout 2 probability block length.".to_string(),
+            )
+        })
+}
+
+fn validate_block_length(
+    declared_length: usize,
+    maximum_supported_length: usize,
+    variant_index: usize,
+) -> Result<(), BgenError> {
+    if declared_length > maximum_supported_length {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "Variant index {variant_index} declares an uncompressed probability block of {declared_length} bytes, but a supported biallelic diploid Layout 2 block contains at most {maximum_supported_length} bytes for this sample count.",
+        )));
+    }
+    Ok(())
 }
 
 fn read_allele(
