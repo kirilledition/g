@@ -230,9 +230,9 @@ fn decompress_zlib_block_into_scratch(
     ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
     let output_buffer = &mut thread_scratch.decompressed_probability_block[..expected_length];
     let mut consumed_input_length = 0;
-    let mut decompressed_length = 0;
-    // SAFETY: the per-thread decompressor is live and uniquely borrowed, and
-    // both pointers remain valid for the exact slice lengths passed to C.
+    // SAFETY: the per-thread decompressor is live and uniquely borrowed. The
+    // index rejects empty compressed payloads, and both slices remain valid for
+    // the exact lengths passed to C.
     let result = unsafe {
         libdeflate_sys::libdeflate_zlib_decompress_ex(
             thread_scratch.zlib_decompressor.as_ptr(),
@@ -241,7 +241,7 @@ fn decompress_zlib_block_into_scratch(
             output_buffer.as_mut_ptr().cast(),
             output_buffer.len(),
             &raw mut consumed_input_length,
-            &raw mut decompressed_length,
+            std::ptr::null_mut(),
         )
     };
     match result {
@@ -269,11 +269,6 @@ fn decompress_zlib_block_into_scratch(
         return Err(BgenError::InvalidFormat(format!(
             "Zlib-compressed BGEN block consumed {consumed_input_length} of {} payload bytes.",
             compressed_payload.len(),
-        )));
-    }
-    if decompressed_length != expected_length {
-        return Err(BgenError::InvalidFormat(format!(
-            "Zlib-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
         )));
     }
     Ok(())

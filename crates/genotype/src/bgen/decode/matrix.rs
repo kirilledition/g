@@ -91,7 +91,3 @@ impl Drop for ThreadScratch {
         unsafe { libdeflate_sys::libdeflate_free_decompressor(self.zlib_decompressor.as_ptr()) };
     }
 }
-
-// SAFETY: ownership of the native decompressor moves with the scratch state,
-// which is borrowed exclusively before invoking libdeflate.
-unsafe impl Send for ThreadScratch {}
