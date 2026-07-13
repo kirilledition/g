@@ -31,7 +31,7 @@ pub(super) fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<
     for (line_index, line_result) in BufReader::new(file).lines().enumerate() {
         let line_number = line_index + 1;
         let line = line_result?;
-        let mut fields = line.split_whitespace();
+        let mut fields = line.split_ascii_whitespace();
         let Some(phenotype_name) = fields.next() else {
             continue;
         };

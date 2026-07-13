@@ -33,6 +33,10 @@ indexing. The required prediction-alignment fingerprint also binds the indexed
 header, every normalized chromosome row digest, trait order, and the concrete
 identity/index alignment recipe, without rereading a LOCO file. Resume planning
 checks only chromosome blocks with pending output.
+Oxford sample and REGENIE auxiliary formats use ASCII whitespace; their hot
+scanners must not pay Unicode classification costs. Large transient sample-key
+maps use a randomized high-throughput hasher, while persisted identity remains
+the canonical SHA-256 fingerprint and never depends on map iteration or hashes.
 The engine resolves the prediction list once; input consumes that borrowed
 catalog rather than reparsing it for each group, and the same catalog drives
 output-manifest fingerprints.

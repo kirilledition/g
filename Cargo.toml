@@ -32,6 +32,7 @@ name = "_core"
 crate-type = ["cdylib", "rlib"]
 
 [workspace.dependencies]
+ahash = "0.8.12"
 arrow = "59.0.0"
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap = { version = "4.6.1", features = ["derive"] }

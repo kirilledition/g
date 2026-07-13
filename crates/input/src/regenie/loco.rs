@@ -78,7 +78,7 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
             header_line = Some(std::mem::take(&mut line));
             continue;
         }
-        let mut fields = stripped_line.split_whitespace();
+        let mut fields = stripped_line.split_ascii_whitespace();
         let Some(chromosome_field) = fields.next() else {
             return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: 0 });
         };
@@ -176,7 +176,7 @@ pub(super) fn read_loco_chromosome_predictions_into(
         });
     }
 
-    let mut fields = line.split_whitespace();
+    let mut fields = line.split_ascii_whitespace();
     let Some(chromosome_field) = fields.next() else {
         return Err(PredictionError::InvalidLocoDataLine { line_number: row_index.line_number, field_count: 0 });
     };
@@ -278,7 +278,7 @@ fn metadata_timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i128 {
 }
 
 fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
-    let mut fields = header_line.split_whitespace();
+    let mut fields = header_line.split_ascii_whitespace();
     let Some(observed_marker) = fields.next() else {
         return Err(PredictionError::EmptyLocoHeader);
     };
@@ -307,7 +307,7 @@ fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
 
 pub(super) fn parse_loco_sample_identifiers(header_line: &str) -> Result<LocoSampleIndex, PredictionError> {
     let sample_identifier_count = validate_loco_header(header_line)?;
-    let mut fields = header_line.split_whitespace();
+    let mut fields = header_line.split_ascii_whitespace();
     let _ = fields.next().expect("validated LOCO headers contain their marker");
 
     let mut family_identifiers = Vec::with_capacity(sample_identifier_count);

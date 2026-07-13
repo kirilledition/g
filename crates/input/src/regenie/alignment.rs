@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use super::PredictionError;
 use super::loco::LocoSampleIndex;

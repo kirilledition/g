@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use super::SampleAlignmentResult;
 use super::tables::{CovariateTable, MultiPhenotypeTable, is_complete_multi_phenotype_sample};

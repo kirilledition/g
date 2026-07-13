@@ -22,13 +22,13 @@ pub fn load_sample_identifier_data_from_sample_file(
     let column_names = reader
         .read_next_nonempty_line()?
         .ok_or_else(missing_header_error)?
-        .split_whitespace()
+        .split_ascii_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
     let column_types = reader
         .read_next_nonempty_line()?
         .ok_or_else(missing_header_error)?
-        .split_whitespace()
+        .split_ascii_whitespace()
         .map(str::to_string)
         .collect::<Vec<_>>();
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
@@ -49,7 +49,7 @@ pub fn load_sample_identifier_data_from_sample_file(
         let mut row_value_count = 0;
         let mut family_identifier = None;
         let mut individual_identifier = None;
-        for (column_index, value) in row_text.split_whitespace().enumerate() {
+        for (column_index, value) in row_text.split_ascii_whitespace().enumerate() {
             row_value_count += 1;
             if column_index == family_identifier_column_index {
                 family_identifier = Some(value.to_owned());
@@ -153,7 +153,7 @@ impl<R: BufRead> SampleFileReader<R> {
             if read_byte_count == 0 {
                 return Ok(None);
             }
-            if self.line_buffer.split_whitespace().next().is_some() {
+            if self.line_buffer.split_ascii_whitespace().next().is_some() {
                 break;
             }
         }
