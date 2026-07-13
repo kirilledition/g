@@ -6,9 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-flate2 = { workspace = true }
 g-genotype-contracts = { workspace = true }
 hex = { workspace = true }
+libdeflate-sys = { workspace = true }
 memmap2 = { workspace = true }
 rayon = { workspace = true }
 sha2 = { workspace = true }

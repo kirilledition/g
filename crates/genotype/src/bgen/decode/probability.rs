@@ -1,5 +1,3 @@
-use flate2::{FlushDecompress, Status};
-
 use super::super::metadata::VariantRecord;
 use super::super::simd;
 use super::super::{BgenError, CompressionType};
@@ -230,29 +228,49 @@ fn decompress_zlib_block_into_scratch(
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), BgenError> {
     ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
-    thread_scratch.zlib_decompressor.reset(true);
-    let total_input_before = thread_scratch.zlib_decompressor.total_in();
-    let total_output_before = thread_scratch.zlib_decompressor.total_out();
     let output_buffer = &mut thread_scratch.decompressed_probability_block[..expected_length];
-    let status = thread_scratch
-        .zlib_decompressor
-        .decompress(compressed_payload, output_buffer, FlushDecompress::Finish)
-        .map_err(std::io::Error::from)?;
-    if status != Status::StreamEnd {
-        return Err(BgenError::InvalidFormat(
-            "Zlib-compressed BGEN block did not terminate at stream end.".to_string(),
-        ));
+    let mut consumed_input_length = 0;
+    let mut decompressed_length = 0;
+    // SAFETY: the per-thread decompressor is live and uniquely borrowed, and
+    // both pointers remain valid for the exact slice lengths passed to C.
+    let result = unsafe {
+        libdeflate_sys::libdeflate_zlib_decompress_ex(
+            thread_scratch.zlib_decompressor.as_ptr(),
+            compressed_payload.as_ptr().cast(),
+            compressed_payload.len(),
+            output_buffer.as_mut_ptr().cast(),
+            output_buffer.len(),
+            &raw mut consumed_input_length,
+            &raw mut decompressed_length,
+        )
+    };
+    match result {
+        libdeflate_sys::libdeflate_result_LIBDEFLATE_SUCCESS => {}
+        libdeflate_sys::libdeflate_result_LIBDEFLATE_BAD_DATA => {
+            return Err(BgenError::InvalidFormat("Zlib-compressed BGEN block contains invalid zlib data.".to_string()));
+        }
+        libdeflate_sys::libdeflate_result_LIBDEFLATE_SHORT_OUTPUT => {
+            return Err(BgenError::InvalidFormat(
+                "Zlib-compressed BGEN block produced an incomplete output block.".to_string(),
+            ));
+        }
+        libdeflate_sys::libdeflate_result_LIBDEFLATE_INSUFFICIENT_SPACE => {
+            return Err(BgenError::InvalidFormat(
+                "Zlib-compressed BGEN block exceeds its declared uncompressed length.".to_string(),
+            ));
+        }
+        unexpected_result => {
+            return Err(BgenError::InvalidFormat(format!(
+                "Zlib decompression returned unsupported result code {unexpected_result}.",
+            )));
+        }
     }
-    let consumed_input_length = usize::try_from(thread_scratch.zlib_decompressor.total_in() - total_input_before)
-        .map_err(|_| BgenError::InvalidFormat("Consumed zlib input length does not fit into usize.".to_string()))?;
     if consumed_input_length != compressed_payload.len() {
         return Err(BgenError::InvalidFormat(format!(
             "Zlib-compressed BGEN block consumed {consumed_input_length} of {} payload bytes.",
             compressed_payload.len(),
         )));
     }
-    let decompressed_length = usize::try_from(thread_scratch.zlib_decompressor.total_out() - total_output_before)
-        .map_err(|_| BgenError::InvalidFormat("Decoded zlib block length does not fit into usize.".to_string()))?;
     if decompressed_length != expected_length {
         return Err(BgenError::InvalidFormat(format!(
             "Zlib-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",

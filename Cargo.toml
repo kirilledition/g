@@ -39,7 +39,6 @@ clap = { version = "4.6.1", features = ["derive"] }
 criterion = "0.8.2"
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"
-flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 hex = "0.4.3"
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
@@ -50,6 +49,7 @@ g-output = { path = "crates/output" }
 g-plan = { path = "crates/plan" }
 g-runner = { path = "crates/runner" }
 g-runtime = { path = "crates/runtime" }
+libdeflate-sys = "1.25.2"
 memchr = "2.8.1"
 memmap2 = "0.9.10"
 nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
