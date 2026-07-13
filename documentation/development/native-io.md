@@ -23,7 +23,8 @@ Integer boundary decisions for native I/O are maintained in
 
 ## BGEN Contract
 
-The supported public genotype input is BGEN 1.2. Native code owns:
+The supported public genotype input is Layout 2 BGEN, including uncompressed,
+zlib, and BGEN v1.3 Zstandard variant blocks. Native code owns:
 
 - index/open path;
 - sample-count validation against identities loaded from the required Oxford
@@ -36,6 +37,10 @@ The supported public genotype input is BGEN 1.2. Native code owns:
 
 Python/JAX kernels should receive already aligned dosage or validated packed8
 chunks and metadata, not parse file formats.
+
+Optional `.bgi` input is deliberately deferred. The current runtime must remain
+fully functional without an external index; future support is tracked in the
+[Roadmap](roadmap.md) and must retain exact BGEN/index identity validation.
 
 ## Alignment Contract
 

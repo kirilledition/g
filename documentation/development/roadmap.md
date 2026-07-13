@@ -17,7 +17,8 @@ Parquet dataset output.
 - Binary approximate-Firth fallback through
   `--binary-fallback firth_approximate`, with parity work still treated as an
   active engineering surface.
-- BGEN 1.2 input with Oxford `.sample` metadata.
+- Layout 2 BGEN input, including the BGEN v1.3 Zstandard extension, with Oxford
+  `.sample` metadata.
 - Native TOML/CLI input compiled into one Rust run request.
 - Chunked Parquet output under each phenotype run's `parts/` directory.
 - Runtime lifecycle telemetry and profile-stage summaries.
@@ -28,6 +29,7 @@ Parquet dataset output.
 - SPA.
 - Exact Firth without `--approx`.
 - BED/PGEN input.
+- Optional `.bgi` consumption for indexed BGEN startup and variant selection.
 - Full public support for all REGENIE Step 2 flags.
 
 ## Tracked Follow-Ups
@@ -36,6 +38,11 @@ Roadmap work should be tracked in Linear rather than as unchecked tasks in this
 file. The current docs-task audit generated focused follow-ups for packed8
 custom-kernel profiling and binary benchmark diagnostics. See
 [Agent Memory](../scratchpad/memory.md) for the audit summary and Linear links.
+
+The `.bgi` follow-up must preserve the current index-free BGEN scan as a
+fallback, validate that the index belongs to the exact opened BGEN source, and
+demonstrate a startup or selection benefit on UK Biobank-scale files before it
+adds a runtime dependency.
 
 ## Performance Direction
 

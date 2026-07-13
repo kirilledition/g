@@ -108,7 +108,7 @@ Packed8 selection and BGEN compatibility validation are automatic. Packed8
 requires unphased, biallelic, diploid, 8-bit BGEN with no missing calls.
 Otherwise-supported biallelic diploid Layout-2 data with missing calls, phased
 probabilities, or a different bit depth uses dosage delivery. Multiallelic,
-non-diploid, Zstandard-compressed, or otherwise unsupported input fails instead.
+non-diploid, or otherwise unsupported input fails instead.
 There is no manual packed8 eligibility override.
 
 ## GPU Is Not Used

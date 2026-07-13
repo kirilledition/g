@@ -124,7 +124,7 @@ tiles. Linear and binary GPU runs use packed8 delivery when no-missing diploid
 compatibility validation passes, including multi-phenotype groups. CPU and
 otherwise-supported biallelic diploid Layout-2 inputs that are not
 packed8-compatible use dosage delivery. Multiallelic, non-diploid,
-Zstandard-compressed, or otherwise unsupported input fails instead.
+or otherwise unsupported input fails instead.
 
 Current default values are in `crates/interface/src/config.default.toml`.
 The V100-tuned binary path uses 512-lane Firth batches and a

@@ -16,7 +16,7 @@ release line exists.
 | REGENIE Step 2 quantitative traits | Supported with `--qt`. |
 | REGENIE Step 2 binary score test | Supported with `--bt`. |
 | Binary approximate Firth fallback | Experimental with `--bt --binary-fallback firth_approximate`; not production-stable until upstream golden parity is added. |
-| BGEN 1.2 input | Supported. |
+| Layout 2 BGEN input | Supported with uncompressed or zlib blocks and the BGEN v1.3 Zstandard extension. |
 | Oxford `.sample` files | Required for BGEN row identities. |
 | Embedded BGEN sample identifiers | Unsupported; pass an Oxford sample file with `--sample`. |
 | Sample identity | Fixed to non-empty, unique `(FID, IID)` pairs across aligned inputs; IID-only matching is unsupported. |

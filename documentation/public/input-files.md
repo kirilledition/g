@@ -23,12 +23,15 @@ CLI names and TOML mapping, see [CLI](cli.md) and [Configuration](configuration.
 
 ## Genotypes
 
-`g` currently supports BGEN 1.2 for Step 2 scans.
+`g` currently supports Layout 2 BGEN for Step 2 scans. This includes the
+uncompressed and zlib encodings defined by BGEN v1.2 and the Zstandard
+compression extension added by
+[BGEN v1.3](https://www.chg.ox.ac.uk/~gav/bgen_format/spec/latest.html).
 
 Supported:
 
-- BGEN 1.2 Layout 2 genotype input with uncompressed, zlib, or
-  Zstandard variant blocks.
+- Layout 2 genotype input with uncompressed, zlib, or Zstandard variant
+  blocks.
 - Oxford `.sample` files through `--sample`.
 
 `--sample` is required. Sample identities are loaded from that Oxford `.sample`

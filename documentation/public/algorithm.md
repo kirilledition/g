@@ -245,7 +245,8 @@ CORRECTION_STATUS = failed
 
 ## Genotype handling
 
-`g` reads BGEN 1.2 genotype probabilities and converts them to allele-one dosage.
+`g` reads Layout 2 BGEN genotype probabilities from uncompressed, zlib, or
+Zstandard blocks and converts them to allele-one dosage.
 
 For unphased diploid biallelic records:
 
@@ -316,7 +317,8 @@ Known intentional scope limits:
 - REGENIE Step 1 is not implemented.
 - Exact Firth is not implemented.
 - SPA fallback is not implemented.
-- BGEN 1.2 is the supported genotype source.
+- Layout 2 BGEN is the supported genotype source; Zstandard compression uses
+  the extension added by BGEN v1.3.
 
 Implementation choices such as chunk size, device, output writer concurrency,
 and telemetry mode are operational. They should not change the mathematical
