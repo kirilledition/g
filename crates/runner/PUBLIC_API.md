@@ -15,12 +15,12 @@ kernel policy rather than redefining scalar settings. The Python host names no
 
 ## Public functions
 
-`run_cli` dispatches the CLI, resolves the plan's diagnostics modes and output
+`run_cli` dispatches the CLI, resolves the plan's telemetry mode and output
 layout into a generic `g-runtime::NativeRunSessionPolicy`, owns process-global
 setup, constructs terminal output, and invokes the coordinated engine run
-exactly once. It rejects an incompatible process-global logging topology under
-the runtime-state lock before opening run files or starting asynchronous
-writers.
+exactly once per compiled run. It rejects an incompatible process-global
+logging topology under the runtime-state lock before opening run files or
+starting asynchronous writers.
 
 ## This crate must not expose
 

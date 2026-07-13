@@ -8,26 +8,13 @@
 
 use g_genotype_contracts::{ChunkOutputStatistics, NullableFloat32Column};
 
-use crate::common::{ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats, DosageSummary};
+use crate::common::{ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats};
 use crate::error::{GenotypeError, GenotypeResult};
-
-mod simd;
 
 const ZERO_DOSAGE_UPPER_BOUND: f32 = 1.0e-4;
 const HOMOZYGOUS_ALTERNATE_DOSAGE_THRESHOLD: f32 = 1.5;
 const SPARSE_ZERO_DENSITY_THRESHOLD: f32 = 0.5;
 const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: f32 = 50.0;
-
-impl DosageSummary {
-    fn record_observed_dosage(&mut self, dosage_value: f32, collect_sparse_candidate_counts: bool) {
-        self.dosage_sum += dosage_value;
-        self.dosage_square_sum += dosage_value * dosage_value;
-        self.observation_count += 1;
-        if collect_sparse_candidate_counts {
-            increment_sparse_candidate_counts(dosage_value, &mut self.zero_count, &mut self.homozygous_alternate_count);
-        }
-    }
-}
 
 #[cfg(test)]
 pub(crate) fn preprocess_row_major_dosage_matrix(
@@ -103,83 +90,6 @@ pub(crate) fn preprocess_row_major_dosage_matrix(
     }
 
     Ok(stats)
-}
-
-pub fn summarize_variant_major_dosage_matrix(
-    dosage_values: &[f32],
-    selected_sample_count: usize,
-    selected_variant_count: usize,
-    statistics_policy: ChunkStatisticsPolicy,
-) -> GenotypeResult<ChunkStats> {
-    let expected_value_count = selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
-        GenotypeError::InvalidInput("Integer overflow while validating variant-major genotype shape.".to_string())
-    })?;
-    if dosage_values.len() != expected_value_count {
-        return Err(GenotypeError::InvalidInput(format!(
-            "Variant-major genotype value count mismatch: expected {expected_value_count}, observed {}.",
-            dosage_values.len(),
-        )));
-    }
-
-    let mut dosage_sum = vec![0.0_f32; selected_variant_count];
-    let mut dosage_square_sum = vec![0.0_f32; selected_variant_count];
-    let mut observation_count = vec![0_i32; selected_variant_count];
-    let mut zero_count = statistics_policy.collect_sparse_candidate_mask.then(|| vec![0_i32; selected_variant_count]);
-    let mut homozygous_alternate_count =
-        statistics_policy.collect_sparse_candidate_mask.then(|| vec![0_i32; selected_variant_count]);
-    for variant_index in 0..selected_variant_count {
-        let row_offset = variant_index.checked_mul(selected_sample_count).ok_or_else(|| {
-            GenotypeError::InvalidInput("Integer overflow while scanning variant-major rows.".to_string())
-        })?;
-        let row_summary = summarize_variant_major_row_simd_or_scalar(
-            &dosage_values[row_offset..row_offset + selected_sample_count],
-            statistics_policy.collect_sparse_candidate_mask,
-        );
-        dosage_sum[variant_index] = row_summary.dosage_sum;
-        dosage_square_sum[variant_index] = row_summary.dosage_square_sum;
-        observation_count[variant_index] = row_summary.observation_count;
-        if let Some(zero_count) = zero_count.as_mut() {
-            zero_count[variant_index] = row_summary.zero_count;
-        }
-        if let Some(homozygous_alternate_count) = homozygous_alternate_count.as_mut() {
-            homozygous_alternate_count[variant_index] = row_summary.homozygous_alternate_count;
-        }
-    }
-
-    build_chunk_stats_from_summaries(
-        dosage_sum,
-        dosage_square_sum,
-        observation_count,
-        zero_count,
-        homozygous_alternate_count,
-        selected_sample_count,
-        statistics_policy,
-    )
-}
-
-fn summarize_variant_major_row_simd_or_scalar(
-    dosage_values: &[f32],
-    collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if std::arch::is_x86_feature_detected!("avx2") {
-            return unsafe { simd::summarize_variant_major_row_avx2(dosage_values, collect_sparse_candidate_counts) };
-        }
-    }
-
-    summarize_variant_major_row_scalar(dosage_values, collect_sparse_candidate_counts)
-}
-
-fn summarize_variant_major_row_scalar(dosage_values: &[f32], collect_sparse_candidate_counts: bool) -> DosageSummary {
-    let mut row_summary = DosageSummary::default();
-    for &dosage_value in dosage_values {
-        if dosage_value.is_nan() {
-            continue;
-        }
-        row_summary.record_observed_dosage(dosage_value, collect_sparse_candidate_counts);
-    }
-    row_summary
 }
 
 #[must_use]

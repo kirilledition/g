@@ -14,9 +14,8 @@ pub(crate) struct NativeChunkWriterArrays {
     pub(crate) observation_count: ArrayRef,
 }
 
-#[derive(Clone)]
 pub struct NativeVariantMetadataHandle {
-    source: Arc<NativeVariantMetadataSource>,
+    source: NativeVariantMetadataSource,
 }
 
 pub(crate) struct NativeVariantMetadataArrays {
@@ -51,9 +50,7 @@ impl NativeVariantMetadataHandle {
         validate_utf8_column_width("ID", metadata.variant_identifiers())?;
         validate_utf8_column_width("ALLELE0", metadata.allele_ones())?;
         validate_utf8_column_width("ALLELE1", metadata.allele_twos())?;
-        Ok(Self {
-            source: Arc::new(NativeVariantMetadataSource { metadata: metadata.clone(), arrays: OnceLock::new() }),
-        })
+        Ok(Self { source: NativeVariantMetadataSource { metadata: metadata.clone(), arrays: OnceLock::new() } })
     }
 
     #[must_use]
@@ -126,17 +123,21 @@ pub struct NativeChunkHandle {
 }
 
 impl NativeChunkHandle {
-    /// Build one output chunk while validating its nullable columns.
+    /// Build one output chunk while validating its row counts and nullable columns.
     ///
     /// # Errors
     ///
-    /// Returns an error when a packed validity bitmap does not match its value
-    /// column.
+    /// Returns an error when a statistic column has the wrong row count or a
+    /// packed validity bitmap does not match its value column.
     pub fn try_new(
         metadata: NativeVariantMetadataHandle,
         statistics: ChunkOutputStatistics,
         chunk_identifier: i64,
     ) -> Result<Self, OutputError> {
+        let row_count = metadata.row_count();
+        validate_row_count("allele one frequency", statistics.allele_one_frequency.len(), row_count)?;
+        validate_row_count("INFO score", statistics.info_score.values.len(), row_count)?;
+        validate_row_count("observation count", statistics.observation_count.len(), row_count)?;
         Ok(Self {
             chunk_identifier,
             writer_arrays: Arc::new(NativeChunkWriterArrays::try_from_chunk_sources(metadata, statistics)?),
@@ -156,4 +157,11 @@ impl NativeChunkHandle {
             OutputError::InvalidInput("Rust output writer variant stop index does not fit into int64.".to_string())
         })
     }
+}
+
+fn validate_row_count(column_name: &str, observed: usize, expected: usize) -> Result<(), OutputError> {
+    if observed == expected {
+        return Ok(());
+    }
+    Err(OutputError::InvalidInput(format!("Output {column_name} contains {observed} rows, expected {expected}.")))
 }

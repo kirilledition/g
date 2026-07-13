@@ -16,3 +16,6 @@ mod write_plan;
 mod writer;
 
 pub use api::*;
+
+pub(crate) const CHUNKS_PER_PARQUET_FILE: usize = 16;
+pub(crate) const WRITER_QUEUE_DEPTH: usize = 16;

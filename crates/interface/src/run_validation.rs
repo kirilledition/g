@@ -9,7 +9,7 @@ use super::{ConfigError, ConfigResult};
 /// # Errors
 ///
 /// Returns an error when semantic validation fails or an input path does not exist.
-pub fn validate_config_for_run(config: &RegenieConfigData) -> ConfigResult<()> {
+pub(crate) fn validate_config_for_run(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_config(config)?;
     validate_existing_input_paths(config)
 }

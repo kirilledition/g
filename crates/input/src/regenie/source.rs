@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use sha2::{Digest, Sha256};
+
 use super::alignment::LocoSampleAlignment;
 use super::cache::{LocoAlignmentCache, LocoFileIndexCache};
 use super::error::PredictionError;
@@ -53,7 +55,6 @@ impl<'paths> PredictionSourceLoader<'paths> {
         target_family_identifiers: &[String],
         target_individual_identifiers: &[String],
         target_sample_indices: &[usize],
-        sample_key_mode: g_plan::SampleKeyMode,
     ) -> Result<PredictionSource, PredictionError> {
         let trait_count = phenotype_indices.len();
         let sample_count = target_sample_indices.len();
@@ -64,14 +65,13 @@ impl<'paths> PredictionSourceLoader<'paths> {
         let mut trait_sources = Vec::with_capacity(trait_count);
         for phenotype_index in phenotype_indices {
             let resolved_path = &self.prediction_loco_paths[*phenotype_index];
-            let indexed_file = self.file_index_cache.index(&resolved_path.loco_file_path, sample_key_mode)?;
+            let indexed_file = self.file_index_cache.index(&resolved_path.loco_file_path)?;
             let sample_alignment = alignment_cache.alignment(
                 &indexed_file.file_index,
                 &indexed_file.sample_index,
                 target_family_identifiers,
                 target_individual_identifiers,
                 target_sample_indices,
-                sample_key_mode,
             )?;
             trait_sources.push(PredictionTraitSource { file_index: indexed_file.file_index, sample_alignment });
         }
@@ -86,6 +86,27 @@ impl<'paths> PredictionSourceLoader<'paths> {
 }
 
 impl PredictionSource {
+    pub(crate) fn alignment_source_digest(&self) -> [u8; 32] {
+        let mut fingerprint_hash = Sha256::new();
+        fingerprint_hash.update(b"prediction-alignment-source-v1");
+        update_usize_fingerprint(&mut fingerprint_hash, self.trait_count);
+        update_usize_fingerprint(&mut fingerprint_hash, self.sample_count);
+        for trait_source in &self.trait_sources {
+            fingerprint_hash.update(trait_source.file_index.source_digest);
+            match trait_source.sample_alignment.as_ref() {
+                LocoSampleAlignment::Identity => fingerprint_hash.update(b"identity"),
+                LocoSampleAlignment::Indices(alignment_indices) => {
+                    fingerprint_hash.update(b"indices");
+                    update_usize_fingerprint(&mut fingerprint_hash, alignment_indices.len());
+                    for sample_index in alignment_indices {
+                        update_usize_fingerprint(&mut fingerprint_hash, *sample_index);
+                    }
+                }
+            }
+        }
+        fingerprint_hash.finalize().into()
+    }
+
     pub(crate) fn plan_uses(&mut self, chromosome_blocks: &[Arc<str>]) -> Result<(), PredictionError> {
         let mut planned_chromosomes = HashMap::new();
         for chromosome in chromosome_blocks {
@@ -175,6 +196,11 @@ impl PredictionSource {
             prediction_values,
         })
     }
+}
+
+fn update_usize_fingerprint(fingerprint_hash: &mut Sha256, value: usize) {
+    fingerprint_hash
+        .update(u64::try_from(value).expect("supported Rust targets represent usize within u64").to_le_bytes());
 }
 
 fn sorted_chromosomes<Values>(predictions: &HashMap<String, Values>) -> Vec<String> {

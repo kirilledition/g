@@ -1,4 +1,3 @@
-use g_plan::SampleKeyMode;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -26,88 +25,16 @@ pub(super) fn validate_loco_sample_keys(loco_sample_index: &LocoSampleIndex) -> 
     Ok(())
 }
 
-pub(super) fn validate_unique_loco_individual_identifiers(
-    loco_sample_index: &LocoSampleIndex,
-) -> Result<(), PredictionError> {
-    let mut observed_individual_identifiers = HashSet::with_capacity(loco_sample_index.individual_identifiers.len());
-    for individual_identifier in &loco_sample_index.individual_identifiers {
-        if individual_identifier.is_empty() {
-            return Err(PredictionError::EmptyLocoIid);
-        }
-        if !observed_individual_identifiers.insert(individual_identifier.as_str()) {
-            return Err(PredictionError::DuplicateLocoIid { individual_identifier: individual_identifier.clone() });
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn build_sample_alignment(
     loco_sample_index: &LocoSampleIndex,
     target_family_identifiers: &[String],
     target_individual_identifiers: &[String],
     target_sample_indices: &[usize],
-    sample_key_mode: SampleKeyMode,
 ) -> Result<LocoSampleAlignment, PredictionError> {
     if target_family_identifiers.len() != target_individual_identifiers.len() {
         return Err(PredictionError::TargetSampleLengthMismatch);
     }
 
-    if sample_key_mode == SampleKeyMode::Iid {
-        return build_individual_identifier_alignment_indices(
-            loco_sample_index,
-            target_individual_identifiers,
-            target_sample_indices,
-        );
-    }
-    build_family_individual_identifier_alignment_indices(
-        loco_sample_index,
-        target_family_identifiers,
-        target_individual_identifiers,
-        target_sample_indices,
-    )
-}
-
-fn build_individual_identifier_alignment_indices(
-    loco_sample_index: &LocoSampleIndex,
-    target_individual_identifiers: &[String],
-    target_sample_indices: &[usize],
-) -> Result<LocoSampleAlignment, PredictionError> {
-    if target_sample_indices.len() == loco_sample_index.individual_identifiers.len()
-        && target_sample_indices
-            .iter()
-            .zip(&loco_sample_index.individual_identifiers)
-            .all(|(target_sample_index, source)| target_individual_identifiers[*target_sample_index] == *source)
-    {
-        return Ok(LocoSampleAlignment::Identity);
-    }
-    let mut loco_lookup = HashMap::with_capacity(loco_sample_index.individual_identifiers.len());
-    for (sample_index, individual_identifier) in loco_sample_index.individual_identifiers.iter().enumerate() {
-        loco_lookup.insert(individual_identifier.as_str(), sample_index);
-    }
-
-    let mut alignment_indices = Vec::with_capacity(target_sample_indices.len());
-    let mut missing_samples = Vec::new();
-    for target_sample_index in target_sample_indices {
-        let individual_identifier = &target_individual_identifiers[*target_sample_index];
-        if let Some(sample_index) = loco_lookup.get(individual_identifier.as_str()) {
-            alignment_indices.push(*sample_index);
-        } else {
-            missing_samples.push(individual_identifier.clone());
-        }
-    }
-
-    if !missing_samples.is_empty() {
-        return Err(PredictionError::MissingTargetSamples(format_missing_samples(&missing_samples)));
-    }
-    Ok(LocoSampleAlignment::Indices(alignment_indices))
-}
-
-fn build_family_individual_identifier_alignment_indices(
-    loco_sample_index: &LocoSampleIndex,
-    target_family_identifiers: &[String],
-    target_individual_identifiers: &[String],
-    target_sample_indices: &[usize],
-) -> Result<LocoSampleAlignment, PredictionError> {
     if target_sample_indices.len() == loco_sample_index.family_identifiers.len()
         && target_sample_indices
             .iter()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import jax.scipy.stats
+import jax.scipy.special
 
 
 def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
@@ -27,5 +27,5 @@ def chi_squared_to_log10_p_value(chi_squared: jax.Array) -> jax.Array:
         chi_squared_array.astype(pvalue_dtype),
         jnp.asarray(0.0, dtype=pvalue_dtype),
     )
-    log_p_value = jnp.log(2.0) + jax.scipy.stats.norm.logsf(jnp.sqrt(safe_chi_squared))
+    log_p_value = jnp.log(2.0) + jax.scipy.special.log_ndtr(-jnp.sqrt(safe_chi_squared))
     return -log_p_value / jnp.log(10.0)

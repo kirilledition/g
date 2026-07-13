@@ -31,7 +31,6 @@ struct RunFailedTelemetryFields<'fields> {
 
 #[derive(Serialize)]
 struct NativeRuntimeKnobsDiagnosticFields {
-    bgen_decode_tile_variant_count: i64,
     threads: Option<i64>,
 }
 
@@ -388,7 +387,6 @@ fn configure_process_runtime<Host>(
 where
     Host: NativeRunHost,
 {
-    let bgen_decode_tile_variant_count = run_plan.compute.bgen_decode_tile_variant_count;
     let rayon_thread_count = run_plan.compute.cpu_thread_count.map(i64::from);
     let jax_policy = build_jax_runtime_policy(run_plan).map_err(|error| host.run_error(error.to_string()))?;
     let runtime_state = global_process_runtime_state();
@@ -404,10 +402,7 @@ where
         "debug",
         "native_runtime_knobs_configured",
         "Configuring native runtime knobs.",
-        &NativeRuntimeKnobsDiagnosticFields {
-            bgen_decode_tile_variant_count: i64::from(bgen_decode_tile_variant_count),
-            threads: rayon_thread_count,
-        },
+        &NativeRuntimeKnobsDiagnosticFields { threads: rayon_thread_count },
     )
     .map_err(|error| host.run_error(format!("Failed to serialize runtime diagnostic event: {error}")))?;
     let setup_preparation_required = {

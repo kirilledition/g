@@ -8,12 +8,10 @@ import typing
 import jax
 import jax.numpy as jnp
 
-from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.common import result as association_result
 
 if typing.TYPE_CHECKING:
-    from g import types
     from g.compute.regenie2_linear import state as regenie2_linear_state
 
 
@@ -22,21 +20,45 @@ type Regenie2MultiLinearChunkResult = association_result.AssociationResult[jax.A
 
 @functools.partial(
     jax.jit,
-    static_argnames=("score_dtype", "linear_minimum_variance", "linear_relative_variance_tolerance"),
+    static_argnames=("linear_minimum_variance", "linear_relative_variance_tolerance"),
+    donate_argnames=(
+        "native_genotype_mean",
+        "genotype_imputed_dosage_square_sum",
+    ),
 )
-def compute_regenie2_linear_chunk_trait_major_variant_major(
+def compute_multi_linear_chunk_packed8_donating_inputs(
+    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    native_genotype_mean: jax.Array | None,
+    genotype_imputed_dosage_square_sum: jax.Array | None,
+    linear_minimum_variance: float,
+    linear_relative_variance_tolerance: float,
+) -> Regenie2MultiLinearChunkResult:
+    """Decode packed8 probabilities and compute multi-trait quantitative statistics."""
+    genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_probability_pairs_by_variant
+    )
+    return compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        native_genotype_mean=native_genotype_mean,
+        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
+        linear_minimum_variance=linear_minimum_variance,
+        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
+    )
+
+
+def compute_regenie2_linear_chunk_trait_major_variant_major_core(
     *,
     chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     native_genotype_mean: jax.Array | None,
     genotype_imputed_dosage_square_sum: jax.Array | None,
-    score_dtype: types.FloatingPointDtype,
     linear_minimum_variance: float,
     linear_relative_variance_tolerance: float,
 ) -> Regenie2MultiLinearChunkResult:
     """Compute linear score-test statistics for trait-major residuals and variant-major genotypes."""
-    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
-    genotype_matrix_by_variant_compute = jnp.asarray(genotype_matrix_by_variant, dtype=jax_dtype)
+    genotype_matrix_by_variant_compute = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_mean = genotype.compute_diploid_genotype_mean(
         genotype_matrix_by_variant_compute,
         native_genotype_mean,
@@ -50,11 +72,11 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
             normalized_genotype_matrix_by_variant,
         )
     else:
-        sample_count_compute = jnp.asarray(genotype_matrix_by_variant_compute.shape[1], dtype=jax_dtype)
+        sample_count_compute = jnp.asarray(genotype_matrix_by_variant_compute.shape[1], dtype=jnp.float32)
         imputed_dosage_sum_compute = genotype_mean * sample_count_compute
         imputed_dosage_square_sum_compute = jnp.asarray(
             genotype_imputed_dosage_square_sum,
-            dtype=jax_dtype,
+            dtype=jnp.float32,
         )
         genotype_sum_squares_compute = (
             imputed_dosage_square_sum_compute
@@ -117,3 +139,10 @@ def compute_regenie2_linear_chunk_trait_major_variant_major(
         log10_p_value=log10_p_value,
         correction_code=None,
     )
+
+
+compute_regenie2_linear_chunk_trait_major_variant_major_donating_inputs = jax.jit(
+    compute_regenie2_linear_chunk_trait_major_variant_major_core,
+    static_argnames=("linear_minimum_variance", "linear_relative_variance_tolerance"),
+    donate_argnames=("native_genotype_mean", "genotype_imputed_dosage_square_sum"),
+)

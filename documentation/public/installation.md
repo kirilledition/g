@@ -36,7 +36,7 @@ Run `just doctor` to verify that the installed compiler driver can invoke Mold.
 | Platform | Status |
 | --- | --- |
 | Linux source checkout | Primary supported install path. |
-| Linux GPU node with compatible NVIDIA driver | Supported through the GPU dependency group and JAX CUDA wheels. |
+| Linux GPU node with compatible NVIDIA driver | Supported through the base CUDA-enabled JAX dependency. |
 | Shared Linux cluster without root | Supported when the checkout, `.venv/`, and caches are user-writable. |
 | macOS | Untested for production scans; CPU-only development may work if the native extension builds locally. |
 | Windows | Unsupported and untested. |
@@ -131,7 +131,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_name \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_regenie2
 ```

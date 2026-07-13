@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Write;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -12,13 +13,13 @@ use crate::error::{OutputError, OutputResult};
 use crate::resume;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct OutputRunPaths {
+pub(crate) struct OutputRunPaths {
     pub run_directory: PathBuf,
     pub parts_directory: PathBuf,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct PreparedOutputRun {
+pub(crate) struct PreparedOutputRun {
     pub output_run_paths: OutputRunPaths,
     pub existing_manifest_json: Option<String>,
 }
@@ -33,7 +34,7 @@ fn resolve_output_run_paths(output_root: &Path, association_mode: &str) -> Outpu
     OutputRunPaths { parts_directory: run_directory.join("parts"), run_directory }
 }
 
-pub fn prepare_output_run(
+pub(crate) fn prepare_output_run(
     output_root: &Path,
     association_mode: &str,
     resume: bool,
@@ -84,7 +85,11 @@ pub(crate) fn read_run_manifest_gpu_genotype_format_from_text(
     }
 }
 
-pub fn extend_run_manifest_metadata(run_directory: &Path, command: Value, runtime: Value) -> Result<(), OutputError> {
+pub(crate) fn extend_run_manifest_metadata(
+    run_directory: &Path,
+    command: Value,
+    runtime: Value,
+) -> Result<(), OutputError> {
     upsert_run_manifest(run_directory, |manifest| {
         let manifest_object = manifest
             .as_object_mut()
@@ -100,60 +105,44 @@ fn validate_run_manifest_compatibility(manifest_json: &str, current_header: &Val
     validation::validate_manifest_compatibility_values(&manifest, current_header)
 }
 
-pub fn validate_output_run_resume_compatibility(
+pub(crate) fn reconcile_output_run_resume(
     parts_directory: &Path,
     manifest_json: &str,
     current_header: &Value,
-    resume_mode: g_plan::ResumeMode,
-) -> Result<(), OutputError> {
+    planned_chunk_ranges: &[Range<usize>],
+) -> Result<Vec<RunManifestChunkCommit>, OutputError> {
     validate_run_manifest_compatibility(manifest_json, current_header)?;
-    if resume_mode == g_plan::ResumeMode::Strict {
-        resume::repair_strict_manifest_chunk_commits(parts_directory, manifest_json)?;
-    }
-    Ok(())
+    resume::repair_strict_manifest_chunk_commits(parts_directory, manifest_json, planned_chunk_ranges)
 }
 
-pub fn initialize_output_run(
+pub(crate) fn initialize_output_run(
     run_directory: &Path,
-    parts_directory: &Path,
     existing_manifest_json: Option<&str>,
     current_header: &Value,
-    resume: bool,
-    resume_mode: g_plan::ResumeMode,
+    resumed_chunk_commits: Option<Vec<RunManifestChunkCommit>>,
 ) -> Result<Vec<i64>, OutputError> {
-    let (mut manifest, committed_chunks, committed_chunk_identifiers) = if let Some(existing_manifest_text) =
-        existing_manifest_json
-    {
-        let existing_manifest = parse_run_manifest_text(existing_manifest_text, None)?;
-        validation::validate_manifest_compatibility_values(&existing_manifest, current_header)?;
-        let manifest_committed_chunks = read_run_manifest_committed_chunks(&existing_manifest)?;
-        let _validated_committed_chunk_identifiers = read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
-        if resume {
-            match resume_mode {
-                g_plan::ResumeMode::Fast => {
-                    let committed_chunk_identifiers =
-                        read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
-                    (existing_manifest, manifest_committed_chunks, committed_chunk_identifiers)
-                }
-                g_plan::ResumeMode::Strict => {
-                    let repaired_commits =
-                        resume::repair_strict_manifest_chunk_commits(parts_directory, existing_manifest_text)?;
-                    let committed_chunk_identifiers =
-                        repaired_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect();
-                    let committed_chunks = repaired_commits.iter().map(chunk_commit_to_value).collect::<Vec<_>>();
-                    (existing_manifest, committed_chunks, committed_chunk_identifiers)
-                }
+    let (mut manifest, committed_chunks, committed_chunk_identifiers) =
+        if let Some(existing_manifest_text) = existing_manifest_json {
+            let existing_manifest = parse_run_manifest_text(existing_manifest_text, None)?;
+            if let Some(resumed_chunk_commits) = resumed_chunk_commits {
+                let committed_chunk_identifiers =
+                    resumed_chunk_commits.iter().map(|chunk_commit| chunk_commit.chunk_identifier).collect();
+                let committed_chunks = resumed_chunk_commits.iter().map(chunk_commit_to_value).collect::<Vec<_>>();
+                (existing_manifest, committed_chunks, committed_chunk_identifiers)
+            } else {
+                validation::validate_manifest_compatibility_values(&existing_manifest, current_header)?;
+                let manifest_committed_chunks = read_run_manifest_committed_chunks(&existing_manifest)?;
+                let _validated_committed_chunk_identifiers =
+                    read_run_manifest_committed_chunk_identifiers(&existing_manifest)?;
+                (existing_manifest, manifest_committed_chunks, Vec::new())
             }
         } else {
-            (existing_manifest, manifest_committed_chunks, Vec::new())
-        }
-    } else {
-        if resume {
-            return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
-        }
-        let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
-        (manifest, Vec::new(), Vec::new())
-    };
+            if resumed_chunk_commits.is_some() {
+                return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
+            }
+            let manifest = load_run_manifest_value(run_directory)?.unwrap_or_else(|| Value::Object(Map::new()));
+            (manifest, Vec::new(), Vec::new())
+        };
     merge_manifest_header(&mut manifest, current_header)?;
     let manifest_object = manifest
         .as_object_mut()
@@ -175,10 +164,12 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
         .ok_or_else(|| OutputError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string()))?;
     let mut committed_chunks_by_identifier = BTreeMap::new();
     for committed_chunk in committed_chunks {
-        insert_or_validate_chunk_commit(
-            &mut committed_chunks_by_identifier,
-            chunks::read_run_manifest_chunk_commit(committed_chunk)?,
-        )?;
+        let chunk_commit = chunks::read_run_manifest_chunk_commit(committed_chunk)?;
+        if committed_chunks_by_identifier.insert(chunk_commit.chunk_identifier, chunk_commit).is_some() {
+            return Err(OutputError::InvalidInput(
+                "Strict resume manifest contains duplicate chunk identifiers.".to_string(),
+            ));
+        }
     }
     Ok(committed_chunks_by_identifier.into_values().collect())
 }

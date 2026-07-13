@@ -11,6 +11,6 @@ The canonical public pages are split by topic:
 - [Output Files](output-files.md) documents run directories, Parquet dataset
   parts, telemetry files, and result schema.
 - [Resume and Manifest](resume-and-manifest.md) documents
-  `effective_config.toml`, `run_manifest.json`, and TOML resume modes.
+  `effective_config.toml`, `run_manifest.json`, and strict resume behavior.
 
 For statistical interpretation of output fields, see [Algorithm](algorithm.md).

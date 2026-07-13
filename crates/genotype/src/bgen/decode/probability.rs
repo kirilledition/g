@@ -1,10 +1,189 @@
-use std::mem::MaybeUninit;
-
 use flate2::{FlushDecompress, Status};
 
 use super::super::metadata::VariantRecord;
+use super::super::simd;
 use super::super::{BgenError, CompressionType};
 use super::matrix::ThreadScratch;
+
+pub(in crate::bgen) const MISSING_SAMPLE_FLAG_MASK: u8 = 0x80;
+pub(in crate::bgen) const PLOIDY_MASK: u8 = 0x3F;
+const UNUSED_PLOIDY_FLAG_MASK: u8 = 0x40;
+
+pub(in crate::bgen) struct ParsedLayoutTwoProbabilityBlock<'block> {
+    pub(in crate::bgen) minimum_ploidy: u8,
+    pub(in crate::bgen) maximum_ploidy: u8,
+    pub(in crate::bgen) sample_ploidy_and_missingness: &'block [u8],
+    pub(in crate::bgen) phased_flag: u8,
+    pub(in crate::bgen) probability_bit_count: u8,
+    pub(in crate::bgen) probability_bytes: &'block [u8],
+}
+
+pub(in crate::bgen) fn parse_layout_two_probability_block(
+    probability_block: &[u8],
+    sample_count: usize,
+) -> Result<ParsedLayoutTwoProbabilityBlock<'_>, BgenError> {
+    let mut cursor = 0;
+    let stored_sample_count = u32_to_usize(read_u32_at(probability_block, cursor)?)?;
+    cursor += 4;
+    if stored_sample_count != sample_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "stores {stored_sample_count} samples in its probability block, but the file header reports {sample_count}.",
+        )));
+    }
+
+    let allele_count = read_u16_at(probability_block, cursor)?;
+    cursor += 2;
+    if allele_count != 2 {
+        return Err(BgenError::UnsupportedFormat("is not biallelic.".to_string()));
+    }
+
+    let minimum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let maximum_ploidy = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let sample_ploidy_and_missingness = read_exact_bytes(probability_block, cursor, sample_count)?;
+    cursor += sample_count;
+    let phased_flag = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+    let probability_bit_count = read_u8_at(probability_block, cursor)?;
+    cursor += 1;
+
+    Ok(ParsedLayoutTwoProbabilityBlock {
+        minimum_ploidy,
+        maximum_ploidy,
+        sample_ploidy_and_missingness,
+        phased_flag,
+        probability_bit_count,
+        probability_bytes: &probability_block[cursor..],
+    })
+}
+
+pub(in crate::bgen) fn validate_layout_two_probability_values(
+    probability_block: &ParsedLayoutTwoProbabilityBlock<'_>,
+    sample_count: usize,
+) -> Result<bool, BgenError> {
+    if probability_block.minimum_ploidy != 2 || probability_block.maximum_ploidy != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "uses ploidy bounds [{}, {}], but dosage reads require diploid variants.",
+            probability_block.minimum_ploidy, probability_block.maximum_ploidy,
+        )));
+    }
+    if probability_block.phased_flag > 1 {
+        return Err(BgenError::InvalidFormat(format!(
+            "uses phased flag {}, but BGEN Layout 2 requires 0 or 1.",
+            probability_block.phased_flag,
+        )));
+    }
+    if !(1..=32).contains(&probability_block.probability_bit_count) {
+        return Err(BgenError::InvalidFormat(format!(
+            "uses {} bits per probability, but BGEN Layout 2 requires a value between 1 and 32.",
+            probability_block.probability_bit_count,
+        )));
+    }
+
+    let expected_probability_byte_count =
+        layout_two_probability_byte_count(sample_count, probability_block.probability_bit_count)?;
+    if probability_block.probability_bytes.len() != expected_probability_byte_count {
+        return Err(BgenError::InvalidFormat(format!(
+            "contains {} probability bytes, but its encoding requires exactly {expected_probability_byte_count}.",
+            probability_block.probability_bytes.len(),
+        )));
+    }
+
+    let all_samples_present =
+        simd::all_samples_present_diploid_simd_or_scalar(probability_block.sample_ploidy_and_missingness);
+    if all_samples_present && probability_block.phased_flag == 0 && probability_block.probability_bit_count == 8 {
+        if simd::all_unphased_eight_bit_probability_pairs_valid_simd_or_scalar(probability_block.probability_bytes) {
+            return Ok(false);
+        }
+        return Err(BgenError::InvalidFormat(
+            "contains an 8-bit probability pair whose values sum above 255.".to_string(),
+        ));
+    }
+
+    let maximum_probability_value = if probability_block.probability_bit_count == 32 {
+        u64::from(u32::MAX)
+    } else {
+        (1_u64 << probability_block.probability_bit_count) - 1
+    };
+    let mut probability_reader = PackedProbabilityReader::new(probability_block.probability_bytes);
+    let mut has_missing_samples = false;
+    for (file_sample_index, ploidy_and_missingness) in
+        probability_block.sample_ploidy_and_missingness.iter().copied().enumerate()
+    {
+        let is_missing = validate_diploid_sample_flags(ploidy_and_missingness, file_sample_index)?;
+        has_missing_samples |= is_missing;
+        let first_probability = probability_reader.read_probability(probability_block.probability_bit_count)?;
+        let second_probability = probability_reader.read_probability(probability_block.probability_bit_count)?;
+        validate_stored_probability_pair(
+            first_probability,
+            second_probability,
+            maximum_probability_value,
+            probability_block.phased_flag,
+            is_missing,
+            file_sample_index,
+        )?;
+    }
+    if !probability_reader.has_only_zero_padding() {
+        return Err(BgenError::InvalidFormat(
+            "contains nonzero padding bits after its stored probabilities.".to_string(),
+        ));
+    }
+    Ok(has_missing_samples)
+}
+
+pub(in crate::bgen) fn layout_two_probability_byte_count(
+    sample_count: usize,
+    probability_bit_count: u8,
+) -> Result<usize, BgenError> {
+    let stored_probability_count = sample_count.checked_mul(2).ok_or_else(|| {
+        BgenError::InvalidFormat("Integer overflow while sizing BGEN probability values.".to_string())
+    })?;
+    stored_probability_count
+        .checked_mul(usize::from(probability_bit_count))
+        .map(|bit_count| bit_count.div_ceil(8))
+        .ok_or_else(|| BgenError::InvalidFormat("Integer overflow while sizing BGEN probability bits.".to_string()))
+}
+
+pub(in crate::bgen) fn validate_diploid_sample_flags(
+    ploidy_and_missingness: u8,
+    file_sample_index: usize,
+) -> Result<bool, BgenError> {
+    if (ploidy_and_missingness & UNUSED_PLOIDY_FLAG_MASK) != 0 {
+        return Err(BgenError::InvalidFormat(format!(
+            "contains reserved ploidy flag bits at file sample index {file_sample_index}.",
+        )));
+    }
+    let observed_ploidy = ploidy_and_missingness & PLOIDY_MASK;
+    if observed_ploidy != 2 {
+        return Err(BgenError::UnsupportedFormat(format!(
+            "contains a non-diploid sample at file sample index {file_sample_index}. Observed ploidy {observed_ploidy}.",
+        )));
+    }
+    Ok((ploidy_and_missingness & MISSING_SAMPLE_FLAG_MASK) != 0)
+}
+
+#[inline]
+pub(in crate::bgen) fn validate_stored_probability_pair(
+    first_probability: u32,
+    second_probability: u32,
+    maximum_probability_value: u64,
+    phased_flag: u8,
+    is_missing: bool,
+    file_sample_index: usize,
+) -> Result<(), BgenError> {
+    if is_missing && (first_probability != 0 || second_probability != 0) {
+        return Err(BgenError::InvalidFormat(format!(
+            "stores nonzero probabilities for missing file sample index {file_sample_index}.",
+        )));
+    }
+    if phased_flag == 0 && u64::from(first_probability) + u64::from(second_probability) > maximum_probability_value {
+        return Err(BgenError::InvalidFormat(format!(
+            "stores probabilities above the normalization range at file sample index {file_sample_index}.",
+        )));
+    }
+    Ok(())
+}
 
 pub(in crate::bgen) fn read_probability_block<'a>(
     mmap: &'a [u8],
@@ -27,7 +206,7 @@ pub(in crate::bgen) fn read_probability_block<'a>(
                 variant_record.declared_uncompressed_block_length,
                 thread_scratch,
             )?;
-            Ok(thread_scratch.decompressed_probability_block.as_slice())
+            Ok(&thread_scratch.decompressed_probability_block[..variant_record.declared_uncompressed_block_length])
         }
     }
 }
@@ -37,24 +216,29 @@ fn decompress_zlib_block_into_scratch(
     expected_length: usize,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), BgenError> {
-    thread_scratch.decompressed_probability_block.clear();
-    if thread_scratch.decompressed_probability_block.capacity() < expected_length {
-        thread_scratch
-            .decompressed_probability_block
-            .reserve(expected_length - thread_scratch.decompressed_probability_block.capacity());
+    if thread_scratch.decompressed_probability_block.len() < expected_length {
+        thread_scratch.decompressed_probability_block.resize(expected_length, 0);
     }
     thread_scratch.zlib_decompressor.reset(true);
+    let total_input_before = thread_scratch.zlib_decompressor.total_in();
     let total_output_before = thread_scratch.zlib_decompressor.total_out();
-    let output_buffer: &mut [MaybeUninit<u8>] =
-        &mut thread_scratch.decompressed_probability_block.spare_capacity_mut()[..expected_length];
+    let output_buffer = &mut thread_scratch.decompressed_probability_block[..expected_length];
     let status = thread_scratch
         .zlib_decompressor
-        .decompress_uninit(compressed_payload, output_buffer, FlushDecompress::Finish)
+        .decompress(compressed_payload, output_buffer, FlushDecompress::Finish)
         .map_err(std::io::Error::from)?;
     if status != Status::StreamEnd {
         return Err(BgenError::InvalidFormat(
             "Zlib-compressed BGEN block did not terminate at stream end.".to_string(),
         ));
+    }
+    let consumed_input_length = usize::try_from(thread_scratch.zlib_decompressor.total_in() - total_input_before)
+        .map_err(|_| BgenError::InvalidFormat("Consumed zlib input length does not fit into usize.".to_string()))?;
+    if consumed_input_length != compressed_payload.len() {
+        return Err(BgenError::InvalidFormat(format!(
+            "Zlib-compressed BGEN block consumed {consumed_input_length} of {} payload bytes.",
+            compressed_payload.len(),
+        )));
     }
     let decompressed_length = usize::try_from(thread_scratch.zlib_decompressor.total_out() - total_output_before)
         .map_err(|_| BgenError::InvalidFormat("Decoded zlib block length does not fit into usize.".to_string()))?;
@@ -62,9 +246,6 @@ fn decompress_zlib_block_into_scratch(
         return Err(BgenError::InvalidFormat(format!(
             "Zlib-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
         )));
-    }
-    unsafe {
-        thread_scratch.decompressed_probability_block.set_len(decompressed_length);
     }
     Ok(())
 }
@@ -100,9 +281,13 @@ impl<'a> PackedProbabilityReader<'a> {
         self.buffered_bit_count -= bit_count;
         Ok(probability_value)
     }
+
+    pub(super) fn has_only_zero_padding(&self) -> bool {
+        self.byte_offset == self.packed_probability_bytes.len() && self.bit_buffer == 0
+    }
 }
 
-pub(in crate::bgen) fn read_u8_at(buffer: &[u8], offset: usize) -> Result<u8, BgenError> {
+fn read_u8_at(buffer: &[u8], offset: usize) -> Result<u8, BgenError> {
     Ok(*read_exact_bytes(buffer, offset, 1)?
         .first()
         .ok_or_else(|| BgenError::InvalidFormat("Unexpected empty byte slice.".to_string()))?)

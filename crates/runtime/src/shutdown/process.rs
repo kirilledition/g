@@ -9,7 +9,7 @@ static SIGTERM_FLAG: OnceLock<Result<Arc<AtomicBool>, ShutdownError>> = OnceLock
 static SIGTERM_SCOPE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Active CLI scope for graceful first-SIGTERM handling.
-pub struct SigtermShutdownScope {
+pub(crate) struct SigtermShutdownScope {
     requested: Arc<AtomicBool>,
 }
 
@@ -29,7 +29,7 @@ impl Drop for SigtermShutdownScope {
 ///
 /// Returns an error if signal handlers cannot be installed or another CLI run
 /// already owns the process signal scope.
-pub fn begin_sigterm_shutdown_scope() -> Result<SigtermShutdownScope, ShutdownError> {
+pub(crate) fn begin_sigterm_shutdown_scope() -> Result<SigtermShutdownScope, ShutdownError> {
     if SIGTERM_SCOPE_ACTIVE.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
         return Err(ShutdownError::new("A SIGTERM shutdown scope is already active."));
     }

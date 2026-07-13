@@ -52,7 +52,7 @@ impl ProcessRuntimeState {
     ///
     /// Returns an error when a previous run configured a different Rayon global
     /// thread count.
-    pub fn require_compatible_rayon_thread_count(
+    pub(crate) fn require_compatible_rayon_thread_count(
         &self,
         requested_thread_count: Option<i64>,
     ) -> Result<(), RuntimeCompatibilityError> {

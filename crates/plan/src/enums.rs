@@ -56,16 +56,6 @@ string_enum!(Device {
     Gpu => "gpu",
 });
 
-string_enum!(TrustedBgenValidationMode {
-    CacheOnMiss => "cache_on_miss",
-    ForceValidate => "force_validate",
-});
-
-string_enum!(SampleKeyMode {
-    Iid => "iid",
-    FidIid => "fid_iid",
-});
-
 string_enum!(MultiPhenotypeSampleMode {
     PerPhenotype => "per-phenotype",
     CompleteCase => "complete-case",
@@ -78,16 +68,8 @@ string_enum!(PhenotypeComputeGroupMode {
 });
 
 string_enum!(GpuGenotypeFormat {
-    Auto => "auto",
     Dosage => "dosage",
     Packed8 => "packed8",
-});
-
-string_enum!(JaxMatmulPrecision {
-    Float32 => "float32",
-    TensorFloat32 => "tensorfloat32",
-    BrainFloat16 => "bfloat16",
-    Highest => "highest",
 });
 
 string_enum!(BinaryFallbackMethod {
@@ -104,9 +86,4 @@ string_enum!(TelemetryMode {
     Off => "off",
     Progress => "progress",
     Profile => "profile",
-});
-
-string_enum!(ResumeMode {
-    Fast => "fast",
-    Strict => "strict",
 });

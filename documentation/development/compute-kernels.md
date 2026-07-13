@@ -25,7 +25,8 @@ Kernels should receive:
 - aligned phenotype/covariate/prediction state;
 - variant-major genotype dosage chunks or packed GPU-compatible genotype data;
 - immutable numerical configuration;
-- explicit dtype and device policy from the typed JAX backend config.
+- typed device policy. Score/Firth widths and matmul precision are fixed
+  kernel/runtime invariants.
 
 Kernels should not:
 
@@ -63,20 +64,22 @@ user-visible statistics or tuning semantics change.
 
 ## Numerical Configuration
 
-Numerical settings are canonical TOML options and must be threaded from
-`crates/interface/src/config.default.toml` through the Rust run request and
-typed JAX backend config into kernel config dataclasses.
+Numerical thresholds and iteration policies are canonical TOML options and must
+be threaded from `crates/interface/src/config.default.toml` through the Rust
+`RunPlan` and typed JAX backend config into kernel config dataclasses.
 
 Examples:
 
 - linear variance floors;
 - binary probability and variance floors;
 - null logistic nonconvergence policy;
-- Firth iteration/tolerance/line-search limits;
-- score and Firth dtypes;
-- JAX matmul precision.
+- Firth iteration, tolerance, and line-search limits.
 
-Do not add module-level runtime constants for configurable numerical behavior.
+Score arithmetic uses `float32`, Firth arithmetic uses `float64`, JAX x64 is
+enabled, and JAX matmul precision is `float32`. These are fixed implementation
+policies, not configuration fields. Do not add module-level runtime constants
+for configurable numerical behavior or expose fixed width/runtime policy as
+configuration.
 
 ## JAX Runtime
 

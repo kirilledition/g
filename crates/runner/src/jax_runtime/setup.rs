@@ -4,17 +4,13 @@ use std::fs;
 use super::{JaxGpuValidationStatus, JaxRuntimePolicy, JaxRuntimeSetupSession};
 
 impl JaxRuntimePolicy {
-    /// Create the persistent JAX cache directory when requested by policy.
+    /// Create the persistent JAX cache directory.
     ///
     /// # Errors
     ///
-    /// Returns an error when persistent caching is enabled and the cache
-    /// directory cannot be created.
+    /// Returns an error when the cache directory cannot be created.
     pub(crate) fn create_cache_directory_if_configured(&self) -> Result<(), std::io::Error> {
-        let Some(cache_policy) = self.persistent_cache.as_ref() else {
-            return Ok(());
-        };
-        fs::create_dir_all(cache_policy.directory.path())?;
+        fs::create_dir_all(self.cache_directory.path())?;
         Ok(())
     }
 }

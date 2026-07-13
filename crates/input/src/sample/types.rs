@@ -48,13 +48,11 @@ impl AlignedPhenotypeGroup {
 pub struct PhenotypeGroupLoadRequest<'input> {
     pub sample_identifiers: &'input SampleIdentifierData,
     pub phenotype_path: &'input str,
-    pub prediction_list_path: &'input str,
     pub prediction_loco_paths: &'input [PredictionLocoPath],
     pub phenotype_names: &'input [String],
     pub covariate_path: Option<&'input str>,
     pub covariate_names: Option<&'input [String]>,
     pub is_binary_trait: bool,
-    pub sample_key_mode: g_plan::SampleKeyMode,
     pub sample_mode: g_plan::MultiPhenotypeSampleMode,
 }
 

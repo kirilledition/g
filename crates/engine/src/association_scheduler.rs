@@ -5,11 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::backend::{
-    AssociationBackend, GenotypeBatchInput, GenotypeBatchStatistics, HostAssociationBatch, OwnedGenotypeBuffer,
-};
-use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TryRecvError, TrySendError};
-use g_genotype::ChunkStats;
+use crate::backend::{AssociationBackend, GenotypeBatchInput};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError, TrySendError};
+use g_genotype::{ChunkStats, DecodedGenotypeBatch, OwnedGenotypeBuffer};
 use g_genotype_contracts::ChunkOutputStatistics;
 use g_output::NativeVariantMetadataHandle;
 
@@ -17,40 +15,50 @@ use crate::output_schedule::ActiveTraitSelection;
 
 const COMPUTE_WORKER_NAME: &str = "g-association-compute";
 const MATERIALIZATION_WORKER_NAME: &str = "g-association-materialization";
+const DECODED_BATCH_CAPACITY: usize = 1;
+const DEVICE_RESULT_CAPACITY: usize = 2;
 const DECODED_BATCH_QUEUE: &str = "decoded batch";
 const DEVICE_RESULT_QUEUE: &str = "device result";
 const COMPLETED_BATCH_QUEUE: &str = "completed batch";
 const COMPUTE_WORKER: &str = "compute";
 const MATERIALIZATION_WORKER: &str = "materialization";
+const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// One owned association batch ready for device compute.
 #[derive(Debug)]
 pub(crate) struct ScheduledAssociationBatch {
-    pub(crate) variant_start_index: usize,
-    pub(crate) compute_variant_count: usize,
-    pub(crate) sample_count: usize,
+    pub(crate) decoded: DecodedGenotypeBatch,
     pub(crate) metadata: NativeVariantMetadataHandle,
-    pub(crate) statistics: ChunkStats,
-    pub(crate) genotype_buffer: OwnedGenotypeBuffer,
     pub(crate) active_trait_selection: ActiveTraitSelection,
 }
 
 impl ScheduledAssociationBatch {
     fn validate<BackendError>(&self) -> SchedulerResult<(), BackendError> {
-        let logical_variant_count = self.metadata.row_count();
-        if self.compute_variant_count < logical_variant_count {
+        let decoded = &self.decoded;
+        if self.metadata.row_count() != decoded.logical_variant_count {
+            return Err(SchedulerError::InvalidBatch {
+                message: format!(
+                    "metadata contains {} variants, decoded batch contains {}",
+                    self.metadata.row_count(),
+                    decoded.logical_variant_count
+                ),
+            });
+        }
+        if decoded.compute_variant_count < decoded.logical_variant_count {
             return Err(SchedulerError::InvalidBatch {
                 message: format!(
                     "compute variant count {} is smaller than logical variant count {}",
-                    self.compute_variant_count, logical_variant_count
+                    decoded.compute_variant_count, decoded.logical_variant_count
                 ),
             });
         }
         let genotype_value_count =
-            self.compute_variant_count.checked_mul(self.sample_count).ok_or_else(|| SchedulerError::InvalidBatch {
-                message: "variant and sample counts overflow the host index width".to_string(),
+            decoded.compute_variant_count.checked_mul(decoded.sample_count).ok_or_else(|| {
+                SchedulerError::InvalidBatch {
+                    message: "variant and sample counts overflow the host index width".to_string(),
+                }
             })?;
-        let expected_genotype_value_count = match &self.genotype_buffer {
+        let expected_genotype_value_count = match &decoded.genotypes {
             OwnedGenotypeBuffer::Dosage(_) => genotype_value_count,
             OwnedGenotypeBuffer::Packed8(_) => {
                 genotype_value_count.checked_mul(2).ok_or_else(|| SchedulerError::InvalidBatch {
@@ -58,7 +66,7 @@ impl ScheduledAssociationBatch {
                 })?
             }
         };
-        let observed_genotype_value_count = match &self.genotype_buffer {
+        let observed_genotype_value_count = match &decoded.genotypes {
             OwnedGenotypeBuffer::Dosage(values) => values.len(),
             OwnedGenotypeBuffer::Packed8(values) => values.len(),
         };
@@ -70,37 +78,22 @@ impl ScheduledAssociationBatch {
             });
         }
         validate_variant_column_length(
-            "allele one frequency",
-            self.statistics.output.allele_one_frequency.len(),
-            logical_variant_count,
-        )?;
-        validate_variant_column_length(
-            "INFO score",
-            self.statistics.output.info_score.values.len(),
-            logical_variant_count,
-        )?;
-        validate_variant_column_length(
             "genotype mean",
-            self.statistics.compute.genotype_mean.len(),
-            self.compute_variant_count,
+            decoded.statistics.compute.genotype_mean.len(),
+            decoded.compute_variant_count,
         )?;
-        validate_variant_column_length(
-            "observation count",
-            self.statistics.output.observation_count.len(),
-            logical_variant_count,
-        )?;
-        if let Some(imputed_dosage_square_sum) = self.statistics.compute.imputed_dosage_square_sum.as_ref() {
+        if let Some(imputed_dosage_square_sum) = decoded.statistics.compute.imputed_dosage_square_sum.as_ref() {
             validate_variant_column_length(
                 "imputed dosage square sum",
                 imputed_dosage_square_sum.len(),
-                self.compute_variant_count,
+                decoded.compute_variant_count,
             )?;
         }
-        if let Some(sparse_candidate_mask) = self.statistics.compute.sparse_candidate_mask.as_ref() {
+        if let Some(sparse_candidate_mask) = decoded.statistics.compute.sparse_candidate_mask.as_ref() {
             validate_variant_column_length(
                 "rare sparse Firth candidate mask",
                 sparse_candidate_mask.len(),
-                self.compute_variant_count,
+                decoded.compute_variant_count,
             )?;
         }
         Ok(())
@@ -118,9 +111,8 @@ pub(crate) struct AssociationBatchOutput {
 /// One completed host result and the resources that produced it.
 #[derive(Debug)]
 pub(crate) struct CompletedAssociationBatch {
-    pub(crate) group_index: usize,
     pub(crate) output: AssociationBatchOutput,
-    pub(crate) result: HostAssociationBatch,
+    pub(crate) result: g_output::Regenie2StatisticBatch,
 }
 
 #[derive(Debug)]
@@ -129,13 +121,11 @@ pub(crate) struct CompletedAssociationBatch {
 #[allow(clippy::large_enum_variant)]
 enum AssociationSchedulerEvent {
     Completed(CompletedAssociationBatch),
-    ChromosomeReleased { group_index: usize },
+    ChromosomeReleased,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SchedulerError<BackendError> {
-    #[error("association scheduler {queue} capacity must be positive, observed {capacity}")]
-    InvalidCapacity { queue: &'static str, capacity: usize },
     #[error("invalid scheduled association batch: {message}")]
     InvalidBatch { message: String },
     #[error("association backend failed during {stage}: {source}")]
@@ -154,12 +144,10 @@ pub(crate) enum SchedulerError<BackendError> {
     Closed,
     #[error("association scheduler requires a prepared chromosome before batch submission")]
     ChromosomeNotPrepared,
-    #[error("association scheduler group index {group_index} is not registered")]
-    UnknownGroup { group_index: usize },
-    #[error("association scheduler group {group_index} already has a prepared chromosome")]
-    ChromosomeAlreadyPrepared { group_index: usize },
-    #[error("association scheduler group {group_index} chromosome release is already pending")]
-    ChromosomeReleasePending { group_index: usize },
+    #[error("association scheduler already has a prepared chromosome")]
+    ChromosomeAlreadyPrepared,
+    #[error("association scheduler chromosome release is already pending")]
+    ChromosomeReleasePending,
     #[error(
         "association scheduler cannot change chromosomes with batches pending: {submitted} submitted, {completed} completed"
     )]
@@ -181,7 +169,6 @@ pub(crate) enum SchedulerError<BackendError> {
 type SchedulerResult<Value, BackendError> = Result<Value, SchedulerError<BackendError>>;
 
 struct DeviceAssociationBatch<DeviceResult> {
-    group_index: usize,
     output: AssociationBatchOutput,
     device_result: DeviceResult,
 }
@@ -190,13 +177,13 @@ struct DeviceAssociationBatch<DeviceResult> {
 // boxing the hot variant would add one allocation to every submitted batch.
 #[allow(clippy::large_enum_variant)]
 enum ComputeCommand<ChromosomeState> {
-    PrepareChromosome { group_index: usize, state: ChromosomeState },
-    ReleaseChromosome { group_index: usize },
-    ComputeBatch { group_index: usize, batch: ScheduledAssociationBatch },
+    PrepareChromosome { state: ChromosomeState },
+    ReleaseChromosome,
+    ComputeBatch { batch: ScheduledAssociationBatch },
 }
 
 #[derive(Debug, Default)]
-struct GroupSchedulerState {
+struct PipelineSchedulerState {
     submitted_batch_count: usize,
     completed_batch_count: usize,
     chromosome_prepared: bool,
@@ -237,19 +224,20 @@ impl<BackendError> SchedulerControl<BackendError> {
     }
 }
 
-/// One bounded decoded-to-device-to-host pipeline shared by phenotype groups.
+/// One bounded decoded-to-device-to-host delivery pipeline.
 pub(crate) struct AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
+    backend: Arc<Backend>,
     compute_sender: Option<Sender<ComputeCommand<Backend::ChromosomeState>>>,
     event_receiver: Receiver<AssociationSchedulerEvent>,
     compute_worker: Option<thread::JoinHandle<()>>,
     materialization_worker: Option<thread::JoinHandle<()>>,
     control: Arc<SchedulerControl<Backend::Error>>,
-    groups: Vec<GroupSchedulerState>,
+    state: PipelineSchedulerState,
 }
 
 impl<Backend> AssociationBatchPipeline<Backend>
@@ -258,23 +246,15 @@ where
     Backend::ChromosomeState: 'static,
     Backend::DeviceResult: 'static,
 {
-    /// Start one shared two-stage pipeline.
+    /// Start one two-stage pipeline with the engine's bounded capacities.
     ///
     /// # Errors
     ///
-    /// Returns an error when either capacity is zero or a worker thread cannot
-    /// be started.
-    pub(crate) fn new(
-        backend: Arc<Backend>,
-        staging_depth: usize,
-        result_in_flight_limit: usize,
-    ) -> SchedulerResult<Self, Backend::Error> {
-        validate_capacity(DECODED_BATCH_QUEUE, staging_depth)?;
-        validate_capacity(DEVICE_RESULT_QUEUE, result_in_flight_limit)?;
-
-        let (compute_sender, compute_receiver) = crossbeam_channel::bounded(staging_depth);
-        let (device_sender, device_receiver) = crossbeam_channel::bounded(result_in_flight_limit);
-        let (event_sender, event_receiver) = crossbeam_channel::bounded(result_in_flight_limit);
+    /// Returns an error when a worker thread cannot be started.
+    pub(crate) fn new(backend: Arc<Backend>) -> SchedulerResult<Self, Backend::Error> {
+        let (compute_sender, compute_receiver) = crossbeam_channel::bounded(DECODED_BATCH_CAPACITY);
+        let (device_sender, device_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
+        let (event_sender, event_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let control = Arc::new(SchedulerControl::new());
 
         let materialization_backend = Arc::clone(&backend);
@@ -305,6 +285,7 @@ where
 
         let compute_control = Arc::clone(&control);
         let compute_event_sender = event_sender;
+        let pipeline_backend = Arc::clone(&backend);
         let compute_worker = match thread::Builder::new().name(COMPUTE_WORKER_NAME.to_string()).spawn(move || {
             let worker_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 run_compute_worker(
@@ -320,6 +301,7 @@ where
                     worker: COMPUTE_WORKER,
                     message: panic_message(payload.as_ref()),
                 });
+                drain_command_states(backend.as_ref(), &compute_receiver);
             }
         }) {
             Ok(worker) => worker,
@@ -332,25 +314,14 @@ where
         };
 
         Ok(Self {
+            backend: pipeline_backend,
             compute_sender: Some(compute_sender),
             event_receiver,
             compute_worker: Some(compute_worker),
             materialization_worker: Some(materialization_worker),
             control,
-            groups: Vec::new(),
+            state: PipelineSchedulerState::default(),
         })
-    }
-
-    /// Register one independently counted phenotype group.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the pipeline has been closed, aborted, or failed.
-    pub(crate) fn register_group(&mut self) -> SchedulerResult<usize, Backend::Error> {
-        self.ensure_running()?;
-        let group_index = self.groups.len();
-        self.groups.push(GroupSchedulerState::default());
-        Ok(group_index)
     }
 
     /// Install an owned chromosome state after the shared pipeline is drained.
@@ -361,7 +332,6 @@ where
     /// been closed, aborted, or failed.
     pub(crate) fn prepare_chromosome(
         &mut self,
-        group_index: usize,
         chromosome_state: Backend::ChromosomeState,
     ) -> SchedulerResult<(), Backend::Error> {
         self.ensure_running()?;
@@ -369,18 +339,19 @@ where
             let (submitted, completed) = self.batch_counts();
             return Err(SchedulerError::ChromosomeTransitionPending { submitted, completed });
         }
-        let group = self.group(group_index)?;
-        if group.chromosome_release_pending {
-            return Err(SchedulerError::ChromosomeReleasePending { group_index });
+        if self.state.chromosome_release_pending {
+            return Err(SchedulerError::ChromosomeReleasePending);
         }
-        if group.chromosome_prepared {
-            return Err(SchedulerError::ChromosomeAlreadyPrepared { group_index });
+        if self.state.chromosome_prepared {
+            return Err(SchedulerError::ChromosomeAlreadyPrepared);
         }
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
-        sender
-            .send(ComputeCommand::PrepareChromosome { group_index, state: chromosome_state })
-            .map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))?;
-        self.group_mut(group_index)?.chromosome_prepared = true;
+        if let Err(error) = sender.send(ComputeCommand::PrepareChromosome { state: chromosome_state }) {
+            let scheduler_error = self.current_or_channel_error(DECODED_BATCH_QUEUE);
+            release_command_state(self.backend.as_ref(), error.0);
+            return Err(scheduler_error);
+        }
+        self.state.chromosome_prepared = true;
         Ok(())
     }
 
@@ -390,55 +361,30 @@ where
     ///
     /// Returns an error unless every submitted group batch has been received,
     /// or when the pipeline has been closed, aborted, or failed.
-    pub(crate) fn release_chromosome(&mut self, group_index: usize) -> SchedulerResult<(), Backend::Error> {
+    pub(crate) fn release_chromosome(&mut self) -> SchedulerResult<(), Backend::Error> {
         self.ensure_running()?;
         if !self.is_drained() {
             let (submitted, completed) = self.batch_counts();
             return Err(SchedulerError::ChromosomeTransitionPending { submitted, completed });
         }
-        let group = self.group(group_index)?;
-        if group.chromosome_release_pending {
-            return Err(SchedulerError::ChromosomeReleasePending { group_index });
+        if self.state.chromosome_release_pending {
+            return Err(SchedulerError::ChromosomeReleasePending);
         }
-        if !group.chromosome_prepared {
+        if !self.state.chromosome_prepared {
             return Ok(());
         }
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
         sender
-            .send(ComputeCommand::ReleaseChromosome { group_index })
+            .send(ComputeCommand::ReleaseChromosome)
             .map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))?;
-        let group = self.group_mut(group_index)?;
-        group.chromosome_prepared = false;
-        group.chromosome_release_pending = true;
+        self.state.chromosome_prepared = false;
+        self.state.chromosome_release_pending = true;
         match self.receive_scheduler_event()? {
-            AssociationSchedulerEvent::ChromosomeReleased { group_index: released_group_index }
-                if released_group_index == group_index =>
-            {
-                Ok(())
-            }
-            AssociationSchedulerEvent::ChromosomeReleased { group_index: released_group_index } => {
-                Err(SchedulerError::InvalidBatch {
-                    message: format!(
-                        "received chromosome release for group {released_group_index} while waiting for group {group_index}"
-                    ),
-                })
-            }
+            AssociationSchedulerEvent::ChromosomeReleased => Ok(()),
             AssociationSchedulerEvent::Completed(_) => Err(SchedulerError::InvalidBatch {
                 message: "received a completed batch after the drained chromosome-release barrier".to_string(),
             }),
         }
-    }
-
-    /// Release every registered chromosome after the shared pipeline is drained.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a release fails or pending batches remain.
-    pub(crate) fn release_all_chromosomes(&mut self) -> SchedulerResult<(), Backend::Error> {
-        for group_index in 0..self.groups.len() {
-            self.release_chromosome(group_index)?;
-        }
-        Ok(())
     }
 
     /// Try to submit one owned decoded batch without blocking behind work.
@@ -454,33 +400,29 @@ where
     /// closed or aborted, or a worker has failed.
     pub(crate) fn try_submit(
         &mut self,
-        group_index: usize,
         batch: ScheduledAssociationBatch,
     ) -> SchedulerResult<Option<ScheduledAssociationBatch>, Backend::Error> {
         batch.validate::<Backend::Error>()?;
         self.ensure_running()?;
-        let group = self.group(group_index)?;
-        if !group.chromosome_prepared || group.chromosome_release_pending {
+        if !self.state.chromosome_prepared || self.state.chromosome_release_pending {
             return Err(SchedulerError::ChromosomeNotPrepared);
         }
         let next_submitted_batch_count =
-            group.submitted_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
+            self.state.submitted_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
-        let command = ComputeCommand::ComputeBatch { group_index, batch };
+        let command = ComputeCommand::ComputeBatch { batch };
         if self.is_drained() {
             sender.send(command).map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))?;
-            self.group_mut(group_index)?.submitted_batch_count = next_submitted_batch_count;
+            self.state.submitted_batch_count = next_submitted_batch_count;
             return Ok(None);
         }
         match sender.try_send(command) {
             Ok(()) => {
-                self.group_mut(group_index)?.submitted_batch_count = next_submitted_batch_count;
+                self.state.submitted_batch_count = next_submitted_batch_count;
                 Ok(None)
             }
-            Err(TrySendError::Full(ComputeCommand::ComputeBatch { batch, .. })) => Ok(Some(batch)),
-            Err(TrySendError::Full(
-                ComputeCommand::PrepareChromosome { .. } | ComputeCommand::ReleaseChromosome { .. },
-            )) => {
+            Err(TrySendError::Full(ComputeCommand::ComputeBatch { batch })) => Ok(Some(batch)),
+            Err(TrySendError::Full(ComputeCommand::PrepareChromosome { .. } | ComputeCommand::ReleaseChromosome)) => {
                 unreachable!("batch submission cannot return a chromosome command")
             }
             Err(TrySendError::Disconnected(_)) => Err(self.current_or_channel_error(DECODED_BATCH_QUEUE)),
@@ -495,8 +437,8 @@ where
     pub(crate) fn receive(&mut self) -> SchedulerResult<CompletedAssociationBatch, Backend::Error> {
         match self.receive_scheduler_event()? {
             AssociationSchedulerEvent::Completed(completed_batch) => Ok(completed_batch),
-            AssociationSchedulerEvent::ChromosomeReleased { group_index } => Err(SchedulerError::InvalidBatch {
-                message: format!("unexpected chromosome release for group {group_index} outside a drained transition"),
+            AssociationSchedulerEvent::ChromosomeReleased => Err(SchedulerError::InvalidBatch {
+                message: "unexpected chromosome release outside a drained transition".to_string(),
             }),
         }
     }
@@ -509,8 +451,8 @@ where
     pub(crate) fn try_receive(&mut self) -> SchedulerResult<Option<CompletedAssociationBatch>, Backend::Error> {
         match self.try_receive_scheduler_event()? {
             Some(AssociationSchedulerEvent::Completed(completed_batch)) => Ok(Some(completed_batch)),
-            Some(AssociationSchedulerEvent::ChromosomeReleased { group_index }) => Err(SchedulerError::InvalidBatch {
-                message: format!("unexpected chromosome release for group {group_index} outside a drained transition"),
+            Some(AssociationSchedulerEvent::ChromosomeReleased) => Err(SchedulerError::InvalidBatch {
+                message: "unexpected chromosome release outside a drained transition".to_string(),
             }),
             None => Ok(None),
         }
@@ -526,13 +468,25 @@ where
         if !self.has_pending_event() {
             return Err(SchedulerError::NoPendingBatch);
         }
-        match self.event_receiver.recv() {
-            Ok(event) => self.record_event(event),
-            Err(_) => match self.control.take_error() {
-                Some(error) => Err(error),
-                None if self.control.is_aborted() => Err(SchedulerError::Aborted),
-                None => Err(SchedulerError::ChannelDisconnected { queue: COMPLETED_BATCH_QUEUE }),
-            },
+        loop {
+            match self.event_receiver.recv_timeout(CHANNEL_POLL_INTERVAL) {
+                Ok(event) => return self.record_event(event),
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Some(error) = self.control.take_error() {
+                        return Err(error);
+                    }
+                    if self.control.is_aborted() {
+                        return Err(SchedulerError::Aborted);
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return match self.control.take_error() {
+                        Some(error) => Err(error),
+                        None if self.control.is_aborted() => Err(SchedulerError::Aborted),
+                        None => Err(SchedulerError::ChannelDisconnected { queue: COMPLETED_BATCH_QUEUE }),
+                    };
+                }
+            }
         }
     }
 
@@ -558,15 +512,13 @@ where
     /// Return whether every submitted batch has been received by the caller.
     #[must_use]
     pub(crate) fn is_drained(&self) -> bool {
-        self.groups.iter().all(|group| group.submitted_batch_count == group.completed_batch_count)
+        self.state.submitted_batch_count == self.state.completed_batch_count
     }
 
     /// Close the decoded-batch input so queued work can complete.
     pub(crate) fn close_submission(&mut self) {
-        for group in &mut self.groups {
-            group.chromosome_prepared = false;
-            group.chromosome_release_pending = false;
-        }
+        self.state.chromosome_prepared = false;
+        self.state.chromosome_release_pending = false;
         self.compute_sender.take();
     }
 
@@ -583,25 +535,6 @@ where
             let (submitted, completed) = self.batch_counts();
             return Err(SchedulerError::PendingBatches { submitted, completed });
         }
-        self.join_workers();
-        match self.control.take_error() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-
-    /// Cancel queued work, close submission, and join both workers.
-    ///
-    /// # Errors
-    ///
-    /// Returns a worker or backend error observed before or during shutdown.
-    pub(crate) fn abort(&mut self) -> SchedulerResult<(), Backend::Error> {
-        self.control.abort();
-        for group in &mut self.groups {
-            group.chromosome_prepared = false;
-            group.chromosome_release_pending = false;
-        }
-        self.compute_sender.take();
         self.join_workers();
         match self.control.take_error() {
             Some(error) => Err(error),
@@ -626,27 +559,12 @@ where
         self.control.take_error().unwrap_or(SchedulerError::ChannelDisconnected { queue })
     }
 
-    fn group(&self, group_index: usize) -> SchedulerResult<&GroupSchedulerState, Backend::Error> {
-        self.groups.get(group_index).ok_or(SchedulerError::UnknownGroup { group_index })
-    }
-
-    fn group_mut(&mut self, group_index: usize) -> SchedulerResult<&mut GroupSchedulerState, Backend::Error> {
-        self.groups.get_mut(group_index).ok_or(SchedulerError::UnknownGroup { group_index })
-    }
-
     fn batch_counts(&self) -> (usize, usize) {
-        self.groups.iter().fold((0_usize, 0_usize), |(submitted, completed), group| {
-            (
-                submitted.saturating_add(group.submitted_batch_count),
-                completed.saturating_add(group.completed_batch_count),
-            )
-        })
+        (self.state.submitted_batch_count, self.state.completed_batch_count)
     }
 
     fn has_pending_event(&self) -> bool {
-        self.groups
-            .iter()
-            .any(|group| group.submitted_batch_count != group.completed_batch_count || group.chromosome_release_pending)
+        self.state.submitted_batch_count != self.state.completed_batch_count || self.state.chromosome_release_pending
     }
 
     fn record_event(
@@ -654,27 +572,20 @@ where
         event: AssociationSchedulerEvent,
     ) -> SchedulerResult<AssociationSchedulerEvent, Backend::Error> {
         match &event {
-            AssociationSchedulerEvent::Completed(batch) => {
-                let group = self.group_mut(batch.group_index)?;
-                if group.completed_batch_count >= group.submitted_batch_count {
+            AssociationSchedulerEvent::Completed(_) => {
+                if self.state.completed_batch_count >= self.state.submitted_batch_count {
                     return Err(SchedulerError::InvalidBatch {
-                        message: format!(
-                            "group {} produced more completed batches than were submitted",
-                            batch.group_index
-                        ),
+                        message: "pipeline produced more completed batches than were submitted".to_string(),
                     });
                 }
-                group.completed_batch_count =
-                    group.completed_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
+                self.state.completed_batch_count =
+                    self.state.completed_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
             }
-            AssociationSchedulerEvent::ChromosomeReleased { group_index } => {
-                let group = self.group_mut(*group_index)?;
-                if !group.chromosome_release_pending {
-                    return Err(SchedulerError::InvalidBatch {
-                        message: format!("unexpected chromosome release for group {group_index}"),
-                    });
+            AssociationSchedulerEvent::ChromosomeReleased => {
+                if !self.state.chromosome_release_pending {
+                    return Err(SchedulerError::InvalidBatch { message: "unexpected chromosome release".to_string() });
                 }
-                group.chromosome_release_pending = false;
+                self.state.chromosome_release_pending = false;
             }
         }
         Ok(event)
@@ -722,65 +633,54 @@ fn run_compute_worker<Backend>(
 ) where
     Backend: AssociationBackend,
 {
-    let mut chromosome_states = Vec::<Option<Backend::ChromosomeState>>::new();
+    let mut chromosome = ChromosomeStateGuard { backend, state: None };
     while let Ok(command) = compute_receiver.recv() {
         if control.is_aborted() {
             release_command_state(backend, command);
             break;
         }
-        let (group_index, scheduled_batch) = match command {
-            ComputeCommand::PrepareChromosome { group_index, state } => {
-                if chromosome_states.len() <= group_index {
-                    chromosome_states.resize_with(group_index + 1, || None);
-                }
-                if chromosome_states[group_index].is_some() {
+        let scheduled_batch = match command {
+            ComputeCommand::PrepareChromosome { state } => {
+                if chromosome.state.is_some() {
                     backend.release_chromosome(state);
-                    control.record_error(SchedulerError::ChromosomeAlreadyPrepared { group_index });
+                    control.record_error(SchedulerError::ChromosomeAlreadyPrepared);
                     break;
                 }
-                chromosome_states[group_index] = Some(state);
+                chromosome.state = Some(state);
                 continue;
             }
-            ComputeCommand::ReleaseChromosome { group_index } => {
-                let Some(chromosome_state) = chromosome_states.get_mut(group_index).and_then(Option::take) else {
+            ComputeCommand::ReleaseChromosome => {
+                let Some(chromosome_state) = chromosome.state.take() else {
                     control.record_error(SchedulerError::ChromosomeNotPrepared);
                     break;
                 };
                 backend.release_chromosome(chromosome_state);
-                if !send_scheduler_event(
-                    event_sender,
-                    AssociationSchedulerEvent::ChromosomeReleased { group_index },
-                    control,
-                ) {
+                if !send_scheduler_event(event_sender, AssociationSchedulerEvent::ChromosomeReleased, control) {
                     break;
                 }
                 continue;
             }
-            ComputeCommand::ComputeBatch { group_index, batch } => (group_index, batch),
+            ComputeCommand::ComputeBatch { batch } => batch,
         };
-        let Some(active_chromosome_state) = chromosome_states.get(group_index).and_then(Option::as_ref) else {
+        let Some(active_chromosome_state) = chromosome.state.as_ref() else {
             control.record_error(SchedulerError::ChromosomeNotPrepared);
             break;
         };
-        let ScheduledAssociationBatch {
+        let ScheduledAssociationBatch { decoded, metadata, active_trait_selection } = scheduled_batch;
+        let DecodedGenotypeBatch {
             variant_start_index,
+            logical_variant_count: _,
             compute_variant_count,
             sample_count,
-            metadata,
+            genotypes,
             statistics,
-            genotype_buffer,
-            active_trait_selection,
-        } = scheduled_batch;
+        } = decoded;
         let ChunkStats { output: output_statistics, compute: compute_statistics } = statistics;
         let input = GenotypeBatchInput {
             variant_count: compute_variant_count,
             sample_count,
-            genotypes: genotype_buffer,
-            statistics: GenotypeBatchStatistics {
-                genotype_mean: compute_statistics.genotype_mean,
-                imputed_dosage_square_sum: compute_statistics.imputed_dosage_square_sum,
-                sparse_candidate_mask: compute_statistics.sparse_candidate_mask,
-            },
+            genotypes,
+            statistics: compute_statistics,
         };
         let device_result = match backend.compute_batch(active_chromosome_state, input) {
             Ok(result) => result,
@@ -798,19 +698,15 @@ fn run_compute_worker<Backend>(
             statistics: output_statistics,
             active_trait_selection,
         };
-        if device_sender.send(DeviceAssociationBatch { group_index, output, device_result }).is_err() {
+        if device_sender.send(DeviceAssociationBatch { output, device_result }).is_err() {
             if !control.is_aborted() {
                 control.record_error(SchedulerError::ChannelDisconnected { queue: DEVICE_RESULT_QUEUE });
             }
             break;
         }
     }
-    for chromosome_state in chromosome_states.into_iter().flatten() {
-        backend.release_chromosome(chromosome_state);
-    }
-    while let Ok(command) = compute_receiver.try_recv() {
-        release_command_state(backend, command);
-    }
+    drop(chromosome);
+    drain_command_states(backend, compute_receiver);
 }
 
 fn run_materialization_worker<Backend>(
@@ -838,11 +734,8 @@ fn run_materialization_worker<Backend>(
                     break;
                 }
             };
-        let event = AssociationSchedulerEvent::Completed(CompletedAssociationBatch {
-            group_index: device_batch.group_index,
-            output: device_batch.output,
-            result,
-        });
+        let event =
+            AssociationSchedulerEvent::Completed(CompletedAssociationBatch { output: device_batch.output, result });
         if !send_scheduler_event(event_sender, event, control) {
             return;
         }
@@ -859,7 +752,7 @@ fn send_scheduler_event<BackendError>(
         if control.is_aborted() {
             return false;
         }
-        match sender.send_timeout(pending_event, Duration::from_millis(10)) {
+        match sender.send_timeout(pending_event, CHANNEL_POLL_INTERVAL) {
             Ok(()) => return true,
             Err(SendTimeoutError::Timeout(returned_event)) => pending_event = returned_event,
             Err(SendTimeoutError::Disconnected(_)) => {
@@ -876,16 +769,37 @@ fn release_command_state<Backend>(backend: &Backend, command: ComputeCommand<Bac
 where
     Backend: AssociationBackend,
 {
-    if let ComputeCommand::PrepareChromosome { state, .. } = command {
+    if let ComputeCommand::PrepareChromosome { state } = command {
         backend.release_chromosome(state);
     }
 }
 
-fn validate_capacity<BackendError>(queue: &'static str, capacity: usize) -> SchedulerResult<(), BackendError> {
-    if capacity == 0 {
-        return Err(SchedulerError::InvalidCapacity { queue, capacity });
+fn drain_command_states<Backend>(backend: &Backend, receiver: &Receiver<ComputeCommand<Backend::ChromosomeState>>)
+where
+    Backend: AssociationBackend,
+{
+    while let Ok(command) = receiver.try_recv() {
+        release_command_state(backend, command);
     }
-    Ok(())
+}
+
+struct ChromosomeStateGuard<'backend, Backend>
+where
+    Backend: AssociationBackend,
+{
+    backend: &'backend Backend,
+    state: Option<Backend::ChromosomeState>,
+}
+
+impl<Backend> Drop for ChromosomeStateGuard<'_, Backend>
+where
+    Backend: AssociationBackend,
+{
+    fn drop(&mut self) {
+        if let Some(state) = self.state.take() {
+            self.backend.release_chromosome(state);
+        }
+    }
 }
 
 fn validate_variant_column_length<BackendError>(

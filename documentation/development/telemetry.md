@@ -20,8 +20,8 @@ The production frontend currently exposes one diagnostics setting:
 telemetry = "progress" # off, progress, or profile
 ```
 
-Other diagnostics fields are internal plan policy, not accepted TOML options.
-Unknown fields are rejected during native config validation.
+No other diagnostics keys are accepted. Fixed logging and queue behavior belongs
+to `g-runner`; unknown fields are rejected during native config validation.
 
 ## Modes
 
@@ -95,9 +95,10 @@ An enabled telemetry session receives progress, execution-plan preparation, and
 JAX setup diagnostics directly as typed events. When telemetry is disabled,
 execution-plan preparation and JAX setup diagnostics use the tracing diagnostic
 route instead. No diagnostic is sent through both routes, and progress
-bookkeeping is not constructed when telemetry is off. Disabled JAX persistent
-cache diagnostics retain their event and field names but report cache-only
-fields as null because those settings are neither resolved nor applied.
+bookkeeping is not constructed when telemetry is off. The persistent-cache
+diagnostic always reports `enabled=true`, the resolved directory,
+`min_entry_size_bytes=-1`, and `min_compile_time_seconds=0`. Auxiliary-cache and
+transfer-guard diagnostics report their fixed disabled policy.
 
 Progress registers one uniquely owned counter entry per delivery; the joined
 phenotype label is payload text, not an identity key. Complete-plan totals are

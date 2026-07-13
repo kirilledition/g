@@ -55,7 +55,7 @@ Parity checks must compare equivalent statistical modes:
 - binary score-only to binary score-only;
 - approximate Firth only when both tools use approximate Firth with the same
   fallback threshold;
-- same phenotype, covariates, Step 1 predictions, sample identity mode, and
+- same phenotype, covariates, Step 1 predictions, `(FID, IID)` sample set, and
   genotype source.
 
 Do not treat differences caused by different complete-case sample sets as kernel
@@ -63,15 +63,14 @@ bugs until input alignment has been verified.
 
 ## Numerical Expectations
 
-Result statistics are public `float32` outputs by default. Some internal kernels
-can use wider dtypes for parity-sensitive work, and parity runs can set
-`[output].output_statistic_dtype = "float64"` to persist wider public statistics.
+Result statistics and score-test kernels use `float32`. Firth solver internals
+use `float64`, then narrow corrected values once during result materialization.
 When validating a numerical change, record:
 
 - command and commit;
 - input paths and phenotype/covariate columns;
 - trait mode and binary correction plan;
-- device and dtype settings;
+- device setting;
 - tolerance used for comparison;
 - whether differences are isolated to invalid or failed-correction rows.
 

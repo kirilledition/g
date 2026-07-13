@@ -13,10 +13,10 @@ upstream REGENIE Step 1 prediction files.
 `g` runs REGENIE Step 2. It does not run REGENIE Step 1.
 
 - `--bgen`: BGEN genotype file.
-- `--sample`: Oxford sample file when the BGEN does not embed usable sample IDs.
+- `--sample`: Required Oxford sample file providing BGEN row identities.
 - `--phenoFile`: Phenotype table.
-- `--phenoCol` or `--phenoColList`: Phenotype column names.
-- `--covarFile` and `--covarColList`: Covariates when your model uses them.
+- Repeated `--phenoCol`: Phenotype column names.
+- `--covarFile` and repeated `--covarCol`: Covariates when your model uses them.
 - `--pred`: Step 1 prediction list produced by upstream `regenie`.
 - `--out`: Output prefix. `g` writes a run directory next to this prefix.
 
@@ -40,7 +40,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_quantitative_regenie2
 ```
@@ -55,7 +55,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_binary_score_regenie2
 ```
@@ -70,7 +70,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --binary-fallback firth_approximate \
   --pThresh 0.01 \
@@ -95,7 +95,7 @@ uv run g regenie \
   --phenoCol phenotype_continuous_a \
   --phenoCol phenotype_continuous_b \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex,pc1,pc2 \
+  --covarCol age --covarCol sex --covarCol pc1 --covarCol pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_multi_per_phenotype
 ```
@@ -122,7 +122,7 @@ uv run g regenie \
   --phenoCol phenotype_continuous_a \
   --phenoCol phenotype_continuous_b \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex,pc1,pc2 \
+  --covarCol age --covarCol sex --covarCol pc1 --covarCol pc2 \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_multi_complete_case
 ```
@@ -131,12 +131,13 @@ To see runtime knobs for this setting in config, use
 `[compute] multi_phenotype_sample_mode` via
 [Configuration](configuration.md#cli-to-toml-mapping).
 
-When validating this choice, compare `sampleCount` and run manifest metadata in
+When validating this choice, compare `sample_count` and run manifest metadata in
 the output `run_manifest.json` files alongside statistical results.
 
 ## GPU Execution
 
-Install the GPU dependency group first, then create `gpu.toml`:
+Sync the normal runtime environment, which already includes CUDA-enabled JAX,
+verify GPU visibility, then create `gpu.toml`:
 
 ```toml
 [compute]

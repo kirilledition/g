@@ -12,15 +12,13 @@ stability.
 
 1. Phenotypes, covariates, LOCO predictions, dosages, and genotype summary
    buffers are stored as `f32` on the Rust host.
-2. `score_dtype` selects `float32` or `float64` JAX score-test arithmetic after
-   device transfer. It does not change Rust host storage.
-3. Output statistic dtype must be equal to or narrower than `score_dtype`.
-4. Null Firth, approximate Firth, fallback Newton-Raphson, likelihood,
+2. JAX score-test arithmetic and public result statistics use `float32`.
+3. Null Firth, approximate Firth, fallback Newton-Raphson, likelihood,
    information-matrix, and corrected-statistic calculations use JAX `float64`.
-5. Corrected Firth values are merged into the configured score-result dtype.
-6. `firth_dtype` does not exist. Firth width is an algorithm invariant, not a
+4. Corrected Firth values are narrowed once when merged into float32 score results.
+5. `firth_dtype` does not exist. Firth width is an algorithm invariant, not a
    user option.
-7. Epsilon is derived from the active array dtype with `jnp.finfo(dtype).eps`.
+6. Epsilon is derived from the active array dtype with `jnp.finfo(dtype).eps`.
    A float64 epsilon must never be cast down and used as a float32 tolerance.
 
 ## Configuration Values

@@ -5,6 +5,7 @@ compile_error!("g requires a 64-bit target.");
 
 mod api;
 mod metadata;
+mod source;
 mod statistics;
 
 pub use api::*;

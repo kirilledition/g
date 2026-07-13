@@ -35,7 +35,7 @@ prediction lists, then use `g` for Step 2 scans.
 | TOML sections, merge order, effective config, and defaults policy | [Configuration](configuration.md) |
 | Genotype, sample, phenotype, covariate, and prediction files | [Input Files](input-files.md) |
 | Run directories, Parquet dataset schema, and telemetry files | [Output Files](output-files.md) |
-| Resume modes, manifest compatibility, and graceful interruption | [Resume and Manifest](resume-and-manifest.md) |
+| Strict resume behavior, manifest compatibility, and graceful interruption | [Resume and Manifest](resume-and-manifest.md) |
 | Statistical models and result interpretation | [Algorithm](algorithm.md) |
 | GPU, cluster, and SLURM operation | [GPU and Clusters](gpu-and-clusters.md) |
 | Performance tuning and measurement | [Performance Guide](performance-guide.md) |

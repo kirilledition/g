@@ -4,14 +4,14 @@ const NULL_LOGISTIC_POLICY_FAIL: &str = "fail";
 const NULL_LOGISTIC_POLICY_WARN: &str = "warn";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NullLogisticNonconvergenceAction {
+pub(crate) enum NullLogisticNonconvergenceAction {
     Continue,
     Warn,
     Fail,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct NullLogisticNonconvergencePlan {
+pub(crate) struct NullLogisticNonconvergencePlan {
     pub action: NullLogisticNonconvergenceAction,
     pub failed_trait_indices: Vec<usize>,
     pub message: Option<String>,
@@ -28,7 +28,7 @@ struct NullLogisticNonconvergenceMessage {
 }
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
-pub enum NullLogisticPolicyError {
+pub(crate) enum NullLogisticPolicyError {
     #[error("Null logistic convergence flags must contain at least one value.")]
     EmptyConvergenceFlags,
     #[error("Scalar null logistic convergence must contain exactly one flag, observed {observed_count}.")]
@@ -48,7 +48,7 @@ pub enum NullLogisticPolicyError {
 /// Returns an error when the convergence flags are empty, scalar mode receives
 /// anything other than one flag, phenotype names do not match multi-trait flag
 /// count, or the policy value is unsupported.
-pub fn plan_null_logistic_nonconvergence(
+pub(crate) fn plan_null_logistic_nonconvergence(
     chromosome: &str,
     convergence_flags: &[bool],
     scalar_convergence: bool,

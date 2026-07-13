@@ -74,12 +74,18 @@ cast_possible_wrap = "deny"
 cast_sign_loss = "deny"
 pedantic = { level = "warn", priority = -1 }
 
+[workspace.lints.rust]
+unreachable_pub = "deny"
+
 [dependencies]
 # "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
 # "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
 pyo3 = { workspace = true }
 numpy = { workspace = true }
 g-engine = { workspace = true }
+g-genotype = { workspace = true }
+g-input = { workspace = true }
+g-output = { workspace = true }
 g-plan = { workspace = true }
 g-runner = { workspace = true }
 pyo3-pylogger = { workspace = true }

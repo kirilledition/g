@@ -3,24 +3,21 @@
 use serde::{Deserialize, Serialize};
 
 use crate::enums::{
-    AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, JaxMatmulPrecision, MultiPhenotypeSampleMode,
-    NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode, RegenieTraitType, ResumeMode, SampleKeyMode,
-    TelemetryMode, TrustedBgenValidationMode,
+    AssociationMode, BinaryFallbackMethod, Device, MultiPhenotypeSampleMode, NullLogisticNonconvergencePolicy,
+    PhenotypeComputeGroupMode, TelemetryMode,
 };
 use crate::numeric::{DosageThreshold, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct RunPlan {
     pub association_mode: AssociationMode,
+    pub chunk_size: u32,
     pub input: InputPlan,
-    pub analysis: AnalysisPlan,
     pub compute: ComputePlan,
     pub correction: CorrectionPlan,
     pub output: OutputPlan,
-    pub runtime: RuntimePlan,
-    pub diagnostics: DiagnosticsPlan,
+    pub telemetry: TelemetryMode,
     pub phenotype_runs: Vec<PhenotypeRunPlan>,
-    pub phenotype_compute_groups: Vec<PhenotypeComputeGroup>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -31,26 +28,13 @@ pub struct InputPlan {
     pub prediction_list_path: String,
     pub covariate_path: Option<String>,
     pub covariate_names: Vec<String>,
-    pub sample_key_mode: SampleKeyMode,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct AnalysisPlan {
-    pub trait_type: RegenieTraitType,
-    pub chunk_size: u32,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub struct ComputePlan {
     pub device: Device,
     pub cpu_thread_count: Option<u32>,
-    pub staging_depth: u32,
-    pub result_in_flight_limit: Option<u32>,
-    pub variant_limit: Option<u32>,
-    pub bgen_decode_tile_variant_count: u32,
-    pub requested_gpu_genotype_format: GpuGenotypeFormat,
-    pub trusted_no_missing_diploid: bool,
-    pub trusted_bgen_validation_mode: TrustedBgenValidationMode,
+    pub jax_cache_directory: Option<String>,
     pub multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
     pub kernels: KernelPlan,
 }
@@ -119,45 +103,13 @@ pub struct CorrectionPlan {
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct OutputPlan {
-    pub output_prefix: String,
     pub output_run_root: String,
     pub resume: bool,
-    pub resume_mode: ResumeMode,
     pub writer_thread_count: u32,
-    pub writer_queue_depth: u32,
-    pub chunks_per_parquet_file: u32,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct RuntimePlan {
-    pub jax_cache_directory: Option<String>,
-    pub jax_matmul_precision: Option<JaxMatmulPrecision>,
-    pub persistent_cache_enabled: bool,
-    pub persistent_cache_min_entry_size_bytes: i64,
-    pub persistent_cache_min_compile_time_seconds: u32,
-    pub xla_autotune_cache_enabled: bool,
-    pub transfer_guard_enabled: bool,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-#[expect(clippy::struct_excessive_bools, reason = "Diagnostics flags are independent runtime policies.")]
-pub struct DiagnosticsPlan {
-    pub telemetry: TelemetryMode,
-    pub log_directory: Option<String>,
-    pub stage_timings_path: Option<String>,
-    pub log_filter: String,
-    pub log_file: Option<String>,
-    pub log_to_stderr: bool,
-    pub profile_summary_path: Option<String>,
-    pub log_queue_size: u32,
-    pub lossy_logging: bool,
-    pub include_source_location: bool,
-    pub include_span_events: bool,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PhenotypeRunPlan {
-    pub phenotype_index: u32,
     pub phenotype_name: String,
     pub output_directory_name: String,
 }
@@ -168,7 +120,8 @@ pub struct PhenotypeComputeGroup {
     pub phenotype_indices: Vec<u32>,
     pub phenotype_names: Vec<String>,
     pub sample_mode: MultiPhenotypeSampleMode,
-    pub sample_set_fingerprint: Option<String>,
-    pub covariate_design_fingerprint: Option<String>,
-    pub prediction_alignment_fingerprint: Option<String>,
+    pub sample_set_fingerprint: String,
+    pub covariate_design_fingerprint: String,
+    pub phenotype_design_fingerprint: String,
+    pub prediction_alignment_fingerprint: String,
 }

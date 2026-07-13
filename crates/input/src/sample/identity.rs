@@ -32,9 +32,14 @@ pub fn load_sample_identifier_data_from_sample_file(
         .map(str::to_string)
         .collect::<Vec<_>>();
     validate_sample_file_header(sample_path, &column_names, &column_types)?;
-    let family_identifier_column_index = 0;
-    let individual_identifier_column_index =
-        column_names.iter().position(|column_name| column_name == "ID_2").unwrap_or(family_identifier_column_index);
+    let family_identifier_column_index = column_names
+        .iter()
+        .position(|column_name| column_name == "ID_1")
+        .ok_or_else(|| format!("Sample file '{}' must contain the identifier column 'ID_1'.", sample_path.display()))?;
+    let individual_identifier_column_index = column_names
+        .iter()
+        .position(|column_name| column_name == "ID_2")
+        .ok_or_else(|| format!("Sample file '{}' must contain the identifier column 'ID_2'.", sample_path.display()))?;
 
     let mut family_identifiers = Vec::with_capacity(expected_sample_count);
     let mut individual_identifiers = Vec::with_capacity(expected_sample_count);
@@ -63,12 +68,30 @@ pub fn load_sample_identifier_data_from_sample_file(
             )
             .into());
         }
-        family_identifiers.push(family_identifier.ok_or_else(|| {
-            format!("Sample file '{}' row is missing the first identifier column.", sample_path.display())
-        })?);
-        individual_identifiers.push(individual_identifier.ok_or_else(|| {
-            format!("Sample file '{}' row is missing the selected individual identifier column.", sample_path.display())
-        })?);
+        let family_identifier = family_identifier.ok_or_else(|| {
+            format!("Sample file '{}' line {} is missing ID_1.", sample_path.display(), sample_count + 2)
+        })?;
+        let individual_identifier = individual_identifier.ok_or_else(|| {
+            format!("Sample file '{}' line {} is missing ID_2.", sample_path.display(), sample_count + 2)
+        })?;
+        if family_identifier.is_empty() {
+            return Err(format!(
+                "Sample file '{}' line {} contains an empty ID_1; ID_1 and ID_2 must both be non-empty.",
+                sample_path.display(),
+                sample_count + 2,
+            )
+            .into());
+        }
+        if individual_identifier.is_empty() {
+            return Err(format!(
+                "Sample file '{}' line {} contains an empty ID_2; ID_1 and ID_2 must both be non-empty.",
+                sample_path.display(),
+                sample_count + 2,
+            )
+            .into());
+        }
+        family_identifiers.push(family_identifier);
+        individual_identifiers.push(individual_identifier);
     }
     if sample_count != expected_sample_count {
         return Err(format!(
@@ -91,19 +114,20 @@ fn validate_sample_file_header(
             sample_path.display()
         ));
     }
-    if column_names.is_empty() {
-        return Err(format!("Sample file '{}' does not contain any columns.", sample_path.display()));
-    }
-    if column_types[0] != "0" {
-        return Err(format!(
-            "Sample file '{}' must mark the first identifier column with type '0'.",
-            sample_path.display()
-        ));
-    }
-    if let Some(individual_identifier_column_index) = column_names.iter().position(|column_name| column_name == "ID_2")
-        && column_types[individual_identifier_column_index] != "0"
-    {
-        return Err(format!("Sample file '{}' must mark 'ID_2' with type '0'.", sample_path.display()));
+    for identifier_column_name in ["ID_1", "ID_2"] {
+        let identifier_column_index =
+            column_names.iter().position(|column_name| column_name == identifier_column_name).ok_or_else(|| {
+                format!(
+                    "Sample file '{}' must contain the identifier column '{identifier_column_name}'.",
+                    sample_path.display(),
+                )
+            })?;
+        if column_types[identifier_column_index] != "0" {
+            return Err(format!(
+                "Sample file '{}' must mark '{identifier_column_name}' with type '0'.",
+                sample_path.display(),
+            ));
+        }
     }
     Ok(())
 }

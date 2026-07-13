@@ -49,9 +49,11 @@ results/example.g/
 ```
 
 The first and last identifiers in a part name are zero-padded engine chunk
-identifiers. A file contains one or more consecutive chunks according to
-`[output].chunks_per_parquet_file`. A single-chunk file uses
+identifiers. A file contains one or more consecutive chunks according to the
+internal output grouping policy. A single-chunk file uses
 `part_<chunk>.parquet`; a grouped file uses `part_<first>_<last>.parquet`.
+Chunk grouping and Parquet compression are internal policies, not public
+configuration keys.
 
 Read `parts/` directly as a Parquet dataset. For example:
 
@@ -82,10 +84,10 @@ Parquet footer. The run manifest records the same commits for resume.
 | `A1FREQ` | `Float32` | No | allele frequency | Observed allele-one frequency after sample alignment. |
 | `INFO` | `Float32` | No | INFO score | Observed dosage INFO score. |
 | `N` | `Int32` | No | sample count | Number of observed genotypes used in statistics. |
-| `BETA` | `Float32` default, `Float64` when requested | No | effect size | Estimated effect for `ALLELE1`. |
-| `SE` | `Float32` default, `Float64` when requested | No | effect size standard error | Standard error for `BETA`. |
-| `CHISQ` | `Float32` default, `Float64` when requested | No | chi-squared statistic | Score statistic or equivalent Step 2 metric. |
-| `LOG10P` | `Float32` default, `Float64` when requested | No | -log10(p) | Association significance. |
+| `BETA` | `Float32` | No | effect size | Estimated effect for `ALLELE1`. |
+| `SE` | `Float32` | No | effect size standard error | Standard error for `BETA`. |
+| `CHISQ` | `Float32` | No | chi-squared statistic | Score statistic or equivalent Step 2 metric. |
+| `LOG10P` | `Float32` | No | -log10(p) | Association significance. |
 | `CORRECTION_METHOD` | `Utf8` | No | - | Diagnostic correction method label. |
 | `CORRECTION_STATUS` | `Utf8` | No | - | Diagnostic correction status label. |
 
@@ -110,9 +112,8 @@ Current schema properties:
 - `output_schema_version`: `3`
 - Column order is part of the contract for stable downstream parsing.
 - Invalid association statistics are stored as `NaN`; Arrow nulls are not used.
-- `[output].output_statistic_dtype` controls the persisted dtype for `BETA`,
-  `SE`, `CHISQ`, and `LOG10P`. The default is `float32`; `A1FREQ` and `INFO`
-  remain `Float32`.
+- `A1FREQ`, `INFO`, `BETA`, `SE`, `CHISQ`, and `LOG10P` are persisted as
+  `Float32`.
 
 Compatibility policy:
 
@@ -122,10 +123,8 @@ Compatibility policy:
 - Additional correction labels or diagnostic meanings require a documented
   schema policy change before release.
 
-Public result statistics are written as `float32` by default, even when an
-internal kernel uses wider precision. Set
-`[output].output_statistic_dtype = "float64"` to preserve wider public
-statistics.
+Public result statistics are written as `float32`, even when an internal kernel
+uses wider precision.
 
 ## Telemetry And Logs
 

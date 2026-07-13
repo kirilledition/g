@@ -15,4 +15,4 @@ impl OutputError {
     }
 }
 
-pub type OutputResult<T> = Result<T, OutputError>;
+pub(crate) type OutputResult<T> = Result<T, OutputError>;

@@ -121,7 +121,7 @@ impl RunLoggingSession {
     /// # Errors
     ///
     /// Returns a sink error when a file cannot be opened or another run owns a writer.
-    pub fn new(policy: &NativeRunSessionPolicy) -> Result<Self, LoggingSinkError> {
+    pub(crate) fn new(policy: &NativeRunSessionPolicy) -> Result<Self, LoggingSinkError> {
         let stderr_writer = if policy.log_stderr {
             let (writer, guard) = telemetry_writer::build_non_blocking_writer(
                 std::io::stderr(),
@@ -149,7 +149,7 @@ impl RunLoggingSession {
     /// # Errors
     ///
     /// Returns a sink error when a dynamic-writer registry is unavailable.
-    pub fn finish(&mut self) -> Result<(), LoggingSinkError> {
+    pub(crate) fn finish(&mut self) -> Result<(), LoggingSinkError> {
         let stderr_result = self.stderr_writer.as_mut().map_or(Ok(()), RunLoggingWriter::finish);
         let file_result = self.file_writer.as_mut().map_or(Ok(()), RunLoggingWriter::finish);
         stderr_result.and(file_result)

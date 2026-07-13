@@ -2,6 +2,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, OutputRunPaths, PreparedOutputRun,
     build_current_run_manifest_header_value_with_cache, extend_run_manifest_metadata, initialize_output_run,
-    prepare_output_run, read_run_manifest_gpu_genotype_format_from_text, validate_output_run_resume_compatibility,
+    prepare_output_run, read_run_manifest_gpu_genotype_format_from_text, reconcile_output_run_resume,
 };
 use crate::session::{
     OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
@@ -114,6 +115,7 @@ impl OutputManager {
     pub fn initialize(
         &mut self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
+        planned_chunk_ranges: &[Range<usize>],
         collect_stage_timings: bool,
     ) -> OutputResult<()> {
         if self.writer_sessions.is_some() {
@@ -147,25 +149,30 @@ impl OutputManager {
                 self.runs.len()
             )));
         }
-        let resume_mode = self.run_plan.output.resume_mode;
-        if self.run_plan.output.resume {
-            for run in &self.runs {
-                let header = headers_by_phenotype.get(&run.phenotype_name).ok_or_else(|| {
-                    OutputError::InvalidInput(format!(
-                        "Missing output initialization for phenotype '{}'.",
-                        run.phenotype_name
-                    ))
-                })?;
-                let manifest = run.existing_manifest_json.as_deref().ok_or_else(|| {
-                    OutputError::InvalidInput(format!(
-                        "Resume output for phenotype '{}' has no manifest.",
-                        run.phenotype_name
-                    ))
-                })?;
-                validate_output_run_resume_compatibility(&run.paths.parts_directory, manifest, header, resume_mode)?;
-            }
-        }
-        for run in &mut self.runs {
+        let resumed_chunk_commits = if self.run_plan.output.resume {
+            self.runs
+                .iter()
+                .map(|run| {
+                    let header = headers_by_phenotype.get(&run.phenotype_name).ok_or_else(|| {
+                        OutputError::InvalidInput(format!(
+                            "Missing output initialization for phenotype '{}'.",
+                            run.phenotype_name
+                        ))
+                    })?;
+                    let manifest = run.existing_manifest_json.as_deref().ok_or_else(|| {
+                        OutputError::InvalidInput(format!(
+                            "Resume output for phenotype '{}' has no manifest.",
+                            run.phenotype_name
+                        ))
+                    })?;
+                    reconcile_output_run_resume(&run.paths.parts_directory, manifest, header, planned_chunk_ranges)
+                        .map(Some)
+                })
+                .collect::<OutputResult<Vec<_>>>()?
+        } else {
+            std::iter::repeat_with(|| None).take(self.runs.len()).collect()
+        };
+        for (run, resumed_chunk_commits) in self.runs.iter_mut().zip(resumed_chunk_commits) {
             let current_header = headers_by_phenotype.remove(&run.phenotype_name).ok_or_else(|| {
                 OutputError::InvalidInput(format!(
                     "Missing output initialization for phenotype '{}'.",
@@ -174,11 +181,9 @@ impl OutputManager {
             })?;
             let committed_chunk_identifiers = initialize_output_run(
                 &run.paths.run_directory,
-                &run.paths.parts_directory,
                 run.existing_manifest_json.as_deref(),
                 &current_header,
-                self.run_plan.output.resume,
-                resume_mode,
+                resumed_chunk_commits,
             )?;
             run.committed_chunk_identifiers = Arc::new(
                 committed_chunk_identifiers
@@ -340,15 +345,11 @@ struct ManifestCommand<'a> {
 #[derive(Serialize)]
 struct ManifestRuntime {
     device: &'static str,
-    staging_depth: u32,
     cpu_threads: Option<u32>,
     writer_threads: u32,
-    writer_queue_depth: u32,
-    chunks_per_parquet_file: u32,
+    writer_queue_depth: usize,
+    chunks_per_parquet_file: usize,
     parquet_compression: &'static str,
-    bgen_decode_tile_variant_count: u32,
-    trusted_no_missing_diploid: bool,
-    trusted_bgen_validation_mode: &'static str,
 }
 
 fn extend_manifest_from_plan(run_plan: &g_plan::RunPlan, run: &ManagedOutputRun) -> OutputResult<()> {
@@ -360,15 +361,11 @@ fn extend_manifest_from_plan(run_plan: &g_plan::RunPlan, run: &ManagedOutputRun)
     .map_err(OutputError::runtime)?;
     let runtime = serde_json::to_value(ManifestRuntime {
         device: run_plan.compute.device.as_str(),
-        staging_depth: run_plan.compute.staging_depth,
         cpu_threads: run_plan.compute.cpu_thread_count,
         writer_threads: run_plan.output.writer_thread_count,
-        writer_queue_depth: run_plan.output.writer_queue_depth,
-        chunks_per_parquet_file: run_plan.output.chunks_per_parquet_file,
+        writer_queue_depth: crate::WRITER_QUEUE_DEPTH,
+        chunks_per_parquet_file: crate::CHUNKS_PER_PARQUET_FILE,
         parquet_compression: "zstd",
-        bgen_decode_tile_variant_count: run_plan.compute.bgen_decode_tile_variant_count,
-        trusted_no_missing_diploid: run_plan.compute.trusted_no_missing_diploid,
-        trusted_bgen_validation_mode: run_plan.compute.trusted_bgen_validation_mode.as_str(),
     })
     .map_err(OutputError::runtime)?;
     extend_run_manifest_metadata(&run.paths.run_directory, command, runtime)

@@ -10,7 +10,10 @@ use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
 use crate::session::OutputWriterSession;
 
+#[derive(Debug, PartialEq)]
 pub struct Regenie2StatisticBatch {
+    pub trait_count: usize,
+    pub variant_count: usize,
     pub beta: Vec<f32>,
     pub standard_error: Vec<f32>,
     pub chi_squared: Vec<f32>,
@@ -46,6 +49,12 @@ pub fn write_regenie2_multi_trait_chunk_f32(
     let expected_value_count = row_count.checked_mul(active_trait_count).ok_or_else(|| {
         OutputError::InvalidInput("Trait-major output statistic value count exceeds platform capacity.".to_string())
     })?;
+    if statistic_batch.trait_count != active_trait_count || statistic_batch.variant_count != row_count {
+        return Err(OutputError::InvalidInput(format!(
+            "Materialized statistic shape ({}, {}) does not match expected ({active_trait_count}, {row_count}).",
+            statistic_batch.trait_count, statistic_batch.variant_count
+        )));
+    }
     validate_statistic_batch_lengths(&statistic_batch, expected_value_count)?;
     let statistic_arrays = build_statistic_arrow_arrays(statistic_batch);
     for active_trait_position in 0..active_trait_count {

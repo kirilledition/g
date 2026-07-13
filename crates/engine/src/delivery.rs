@@ -9,13 +9,17 @@ use g_plan::NullLogisticNonconvergencePolicy;
 
 use crate::progress::DeliveryProgress;
 
+/// Prepared genotype input shared by one or more association deliveries.
+pub(crate) struct PreparedGenotypeInput {
+    pub(crate) reader: g_genotype::BgenReaderCore,
+    pub(crate) chunk_size: usize,
+}
+
 /// Runtime controls and output state for one aligned phenotype group.
 pub(crate) struct AssociationDeliverySettings {
     pub writer_sessions: Vec<Arc<OutputWriterSession>>,
     pub committed_chunk_identifier_sets: Vec<Arc<std::collections::BTreeSet<usize>>>,
     pub null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicy,
-    pub staging_depth: usize,
-    pub result_in_flight_limit: usize,
     pub progress: Option<DeliveryProgress>,
     pub use_packed8: bool,
     pub statistics_policy: ChunkStatisticsPolicy,
@@ -25,10 +29,4 @@ pub(crate) struct AssociationDeliverySettings {
 pub(crate) struct AssociationDeliveryRequest {
     pub group: AlignedPhenotypeGroup,
     pub settings: AssociationDeliverySettings,
-}
-
-/// Delivery requests sharing one decoded union sample set.
-pub(crate) struct GroupedUnionAssociationDeliveryRequest {
-    pub groups: Vec<AssociationDeliveryRequest>,
-    pub union_sample_indices: Vec<usize>,
 }

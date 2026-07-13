@@ -43,8 +43,10 @@ src/g       console bootstrap, JAX backend, JAX kernels
 - Public wrappers for crate APIs that production Python does not consume.
 - Root aliases, migration adapters, deprecated names, or test/tooling exports.
 - Per-variant Python calls.
-- Direct dependencies on `g-genotype`, `g-input`, or `g-output`; those services
-  are reached through `g-engine`.
+- Calls into `g-genotype`, `g-input`, or `g-output` services. Type-only
+  dependencies on their canonical `AssociationBackend` payloads are allowed
+  for NumPy conversion; the binding must not orchestrate those crates or
+  redefine or re-export their types.
 
 CLI dispatch, process policy, timing, terminal rendering, and coordinated
 engine execution are owned by `g-runner` and are Python-free. The root host
@@ -75,5 +77,5 @@ Move code to a domain crate whenever it can use crate-owned Rust types and
 errors. Opaque Python state and `PyErr` are generic backend/error parameters,
 not reasons to keep BGEN, output, buffer, numeric, or scheduling policy in the
 binding. The same rule applies to telemetry lifecycle: only Python thread-name
-lookup belongs here. Prefer deletion or a direct re-export over a forwarding
-adapter.
+lookup belongs here. Prefer deletion or a direct owner-type import over a
+forwarding adapter.

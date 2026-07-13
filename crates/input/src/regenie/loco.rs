@@ -13,9 +13,18 @@ pub(super) struct LocoFileIndex {
     pub(super) file_path: PathBuf,
     pub(super) sample_count: usize,
     pub(super) header_digest: [u8; 32],
+    pub(super) source_digest: [u8; 32],
     pub(super) chromosome_rows: HashMap<String, LocoRowIndex>,
-    file_size: u64,
+    source_identity: LocoSourceIdentity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocoSourceIdentity {
+    device_identifier: u64,
+    inode_identifier: u64,
+    change_time_nanoseconds: i128,
     modification_time_nanoseconds: i128,
+    file_size: u64,
 }
 
 #[derive(Debug)]
@@ -44,8 +53,7 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
 
     let file = File::open(loco_file_path)?;
     let metadata = file.metadata()?;
-    let file_size = metadata.len();
-    let modification_time_nanoseconds = metadata_modification_time_nanoseconds(&metadata);
+    let source_identity = LocoSourceIdentity::from_metadata(&metadata);
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     let mut line_number = 0_usize;
@@ -100,17 +108,41 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
     }
     let header_digest = header_digest.expect("a parsed LOCO sample index comes from the physical header line");
     let header_line = header_line.expect("a parsed LOCO sample index retains the physical header line");
+    ensure_loco_source_unchanged(loco_file_path, &source_identity, reader.get_ref())?;
+    let source_digest = build_indexed_source_digest(header_digest, &chromosome_rows);
     Ok(IndexedLocoFile {
         file_index: LocoFileIndex {
             file_path: loco_file_path.to_path_buf(),
             sample_count,
             header_digest,
+            source_digest,
             chromosome_rows,
-            file_size,
-            modification_time_nanoseconds,
+            source_identity,
         },
         header_line,
     })
+}
+
+fn build_indexed_source_digest(header_digest: [u8; 32], chromosome_rows: &HashMap<String, LocoRowIndex>) -> [u8; 32] {
+    let mut source_hash = Sha256::new();
+    source_hash.update(b"loco-indexed-source-v1");
+    source_hash.update(header_digest);
+    let mut ordered_rows = chromosome_rows.iter().collect::<Vec<_>>();
+    ordered_rows.sort_unstable_by_key(|(chromosome, _)| *chromosome);
+    source_hash.update(
+        u64::try_from(ordered_rows.len()).expect("supported Rust targets represent usize within u64").to_le_bytes(),
+    );
+    for (chromosome, row) in ordered_rows {
+        let chromosome_bytes = chromosome.as_bytes();
+        source_hash.update(
+            u64::try_from(chromosome_bytes.len())
+                .expect("supported Rust targets represent usize within u64")
+                .to_le_bytes(),
+        );
+        source_hash.update(chromosome_bytes);
+        source_hash.update(row.raw_digest);
+    }
+    source_hash.finalize().into()
 }
 
 pub(super) fn read_loco_chromosome_predictions_into(
@@ -123,13 +155,15 @@ pub(super) fn read_loco_chromosome_predictions_into(
         .get(chromosome)
         .expect("planned LOCO chromosomes are validated against every file index");
     let file = File::open(&loco_file_index.file_path)?;
+    if LocoSourceIdentity::from_metadata(&file.metadata()?) != loco_file_index.source_identity {
+        return Err(PredictionError::IndexedLocoFileChanged { path: loco_file_index.file_path.clone() });
+    }
     let mut reader = BufReader::new(file);
     reader.seek(SeekFrom::Start(row_index.byte_offset))?;
     let mut line = String::new();
     let read_byte_count = reader.read_line(&mut line)?;
-    let metadata = reader.get_ref().metadata()?;
-    let metadata_changed = metadata.len() != loco_file_index.file_size
-        || metadata_modification_time_nanoseconds(&metadata) != loco_file_index.modification_time_nanoseconds;
+    let metadata_changed =
+        LocoSourceIdentity::from_metadata(&reader.get_ref().metadata()?) != loco_file_index.source_identity;
     if read_byte_count == 0 {
         if metadata_changed {
             return Err(PredictionError::IndexedLocoFileChanged { path: loco_file_index.file_path.clone() });
@@ -190,7 +224,7 @@ pub(super) fn read_loco_chromosome_predictions_into(
             observed_chromosome,
         });
     }
-    if metadata_changed {
+    if metadata_changed || !loco_source_path_matches(&loco_file_index.file_path, &loco_file_index.source_identity)? {
         return Err(PredictionError::IndexedLocoFileChanged { path: loco_file_index.file_path.clone() });
     }
     let observed_raw_digest: [u8; 32] = Sha256::digest(line.as_bytes()).into();
@@ -207,8 +241,40 @@ pub(super) fn read_loco_chromosome_predictions_into(
     Ok(())
 }
 
-fn metadata_modification_time_nanoseconds(metadata: &std::fs::Metadata) -> i128 {
-    i128::from(metadata.mtime()) * 1_000_000_000_i128 + i128::from(metadata.mtime_nsec())
+impl LocoSourceIdentity {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            device_identifier: metadata.dev(),
+            inode_identifier: metadata.ino(),
+            change_time_nanoseconds: metadata_timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
+            modification_time_nanoseconds: metadata_timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
+            file_size: metadata.len(),
+        }
+    }
+}
+
+fn ensure_loco_source_unchanged(
+    path: &Path,
+    expected_identity: &LocoSourceIdentity,
+    opened_file: &File,
+) -> Result<(), PredictionError> {
+    let opened_file_matches = LocoSourceIdentity::from_metadata(&opened_file.metadata()?) == *expected_identity;
+    if opened_file_matches && loco_source_path_matches(path, expected_identity)? {
+        return Ok(());
+    }
+    Err(PredictionError::IndexedLocoFileChanged { path: path.to_path_buf() })
+}
+
+fn loco_source_path_matches(path: &Path, expected_identity: &LocoSourceIdentity) -> Result<bool, PredictionError> {
+    match path.metadata() {
+        Ok(metadata) => Ok(LocoSourceIdentity::from_metadata(&metadata) == *expected_identity),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn metadata_timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i128 {
+    i128::from(seconds) * 1_000_000_000_i128 + i128::from(nanoseconds)
 }
 
 fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
@@ -225,7 +291,11 @@ fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
     }
 
     for (sample_index, sample_identifier) in fields.enumerate() {
-        if !sample_identifier.contains('_') {
+        let valid_sample_identifier =
+            sample_identifier.split_once('_').is_some_and(|(family_identifier, individual_identifier)| {
+                !family_identifier.is_empty() && !individual_identifier.is_empty()
+            });
+        if !valid_sample_identifier {
             return Err(PredictionError::InvalidLocoSampleIdentifier {
                 sample_index,
                 sample_identifier: sample_identifier.to_string(),

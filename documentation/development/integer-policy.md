@@ -28,9 +28,10 @@ boundaries, and checked conversions where values cross those boundaries.
    the mapped buffer bounds.
 8. Large stored index arrays may use `u32` only after validating the maximum
    index and benchmarking the memory-bandwidth benefit.
-9. Raw pointer addresses use `usize` only behind caller-owned buffer wrappers
-   such as `OutputBufferAddress` and `OutputValueCount`. Pointer round trips
-   use Rust's exposed-provenance APIs.
+9. Raw pointer addresses are not public interchange values. Public buffer
+   boundaries use owned typed containers or borrowed slices. Internal
+   unsafe/SIMD pointers derive from slices and never round-trip through
+   `usize`.
 10. Narrowing or sign-changing conversions use `TryFrom` or a named boundary
    helper.
 11. Unchecked `as` casts are not used for integer-to-integer conversion or
@@ -76,20 +77,14 @@ Float-to-integer timestamp conversion is isolated to telemetry formatting and
 falls back when Chrono
 rejects the resulting timestamp.
 
-## Raw Buffers
+## Typed Buffer Boundaries
 
-BGEN delivery writes into caller-owned Rust buffers. Public genotype reader
-methods take explicit buffer wrappers:
-
-```rust
-OutputBufferAddress
-OutputValueCount
-```
-
-The unsafe pointer-to-slice conversion stays inside genotype buffer/decode
-modules. `g-engine` constructs these wrappers only from owned vectors after
-validating the requested value count. The wrapper stores an exposed address;
-the decoder reconstructs a pointer with `with_exposed_provenance_mut`.
+`BgenReadSession::decode_variant_major_batch` returns a
+`DecodedGenotypeBatch` whose `OwnedGenotypeBuffer` owns either a `Vec<f32>` or
+`Vec<u8>`. The decoder reserves the final capacity, initializes the vector's
+spare capacity, and sets its length only after every requested output position
+has been written successfully. No address or value-count wrapper crosses from
+`g-genotype` to `g-engine`.
 
 ## Review Checklist
 
@@ -99,8 +94,8 @@ the decoder reconstructs a pointer with `with_exposed_provenance_mut`.
   JAX x64 is enabled.
 - New JAX shapes and derived products are bounded natively before device work.
 - New conversions that can overflow or change sign are checked.
-- Raw pointer-sized values do not appear in high-level engine or binding APIs
-  except as explicit buffer wrappers.
+- Raw pointer-sized values do not appear in public genotype, engine, or binding
+  APIs; internal pointer use remains slice-derived and locally audited.
 - Count vectors stay in the documented output schema type.
 - Any retained unchecked cast has a local reason and is not a casual boundary
   conversion.

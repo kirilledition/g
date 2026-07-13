@@ -41,7 +41,7 @@ struct SharedWriterState<Factory> {
 
 impl SharedLogWriterFactory {
     #[must_use]
-    pub const fn new(kind: SharedLogWriterKind) -> Self {
+    pub(crate) const fn new(kind: SharedLogWriterKind) -> Self {
         Self { kind }
     }
 }
@@ -165,7 +165,7 @@ impl<Factory> SharedWriterState<Factory> {
 /// # Errors
 ///
 /// Returns an I/O error when another run is active or the registry is poisoned.
-pub fn register_shared_log_writer(kind: SharedLogWriterKind, writer: NonBlocking) -> io::Result<()> {
+pub(crate) fn register_shared_log_writer(kind: SharedLogWriterKind, writer: NonBlocking) -> io::Result<()> {
     match kind {
         SharedLogWriterKind::Stderr => STDERR_WRITER.register(writer),
         SharedLogWriterKind::File => LOG_FILE_WRITER.register(writer),
@@ -177,7 +177,7 @@ pub fn register_shared_log_writer(kind: SharedLogWriterKind, writer: NonBlocking
 /// # Errors
 ///
 /// Returns an I/O error when the registry or active-writer state is poisoned.
-pub fn unregister_shared_log_writer(kind: SharedLogWriterKind) -> io::Result<()> {
+pub(crate) fn unregister_shared_log_writer(kind: SharedLogWriterKind) -> io::Result<()> {
     match kind {
         SharedLogWriterKind::Stderr => STDERR_WRITER.unregister(),
         SharedLogWriterKind::File => LOG_FILE_WRITER.unregister(),
@@ -189,7 +189,7 @@ pub fn unregister_shared_log_writer(kind: SharedLogWriterKind) -> io::Result<()>
 /// # Errors
 ///
 /// Returns an I/O error when another run is active or the registry is poisoned.
-pub fn register_shared_telemetry_writer(writer: TelemetryWriterFactory) -> io::Result<()> {
+pub(super) fn register_shared_telemetry_writer(writer: TelemetryWriterFactory) -> io::Result<()> {
     TELEMETRY_WRITER.register(writer)
 }
 
@@ -198,6 +198,6 @@ pub fn register_shared_telemetry_writer(writer: TelemetryWriterFactory) -> io::R
 /// # Errors
 ///
 /// Returns an I/O error when the registry or active-writer state is poisoned.
-pub fn unregister_shared_telemetry_writer() -> io::Result<()> {
+pub(super) fn unregister_shared_telemetry_writer() -> io::Result<()> {
     TELEMETRY_WRITER.unregister()
 }

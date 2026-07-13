@@ -64,8 +64,9 @@ structured failure event and detailed diagnostics:
 ```toml
 [diagnostics]
 telemetry = "profile"
-log_dir = "/path/to/logs"
 ```
+
+Diagnostic logs are written under the output run root.
 
 ## Missing Step 1 Predictions
 
@@ -92,36 +93,23 @@ the binary kernel.
 
 Check:
 
-- phenotype and covariate tables contain `IID`;
-- tables also contain `FID` when `--sample_key_mode fid_iid` is used;
-- `iid` mode has globally unique non-empty IIDs;
-- `fid_iid` mode has unique `(FID, IID)` pairs;
+- the required Oxford `.sample` file is supplied with `--sample`;
+- the sample, phenotype, covariate, and prediction inputs contain non-empty
+  `FID` and `IID` values;
+- each `(FID, IID)` pair is unique in every input;
 - binary phenotypes use REGENIE-style `1 = control`, `2 = case` coding;
 - selected phenotype and covariate columns are present and spelled exactly.
 
 See [Input Files](input-files.md#sample-identity).
 
-## BGEN Trusted Fast Path Issues
+## Packed8 Eligibility Issues
 
-Start with the default validation mode:
-
-```toml
-[compute]
-trusted_bgen_validation_mode = "cache_on_miss"
-```
-
-Use `force_validate` when validating a file or cache state. Use
-`assume_validated` only for expert workflows where the exact input has already
-been checked.
-
-If trusted mode fails, rerun with:
-
-```toml
-[compute]
-trusted_no_missing_diploid = false
-```
-
-and compare whether the failure is specific to the optimized path.
+Packed8 selection and BGEN compatibility validation are automatic. Packed8
+requires unphased, biallelic, diploid, 8-bit BGEN with no missing calls.
+Otherwise-supported biallelic diploid Layout-2 data with missing calls, phased
+probabilities, or a different bit depth uses dosage delivery. Multiallelic,
+non-diploid, Zstandard-compressed, or otherwise unsupported input fails instead.
+There is no manual packed8 eligibility override.
 
 ## GPU Is Not Used
 
@@ -134,7 +122,7 @@ uv run python -c "import jax; print(jax.devices())"
 Common causes:
 
 - command ran on a login node without NVIDIA devices;
-- GPU dependency group was not installed;
+- CUDA-enabled JAX or its plugin dependencies are unavailable or incompatible;
 - NVIDIA driver and installed JAX CUDA extra are incompatible;
 - scheduler job did not request or receive a GPU;
 - `[compute].device` resolved to `"cpu"` in the effective config.
@@ -153,9 +141,6 @@ bsize = 4096
 
 [compute]
 firth_batch_size = 256
-
-[output]
-writer_queue_depth = 1
 ```
 
 For GPU runs, also check whether the command is repeatedly recompiling with
@@ -168,21 +153,22 @@ changing production settings.
 Every resumable run writes `run_manifest.json` and `effective_config.toml`.
 Resume only when the manifest and execution-plan-affecting inputs still match.
 
-Use strict validation when in doubt:
+Enable resume:
 
 ```toml
 [output]
 resume = true
-resume_mode = "strict"
 ```
+
+Resume always performs strict manifest and chunk-file reconciliation.
 
 Common causes:
 
 - no `run_manifest.json` exists;
 - the output run directory exists but was not produced by the same analysis;
 - a source file changed size or modification time;
-- a trait, covariate, binary correction, output, dtype, or sample-key option
-  changed.
+- a trait, covariate, binary correction, output, dtype, or multi-phenotype
+  sample-mode option changed.
 
 See [Resume and Manifest](resume-and-manifest.md).
 
@@ -211,10 +197,9 @@ If a run was interrupted or storage failed, rerun the same command with:
 ```toml
 [output]
 resume = true
-resume_mode = "strict"
 ```
 
-Strict resume reconciles committed manifest chunks with Parquet files before
+Resume reconciles committed manifest chunks with Parquet files before
 writing the missing work. If writes continue to fail, inspect free space and
 permissions for the run directory and destination filesystem.
 

@@ -19,7 +19,7 @@ Rust config layers + packaged defaults + validation
         |
 RegenieConfigData
         |
-g-plan RunRequest / PreparedRunPlan
+g-plan RunPlan
         |
 native Rust host and g-engine scheduler
 ```
@@ -36,9 +36,10 @@ Rust-owned resolved config and immutable `g-plan` run contracts.
 | `crates/interface/src/toml.rs` | Strict TOML layer decoding and accepted section/key names. |
 | `crates/interface/src/config.default.toml` | Packaged default values for defaultable options. |
 | `crates/interface/src/defaults.rs`, `overlay.rs`, `partial.rs`, `resolved.rs`, `validation.rs`, `run_validation.rs` | Defaults, layer overlay, resolved config construction, validation, and run validation. |
-| `crates/interface/src/plan_request.rs` | Compilation from resolved config into immutable `g-plan` run requests. |
-| `crates/plan/src/` | Requested and prepared run contracts consumed by the engine and manifests. |
-| `src/binding/engine/backend.rs` | Typed JAX-backend settings and batch exchange values consumed by Python. |
+| `crates/interface/src/plan_request.rs` | Compilation from resolved config into the canonical immutable `g-plan::RunPlan`. |
+| `crates/plan/src/` | Canonical run, numeric, and enum contracts consumed by the engine and manifests. |
+| `crates/runner/src/backend_plan.rs` | Mode-specific JAX backend policy projection from the canonical run plan. |
+| `src/binding/engine.rs` | Private PyO3/NumPy adaptation for the JAX backend contract. |
 | `src/g/cli.py` | Thin Python console bootstrap that forwards arguments and renders native output. |
 
 When adding or changing a user-facing option, update the owning parser/config
@@ -73,10 +74,10 @@ configurable defaults do not reappear as production constants.
 
 ## Unsupported Options And Aliases
 
-REGENIE-style names and engine-specific names are declared in Rust metadata.
-Accepted aliases must resolve to one canonical config field before validation.
-Recognized unsupported options must be rejected explicitly; they must never be
-silently ignored or handled only in Python.
+Supported REGENIE-style names are declared directly in
+`crates/interface/src/cli/parser.rs`. There is no alias or unsupported-option
+registry; absent flags fail as unknown. Do not add compatibility aliases
+without canonicalization.
 
 ## Boolean And Trait Rules
 

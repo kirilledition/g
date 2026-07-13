@@ -2,9 +2,7 @@ use std::path::{Path, PathBuf};
 
 use g_runtime::RuntimeCompatibilityError;
 
-use super::{
-    JaxCacheDirectory, JaxGpuValidationStatus, JaxPersistentCachePolicy, JaxRuntimePolicy, JaxRuntimeSetupSession,
-};
+use super::{JaxCacheDirectory, JaxGpuValidationStatus, JaxRuntimePolicy, JaxRuntimeSetupSession};
 
 const DEFAULT_JAX_CACHE_DIRECTORY_NAME: &str = "g-jax-cache";
 const UNKNOWN_USER_NAME: &str = "unknown";
@@ -25,28 +23,12 @@ enum JaxRuntimeConfiguration {
 pub(crate) fn build_jax_runtime_policy(
     run_plan: &g_plan::RunPlan,
 ) -> Result<JaxRuntimePolicy, RuntimeCompatibilityError> {
-    let runtime = &run_plan.runtime;
-    let persistent_cache = if runtime.persistent_cache_enabled {
-        let directory = if let Some(configured_directory) = runtime.jax_cache_directory.as_deref() {
-            JaxCacheDirectory::Explicit(expand_home_directory(configured_directory)?)
-        } else {
-            JaxCacheDirectory::Default(default_jax_runtime_cache_directory())
-        };
-        Some(JaxPersistentCachePolicy {
-            directory,
-            min_entry_size_bytes: runtime.persistent_cache_min_entry_size_bytes,
-            min_compile_time_seconds: i64::from(runtime.persistent_cache_min_compile_time_seconds),
-            xla_autotune_cache_enabled: runtime.xla_autotune_cache_enabled,
-        })
+    let cache_directory = if let Some(configured_directory) = run_plan.compute.jax_cache_directory.as_deref() {
+        JaxCacheDirectory::Explicit(expand_home_directory(configured_directory)?)
     } else {
-        None
+        JaxCacheDirectory::Default(default_jax_runtime_cache_directory())
     };
-    Ok(JaxRuntimePolicy {
-        device: run_plan.compute.device,
-        persistent_cache,
-        matmul_precision: runtime.jax_matmul_precision.unwrap_or(g_plan::JaxMatmulPrecision::Float32),
-        transfer_guard_enabled: runtime.transfer_guard_enabled,
-    })
+    Ok(JaxRuntimePolicy { device: run_plan.compute.device, cache_directory })
 }
 
 impl JaxRuntimeState {
@@ -188,26 +170,9 @@ fn default_jax_runtime_cache_directory() -> PathBuf {
 }
 
 fn describe_jax_runtime_policy(policy: &JaxRuntimePolicy) -> String {
-    let persistent_cache = match &policy.persistent_cache {
-        None => "disabled".to_string(),
-        Some(cache_policy) => {
-            let cache_directory = match &cache_policy.directory {
-                JaxCacheDirectory::Default(_) => "<default>".into(),
-                JaxCacheDirectory::Explicit(path) => path.to_string_lossy(),
-            };
-            format!(
-                "enabled(cache-dir={cache_directory}, min-entry-size-bytes={}, min-compile-time-seconds={}, \
-                 xla-autotune-cache={})",
-                cache_policy.min_entry_size_bytes,
-                cache_policy.min_compile_time_seconds,
-                cache_policy.xla_autotune_cache_enabled,
-            )
-        }
+    let cache_directory = match &policy.cache_directory {
+        JaxCacheDirectory::Default(_) => "<default>".into(),
+        JaxCacheDirectory::Explicit(path) => path.to_string_lossy(),
     };
-    format!(
-        "device={}, jax-matmul-precision={}, jax-persistent-cache={persistent_cache}, jax-transfer-guard={}",
-        policy.device.as_str(),
-        policy.matmul_precision.as_str(),
-        policy.transfer_guard_enabled,
-    )
+    format!("device={}, jax-cache-directory={cache_directory}", policy.device.as_str())
 }

@@ -405,9 +405,9 @@ Agents should classify each issue before running validation:
   benchmarks, large matrix runs, native performance builds, and CPU profiles.
   Use a CPU compute node through bounded `srun`; do not run these on the login
   node.
-- GPU-heavy work: JAX CUDA probes, commands with `--device gpu`, GPU smoke
-  tests, GPU benchmarks, and GPU profiles. Use `landau` through `just slurm-*`
-  wrappers.
+- GPU-heavy work: JAX CUDA probes, commands whose TOML config selects
+  `[compute].device = "gpu"`, GPU smoke tests, GPU benchmarks, and GPU profiles.
+  Use `landau` through `just slurm-*` wrappers.
 - Data-heavy work: first check required data with an existing verification or
   dry-run recipe. Missing data is a Linear blocker, not a reason to spin.
 

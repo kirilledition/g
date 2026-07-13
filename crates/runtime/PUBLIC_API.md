@@ -34,7 +34,7 @@ the runner holds its process-state lock across that constructor.
 ## This crate must not expose
 
 Phenotype/sample domain logic, BGEN reader internals, output writer internals,
-engine scheduler state, JAX policy, terminal output, trusted-BGEN cache policy,
+engine scheduler state, JAX policy, terminal output, packed8-validation cache policy,
 PyO3 classes, `g-plan` types, output-layout defaults, callback-era execution
 APIs, event-specific payload DTOs, or diagnostic event-name/message constants.
 

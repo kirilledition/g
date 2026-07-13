@@ -2,9 +2,10 @@
 
 ## This crate owns
 
-Frontend configuration normalization for canonical TOML plus the native `g`
-CLI binary shell. The CLI accepts `--config` and the
-supported REGENIE step 2 flags; native tuning is TOML-only.
+Frontend configuration normalization for canonical TOML plus the native CLI
+dispatch frontend invoked by the installed Python console bootstrap. The CLI
+accepts `--config` and the supported REGENIE step 2 flags; native tuning is
+TOML-only.
 
 ## Public types
 
@@ -21,7 +22,9 @@ Runtime setup, BGEN opening, sample alignment, output writing, JAX backend choic
 
 ## Performance constraints
 
-Keep work at config/build time only. Do not perform data-file scans or compute-side effects.
+Keep work at config/build time only. Do not perform data-file scans or
+compute-side effects, and do not mirror fixed engine or reader policy as fake
+configuration fields.
 
 ## Allowed downstream users
 

@@ -67,11 +67,11 @@ requires these run-specific inputs:
 | --- | --- | --- |
 | `--bgen PATH` | Always | BGEN genotype source. |
 | `--phenoFile PATH` | Always | Phenotype table. |
-| `--phenoCol NAME` or `--phenoColList LIST` | Always | One or more phenotype columns. |
+| Repeated `--phenoCol NAME` | Always | One or more phenotype columns. |
 | `--pred PATH` | Always | Upstream REGENIE Step 1 prediction list. |
 | `--out PATH` | Always | User output prefix. |
-| `--sample PATH` | When the BGEN does not embed usable sample IDs | Oxford sample file. |
-| `--covarFile PATH`, `--covarCol`, `--covarColList` | When the model uses covariates | Covariate table and selected columns. |
+| `--sample PATH` | Always | Oxford sample file providing BGEN row identities. |
+| `--covarFile PATH`, repeated `--covarCol NAME` | When the model uses covariates | Covariate table and selected columns. |
 
 ## Supported REGENIE-Style Options
 
@@ -80,16 +80,13 @@ requires these run-specific inputs:
 | `--qt` | `[trait]` | Quantitative trait mode. |
 | `--bt` | `[trait]` | Binary trait mode. |
 | `--bgen` | `[input]` | BGEN genotype file. |
-| `--sample` | `[input]` | Optional BGEN sample file. If omitted, embedded BGEN sample IDs are used. |
+| `--sample` | `[input]` | Required Oxford sample file; embedded BGEN sample identifiers are unsupported. |
 | `--phenoFile` | `[input]` | Phenotype table. |
 | `--phenoCol` | `[input]` | Repeatable phenotype column option. |
-| `--phenoColList` | `[input]` | Comma-delimited phenotype column list. |
 | `--covarFile` | `[input]` | Covariate table. |
 | `--covarCol` | `[input]` | Repeatable covariate column option. |
-| `--covarColList` | `[input]` | Comma-delimited covariate column list. |
 | `--pred` | `[input]` | REGENIE Step 1 prediction list. |
 | `--bsize` | `[trait]` | Variants per processing block. |
-| `--threads` | `[trait]` | Requested native CPU thread count. |
 | `--out` | `[output]` | Output prefix. |
 | `--binary-fallback` | `[binary]` | `score_only` or `firth_approximate`. |
 | `--pThresh` | `[binary]` | Score-test p-value threshold for binary fallback candidates. |
@@ -107,7 +104,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_quantitative_regenie2
 ```
@@ -122,7 +119,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_binary_score_regenie2
 ```
@@ -137,7 +134,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_binary \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --binary-fallback firth_approximate \
   --pThresh 0.01 \
@@ -177,6 +174,10 @@ resume, and diagnostics settings use canonical snake_case TOML fields. This
 keeps a REGENIE-compatible CLI without duplicating the full native config
 surface as command-line aliases.
 
+| TOML setting | Meaning |
+| --- | --- |
+| `[compute].cpu_threads` | Optional native Rayon worker count; when omitted, Rayon selects the CPU count. |
+
 Logging sinks, native thread policy, and JAX runtime settings are process-global
 inside one Python process. Separate `g regenie` invocations are isolated by
 their process. `g batch` verifies these policies across every requested run
@@ -184,12 +185,12 @@ before starting work. Once a
 JAX configuration attempt begins, a configuration update, device validation, or
 setup-diagnostic failure requires a fresh process because JAX may already be
 partially configured. Cache-directory creation occurs before that transition,
-so a directory-creation failure remains retryable. Compatibility uses effective
-JAX settings: cache directories, thresholds, and auxiliary-cache flags are
-ignored while persistent caching is disabled, and omitted
-`jax_matmul_precision` is equivalent to explicit `float32`.
+so a directory-creation failure remains retryable. Device and the optional
+`[compute].jax_cache_dir` participate in batch compatibility; precision,
+persistent-cache thresholds, auxiliary caches, and transfer guards are fixed
+implementation policy rather than TOML settings.
 
-## Recognized But Unsupported Options
+## Unsupported Options
 
 `uv run g regenie --help` is the authoritative list of supported flags on this
 experimental Rust frontend branch. Familiar REGENIE flags that are absent from

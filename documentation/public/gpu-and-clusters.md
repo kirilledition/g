@@ -27,12 +27,12 @@ policy can be faster. Treat these as different measurements:
 | Run class | What it measures |
 | --- | --- |
 | Cold process | Startup, JAX initialization, compilation, decode, compute, and output. |
-| Warm cache | Reused compilation artifacts when the persistent cache is configured and valid. |
+| Warm cache | Reused compilation artifacts when always-enabled persistent-cache entries match. |
 | Steady state | Chunk decode, transfer, compute, and writer throughput after startup effects. |
 
-Use `[compute].jax_persistent_cache = true` and
-`jax_cache_dir = "/path/to/cache"` when you want
-compatible runs to reuse JAX compilation artifacts. Put the cache on local or
+The persistent cache is always enabled and defaults to
+`<platform temporary directory>/<user>/g-jax-cache`.
+`[compute].jax_cache_dir` overrides that location. Put overrides on local or
 fast user-writable storage, and do not share CPU cache artifacts across nodes
 with different CPU features.
 
@@ -133,8 +133,7 @@ uv run --no-sync g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_cpu_regenie2 \
-  --threads "${SLURM_CPUS_PER_TASK:-16}"
+  --out /path/to/output/g_cpu_regenie2
 ```
 
 ## Cluster Notes
@@ -156,18 +155,15 @@ Important runtime knobs include:
 | --- | --- |
 | `--bsize` / `[trait].bsize` | Variants per chunk. |
 | `[compute].device` | JAX execution target. |
-| `[compute].staging_depth` | Native scheduler pipeline depth. |
-| `[compute].trusted_no_missing_diploid` | Enables trusted BGEN fast path after validation policy. |
-| `[compute].bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
+| `[compute].cpu_threads` | Native Rayon worker count. |
+| `[compute].multi_phenotype_sample_mode` | Per-phenotype or shared complete-case sample alignment. |
 | `[output].writer_threads` | Output writer worker count. |
-| `[output].writer_queue_depth` | Output writer queue depth. |
-| `[output].chunks_per_parquet_file` | Engine chunks grouped into each committed Parquet part. |
-| `[output].parquet_compression` | Parquet compression, `none` or `zstd`. |
 | `[compute].firth_batch_size` | Binary approximate-Firth batch size. |
-| `[compute].jax_persistent_cache` | Enable JAX persistent compilation cache. |
-| `[compute].jax_cache_dir` | Persistent JAX compilation cache directory. |
-| `[compute].jax_xla_autotune_cache` | Enable XLA auxiliary autotune caches. Prefer a node-local JAX cache. |
-| `[compute].jax_transfer_guard` | Enable JAX transfer guard diagnostics. |
+| `[compute].jax_cache_dir` | Override for the always-enabled persistent JAX compilation cache directory. |
+
+Scheduler queue depths, packed8 BGEN compatibility validation, decode tiling,
+packed8 selection, and Parquet grouping/compression are internal
+genotype/engine/output policies.
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

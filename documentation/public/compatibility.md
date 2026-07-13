@@ -17,8 +17,9 @@ release line exists.
 | REGENIE Step 2 binary score test | Supported with `--bt`. |
 | Binary approximate Firth fallback | Experimental with `--bt --binary-fallback firth_approximate`; not production-stable until upstream golden parity is added. |
 | BGEN 1.2 input | Supported. |
-| Oxford `.sample` files | Supported. |
-| Embedded BGEN sample identifiers | Supported when compatible with sample-key mode. |
+| Oxford `.sample` files | Required for BGEN row identities. |
+| Embedded BGEN sample identifiers | Unsupported; pass an Oxford sample file with `--sample`. |
+| Sample identity | Fixed to non-empty, unique `(FID, IID)` pairs across aligned inputs; IID-only matching is unsupported. |
 | Multiple phenotypes | Supported with per-phenotype semantics by default. |
 | Output | Chunked Parquet datasets under each phenotype run's `parts/` directory. |
 | GPU execution | Supported through JAX when the environment exposes a compatible accelerator. |
@@ -51,7 +52,7 @@ drop scientific intent.
 The supported command is intentionally close to REGENIE Step 2:
 
 ```bash
-g regenie --qt --bgen ... --phenoFile ... --phenoCol ... --pred ... --out ...
+g regenie --qt --bgen ... --sample ... --phenoFile ... --phenoCol ... --pred ... --out ...
 ```
 
 Important migration limits:

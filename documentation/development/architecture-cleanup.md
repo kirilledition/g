@@ -43,12 +43,12 @@ object graphs registered for Python.
   close/drain/join, panic/error propagation, and cancellation-aware abort.
 - Kept variant metadata, output identity, result validation, and writing in
   Rust.
-- Moved genotype buffers, grouped projection, BGEN decode dispatch, chromosome
-  validation, and completed-result writing into `g-engine`. Backend-bound
-  genotype, phenotype, covariate, and single-use LOCO buffers transfer their
-  allocation directly into NumPy; only the union-source buffer is pooled while
-  it is projected into multiple groups. Repeated noncontiguous chromosome
-  blocks retain a counted prediction clone fallback.
+- `g-genotype` owns decoded batch, buffer, and compute-statistics contracts.
+  `g-engine` owns BGEN decode orchestration, chromosome validation,
+  scheduling, and completed-result writing. Backend-bound genotype, phenotype,
+  covariate, and single-use LOCO buffers transfer their allocation directly
+  into NumPy. Repeated noncontiguous chromosome blocks retain a counted
+  prediction clone fallback.
 
 ### Python JAX island
 
@@ -73,22 +73,20 @@ object graphs registered for Python.
 
 ### Native host path
 
-- Native Rust dispatch now covers single-trait, complete-case multi-trait,
-  per-phenotype, and grouped-union modes.
+- Native Rust dispatch now covers single-trait, complete-case multi-trait, and
+  per-phenotype modes through the same direct delivery implementation.
 - `RunEngine::prepare` owns BGEN opening, input alignment, preflight, resume,
-  manifest headers, and writer initialization. Consuming `PreparedRun::execute`
-  owns delivery and every terminal output path.
-- Grouped-union delivery decodes the union once and projects native group
-  columns.
+  manifest headers, and writer initialization. Consuming
+  `PreparedRun::execute_with_progress` owns delivery and every terminal output
+  path.
 - Output sessions are plain Rust values; Python never writes output.
 - Native CLI validation/help precedes JAX import and backend construction.
 - SIGINT uses Python pending-signal checks. SIGTERM uses a native first-signal
   request flag and second-signal default action.
 - Configured stage timing and profile outputs are written by the Rust recorder
   on every terminal path without masking a primary run failure.
-- `g-output` consumes canonical `g-genotype-contracts` metadata/statistics,
-  constructs each union-chunk Arrow metadata set once, and shares arrays across
-  compatible groups and trait writers.
+- `g-output` consumes canonical `g-genotype-contracts` metadata/statistics and
+  constructs each chunk's Arrow metadata set once for its trait writers.
 - Output workers are run-scoped and bounded; the global pool and per-phenotype
   coordinator are deleted.
 - Completed outputs use one `CompletedOutputRun` per phenotype rather than five
@@ -130,10 +128,10 @@ object graphs registered for Python.
 | --- | --- |
 | Inventory, facades, and errors | Every domain crate exports one documented `api.rs` facade. Dead umbrella errors and convenience constructors are deleted. Public production APIs use crate-owned typed errors; no public `Result<T, String>` or library `anyhow::Result` remains. |
 | Plan and interface | Configuration compiles to one typed `RunPlan`. Duplicate enum mirrors, prepared-plan DTOs, Python option normalization, and compatibility aliases are deleted. Numeric controls use validated finite `f64` newtypes. |
-| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. LOCO files are structurally indexed once per canonical path; identical loader-only headers share one identifier index and alignment recipe, indexed metadata plus row digests protect deferred reads, and only post-resume chromosome blocks are parsed and assembled lazily into final trait-major matrices. BGEN variant IDs use one UTF-8 arena and repeated chromosome/allele text uses compact dictionary codes. The production decoder is split into matrix, probability, and variant-major modules; the row-major production path is deleted. Raw caller-owned buffers validate address, counts, and offsets before unsafe writes. |
+| Input and genotype | Alignment workflows return `InputResult` and moved out of `sample/mod.rs`. LOCO files are structurally indexed once per canonical path; identical loader-only headers share one identifier index and alignment recipe, indexed metadata plus row digests protect deferred reads, and only post-resume chromosome blocks are parsed and assembled lazily into final trait-major matrices. BGEN variant IDs use one UTF-8 arena and repeated chromosome/allele text uses compact dictionary codes. The production decoder is split into matrix, probability, and variant-major modules; the row-major production path is deleted. Owned decoding initializes reserved typed-vector capacity and publishes it only after complete success; no raw address/count contract crosses a crate boundary. |
 | Output | Canonical `g-genotype-contracts` DTOs flow directly into `NativeChunkHandle`; `g-output` does not depend on the BGEN implementation crate. A run-scoped bounded worker pool is shared by Parquet writer sessions; the global pool, coordinator, duplicate DTOs, row-copy write plan, alternate writers, and derived-file consolidation are deleted. Manifest and resume counts cross checked signed `i64` boundaries. |
-| Runtime | Duplicate facades, callback-era diagnostics, event-specific payload builders, JAX policy, trusted-validation cache policy, and public event constants are deleted. Runtime owns generic logging/telemetry/timing/shutdown infrastructure. |
-| Engine | The backend is batch-oriented and Python-free. `RunEngine`/`PreparedRun` own preparation, delivery, trusted validation, and writer completion. Scheduler helpers stay internal and the bounded pipeline retains ownership of queues, joins, first-error capture, drain, and abort. |
+| Runtime | Duplicate facades, callback-era diagnostics, event-specific payload builders, JAX policy, packed8-validation cache policy, and public event constants are deleted. Runtime owns generic logging/telemetry/timing/shutdown infrastructure. |
+| Engine | The backend is batch-oriented and Python-free. `RunEngine`/`PreparedRun` own preparation, delivery, packed8 negotiation, and writer completion; the genotype crate owns compatibility validation. Scheduler helpers stay internal and the bounded pipeline retains ownership of queues, joins, first-error capture, drain, and abort. |
 | PyO3 and Python | The input, output, lifecycle, conversion, and JSON adapter trees are deleted. Telemetry lifecycle is runtime-owned. Python contains only console forwarding, the four-operation backend, and JAX kernels. |
 | Dependency and integer audit | Cargo dependency scanning reports no unused dependencies. Production engine/binding code has no unchecked integer `as` casts or bare tuple result mirrors. |
 
@@ -145,11 +143,13 @@ production tree.
 ## Binding Reduction
 
 The root crate depends directly on `g-runner`, `g-engine`, and canonical
-`g-plan` contracts, rather than adapter-specific settings or `g-interface` and
-`g-runtime`. `g-runner` owns dispatch, process
-policy, timing, terminal rendering, and the coordinated engine call.
-`g-engine` owns preparation, host buffers, decode, grouping, scheduling, and
-result delivery. `g-runner` owns terminal output policy. Binding code retains only Python
+`g-plan` contracts. It imports owner-defined `g-genotype`, `g-input`, and
+`g-output` payload types only at the private `AssociationBackend`/NumPy
+boundary; it does not call their services. Adapter-specific settings,
+`g-interface`, and `g-runtime` remain behind `g-runner`, which owns dispatch,
+process policy, timing, terminal rendering, and the coordinated engine call.
+`g-engine` owns preparation, decode orchestration, scheduling, and result
+delivery. `g-runner` owns terminal output policy. Binding code retains only Python
 attachment, opaque JAX objects, NumPy conversion, Python thread labels, and
 original `PyErr` adaptation. The binding implements the runner's Python host
 callbacks; no lifecycle is assembled in `src/binding/cli.rs`.
@@ -162,7 +162,7 @@ callbacks; no lifecycle is assembled in `src/binding/cli.rs`.
   contract.
 - Supported REGENIE Step 2 option spellings.
 - Quantitative, binary score-only, approximate-Firth, single, complete-case,
-  per-phenotype, grouped-union, dosage, and packed8 production paths.
+  per-phenotype, dosage, and packed8 production paths.
 
 Python/PyO3 internals, output-only diagnostics, manifest `firth_dtype`,
 camelCase TOML aliases, callback-era tuning knobs, and unreleased helper APIs

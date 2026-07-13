@@ -10,7 +10,7 @@ use super::{ConfigError, ConfigResult};
 /// # Errors
 ///
 /// Returns an error when required inputs are missing or options conflict semantically.
-pub fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
+pub(crate) fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_required_input_config(config)?;
     validate_compute_config(config)?;
     validate_binary_config(config)?;

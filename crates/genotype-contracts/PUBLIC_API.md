@@ -7,8 +7,8 @@ genotype producers, the engine, and output consumers.
 
 ## Public types
 
-Compact shared variant metadata storage and slices, output-facing chunk
-statistics, and packed nullable `f32` columns.
+The exact opened BGEN source identity, compact shared variant metadata storage
+and slices, output-facing chunk statistics, and packed nullable `f32` columns.
 
 ## This crate must not expose
 

@@ -67,9 +67,8 @@ and pass run-specific scientific inputs on the CLI.
 ```toml
 [compute]
 device = "gpu"
-jax_persistent_cache = true
 jax_cache_dir = "/path/to/local/jax-cache"
-staging_depth = 2
+cpu_threads = 8
 
 [output]
 writer_threads = 2
@@ -90,7 +89,7 @@ uv run g regenie \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_qt_pred.list \
   --out /path/to/output/g_quantitative_regenie2
 ```
@@ -114,14 +113,15 @@ run-specific input and output fields.
 | --- | --- | --- | --- |
 | Genotype source | `[input].bgen` | `--bgen` | Always. |
 | Phenotype table | `[input].pheno_file` | `--phenoFile` | Always. |
-| Phenotype columns | `[input].pheno_columns` | `--phenoCol`, `--phenoColList` | Always. |
+| Phenotype columns | `[input].pheno_columns` | Repeated `--phenoCol` | Always. |
 | Step 1 prediction list | `[input].pred` | `--pred` | Always. |
 | Output prefix | `[output].out` | `--out` | Always. |
-| Sample file | `[input].sample` | `--sample` | When the BGEN does not embed usable sample IDs. |
-| Covariate table and columns | `[input].covar_file`, `[input].covar_columns` | `--covarFile`, `--covarCol`, `--covarColList` | When the model includes covariates. |
+| Sample file | `[input].sample` | `--sample` | Always. |
+| Covariate table and columns | `[input].covar_file`, `[input].covar_columns` | `--covarFile`, repeated `--covarCol` | When the model includes covariates. |
 
-If `[input].sample` is omitted, `g regenie` reads embedded sample identifiers
-from the BGEN. It does not infer an adjacent `.sample` path.
+The required Oxford sample file supplies the BGEN row identities. Sample
+alignment always uses non-empty, unique `(FID, IID)` pairs; there is no public
+IID-only matching mode.
 
 `g regenie` is a Step 2-only command. There is no `step` configuration field or
 `--step` compatibility flag.
@@ -177,11 +177,11 @@ out = "/path/to/output/g_binary_firth_regenie2"
 | Section | Purpose |
 | --- | --- |
 | `[input]` | Genotype, sample, phenotype, covariate, prediction-list paths, and selected columns. |
-| `[trait]` | Quantitative/binary mode, block size, and thread request. |
+| `[trait]` | Quantitative/binary mode and block size. |
 | `[binary]` | Binary fallback method, p-value threshold, and Firth standard-error output. |
-| `[compute]` | Engine runtime, sample semantics, BGEN validation, JAX, numerical, and approximate-Firth tuning. |
-| `[output]` | Output prefix, public statistic dtype, Parquet writer settings, and resume controls. |
-| `[diagnostics]` | Telemetry, logging, stage timing, profile, and trace controls. |
+| `[compute]` | Device, native CPU threads, multi-phenotype sample selection, JAX, numerical, and approximate-Firth tuning. |
+| `[output]` | Output prefix, writer concurrency, and resume controls. |
+| `[diagnostics]` | Telemetry selection. |
 | `[metadata]` | Optional metadata accepted by the TOML parser but not treated as a `g regenie` option. |
 
 Unknown keys are rejected.
@@ -203,31 +203,33 @@ not TOML aliases.
 | `--qt` | `[trait] qt = true` |
 | `--bt` | `[trait] bt = true` |
 | `--bsize N` | `[trait] bsize = N` |
-| `--threads N` | `[trait] threads = N` |
 | `--out PATH` | `[output] out = "PATH"` |
 | `--binary-fallback METHOD` | `[binary] fallback_method = METHOD` |
 | `--pThresh VALUE` | `[binary] p_threshold = VALUE` |
 | `--firth-se` | `[binary] firth_se = true` |
 
-Runtime, scheduling, Parquet writer, resume, diagnostics, and JAX settings are
-TOML-only. Important keys include:
+Runtime, compute, output, resume, diagnostics, and JAX settings are TOML-only.
+Important keys include:
 
 | Concern | TOML |
 | --- | --- |
-| Device and scheduling | `[compute] device`, `staging_depth`, `result_in_flight_limit` |
-| BGEN policy | `[compute] trusted_no_missing_diploid`, `trusted_bgen_validation_mode`, `bgen_decode_tile_variant_count` |
-| Sample semantics | `[compute] sample_key_mode`, `multi_phenotype_sample_mode` |
-| GPU transfer | `[compute] gpu_genotype_format` |
-| JAX cache/runtime | `[compute] jax_cache_dir`, `jax_persistent_cache`, `jax_matmul_precision`, `jax_transfer_guard` |
-| Output | `[output] output_statistic_dtype`, `writer_threads`, `writer_queue_depth`, `chunks_per_parquet_file`, `parquet_compression` |
-| Resume | `[output] resume`, `resume_mode` |
+| Device and native workers | `[compute] device`, `cpu_threads` |
+| Multi-phenotype sample selection | `[compute] multi_phenotype_sample_mode` |
+| Binary compute | `[compute] firth_batch_size`, `firth_candidate_capacity`, and the documented null/Firth tolerances |
+| JAX cache | `[compute] jax_cache_dir` |
+| Output | `[output] output_run_directory`, `writer_threads` |
+| Resume | `[output] resume` |
 | Diagnostics | `[diagnostics] telemetry` (`off`, `progress`, or `profile`) |
+
+Decode tiling, scheduler queue depths, Parquet grouping/compression, packed8
+BGEN compatibility validation, and packed8-versus-dosage delivery are internal
+implementation policies owned by the genotype, engine, and output crates. They
+are intentionally not accepted as configuration keys.
 
 ## Trait And Column Semantics
 
-Repeated `--phenoCol` and `--covarCol` flags append names. Their corresponding
-`*ColList` forms provide a comma-separated list. Do not mix the repeated and
-list forms for the same field.
+Repeated `--phenoCol` and `--covarCol` flags append names. No `*ColList` CLI
+forms are accepted.
 
 Trait mode is resolved from `trait_type`, `qt`, and `bt`:
 
@@ -252,7 +254,7 @@ execution-plan-affecting inputs and settings, file fingerprints, sample/variant
 counts, output writer settings, and committed chunks. Resume compares the
 requested run against this manifest before reusing chunks.
 
-See [Resume and Manifest](resume-and-manifest.md) for resume modes and
+See [Resume and Manifest](resume-and-manifest.md) for strict resume behavior and
 compatibility checks.
 
 ## Validation
@@ -266,7 +268,6 @@ Config construction rejects:
 - invalid TOML syntax;
 - unknown sections or keys;
 - wrong value types;
-- mutually exclusive phenotype or covariate column spellings;
 - incompatible trait flags such as simultaneous quantitative and binary mode;
 - binary-only options explicitly supplied for a quantitative run.
 

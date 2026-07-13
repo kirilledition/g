@@ -5,7 +5,6 @@ compile_error!("g requires a 64-bit target.");
 
 mod api;
 mod bgen;
-mod buffer;
 mod common;
 mod error;
 mod planner;

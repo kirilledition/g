@@ -1,34 +1,32 @@
 //! Prepared native association-run ownership.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use g_input::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest, SampleIdentifierData};
+use g_genotype::Packed8Compatibility;
+use g_input::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest};
 use g_output::{CompletedOutputRun, ManifestFileFingerprintCache, OutputDeliveryState, OutputManager};
 use g_plan::{GpuGenotypeFormat, RunPlan};
 
 use crate::backend::AssociationBackend;
-use crate::delivery::{
-    AssociationDeliveryRequest, AssociationDeliverySettings, GroupedUnionAssociationDeliveryRequest,
-};
-use crate::delivery_execution::{
-    AssociationDeliveryReport, DeliveryError, run_association_delivery, run_grouped_union_association_delivery,
-};
+use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
+use crate::delivery_execution::{AssociationDeliveryReport, DeliveryError, run_association_delivery};
 use crate::output_manifest::build_prediction_loco_file_fingerprints_with_cache;
-use crate::pipeline::BgenRunEngine;
 use crate::preflight::{PreflightError, validate_jax_index_capacity, validate_multi_trait_preflight_values};
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
 use crate::progress::{ProgressTotals, RunProgressReporter};
-use crate::trusted_validation::TrustedBgenValidationError;
 
 /// Failure while converting a run plan into a fully prepared native run.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunPreparationError {
     #[error(transparent)]
     Bgen(#[from] g_genotype::BgenError),
+    #[error(transparent)]
+    Genotype(#[from] g_genotype::GenotypeError),
     #[error(transparent)]
     Input(#[from] g_input::InputError),
     #[error(transparent)]
@@ -37,20 +35,18 @@ pub(crate) enum RunPreparationError {
     OutputPreparation(#[from] PipelineOutputPreparationError),
     #[error(transparent)]
     Preflight(#[from] PreflightError),
-    #[error(transparent)]
-    TrustedValidation(#[from] TrustedBgenValidationError),
     #[error("The run plan contains no phenotype outputs.")]
     EmptyPhenotypePlan,
     #[error("Aligned input produced no phenotype groups.")]
     EmptyPhenotypeGroups,
-    #[error("Resolved GPU genotype format cannot remain auto during run preparation.")]
-    UnresolvedGpuGenotypeFormat,
     #[error("{field_name} must be positive.")]
     NonPositiveCapacity { field_name: &'static str },
     #[error("{field_name} overflowed the native usize representation.")]
     CapacityOverflow { field_name: &'static str },
     #[error("{field_name} exceeds the JAX int32 domain.")]
     JaxIntegerOverflow { field_name: &'static str },
+    #[error("The resumed output requires packed8 delivery, but the current BGEN requires dosage delivery.")]
+    ResumedPacked8Incompatible,
 }
 
 /// Binding-owned hooks used at the native run boundary.
@@ -69,14 +65,14 @@ pub trait RunHooks {
 }
 
 /// Completed native execution and its output artifacts.
-pub struct RunExecution {
+pub(crate) struct RunExecution {
     pub completed_outputs: Vec<CompletedOutputRun>,
     pub delivery_reports: Vec<AssociationDeliveryReport>,
 }
 
 /// Failure while executing a fully prepared run.
 #[derive(Debug, thiserror::Error)]
-pub enum RunExecutionError<BackendError, HookError> {
+pub(crate) enum RunExecutionError<BackendError, HookError> {
     #[error("Association delivery failed.")]
     Delivery(#[source] DeliveryError<BackendError, HookError>),
     #[error("Association delivery was interrupted.")]
@@ -98,7 +94,7 @@ pub enum RunExecutionError<BackendError, HookError> {
 }
 
 /// Unprepared native run owning its canonical plan and output lifecycle.
-pub struct RunEngine {
+pub(crate) struct RunEngine {
     run_plan: Arc<RunPlan>,
     output_manager: OutputManager,
 }
@@ -109,14 +105,11 @@ impl RunEngine {
     /// # Errors
     ///
     /// Returns an error when planned output paths cannot be opened.
-    pub fn open(run_plan: RunPlan, effective_config_toml: String) -> Result<Self, RunPreparationError> {
+    pub(crate) fn open(run_plan: RunPlan, effective_config_toml: String) -> Result<Self, RunPreparationError> {
         if run_plan.phenotype_runs.is_empty() {
             return Err(RunPreparationError::EmptyPhenotypePlan);
         }
         validate_jax_integer_domain(&run_plan)?;
-        let decode_tile_variant_count = usize::try_from(run_plan.compute.bgen_decode_tile_variant_count)
-            .map_err(|_| RunPreparationError::CapacityOverflow { field_name: "BGEN decode tile variant count" })?;
-        g_genotype::set_bgen_decode_tile_variant_count(decode_tile_variant_count)?;
         let run_plan = Arc::new(run_plan);
         let output_manager = OutputManager::open(Arc::clone(&run_plan), effective_config_toml)?;
         Ok(Self { run_plan, output_manager })
@@ -128,27 +121,23 @@ impl RunEngine {
     ///
     /// Returns a typed error when BGEN preparation, input alignment, preflight,
     /// manifest construction, resume validation, or output initialization fails.
-    pub fn prepare(self) -> Result<PreparedRun, RunPreparationError> {
+    pub(crate) fn prepare(self) -> Result<PreparedRun, RunPreparationError> {
         let Self { run_plan, mut output_manager } = self;
-        let chunk_size = positive_u32_as_usize(run_plan.analysis.chunk_size, "analysis chunk size")?;
-        let variant_limit = run_plan
-            .compute
-            .variant_limit
-            .map(usize::try_from)
-            .transpose()
-            .map_err(|_| RunPreparationError::CapacityOverflow { field_name: "variant limit" })?;
-        let (resolved_gpu_genotype_format, prepared_bgen_engine) =
-            resolve_gpu_genotype_format(&run_plan, &output_manager, chunk_size, variant_limit)?;
-        if resolved_gpu_genotype_format == GpuGenotypeFormat::Auto {
-            return Err(RunPreparationError::UnresolvedGpuGenotypeFormat);
-        }
-        let effective_trusted_no_missing_diploid =
-            run_plan.compute.trusted_no_missing_diploid || resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8;
-        let bgen_engine = match prepared_bgen_engine {
-            Some(engine) => engine,
-            None => open_bgen_engine(&run_plan, chunk_size, variant_limit, effective_trusted_no_missing_diploid)?,
+        let chunk_size = positive_u32_as_usize(run_plan.chunk_size, "analysis chunk size")?;
+        let genotype_input = PreparedGenotypeInput {
+            reader: g_genotype::BgenReaderCore::open(Path::new(&run_plan.input.bgen_path))?,
+            chunk_size,
         };
-        validate_scanned_variants(&bgen_engine, variant_limit)?;
+        if genotype_input.reader.variant_count() == 0 {
+            return Err(PreflightError::EmptyBgenInput.into());
+        }
+        let planned_chunk_ranges = genotype_input
+            .reader
+            .plan_chromosome_homogeneous_chunks(genotype_input.chunk_size, &BTreeSet::new())?
+            .into_iter()
+            .map(|chunk_spec| chunk_spec.variant_start_index..chunk_spec.variant_stop_index)
+            .collect::<Vec<Range<usize>>>();
+        let resolved_gpu_genotype_format = resolve_gpu_genotype_format(&run_plan, &output_manager, &genotype_input)?;
         let phenotype_names = run_plan
             .phenotype_runs
             .iter()
@@ -156,7 +145,7 @@ impl RunEngine {
             .collect::<Vec<_>>();
         let prediction_loco_paths =
             g_input::resolve_prediction_loco_paths(Path::new(&run_plan.input.prediction_list_path), &phenotype_names)?;
-        let groups = load_groups(&run_plan, &bgen_engine, &phenotype_names, &prediction_loco_paths)?;
+        let groups = load_groups(&run_plan, &genotype_input, &phenotype_names, &prediction_loco_paths)?;
         validate_groups(&run_plan, &groups)?;
         let prepared_groups = prepare_output_groups(
             &run_plan,
@@ -164,32 +153,16 @@ impl RunEngine {
             &prediction_loco_paths,
             &mut output_manager,
             resolved_gpu_genotype_format,
-            effective_trusted_no_missing_diploid,
-            bgen_engine.reader.variant_count(),
+            genotype_input.reader.source_identity(),
+            genotype_input.reader.variant_count(),
+            &planned_chunk_ranges,
         )?;
-        let staging_depth = positive_u32_as_usize(run_plan.compute.staging_depth, "association staging depth")?;
-        let result_in_flight_limit = run_plan
-            .compute
-            .result_in_flight_limit
-            .map(|value| positive_u32_as_usize(value, "association result in-flight limit"))
-            .transpose()?
-            .map_or_else(
-                || {
-                    staging_depth.checked_add(1).ok_or(RunPreparationError::CapacityOverflow {
-                        field_name: "association result in-flight limit",
-                    })
-                },
-                Ok,
-            )?;
         Ok(PreparedRun {
             run_plan,
             resolved_gpu_genotype_format,
-            effective_trusted_no_missing_diploid,
-            bgen_engine,
+            genotype_input,
             groups: prepared_groups,
             output_manager,
-            staging_depth,
-            result_in_flight_limit,
         })
     }
 }
@@ -200,21 +173,18 @@ struct PreparedAssociationGroup {
 }
 
 /// Fully prepared run awaiting one association backend.
-pub struct PreparedRun {
+pub(crate) struct PreparedRun {
     run_plan: Arc<RunPlan>,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
-    effective_trusted_no_missing_diploid: bool,
-    bgen_engine: BgenRunEngine,
+    genotype_input: PreparedGenotypeInput,
     groups: Vec<PreparedAssociationGroup>,
     output_manager: OutputManager,
-    staging_depth: usize,
-    result_in_flight_limit: usize,
 }
 
 impl PreparedRun {
     /// Return the resolved association backend contract.
     #[must_use]
-    pub const fn resolved_gpu_genotype_format(&self) -> GpuGenotypeFormat {
+    pub(crate) const fn resolved_gpu_genotype_format(&self) -> GpuGenotypeFormat {
         self.resolved_gpu_genotype_format
     }
 
@@ -223,7 +193,7 @@ impl PreparedRun {
     /// # Errors
     ///
     /// Returns a typed backend, hook, delivery, or output completion error.
-    pub fn execute_with_progress<Backend, Hooks>(
+    pub(crate) fn execute_with_progress<Backend, Hooks>(
         self,
         backend: Arc<Backend>,
         hooks: &mut Hooks,
@@ -235,18 +205,7 @@ impl PreparedRun {
         Backend::DeviceResult: 'static,
         Hooks: RunHooks,
     {
-        let PreparedRun {
-            run_plan,
-            resolved_gpu_genotype_format,
-            effective_trusted_no_missing_diploid,
-            bgen_engine,
-            groups,
-            output_manager,
-            staging_depth,
-            result_in_flight_limit,
-        } = self;
-        let grouped_union_sample_indices =
-            grouped_union_sample_indices(&groups, resolved_gpu_genotype_format, effective_trusted_no_missing_diploid);
+        let PreparedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;
         let statistics_policy = match run_plan.association_mode {
             g_plan::AssociationMode::Regenie2Linear => g_genotype::ChunkStatisticsPolicy {
                 retain_imputed_dosage_square_sum: true,
@@ -261,63 +220,43 @@ impl PreparedRun {
         let delivery_result: Result<Vec<AssociationDeliveryReport>, DeliveryError<Backend::Error, Hooks::Error>> =
             (|| {
                 let progress_context = if let Some(reporter) = progress_reporter {
-                    let all_chunk_specs = bgen_engine.plan_chunks(&BTreeSet::new())?;
+                    let all_chunk_specs = genotype_input
+                        .reader
+                        .plan_chromosome_homogeneous_chunks(genotype_input.chunk_size, &BTreeSet::new())?;
                     Some((reporter, ProgressTotals::from_chunk_specs(&all_chunk_specs)?))
                 } else {
                     None
                 };
-                let requests = groups
-                    .into_iter()
-                    .map(|prepared_group| {
-                        let progress = progress_context
-                            .map(|(reporter, totals)| {
-                                reporter.register_delivery(
-                                    prepared_group.group.phenotype_group.phenotype_names.join(","),
-                                    totals,
-                                )
-                            })
-                            .transpose()?;
-                        Ok(AssociationDeliveryRequest {
-                            group: prepared_group.group,
-                            settings: AssociationDeliverySettings {
-                                writer_sessions: prepared_group.output.writer_sessions,
-                                committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
-                                null_logistic_nonconvergence_policy: run_plan
-                                    .compute
-                                    .kernels
-                                    .binary_null
-                                    .nonconvergence_policy,
-                                staging_depth,
-                                result_in_flight_limit,
-                                progress,
-                                use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
-                                statistics_policy,
-                            },
+                let mut reports = Vec::with_capacity(groups.len());
+                for prepared_group in groups {
+                    let progress = progress_context
+                        .map(|(reporter, totals)| {
+                            reporter.register_delivery(
+                                prepared_group.group.phenotype_group.phenotype_names.join(","),
+                                totals,
+                            )
                         })
-                    })
-                    .collect::<Result<Vec<_>, DeliveryError<Backend::Error, Hooks::Error>>>()?;
-                if let Some(union_sample_indices) = grouped_union_sample_indices {
-                    run_grouped_union_association_delivery(
-                        &bgen_engine,
-                        &backend,
-                        GroupedUnionAssociationDeliveryRequest { groups: requests, union_sample_indices },
-                        || hooks.check_interruption(),
-                    )
-                    .map(|report| vec![report])
-                } else {
-                    let mut reports = Vec::with_capacity(requests.len());
-                    let mut delivery_error = None;
-                    for request in requests {
-                        match run_association_delivery(&bgen_engine, &backend, request, || hooks.check_interruption()) {
-                            Ok(report) => reports.push(report),
-                            Err(error) => {
-                                delivery_error = Some(error);
-                                break;
-                            }
-                        }
-                    }
-                    delivery_error.map_or(Ok(reports), Err)
+                        .transpose()?;
+                    let request = AssociationDeliveryRequest {
+                        group: prepared_group.group,
+                        settings: AssociationDeliverySettings {
+                            writer_sessions: prepared_group.output.writer_sessions,
+                            committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
+                            null_logistic_nonconvergence_policy: run_plan
+                                .compute
+                                .kernels
+                                .binary_null
+                                .nonconvergence_policy,
+                            progress,
+                            use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
+                            statistics_policy,
+                        },
+                    };
+                    reports.push(run_association_delivery(&genotype_input, &backend, request, || {
+                        hooks.check_interruption()
+                    })?);
                 }
+                Ok(reports)
             })();
         drop(backend);
         finish_execution::<Backend::Error, Hooks>(delivery_result, output_manager)
@@ -340,7 +279,7 @@ fn positive_u32_as_usize(value: u32, field_name: &'static str) -> Result<usize, 
 pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparationError> {
     let kernels = &run_plan.compute.kernels;
     let positive_values = [
-        ("analysis chunk size", run_plan.analysis.chunk_size),
+        ("analysis chunk size", run_plan.chunk_size),
         ("binary null maximum iterations", kernels.binary_null.maximum_iterations),
         ("Firth batch size", kernels.firth.batch_size),
         ("Firth candidate capacity", kernels.firth.candidate_capacity),
@@ -370,53 +309,25 @@ pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunP
     Ok(())
 }
 
-fn open_bgen_engine(
-    run_plan: &RunPlan,
-    chunk_size: usize,
-    variant_limit: Option<usize>,
-    trusted_no_missing_diploid: bool,
-) -> Result<BgenRunEngine, RunPreparationError> {
-    let engine = BgenRunEngine::open(
-        Path::new(&run_plan.input.bgen_path),
-        chunk_size,
-        variant_limit,
-        trusted_no_missing_diploid,
-    )?;
-    if trusted_no_missing_diploid {
-        let cache_directory = crate::trusted_validation::default_cache_directory()?;
-        crate::trusted_validation::validate_trusted_no_missing_diploid_with_cache_directory(
-            &engine.reader,
-            Path::new(&run_plan.input.bgen_path),
-            run_plan.compute.trusted_bgen_validation_mode,
-            &cache_directory,
-        )?;
-    }
-    Ok(engine)
-}
-
 fn resolve_gpu_genotype_format(
     run_plan: &RunPlan,
     output_manager: &OutputManager,
-    chunk_size: usize,
-    variant_limit: Option<usize>,
-) -> Result<(GpuGenotypeFormat, Option<BgenRunEngine>), RunPreparationError> {
-    if run_plan.compute.requested_gpu_genotype_format != GpuGenotypeFormat::Auto {
-        return Ok((run_plan.compute.requested_gpu_genotype_format, None));
-    }
-    let single_binary =
-        run_plan.phenotype_runs.len() == 1 && run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary;
-    if !single_binary {
-        return Ok((GpuGenotypeFormat::Dosage, None));
-    }
+    genotype_input: &PreparedGenotypeInput,
+) -> Result<GpuGenotypeFormat, RunPreparationError> {
     if let Some(manifest_format) = resumed_manifest_gpu_genotype_format(run_plan, output_manager)? {
-        return Ok((manifest_format, None));
+        if manifest_format == GpuGenotypeFormat::Packed8
+            && genotype_input.reader.packed8_compatibility_with_cache()? == Packed8Compatibility::RequiresDosage
+        {
+            return Err(RunPreparationError::ResumedPacked8Incompatible);
+        }
+        return Ok(manifest_format);
     }
     if run_plan.compute.device != g_plan::Device::Gpu {
-        return Ok((GpuGenotypeFormat::Dosage, None));
+        return Ok(GpuGenotypeFormat::Dosage);
     }
-    match open_bgen_engine(run_plan, chunk_size, variant_limit, true) {
-        Ok(engine) => Ok((GpuGenotypeFormat::Packed8, Some(engine))),
-        Err(_) => Ok((GpuGenotypeFormat::Dosage, None)),
+    match genotype_input.reader.packed8_compatibility_with_cache()? {
+        Packed8Compatibility::Compatible => Ok(GpuGenotypeFormat::Packed8),
+        Packed8Compatibility::RequiresDosage => Ok(GpuGenotypeFormat::Dosage),
     }
 }
 
@@ -432,34 +343,24 @@ fn resumed_manifest_gpu_genotype_format(
     output_manager.existing_manifest_gpu_genotype_format(phenotype_name).map_err(Into::into)
 }
 
-fn validate_scanned_variants(bgen_engine: &BgenRunEngine, variant_limit: Option<usize>) -> Result<(), PreflightError> {
-    let variant_count = bgen_engine.reader.variant_count();
-    if variant_count == 0 {
-        return Err(PreflightError::EmptyBgenInput);
-    }
-    if variant_limit.is_some_and(|limit| limit.min(variant_count) == 0) {
-        return Err(PreflightError::EmptyBgenScan);
-    }
-    Ok(())
-}
-
 fn load_groups(
     run_plan: &RunPlan,
-    bgen_engine: &BgenRunEngine,
+    genotype_input: &PreparedGenotypeInput,
     phenotype_names: &[String],
     prediction_loco_paths: &[g_input::PredictionLocoPath],
 ) -> Result<Vec<AlignedPhenotypeGroup>, RunPreparationError> {
-    let sample_identifiers = load_sample_identifiers(run_plan, bgen_engine)?;
+    let sample_identifiers = g_input::load_sample_identifier_data_from_sample_file(
+        Path::new(&run_plan.input.sample_path),
+        genotype_input.reader.sample_count(),
+    )?;
     let groups = g_input::load_aligned_phenotype_groups(&PhenotypeGroupLoadRequest {
         sample_identifiers: &sample_identifiers,
         phenotype_path: &run_plan.input.phenotype_path,
-        prediction_list_path: &run_plan.input.prediction_list_path,
         prediction_loco_paths,
         phenotype_names,
         covariate_path: run_plan.input.covariate_path.as_deref(),
         covariate_names: Some(&run_plan.input.covariate_names),
-        is_binary_trait: run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary,
-        sample_key_mode: run_plan.input.sample_key_mode,
+        is_binary_trait: run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary,
         sample_mode: run_plan.compute.multi_phenotype_sample_mode,
     })?;
     if groups.is_empty() {
@@ -468,19 +369,9 @@ fn load_groups(
     Ok(groups)
 }
 
-fn load_sample_identifiers(
-    run_plan: &RunPlan,
-    bgen_engine: &BgenRunEngine,
-) -> Result<SampleIdentifierData, RunPreparationError> {
-    Ok(g_input::load_sample_identifier_data_from_sample_file(
-        Path::new(&run_plan.input.sample_path),
-        bgen_engine.reader.sample_count(),
-    )?)
-}
-
 fn validate_groups(run_plan: &RunPlan, groups: &[AlignedPhenotypeGroup]) -> Result<(), RunPreparationError> {
-    let is_binary_trait = run_plan.analysis.trait_type == g_plan::RegenieTraitType::Binary;
-    let chunk_size = positive_u32_as_usize(run_plan.analysis.chunk_size, "analysis chunk size")?;
+    let is_binary_trait = run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary;
+    let chunk_size = positive_u32_as_usize(run_plan.chunk_size, "analysis chunk size")?;
     let firth_candidate_capacity =
         positive_u32_as_usize(run_plan.compute.kernels.firth.candidate_capacity, "Firth candidate capacity")?;
     let firth_batch_size = positive_u32_as_usize(run_plan.compute.kernels.firth.batch_size, "Firth batch size")?;
@@ -514,11 +405,15 @@ fn prepare_output_groups(
     prediction_loco_paths: &[g_input::PredictionLocoPath],
     output_manager: &mut OutputManager,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
-    effective_trusted_no_missing_diploid: bool,
+    bgen_source_identity: &g_genotype_contracts::BgenSourceIdentity,
     variant_count: usize,
+    planned_chunk_ranges: &[Range<usize>],
 ) -> Result<Vec<PreparedAssociationGroup>, RunPreparationError> {
-    let runtime_output_plan =
-        RuntimeOutputPlan { variant_count, effective_trusted_no_missing_diploid, resolved_gpu_genotype_format };
+    let runtime_output_plan = RuntimeOutputPlan {
+        variant_count,
+        resolved_gpu_genotype_format,
+        bgen_source_identity: Arc::new(bgen_source_identity.clone()),
+    };
     let mut fingerprint_cache = ManifestFileFingerprintCache::default();
     let all_prediction_loco_files: Arc<[g_output::PredictionLocoFileFingerprint]> =
         build_prediction_loco_file_fingerprints_with_cache(prediction_loco_paths, &mut fingerprint_cache)?.into();
@@ -529,16 +424,13 @@ fn prepare_output_groups(
                 phenotype_group: &group.phenotype_group,
                 covariate_names: &group.covariate_names,
                 sample_count: group.sample_indices.len(),
-                output_sample_mode: group.phenotype_group.sample_mode,
             },
             &runtime_output_plan,
             &all_prediction_loco_files,
         )?);
     }
-    let collect_stage_timings = run_plan.diagnostics.stage_timings_path.is_some()
-        || run_plan.diagnostics.profile_summary_path.is_some()
-        || matches!(run_plan.diagnostics.telemetry, g_plan::TelemetryMode::Profile);
-    output_manager.initialize(run_initializations, collect_stage_timings)?;
+    let collect_stage_timings = matches!(run_plan.telemetry, g_plan::TelemetryMode::Profile);
+    output_manager.initialize(run_initializations, planned_chunk_ranges, collect_stage_timings)?;
     groups
         .into_iter()
         .map(|group| {
@@ -546,20 +438,6 @@ fn prepare_output_groups(
             Ok(PreparedAssociationGroup { group, output })
         })
         .collect()
-}
-
-fn grouped_union_sample_indices(
-    groups: &[PreparedAssociationGroup],
-    genotype_format: GpuGenotypeFormat,
-    effective_trusted_no_missing_diploid: bool,
-) -> Option<Vec<usize>> {
-    if groups.len() <= 1 || genotype_format == GpuGenotypeFormat::Packed8 || !effective_trusted_no_missing_diploid {
-        return None;
-    }
-    let union_sample_indices =
-        g_input::build_union_sample_indices(groups.iter().map(|group| group.group.sample_indices.as_slice()));
-    let grouped_sample_count = groups.iter().map(|group| group.group.sample_indices.len()).sum::<usize>();
-    (union_sample_indices.len() < grouped_sample_count).then_some(union_sample_indices)
 }
 
 fn finish_execution<BackendError, Hooks>(

@@ -1,61 +1,51 @@
 use std::collections::BTreeSet;
-use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(test)]
-use std::path::PathBuf;
 
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
 
 use g_genotype_contracts::{VariantMetadataColumns, VariantMetadataStore};
 
-#[cfg(test)]
-use crate::buffer::{OutputBufferAddress, OutputValueCount, RowMajorDosageBuffer};
 use crate::common::ChunkSpec;
-#[cfg(test)]
-use crate::common::ChunkStats;
+use crate::common::Packed8Compatibility;
 use crate::error::GenotypeResult;
-#[cfg(test)]
-use crate::preprocess;
 
-#[cfg(test)]
-use super::decode::{
-    DosageTileDecodeResult, decode_tile_variant_count, decode_variant_dosage_tile_into_row_major_matrix,
-};
 use super::decode::{ThreadScratch, VariantDecodeFailure, read_exact_bytes, read_u32_at, u32_to_usize};
 use super::error::BgenError;
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
-#[cfg(test)]
-use super::profile::ThreadLocalProfileSnapshot;
 use super::sample_selection::{SampleSelection, build_sample_selection};
-use super::{index, trusted};
+use super::{index, packed8};
 
 mod variant_major;
 
 #[derive(Debug)]
 pub struct BgenReaderCore {
     mmap: Mmap,
+    source: super::packed8_cache::ValidationCacheSource,
     sample_count: usize,
     variant_count: usize,
     compression_type: CompressionType,
-    trusted_no_missing_diploid: bool,
-    trusted_no_missing_diploid_validated: AtomicBool,
+    packed8_validation_complete: AtomicBool,
     variant_records: Vec<VariantRecord>,
     variant_metadata: Arc<VariantMetadataStore>,
     chromosome_boundary_indices: Vec<usize>,
-    prepared_sample_selection: Mutex<Option<Arc<SampleSelection>>>,
+}
+
+/// Immutable per-delivery BGEN decoding context.
+#[derive(Debug)]
+pub struct BgenReadSession<'reader> {
+    reader: &'reader BgenReaderCore,
+    sample_selection: SampleSelection,
 }
 
 #[allow(clippy::missing_errors_doc)]
 impl BgenReaderCore {
-    pub fn open(bgen_path: &Path, trusted_no_missing_diploid: bool) -> Result<Self, BgenError> {
-        let file = File::open(bgen_path)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
+    pub fn open(bgen_path: &Path) -> Result<Self, BgenError> {
+        let source = super::packed8_cache::ValidationCacheSource::open(bgen_path)?;
+        let mmap = unsafe { MmapOptions::new().map(&source.file)? };
 
         let first_variant_offset = 4 + u32_to_usize(read_u32_at(&mmap, 0)?)?;
         let header_block_length = u32_to_usize(read_u32_at(&mmap, 4)?)?;
@@ -93,18 +83,22 @@ impl BgenReaderCore {
 
         let parsed_variant_index =
             index::parse_variant_index(&mmap, first_variant_offset, variant_count, sample_count, compression_type)?;
+        if !source.is_unchanged()? {
+            return Err(BgenError::InvalidFormat(
+                "BGEN source changed while its header and variant index were being read.".to_string(),
+            ));
+        }
 
         Ok(Self {
             mmap,
+            source,
             sample_count,
             variant_count,
             compression_type,
-            trusted_no_missing_diploid,
-            trusted_no_missing_diploid_validated: AtomicBool::new(false),
+            packed8_validation_complete: AtomicBool::new(false),
             variant_records: parsed_variant_index.variant_records,
             variant_metadata: parsed_variant_index.variant_metadata,
             chromosome_boundary_indices: parsed_variant_index.chromosome_boundary_indices,
-            prepared_sample_selection: Mutex::new(None),
         })
     }
 
@@ -116,52 +110,46 @@ impl BgenReaderCore {
         self.variant_count
     }
 
-    pub fn chromosome_boundary_indices(&self) -> &[usize] {
-        &self.chromosome_boundary_indices
+    /// Return the identity captured from the exact BGEN file opened by this reader.
+    pub fn source_identity(&self) -> &g_genotype_contracts::BgenSourceIdentity {
+        &self.source.identity
     }
 
     pub fn plan_chromosome_homogeneous_chunks(
         &self,
         chunk_size: usize,
-        variant_limit: Option<usize>,
         committed_chunk_identifiers: &BTreeSet<usize>,
     ) -> GenotypeResult<Vec<ChunkSpec>> {
         crate::planner::plan_chromosome_homogeneous_chunks(
             self.variant_count,
             chunk_size,
-            variant_limit,
             &self.chromosome_boundary_indices,
             committed_chunk_identifiers,
         )
     }
 
-    pub fn prepare_sample_selection(&self, sample_indices: &[usize]) -> Result<(), BgenError> {
-        let sample_selection = Arc::new(build_sample_selection(self.sample_count, sample_indices)?);
-        let mut prepared_sample_selection = self
-            .prepared_sample_selection
-            .lock()
-            .map_err(|_| BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string()))?;
-        *prepared_sample_selection = Some(sample_selection);
-        Ok(())
+    /// Build an immutable decoding session for one aligned sample selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sample selection is invalid.
+    pub fn read_session(&self, sample_indices: &[usize]) -> Result<BgenReadSession<'_>, BgenError> {
+        self.ensure_source_unchanged("BGEN source changed before genotype delivery began.")?;
+        Ok(BgenReadSession {
+            reader: self,
+            sample_selection: build_sample_selection(self.sample_count, sample_indices)?,
+        })
     }
 
-    pub fn clear_prepared_sample_selection(&self) -> Result<(), BgenError> {
-        let mut prepared_sample_selection = self
-            .prepared_sample_selection
-            .lock()
-            .map_err(|_| BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string()))?;
-        *prepared_sample_selection = None;
-        Ok(())
-    }
-
-    pub fn validate_trusted_no_missing_diploid(&self) -> Result<(), BgenError> {
-        if self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire) {
-            return Ok(());
+    fn scan_packed8_compatibility(&self) -> Result<Packed8Compatibility, BgenError> {
+        if self.packed8_validation_complete.load(Ordering::Acquire) {
+            return Ok(Packed8Compatibility::Compatible);
         }
-        self.variant_records.par_iter().enumerate().try_for_each_init(
-            ThreadScratch::default,
-            |thread_scratch, (variant_index, variant_record)| {
-                trusted::validate_variant_compatible_with_trusted_no_missing_diploid(
+        self.variant_records
+            .par_iter()
+            .enumerate()
+            .map_init(ThreadScratch::default, |thread_scratch, (variant_index, variant_record)| {
+                packed8::validate_variant_compatible_with_packed8(
                     &self.mmap,
                     self.compression_type,
                     variant_record,
@@ -169,22 +157,54 @@ impl BgenReaderCore {
                     thread_scratch,
                 )
                 .map_err(|error| self.contextualize_variant_error(variant_index, error))
-            },
-        )?;
-        if self.trusted_no_missing_diploid {
-            self.trusted_no_missing_diploid_validated.store(true, Ordering::Release);
-        }
-        Ok(())
+            })
+            .try_reduce(
+                || Packed8Compatibility::Compatible,
+                |left, right| {
+                    Ok(
+                        if left == Packed8Compatibility::RequiresDosage || right == Packed8Compatibility::RequiresDosage
+                        {
+                            Packed8Compatibility::RequiresDosage
+                        } else {
+                            Packed8Compatibility::Compatible
+                        },
+                    )
+                },
+            )
     }
 
-    pub fn mark_trusted_no_missing_diploid_validated(&self) -> Result<(), BgenError> {
-        if !self.trusted_no_missing_diploid {
-            return Err(BgenError::Range(
-                "Trusted no-missing diploid validation cannot be marked on a non-trusted BGEN reader.".to_string(),
-            ));
+    /// Resolve packed8 compatibility, reusing a matching persistent scan when available.
+    ///
+    /// Cache lookup and write failures are deliberately non-fatal: the reader
+    /// performs the compatibility scan and preserves packed8 execution for the
+    /// current process. BGEN parsing and globally unsupported formats remain errors;
+    /// valid inputs that need dosage delivery return a typed outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the BGEN stream is corrupt or unsupported by both
+    /// packed8 and dosage delivery.
+    pub fn packed8_compatibility_with_cache(&self) -> Result<Packed8Compatibility, BgenError> {
+        if self.packed8_validation_complete.load(Ordering::Acquire) {
+            return Ok(Packed8Compatibility::Compatible);
         }
-        self.trusted_no_missing_diploid_validated.store(true, Ordering::Release);
-        Ok(())
+        self.ensure_source_unchanged("BGEN source changed before packed8 compatibility validation began.")?;
+        let cache_entry = super::packed8_cache::ValidationCacheEntry::build(self, &self.source).ok().flatten();
+        if let Some(cached_compatibility) = cache_entry.as_ref().and_then(|entry| entry.read().ok().flatten()) {
+            if cached_compatibility == Packed8Compatibility::Compatible {
+                self.packed8_validation_complete.store(true, Ordering::Release);
+            }
+            return Ok(cached_compatibility);
+        }
+        let compatibility = self.scan_packed8_compatibility()?;
+        self.ensure_source_unchanged("BGEN source changed while packed8 compatibility was being validated.")?;
+        if compatibility == Packed8Compatibility::Compatible {
+            self.packed8_validation_complete.store(true, Ordering::Release);
+        }
+        if let Some(cache_entry) = cache_entry {
+            let _ = cache_entry.write(compatibility);
+        }
+        Ok(compatibility)
     }
 
     pub fn variant_metadata_slice(
@@ -197,67 +217,12 @@ impl BgenReaderCore {
         Ok(VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop))
     }
 
-    #[cfg(test)]
-    pub fn read_preprocessed_dosage_f32_into_address_prepared(
-        &self,
-        variant_start: usize,
-        variant_stop: usize,
-        output_pointer_address: OutputBufferAddress,
-        output_value_count: OutputValueCount,
-    ) -> Result<ChunkStats, BgenError> {
-        let sample_selection = self.prepared_sample_selection_arc()?;
-        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
-        let selected_variant_count = variant_stop.saturating_sub(variant_start);
-        if selected_variant_count == 0 {
-            return Ok(preprocess::build_empty_chunk_stats(0));
-        }
-        let selected_sample_count = output_value_count.get().checked_div(selected_variant_count).ok_or_else(|| {
-            BgenError::Range("Unable to resolve sample count for preprocessed BGEN dosage matrix.".to_string())
-        })?;
-        let mut output_buffer = unsafe {
-            RowMajorDosageBuffer::from_pointer_address(
-                output_pointer_address,
-                output_value_count,
-                "row-major BGEN dosage",
-            )?
-        };
-        self.read_dosage_f32_into_address_with_selection_and_optional_stats(
-            &sample_selection,
-            variant_start,
-            variant_stop,
-            output_buffer.pointer_address(),
-            output_value_count,
-            false,
-        )
-        .map(|_| ())?;
-        preprocess::preprocess_row_major_dosage_matrix(
-            output_buffer.values_mut(),
-            selected_sample_count,
-            selected_variant_count,
-        )
-        .map_err(|error| BgenError::Range(error.to_string()))
-    }
-
-    fn prepared_sample_selection_arc(&self) -> Result<Arc<SampleSelection>, BgenError> {
-        let prepared_sample_selection = self
-            .prepared_sample_selection
-            .lock()
-            .map_err(|_| BgenError::InvalidFormat("Prepared BGEN sample selection mutex was poisoned.".to_string()))?;
-        prepared_sample_selection.clone().ok_or_else(|| {
-            BgenError::Range("Prepared BGEN sample selection was requested before binding aligned samples.".to_string())
-        })
-    }
-
-    fn trusted_no_missing_diploid_decode_enabled(&self) -> bool {
-        self.trusted_no_missing_diploid && self.trusted_no_missing_diploid_validated.load(Ordering::Acquire)
-    }
-
     fn validate_packed8_probability_pair_preconditions(&self) -> Result<(), BgenError> {
-        if self.trusted_no_missing_diploid_decode_enabled() {
+        if self.packed8_validation_complete.load(Ordering::Acquire) {
             return Ok(());
         }
         Err(BgenError::UnsupportedFormat(
-            "Packed8 BGEN probability-pair delivery requires trusted no-missing diploid validation.".to_string(),
+            "Packed8 BGEN probability-pair delivery requires packed8 compatibility validation.".to_string(),
         ))
     }
 
@@ -282,60 +247,22 @@ impl BgenReaderCore {
         self.contextualize_variant_error(variant_start + relative_variant_index, failure.source)
     }
 
-    #[cfg(test)]
-    fn read_dosage_f32_into_address_with_selection_and_optional_stats(
-        &self,
-        sample_selection: &SampleSelection,
-        variant_start: usize,
-        variant_stop: usize,
-        output_pointer_address: OutputBufferAddress,
-        output_value_count: OutputValueCount,
-        collect_dosage_totals: bool,
-    ) -> Result<Option<Vec<f32>>, BgenError> {
-        let selected_sample_count = sample_selection.selected_sample_count;
-        let selected_variant_count = variant_stop - variant_start;
-        let expected_output_value_count =
-            selected_sample_count.checked_mul(selected_variant_count).ok_or_else(|| {
-                BgenError::Range("Integer overflow while validating BGEN output buffer size.".to_string())
-            })?;
-        if output_value_count.get() != expected_output_value_count {
-            return Err(BgenError::Range(format!(
-                "Output buffer shape mismatch for BGEN dosage read. Expected {expected_output_value_count} float32 values, observed {}.",
-                output_value_count.get(),
-            )));
+    fn ensure_source_unchanged(&self, message: &'static str) -> Result<(), BgenError> {
+        if self.source.is_unchanged()? {
+            return Ok(());
         }
-        if selected_sample_count == 0 || selected_variant_count == 0 {
-            return Ok(collect_dosage_totals.then(|| vec![0.0_f32; selected_variant_count]));
-        }
+        Err(BgenError::InvalidFormat(message.to_string()))
+    }
+}
 
-        let output_pointer = output_pointer_address;
-        let decode_tile_variant_count = decode_tile_variant_count();
-        let decode_results = self.variant_records[variant_start..variant_stop]
-            .par_chunks(decode_tile_variant_count)
-            .enumerate()
-            .map_init(ThreadScratch::default, |thread_scratch, (tile_index, variant_record_chunk)| {
-                decode_variant_dosage_tile_into_row_major_matrix(
-                    &self.mmap,
-                    self.compression_type,
-                    self.sample_count,
-                    sample_selection,
-                    variant_record_chunk,
-                    output_pointer,
-                    selected_variant_count,
-                    tile_index * decode_tile_variant_count,
-                    self.trusted_no_missing_diploid_decode_enabled(),
-                    collect_dosage_totals,
-                    thread_scratch,
-                )
-            })
-            .collect::<Result<Vec<DosageTileDecodeResult>, BgenError>>()?;
-        let mut selected_dosage_totals = collect_dosage_totals.then(|| Vec::with_capacity(selected_variant_count));
-        for decode_result in decode_results {
-            if let Some(totals) = &mut selected_dosage_totals {
-                totals.extend(decode_result.selected_dosage_totals);
-            }
-        }
-        Ok(selected_dosage_totals)
+impl BgenReadSession<'_> {
+    /// Close a delivery session after verifying that its mapped source stayed stable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the opened BGEN changed during genotype delivery.
+    pub fn finish(self) -> Result<(), BgenError> {
+        self.reader.ensure_source_unchanged("BGEN source changed while genotype delivery was in progress.")
     }
 }
 

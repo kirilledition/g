@@ -7,15 +7,19 @@ import typing
 import jax
 import jax.numpy as jnp
 
-from g.compute.common import dtype as compute_dtype
 from g.compute.common import genotype, linalg, pvalue
 from g.compute.common import result as association_result
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
 from g.compute.regenie2_binary import state as regenie2_binary_state
 
 if typing.TYPE_CHECKING:
-    from g import types
     from g.compute.regenie2_binary import result as regenie2_binary_result
+
+SCORE_STATIC_ARGNAMES = (
+    "firth_candidate_p_threshold",
+    "minimum_variance",
+    "relative_variance_tolerance",
+)
 
 
 def compute_multi_binary_score_test_chunk_variant_major(
@@ -25,7 +29,6 @@ def compute_multi_binary_score_test_chunk_variant_major(
     minimum_variance: float,
     relative_variance_tolerance: float,
     native_genotype_mean: jax.Array | None,
-    score_dtype: types.FloatingPointDtype,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Compute batched binary score tests for trait-major states and variant-major genotypes.
 
@@ -36,16 +39,12 @@ def compute_multi_binary_score_test_chunk_variant_major(
         minimum_variance: Absolute variance floor.
         relative_variance_tolerance: Relative variance floor multiplier.
         native_genotype_mean: Optional native per-variant genotype mean.
-        score_dtype: Floating-point dtype for score-test computation.
 
     Returns:
         Trait-major score-test result for the chunk.
 
     """
-    raw_genotype_matrix_by_variant = jnp.asarray(
-        genotype_matrix_by_variant,
-        dtype=compute_dtype.resolve_jax_dtype(score_dtype),
-    )
+    raw_genotype_matrix_by_variant = jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32)
     genotype_mean = genotype.compute_diploid_genotype_mean(
         raw_genotype_matrix_by_variant,
         native_genotype_mean,
@@ -140,3 +139,43 @@ def compute_multi_binary_score_test_chunk_variant_major(
         log10_p_value=log10_p_value,
         correction_code=correction_code,
     )
+
+
+compute_multi_binary_score_test_variant_major = jax.jit(
+    compute_multi_binary_score_test_chunk_variant_major,
+    static_argnames=SCORE_STATIC_ARGNAMES,
+)
+
+compute_multi_binary_score_test_variant_major_donating_inputs = jax.jit(
+    compute_multi_binary_score_test_chunk_variant_major,
+    static_argnames=SCORE_STATIC_ARGNAMES,
+    donate_argnames=("native_genotype_mean",),
+)
+
+
+def compute_multi_binary_score_test_packed8_core(
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState,
+    packed_probability_pairs_by_variant: jax.Array,
+    firth_candidate_p_threshold: float | None,
+    minimum_variance: float,
+    relative_variance_tolerance: float,
+    native_genotype_mean: jax.Array | None,
+) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+    """Decode packed8 genotypes and compute binary score statistics."""
+    return compute_multi_binary_score_test_chunk_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+            packed_probability_pairs_by_variant
+        ),
+        firth_candidate_p_threshold=firth_candidate_p_threshold,
+        minimum_variance=minimum_variance,
+        relative_variance_tolerance=relative_variance_tolerance,
+        native_genotype_mean=native_genotype_mean,
+    )
+
+
+compute_multi_binary_score_test_packed8_donating_inputs = jax.jit(
+    compute_multi_binary_score_test_packed8_core,
+    static_argnames=SCORE_STATIC_ARGNAMES,
+    donate_argnames=("native_genotype_mean",),
+)

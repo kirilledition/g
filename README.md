@@ -4,9 +4,9 @@
 [![Science Monthly](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml/badge.svg)](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml)
 
 `g` is a pre-release GWAS engine for BGEN-backed REGENIE Step 2 association
-scans. It exposes a REGENIE-style CLI, TOML configuration, and a small Python
-API while using Rust for native file handling and JAX for quantitative and
-binary association kernels.
+scans. It exposes a REGENIE-style CLI and TOML configuration, uses Rust for
+native file handling, and uses JAX for quantitative and binary association
+kernels. Python embedding is not a supported API.
 
 `g` does not implement REGENIE Step 1. Use upstream `regenie` to produce Step 1
 prediction lists, then use `g` for Step 2 scans.
@@ -17,11 +17,11 @@ prediction lists, then use `g` for Step 2 scans.
 | --- | --- |
 | Quantitative REGENIE Step 2 (`--qt`) | Primary supported workflow |
 | Binary score-test Step 2 (`--bt`) | Supported, evolving |
-| Binary approximate Firth fallback (`--bt --firth --approx`) | Implemented, parity and performance sensitive |
+| Binary approximate Firth fallback (`--bt --binary-fallback firth_approximate`) | Implemented, parity and performance sensitive |
 | REGENIE Step 1 | Not implemented |
 | BGEN 1.2 input | Supported |
-| BED/PGEN input | Recognized, not implemented |
-| Output | Arrow, Parquet, and REGENIE Step 2-style text artifacts |
+| BED/PGEN input | Unsupported; absent from the CLI and rejected as unknown |
+| Output | Chunked Parquet datasets only |
 | GPU execution | Supported through JAX when the environment is configured |
 
 ## Install
@@ -43,20 +43,19 @@ For GPU installs, cluster installs, and development setup, use
 
 ```bash
 uv run g regenie \
-  --step 2 \
   --qt \
   --bgen /path/to/genotypes.bgen \
   --sample /path/to/genotypes.sample \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_name \
   --covarFile /path/to/covariates.tsv \
-  --covarColList age,sex \
+  --covarCol age --covarCol sex \
   --pred /path/to/regenie_step1_pred.list \
   --out /path/to/output/g_regenie2
 ```
 
 See [Quickstart](documentation/public/quickstart.md) for quantitative, binary,
-approximate-Firth, GPU, and REGENIE-text examples.
+approximate-Firth, multi-phenotype, GPU, and Parquet-output examples.
 
 ## Documentation Map
 

@@ -9,14 +9,14 @@ use crate::telemetry_session::{TelemetryEventCounterState, TelemetryWriterCounte
 use super::line::TelemetryLineWriter;
 
 #[derive(Clone)]
-pub struct TelemetryWriterFactory {
+pub(crate) struct TelemetryWriterFactory {
     writer: NonBlocking,
     event_counter_state: Arc<TelemetryEventCounterState>,
 }
 
 impl TelemetryWriterFactory {
     #[must_use]
-    pub fn new(writer: NonBlocking, event_counter_state: TelemetryEventCounterState) -> Self {
+    pub(crate) fn new(writer: NonBlocking, event_counter_state: TelemetryEventCounterState) -> Self {
         Self { writer, event_counter_state: Arc::new(event_counter_state) }
     }
 
@@ -25,14 +25,14 @@ impl TelemetryWriterFactory {
     /// # Errors
     ///
     /// Returns an I/O error when the writer cannot append the line.
-    pub fn write_json_line(&self, json_line: &str) -> io::Result<()> {
+    pub(crate) fn write_json_line(&self, json_line: &str) -> io::Result<()> {
         debug_assert!(json_line.ends_with('\n'), "serialized telemetry records must end with a newline");
         let mut line_writer = self.make_writer();
         line_writer.write_all(json_line.as_bytes())
     }
 
     #[must_use]
-    pub fn counter_snapshot(&self) -> TelemetryWriterCounterSnapshot {
+    pub(crate) fn counter_snapshot(&self) -> TelemetryWriterCounterSnapshot {
         self.event_counter_state.counter_snapshot(self.writer.error_counter().dropped_lines())
     }
 }

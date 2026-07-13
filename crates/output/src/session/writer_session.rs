@@ -15,25 +15,7 @@ use super::worker_pool::{OutputWriteCompletionTracker, OutputWriterPool};
 pub(super) struct OutputWriterConfig {
     pub(super) run_directory: PathBuf,
     pub(super) parts_directory: PathBuf,
-    pub(super) chunks_per_parquet_file: usize,
     pub(super) collect_stage_timings: bool,
-}
-
-impl OutputWriterConfig {
-    pub(crate) fn from_plan(
-        run_directory: PathBuf,
-        parts_directory: PathBuf,
-        output_plan: &g_plan::OutputPlan,
-        collect_stage_timings: bool,
-    ) -> Result<Self, OutputError> {
-        Ok(Self {
-            run_directory,
-            parts_directory,
-            chunks_per_parquet_file: usize::try_from(output_plan.chunks_per_parquet_file)
-                .map_err(OutputError::runtime)?,
-            collect_stage_timings,
-        })
-    }
 }
 
 pub struct OutputWriterSession {
@@ -48,26 +30,20 @@ pub struct OutputWriterSession {
 
 #[allow(clippy::missing_errors_doc)]
 impl OutputWriterSession {
-    fn new_with_writer_pool(
-        config: OutputWriterConfig,
-        writer_pool: Arc<OutputWriterPool>,
-    ) -> Result<Self, OutputError> {
-        if config.chunks_per_parquet_file == 0 {
-            return Err(OutputError::InvalidInput("Chunks per Parquet file must be at least 1.".to_string()));
-        }
+    fn new_with_writer_pool(config: OutputWriterConfig, writer_pool: Arc<OutputWriterPool>) -> Self {
         let worker_error = Arc::new(Mutex::new(None));
         let worker_commits = Arc::new(Mutex::new(Vec::new()));
         let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
         let completion_tracker = OutputWriteCompletionTracker::new();
-        Ok(Self {
-            pending_chunks: Mutex::new(Some(Vec::with_capacity(config.chunks_per_parquet_file))),
+        Self {
+            pending_chunks: Mutex::new(Some(Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE))),
             writer_pool,
             worker_error,
             worker_commits,
             stage_timings,
             completion_tracker,
             config: Arc::new(config),
-        })
+        }
     }
 
     pub(crate) fn finish(&self) -> Result<(), OutputError> {
@@ -144,8 +120,8 @@ impl OutputWriterSession {
                 .as_mut()
                 .ok_or_else(|| OutputError::Runtime("Rust output writer session is already closed.".to_string()))?;
             pending_chunks.push(job);
-            (pending_chunks.len() >= self.config.chunks_per_parquet_file).then(|| {
-                let chunks = std::mem::replace(pending_chunks, Vec::with_capacity(self.config.chunks_per_parquet_file));
+            (pending_chunks.len() >= crate::CHUNKS_PER_PARQUET_FILE).then(|| {
+                let chunks = std::mem::replace(pending_chunks, Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE));
                 build_chunk_write_batch(chunks)
             })
         };
@@ -267,7 +243,7 @@ fn build_chunk_write_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2Chu
 ///
 /// Returns an error when the directory vector lengths differ, writer settings
 /// are invalid, or a writer pool cannot be created.
-pub fn create_output_writer_sessions(
+pub(crate) fn create_output_writer_sessions(
     run_directories: Vec<PathBuf>,
     parts_directories: Vec<PathBuf>,
     output_plan: &g_plan::OutputPlan,
@@ -283,31 +259,16 @@ pub fn create_output_writer_sessions(
     if run_directories.is_empty() {
         return Ok(Vec::new());
     }
-    let configs = run_directories
+    let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
+    let writer_pool = OutputWriterPool::new(writer_thread_count, crate::WRITER_QUEUE_DEPTH)?;
+    Ok(run_directories
         .into_iter()
         .zip(parts_directories)
         .map(|(run_directory, parts_directory)| {
-            OutputWriterConfig::from_plan(run_directory, parts_directory, output_plan, collect_stage_timings)
+            let config = OutputWriterConfig { run_directory, parts_directory, collect_stage_timings };
+            OutputWriterSession::new_with_writer_pool(config, Arc::clone(&writer_pool))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
-    let writer_queue_depth = usize::try_from(output_plan.writer_queue_depth).map_err(OutputError::runtime)?;
-    create_output_writer_sessions_from_configs(configs, writer_thread_count, writer_queue_depth)
-}
-
-pub(crate) fn create_output_writer_sessions_from_configs(
-    configs: Vec<OutputWriterConfig>,
-    writer_thread_count: usize,
-    writer_queue_depth: usize,
-) -> Result<Vec<OutputWriterSession>, OutputError> {
-    if configs.is_empty() {
-        return Ok(Vec::new());
-    }
-    let writer_pool = OutputWriterPool::new(writer_thread_count, writer_queue_depth)?;
-    configs
-        .into_iter()
-        .map(|config| OutputWriterSession::new_with_writer_pool(config, Arc::clone(&writer_pool)))
-        .collect()
+        .collect())
 }
 
 /// Finish output writer sessions, optionally in bounded parallel batches.
@@ -316,7 +277,7 @@ pub(crate) fn create_output_writer_sessions_from_configs(
 ///
 /// Returns an error when a session cannot be closed, a writer task failed, a
 /// manifest commit fails or a finish thread panics.
-pub fn finish_output_writer_sessions(
+pub(crate) fn finish_output_writer_sessions(
     writer_sessions: &[&OutputWriterSession],
     thread_count: usize,
 ) -> Result<(), OutputError> {
@@ -338,7 +299,7 @@ pub fn finish_output_writer_sessions(
 ///
 /// Returns an error when a session cannot be closed, a writer task failed, a
 /// manifest update fails, or an interrupted-finish thread panics.
-pub fn finish_interrupted_output_writer_sessions(
+pub(crate) fn finish_interrupted_output_writer_sessions(
     writer_sessions: &[&OutputWriterSession],
     thread_count: usize,
     signal_name: &str,

@@ -10,31 +10,28 @@ use crate::error::{GenotypeError, GenotypeResult};
 pub(crate) fn plan_chromosome_homogeneous_chunks(
     variant_count: usize,
     chunk_size: usize,
-    variant_limit: Option<usize>,
     chromosome_boundary_indices: &[usize],
     committed_chunk_identifiers: &BTreeSet<usize>,
 ) -> GenotypeResult<Vec<ChunkSpec>> {
     if chunk_size == 0 {
         return Err(GenotypeError::InvalidInput("Chunk size must be positive.".to_string()));
     }
-    let total_variant_count = variant_limit.map_or(variant_count, |limit| limit.min(variant_count));
-    if total_variant_count == 0 {
+    if variant_count == 0 {
         return Ok(Vec::new());
     }
 
-    let normalized_boundaries = normalize_chromosome_boundaries(chromosome_boundary_indices, total_variant_count)?;
+    let normalized_boundaries = normalize_chromosome_boundaries(chromosome_boundary_indices, variant_count)?;
     let mut chunk_specs = Vec::new();
-    let mut variant_start = 0;
-    while variant_start < total_variant_count {
-        let variant_stop = total_variant_count.min(variant_start + chunk_size);
-        append_chromosome_homogeneous_subchunks(
-            &mut chunk_specs,
-            variant_start,
-            variant_stop,
-            &normalized_boundaries,
-            committed_chunk_identifiers,
-        );
-        variant_start = variant_stop;
+    for chromosome_bounds in normalized_boundaries.windows(2) {
+        let chromosome_stop = chromosome_bounds[1];
+        let mut variant_start = chromosome_bounds[0];
+        while variant_start < chromosome_stop {
+            let variant_stop = chromosome_stop.min(variant_start.saturating_add(chunk_size));
+            if !committed_chunk_identifiers.contains(&variant_start) {
+                chunk_specs.push(ChunkSpec { variant_start_index: variant_start, variant_stop_index: variant_stop });
+            }
+            variant_start = variant_stop;
+        }
     }
     Ok(chunk_specs)
 }
@@ -60,29 +57,4 @@ fn normalize_chromosome_boundaries(
         ));
     }
     Ok(boundaries)
-}
-
-fn append_chromosome_homogeneous_subchunks(
-    chunk_specs: &mut Vec<ChunkSpec>,
-    variant_start: usize,
-    variant_stop: usize,
-    chromosome_boundary_indices: &[usize],
-    committed_chunk_identifiers: &BTreeSet<usize>,
-) {
-    let mut current_start = variant_start;
-    for boundary_index in chromosome_boundary_indices {
-        if *boundary_index <= current_start {
-            continue;
-        }
-        if *boundary_index >= variant_stop {
-            break;
-        }
-        if !committed_chunk_identifiers.contains(&current_start) {
-            chunk_specs.push(ChunkSpec { variant_start_index: current_start, variant_stop_index: *boundary_index });
-        }
-        current_start = *boundary_index;
-    }
-    if current_start != variant_stop && !committed_chunk_identifiers.contains(&current_start) {
-        chunk_specs.push(ChunkSpec { variant_start_index: current_start, variant_stop_index: variant_stop });
-    }
 }

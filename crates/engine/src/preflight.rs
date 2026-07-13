@@ -3,11 +3,9 @@
 use nalgebra::DMatrix;
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
-pub enum PreflightError {
+pub(crate) enum PreflightError {
     #[error("BGEN input contains no variants.")]
     EmptyBgenInput,
-    #[error("BGEN scan contains no variants.")]
-    EmptyBgenScan,
     #[error("Phenotype matrix must contain at least one trait.")]
     EmptyPhenotypeTraitSet,
     #[error("Phenotype matrix must contain at least one sample.")]

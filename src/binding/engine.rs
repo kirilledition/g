@@ -4,13 +4,17 @@
 
 use numpy::ndarray::{Array2, Array3, Ix2};
 use numpy::{
-    IntoPyArray, PyArray, PyArray1, PyArrayDescrMethods, PyArrayMethods, PyUntypedArray, PyUntypedArrayMethods, dtype,
+    Element, IntoPyArray, PyArray, PyArray1, PyArrayDescrMethods, PyArrayMethods, PyReadonlyArray2, PyUntypedArray,
+    PyUntypedArrayMethods, dtype,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 use g_engine as native_engine;
+use g_genotype as native_genotype;
+use g_input as native_input;
+use g_output as native_output;
 
 /// Private adapter implementing the Python-free engine contract.
 pub(crate) struct PyJaxBackend {
@@ -162,13 +166,15 @@ impl native_engine::AssociationBackend for PyJaxBackend {
     fn prepare_chromosome(
         &self,
         group: &Self::GroupState,
-        predictions: native_engine::TraitMajorMatrix,
+        predictions: native_input::ChromosomePredictionMatrix,
     ) -> Result<native_engine::PreparedChromosome<Self::ChromosomeState>, Self::Error> {
         Python::attach(|py| {
-            let prediction_matrix =
-                Array2::from_shape_vec((predictions.trait_count, predictions.sample_count), predictions.values)
-                    .expect("engine-validated prediction matrix shape")
-                    .into_pyarray(py);
+            let prediction_matrix = Array2::from_shape_vec(
+                (predictions.trait_count, predictions.sample_count),
+                predictions.prediction_values,
+            )
+            .expect("input-validated prediction matrix shape")
+            .into_pyarray(py);
             let state = self
                 .backend
                 .bind(py)
@@ -223,7 +229,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
         result: Self::DeviceResult,
         active_trait_indices: Option<&[usize]>,
         logical_variant_count: usize,
-    ) -> Result<native_engine::HostAssociationBatch, Self::Error> {
+    ) -> Result<native_output::Regenie2StatisticBatch, Self::Error> {
         Python::attach(|py| {
             let active_trait_indices = active_trait_indices.map(|indices| {
                 indices
@@ -236,7 +242,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
             let materialized = self
                 .backend
                 .bind(py)
-                .call_method1("materialize_batch", (result, active_trait_indices))
+                .call_method1("materialize_batch", (result, active_trait_indices, logical_variant_count))
                 .map_err(PyJaxBackendError::Python)?;
             parse_host_association_batch(py, &materialized, logical_variant_count).map_err(PyJaxBackendError::Python)
         })
@@ -250,7 +256,7 @@ fn compute_linear_batch(
     input: native_engine::GenotypeBatchInput,
 ) -> Result<Py<PyAny>, PyJaxBackendError> {
     let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_engine::GenotypeBatchStatistics { genotype_mean, imputed_dosage_square_sum, sparse_candidate_mask: _ } =
+    let native_genotype::ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum, sparse_candidate_mask: _ } =
         statistics;
     let imputed_dosage_square_sum = imputed_dosage_square_sum
         .ok_or_else(|| {
@@ -273,7 +279,7 @@ fn compute_binary_score_batch(
     input: native_engine::GenotypeBatchInput,
 ) -> Result<Py<PyAny>, PyJaxBackendError> {
     let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_engine::GenotypeBatchStatistics {
+    let native_genotype::ChunkComputeStatistics {
         genotype_mean,
         imputed_dosage_square_sum: _,
         sparse_candidate_mask: _,
@@ -292,7 +298,7 @@ fn compute_binary_firth_batch(
     input: native_engine::GenotypeBatchInput,
 ) -> Result<Py<PyAny>, PyJaxBackendError> {
     let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_engine::GenotypeBatchStatistics { genotype_mean, imputed_dosage_square_sum: _, sparse_candidate_mask } =
+    let native_genotype::ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum: _, sparse_candidate_mask } =
         statistics;
     let sparse_candidate_mask = sparse_candidate_mask
         .ok_or_else(|| {
@@ -310,12 +316,12 @@ fn compute_binary_firth_batch(
 
 fn into_python_genotype_batch(
     py: Python<'_>,
-    genotypes: native_engine::OwnedGenotypeBuffer,
+    genotypes: native_genotype::OwnedGenotypeBuffer,
     variant_count: usize,
     sample_count: usize,
 ) -> PythonGenotypeBatch {
     match genotypes {
-        native_engine::OwnedGenotypeBuffer::Dosage(values) => PythonGenotypeBatch {
+        native_genotype::OwnedGenotypeBuffer::Dosage(values) => PythonGenotypeBatch {
             method_name: "compute_dosage_batch",
             values: Array2::from_shape_vec((variant_count, sample_count), values)
                 .expect("engine-validated dosage matrix shape")
@@ -323,7 +329,7 @@ fn into_python_genotype_batch(
                 .into_any()
                 .unbind(),
         },
-        native_engine::OwnedGenotypeBuffer::Packed8(values) => PythonGenotypeBatch {
+        native_genotype::OwnedGenotypeBuffer::Packed8(values) => PythonGenotypeBatch {
             method_name: "compute_packed8_batch",
             values: Array3::from_shape_vec((variant_count, sample_count, 2), values)
                 .expect("engine-validated packed8 matrix shape")
@@ -338,7 +344,7 @@ fn parse_host_association_batch(
     py: Python<'_>,
     payload: &Bound<'_, PyAny>,
     logical_variant_count: usize,
-) -> PyResult<native_engine::HostAssociationBatch> {
+) -> PyResult<native_output::Regenie2StatisticBatch> {
     let beta_object = payload.getattr("beta")?;
     let standard_error_object = payload.getattr("standard_error")?;
     let chi_squared_object = payload.getattr("chi_squared")?;
@@ -375,84 +381,55 @@ fn parse_host_association_batch(
         }
     }
     let (trait_count, materialized_variant_count) = (expected_shape[0], expected_shape[1]);
-    if logical_variant_count > materialized_variant_count {
+    if logical_variant_count != materialized_variant_count {
         return Err(PyValueError::new_err(format!(
-            "logical variant count {logical_variant_count} exceeds materialized variant count {materialized_variant_count}."
+            "materialized variant count {materialized_variant_count} does not match logical variant count {logical_variant_count}."
         )));
     }
     let correction_code_object = payload.getattr("correction_code")?;
-    let correction_codes = if correction_code_object.is_none() {
+    let correction_code = if correction_code_object.is_none() {
         None
     } else {
         Some(parse_correction_codes(
             py,
             correction_code_object.cast::<PyUntypedArray>()?,
             trait_count,
-            materialized_variant_count,
             logical_variant_count,
         )?)
     };
-    Ok(native_engine::HostAssociationBatch {
+    Ok(native_output::Regenie2StatisticBatch {
         trait_count,
         variant_count: logical_variant_count,
-        beta: trim_trait_major_values(beta.as_slice()?, trait_count, materialized_variant_count, logical_variant_count),
-        standard_error: trim_trait_major_values(
-            standard_error.as_slice()?,
-            trait_count,
-            materialized_variant_count,
-            logical_variant_count,
-        ),
-        chi_squared: trim_trait_major_values(
-            chi_squared.as_slice()?,
-            trait_count,
-            materialized_variant_count,
-            logical_variant_count,
-        ),
-        log10_p_value: trim_trait_major_values(
-            log10_p_value.as_slice()?,
-            trait_count,
-            materialized_variant_count,
-            logical_variant_count,
-        ),
-        correction_codes,
+        beta: copy_array_values(&beta),
+        standard_error: copy_array_values(&standard_error),
+        chi_squared: copy_array_values(&chi_squared),
+        log10_p_value: copy_array_values(&log10_p_value),
+        correction_code,
     })
 }
 
-fn trim_trait_major_values<Value: Copy>(
-    values: &[Value],
-    trait_count: usize,
-    materialized_variant_count: usize,
-    logical_variant_count: usize,
-) -> Vec<Value> {
-    if logical_variant_count == materialized_variant_count {
-        return values.to_vec();
+fn copy_array_values<ElementType: Element + Copy>(values: &PyReadonlyArray2<'_, ElementType>) -> Vec<ElementType> {
+    match values.as_slice() {
+        Ok(contiguous_values) => contiguous_values.to_vec(),
+        Err(_) => values.as_array().iter().copied().collect(),
     }
-    let output_value_count = trait_count
-        .checked_mul(logical_variant_count)
-        .expect("logical result shape is bounded by the materialized shape");
-    let mut output = Vec::with_capacity(output_value_count);
-    for trait_values in values.chunks_exact(materialized_variant_count) {
-        output.extend_from_slice(&trait_values[..logical_variant_count]);
-    }
-    output
 }
 
 fn parse_correction_codes(
     py: Python<'_>,
     values: &Bound<'_, PyUntypedArray>,
     trait_count: usize,
-    materialized_variant_count: usize,
     logical_variant_count: usize,
 ) -> PyResult<Vec<u8>> {
     if !values.dtype().is_equiv_to(&dtype::<u8>(py)) {
         return Err(PyValueError::new_err("correction_code must use uint8 dtype."));
     }
     let values = values.cast::<PyArray<u8, Ix2>>()?.readonly();
-    if values.shape() != [trait_count, materialized_variant_count] {
+    if values.shape() != [trait_count, logical_variant_count] {
         return Err(PyValueError::new_err(format!(
-            "correction_code shape {:?} does not match statistic shape ({trait_count}, {materialized_variant_count}).",
+            "correction_code shape {:?} does not match statistic shape ({trait_count}, {logical_variant_count}).",
             values.shape()
         )));
     }
-    Ok(trim_trait_major_values(values.as_slice()?, trait_count, materialized_variant_count, logical_variant_count))
+    Ok(copy_array_values(&values))
 }

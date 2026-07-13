@@ -42,7 +42,7 @@ custom-kernel profiling and binary benchmark diagnostics. See
 - Group phenotypes by identical sample, covariate, and prediction alignment so
   multi-phenotype runs can preserve per-trait semantics while reducing BGEN
   rereads.
-- Keep AVX2 as the production SIMD target for trusted BGEN decode and
+- Keep AVX2 as the production SIMD target for validated packed8 BGEN decode and
   preprocessing. AVX-512 and arbitrary selected-subset SIMD are deferred unless
   new measurements justify them.
 - Use native genotype sums and square sums in linear and binary kernels to

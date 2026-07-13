@@ -16,7 +16,7 @@ struct OutputWriteTask {
     worker_error: Arc<Mutex<Option<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
-    completion_tracker: OutputWriteCompletionTracker,
+    completion_guard: OutputWriteCompletionGuard,
 }
 
 pub(super) struct OutputWriterPool {
@@ -59,6 +59,9 @@ impl OutputWriterPool {
         stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
         completion_tracker: &OutputWriteCompletionTracker,
     ) -> Result<(), OutputError> {
+        let Some(sender) = self.sender.as_ref() else {
+            return Err(OutputError::Runtime("Rust output writer pool is closed.".to_string()));
+        };
         completion_tracker.increment()?;
         let write_task = OutputWriteTask {
             write_batch,
@@ -66,16 +69,9 @@ impl OutputWriterPool {
             worker_error: Arc::clone(worker_error),
             worker_commits: Arc::clone(worker_commits),
             stage_timings: Arc::clone(stage_timings),
-            completion_tracker: completion_tracker.clone(),
+            completion_guard: OutputWriteCompletionGuard { completion_tracker: completion_tracker.clone() },
         };
-        let Some(sender) = self.sender.as_ref() else {
-            completion_tracker.decrement();
-            return Err(OutputError::Runtime("Rust output writer pool is closed.".to_string()));
-        };
-        sender.send(write_task).map_err(|error| {
-            completion_tracker.decrement();
-            OutputError::runtime(error)
-        })
+        sender.send(write_task).map_err(OutputError::runtime)
     }
 }
 
@@ -146,13 +142,16 @@ pub(super) fn record_worker_error(worker_error: &Arc<Mutex<Option<String>>>, err
 #[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_worker(receiver: Receiver<OutputWriteTask>) {
     while let Ok(output_write_task) = receiver.recv() {
-        run_output_write_task(output_write_task);
+        let worker_error = Arc::clone(&output_write_task.worker_error);
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_output_write_task(output_write_task))).is_err()
+        {
+            record_worker_error(&worker_error, "Rust output writer panicked.".to_string());
+        }
     }
 }
 
 fn run_output_write_task(output_write_task: OutputWriteTask) {
-    let _completion_guard =
-        OutputWriteCompletionGuard { completion_tracker: output_write_task.completion_tracker.clone() };
+    let _completion_guard = output_write_task.completion_guard;
     let write_result = write_regenie_step2_chunk_job(
         &output_write_task.config.parts_directory,
         output_write_task.write_batch,

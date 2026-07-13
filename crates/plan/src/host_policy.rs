@@ -7,64 +7,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::enums::{MultiPhenotypeSampleMode, PhenotypeComputeGroupMode};
 use crate::request::PhenotypeComputeGroup;
 
 const PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH: usize = 80;
-
-pub fn build_phenotype_compute_groups(
-    phenotype_names: &[String],
-    multi_phenotype_sample_mode: MultiPhenotypeSampleMode,
-) -> Result<Vec<PhenotypeComputeGroup>, String> {
-    if phenotype_names.is_empty() {
-        return Err("At least one phenotype is required for execution planning.".to_string());
-    }
-    if phenotype_names.len() == 1 {
-        return Ok(vec![PhenotypeComputeGroup {
-            group_mode: PhenotypeComputeGroupMode::SinglePhenotype,
-            phenotype_indices: vec![0],
-            phenotype_names: phenotype_names.to_vec(),
-            sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
-            sample_set_fingerprint: None,
-            covariate_design_fingerprint: None,
-            prediction_alignment_fingerprint: None,
-        }]);
-    }
-    let phenotype_indices = (0..phenotype_names.len())
-        .map(|phenotype_index| {
-            u32::try_from(phenotype_index).map_err(|_| "Phenotype count exceeds native u32 capacity.".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if multi_phenotype_sample_mode == MultiPhenotypeSampleMode::CompleteCase {
-        return Ok(vec![PhenotypeComputeGroup {
-            group_mode: PhenotypeComputeGroupMode::CompleteCase,
-            phenotype_indices,
-            phenotype_names: phenotype_names.to_vec(),
-            sample_mode: MultiPhenotypeSampleMode::CompleteCase,
-            sample_set_fingerprint: None,
-            covariate_design_fingerprint: None,
-            prediction_alignment_fingerprint: None,
-        }]);
-    }
-    phenotype_names
-        .iter()
-        .enumerate()
-        .map(|(phenotype_index, phenotype_name)| {
-            Ok(PhenotypeComputeGroup {
-                group_mode: PhenotypeComputeGroupMode::PerPhenotypeCompatible,
-                phenotype_indices: vec![
-                    u32::try_from(phenotype_index)
-                        .map_err(|_| "Phenotype count exceeds native u32 capacity.".to_string())?,
-                ],
-                phenotype_names: vec![phenotype_name.clone()],
-                sample_mode: MultiPhenotypeSampleMode::PerPhenotype,
-                sample_set_fingerprint: None,
-                covariate_design_fingerprint: None,
-                prediction_alignment_fingerprint: None,
-            })
-        })
-        .collect()
-}
 
 /// Build a deterministic identifier for one phenotype compute group.
 ///
@@ -76,20 +21,22 @@ pub fn build_phenotype_compute_group_id(phenotype_compute_group: &PhenotypeCompu
     let mut group_payload = BTreeMap::new();
     group_payload.insert(
         "covariate_design_fingerprint",
-        optional_string_value(phenotype_compute_group.covariate_design_fingerprint.as_deref()),
+        Value::String(phenotype_compute_group.covariate_design_fingerprint.clone()),
     );
     group_payload.insert("group_mode", Value::String(phenotype_compute_group.group_mode.as_str().to_string()));
     group_payload.insert("phenotype_indices", serde_json::json!(&phenotype_compute_group.phenotype_indices));
     group_payload.insert("phenotype_names", serde_json::json!(&phenotype_compute_group.phenotype_names));
     group_payload.insert(
+        "phenotype_design_fingerprint",
+        Value::String(phenotype_compute_group.phenotype_design_fingerprint.clone()),
+    );
+    group_payload.insert(
         "prediction_alignment_fingerprint",
-        optional_string_value(phenotype_compute_group.prediction_alignment_fingerprint.as_deref()),
+        Value::String(phenotype_compute_group.prediction_alignment_fingerprint.clone()),
     );
     group_payload.insert("sample_mode", Value::String(phenotype_compute_group.sample_mode.as_str().to_string()));
-    group_payload.insert(
-        "sample_set_fingerprint",
-        optional_string_value(phenotype_compute_group.sample_set_fingerprint.as_deref()),
-    );
+    group_payload
+        .insert("sample_set_fingerprint", Value::String(phenotype_compute_group.sample_set_fingerprint.clone()));
     let group_payload_bytes = serde_json::to_vec(&group_payload).expect("group payload serialization must succeed");
     hex::encode(Sha256::digest(group_payload_bytes))
 }
@@ -115,11 +62,4 @@ pub fn build_phenotype_output_directory_name(phenotype_index: u32, phenotype_nam
     let fallback_slug = if trimmed_slug.is_empty() { "phenotype".to_string() } else { trimmed_slug };
     let truncated_slug = fallback_slug.chars().take(PHENOTYPE_DIRECTORY_MAXIMUM_SLUG_LENGTH).collect::<String>();
     format!("trait_{phenotype_index:04}_{truncated_slug}")
-}
-
-fn optional_string_value(value: Option<&str>) -> Value {
-    match value {
-        Some(text) => Value::String(text.to_string()),
-        None => Value::Null,
-    }
 }

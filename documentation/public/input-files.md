@@ -14,11 +14,11 @@ CLI names and TOML mapping, see [CLI](cli.md) and [Configuration](configuration.
 | Input | CLI | TOML | Required |
 | --- | --- | --- | --- |
 | BGEN genotype file | `--bgen` | `[input].bgen` | Yes. |
-| Sample file | `--sample` | `[input].sample` | Required when the BGEN does not embed usable sample IDs. |
-| Phenotype table | `--phenoFile` | `[input].phenoFile` | Yes. |
-| Phenotype columns | `--phenoCol`, `--phenoColList` | `[input].phenoCol`, `[input].phenoColList` | Yes. |
-| Covariate table | `--covarFile` | `[input].covarFile` | Required when covariates are selected. |
-| Covariate columns | `--covarCol`, `--covarColList` | `[input].covarCol`, `[input].covarColList` | Required when covariates are selected. |
+| Sample file | `--sample` | `[input].sample` | Yes. |
+| Phenotype table | `--phenoFile` | `[input].pheno_file` | Yes. |
+| Phenotype columns | Repeated `--phenoCol` | `[input].pheno_columns` | Yes. |
+| Covariate table | `--covarFile` | `[input].covar_file` | Required when covariates are selected. |
+| Covariate columns | Repeated `--covarCol` | `[input].covar_columns` | Required when covariates are selected. |
 | Step 1 prediction list | `--pred` | `[input].pred` | Yes. |
 
 ## Genotypes
@@ -29,62 +29,56 @@ Supported:
 
 - BGEN 1.2 genotype input.
 - Oxford `.sample` files through `--sample`.
-- Embedded BGEN sample identifiers when present and valid for the selected
-  sample-key mode.
 
-`g regenie` follows REGENIE's BGEN sample behavior: when `--sample` is omitted,
-sample identifiers are read from the BGEN itself. Adjacent `.sample` files are
+`--sample` is required. Sample identities are loaded from that Oxford `.sample`
+file, not from identifiers embedded in the BGEN. Adjacent `.sample` files are
 not discovered implicitly.
 
-Recognized but not implemented:
+Unsupported options, which are absent from the CLI and rejected as unknown:
 
 - `--bed`
 - `--pgen`
 - variant filtering through `--extract` and `--exclude`
 - sample filtering through `--keep` and `--remove`
 
-The trusted BGEN fast path is controlled by:
-
-```toml
-[compute]
-trusted_no_missing_diploid = true
-trusted_bgen_validation_mode = "cache_on_miss"
-```
-
-Validation modes:
-
-| Mode | Meaning |
-| --- | --- |
-| `cache_on_miss` | Validate on cache miss, then reuse validation state. |
-| `force_validate` | Validate before each trusted fast-path use. |
-| `assume_validated` | Skip validation. Expert mode only. |
-
-Only use `assume_validated` when the exact input has already been checked by a
-workflow you trust.
+Eligible GPU runs select the packed8 fast path automatically, including
+multi-phenotype groups and groups with different aligned sample selections.
+Before using it, the engine validates that every BGEN variant is compatible
+with the no-missing diploid 8-bit representation. The scan also rejects invalid
+probability lengths, normalization sums, padding, reserved flags, and nonzero
+probabilities for missing samples before choosing a delivery format. Both typed
+outcomes—packed8 compatible and dosage required—are cached by a file-identity,
+timestamp, size, and dimension fingerprint under the user cache directory. The exact opened file is checked
+after indexing, before and after compatibility validation, and around genotype
+delivery, so a source changed during a run fails. Cache-directory lookup or persistence
+failures trigger an uncached scan and do not disable packed8. Otherwise-supported
+biallelic diploid Layout-2 variants with missing values, phased probabilities,
+or a bit depth other than 8 fall back to dosage delivery. Multiallelic,
+non-diploid, Zstandard-compressed, or otherwise unsupported input fails instead
+of falling back. Compatibility validation and packed8 selection are internal
+policies rather than configuration keys.
 
 ## Sample Identity
 
-Sample alignment uses the configured sample key mode:
+Sample alignment always uses the `(FID, IID)` pair. Both values must be
+non-empty, and each pair must be unique. There is no public IID-only matching
+mode. The same identity rule applies across the Oxford `.sample` file,
+phenotype rows, covariate rows, and prediction rows.
 
-| Mode | Required columns | Rule |
-| --- | --- | --- |
-| `iid` | `IID` | IIDs must be globally unique and non-empty. |
-| `fid_iid` | `FID`, `IID` | `(FID, IID)` pairs must be unique. |
-
-The same sample identity rule applies across BGEN sample IDs, phenotype rows,
-covariate rows, and prediction rows.
+The Oxford `.sample` header must contain `ID_1` and `ID_2`, and its following
+type row must mark both columns with type `0`. `ID_1` supplies `FID` and `ID_2`
+supplies `IID` for the other inputs. The columns may appear anywhere in the
+sample header; their names and types are required.
 
 ## Phenotypes And Covariates
 
 Phenotype and covariate tables are parsed by the native Rust path. Tables are
-expected to include `IID`; `FID` is also required when
-`[compute] sample_key_mode = "fid_iid"` is used.
+expected to include both `FID` and `IID`.
 
 Column selection rules:
 
-- Use either repeated `--phenoCol` or one `--phenoColList`, not both.
-- Use either repeated `--covarCol` or one `--covarColList`, not both.
-- `--phenoColList` and `--covarColList` are comma-delimited lists.
+- Repeat `--phenoCol` for each phenotype.
+- Repeat `--covarCol` for each covariate.
 - Multiple phenotypes write one output run per phenotype.
 
 Binary phenotypes use REGENIE-style coding:
@@ -95,15 +89,16 @@ Binary phenotypes use REGENIE-style coding:
 | `2` | Case, recoded to `1`. |
 
 Missing tokens include empty string, `NA`, `NaN`, `nan`, and `-9`.
-Rows must still physically contain each selected field: `IID`, `FID` when
-`[compute] sample_key_mode = "fid_iid"` is used, selected phenotype columns, and selected
-covariate columns. A structurally short row that ends before one of those
-columns fails instead of being treated as missing. Use an explicit empty field
-with the delimiter present, such as a trailing tab for the final selected
-column, when the intended value is missing.
+Rows must still physically contain each selected field: `FID`, `IID`, selected
+phenotype columns, and selected covariate columns. A structurally short row that
+ends before one of those columns fails instead of being treated as missing. Use
+an explicit empty field with the delimiter present, such as a trailing tab for
+the final selected column, when the intended value is missing.
+Empty `FID` or `IID` fields always fail, including on rows that do not match the
+sample file or would otherwise be excluded for missing phenotype or covariate
+values.
 
-Categorical covariates through `--catCovarList` are recognized but not
-implemented.
+`--catCovarList` is not accepted and fails as an unknown option.
 
 ## Step 1 Predictions
 
@@ -115,6 +110,10 @@ LOCO paths are resolved from the prediction-list directory. Run manifests record
 the prediction-list content hash and the content hash of each selected LOCO file
 for the phenotype or compatible compute group, so changing a referenced LOCO file
 prevents resume even when the prediction-list file itself is unchanged.
+
+Each LOCO header starts with `FID_IID`; every following sample token must encode
+non-empty FID and IID values separated by an underscore, and each resulting
+pair must be unique.
 
 Step 2 statistics depend on the prediction file, trait mode, covariates,
 chromosome, and aligned sample set. Changing the prediction list can change
@@ -145,7 +144,7 @@ This is a statistical choice, not only an execution strategy:
   (for strict per-trait comparability) or when missingness is nearly identical.
 
 `complete-case` can change test statistics when phenotype missingness differs across
-traits because it changes `sampleCount`, covariate projections, and LOCO alignment
+traits because it changes `sample_count`, covariate projections, and LOCO alignment
 for every phenotype in the command. In that situation, this mode can bias or lose
 power for phenotypes with trait-specific missingness patterns.
 
@@ -160,4 +159,4 @@ Performance implications:
 For full definitions and implementation details, see
 [Algorithm > Multi-Phenotype Behavior](algorithm.md#multi-phenotype-behavior) and
 [Configuration](configuration.md#cli-to-toml-mapping) for the exact
-setting name in CLI and TOML.
+TOML setting name.

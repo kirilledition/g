@@ -23,7 +23,7 @@ g-interface -> g-plan -> g-engine::execute_coordinated_run
         |                       +-> g-genotype-contracts
         |                       +-> g-runtime + g-output
         v
-PreparedRun::execute<AssociationBackend> + bounded pipeline
+PreparedRun::execute_with_progress<AssociationBackend, RunHooks> + bounded pipeline
         |
 four-operation PyO3 adapter
         |
@@ -42,9 +42,9 @@ typed arrays to Rust.
 | CLI parsing, TOML, defaults, validation | `g-interface` |
 | Immutable run contracts and host policy | `g-plan` |
 | Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
-| BGEN mmap/index/decode and genotype preprocessing | `g-genotype` |
+| BGEN mmap/index, immutable read sessions, decode/preprocessing, and owned decoded batches/buffers | `g-genotype` |
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
-| Host buffers, BGEN delivery primitives, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
+| BGEN delivery orchestration, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
 | Logging/telemetry transport, timing, Rayon state, SIGTERM | `g-runtime` |
 | CLI lifecycle, process/JAX policy, crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
@@ -57,15 +57,17 @@ application plan into concrete logging, telemetry, and timing resources,
 process-global runtime compatibility, terminal rendering, and JAX setup before
 the coarse engine invocation. `g-runtime` consumes only that generic resolved
 session policy; it does not import or interpret `g-plan`. `RunEngine` owns the shared plan
-and output manager; `PreparedRun` owns aligned groups, BGEN state, resume state, bounded
-scheduling, move-only backend buffers, reusable grouped-union source buffers,
-delivery, interruption, abort, and output completion. Input retains shared
+and output manager; `PreparedRun` owns aligned groups, BGEN state, resume state,
+bounded scheduling, move-only backend buffers, delivery, interruption, abort,
+and output completion. Input retains shared
 LOCO row indexes and compact alignment recipes, then materializes only the next
 post-resume chromosome. Group, genotype, and single-use LOCO matrices move
 directly into NumPy ownership. The binding
 retains only calls that attach to Python, hold opaque
 JAX objects, preserve a concrete `PyErr`, or label telemetry with the current
-Python thread.
+Python thread. It imports canonical genotype, input, and output payload types
+only to convert the private `AssociationBackend` boundary to and from NumPy;
+all services remain behind `g-engine` and `g-runner`.
 
 Engine resolves the prediction list once into an input-owned path catalog.
 Input indexing/alignment and output-manifest fingerprinting borrow that same
@@ -120,8 +122,8 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
 - First SIGINT/SIGTERM preserves resumable output; a second SIGTERM uses the
   operating system default action.
 - Unsupported REGENIE options are rejected, not silently adapted.
-- Rust host scientific buffers are `f32`; `score_dtype` controls JAX arithmetic
-  and result width after device transfer. Firth arithmetic is always `f64`.
+- Rust host scientific buffers, association scores, and persisted public
+  statistics are `f32`. Firth arithmetic is always `f64`.
 - Production exports are limited to `g._core.cli`.
 
 Detailed contracts:

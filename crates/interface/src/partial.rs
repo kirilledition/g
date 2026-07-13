@@ -144,8 +144,6 @@ impl PartialComputeConfig {
         let core = self.resolve_core_fields()?;
         let firth = self.resolve_firth_fields()?;
         let null_firth = self.resolve_null_firth_fields()?;
-        let genotype = self.resolve_genotype_fields()?;
-        let jax = self.resolve_jax_fields();
         Ok(GComputeConfigData {
             device: core.device,
             cpu_threads: core.cpu_threads,
@@ -180,8 +178,8 @@ impl PartialComputeConfig {
             null_firth_fallback_step_divisor: null_firth.fallback_step_divisor,
             null_firth_line_search_maximum_attempts: null_firth.line_search_maximum_attempts,
             null_firth_step_halving_scale: null_firth.step_halving_scale,
-            use_block_firth_math: genotype.use_block_firth_math,
-            jax_cache_dir: jax.cache_dir,
+            use_block_firth_math: required("use_block_firth_math", self.use_block_firth_math)?,
+            jax_cache_dir: self.jax_cache_dir.clone(),
         })
     }
 
@@ -271,16 +269,6 @@ impl PartialComputeConfig {
             step_halving_scale: required("null_firth_step_halving_scale", self.null_firth_step_halving_scale)?,
         })
     }
-
-    fn resolve_genotype_fields(&self) -> ConfigResult<ResolvedGenotypeFields> {
-        Ok(ResolvedGenotypeFields {
-            use_block_firth_math: required("use_block_firth_math", self.use_block_firth_math)?,
-        })
-    }
-
-    fn resolve_jax_fields(&self) -> ResolvedJaxFields {
-        ResolvedJaxFields { cache_dir: self.jax_cache_dir.clone() }
-    }
 }
 
 struct ResolvedComputeCoreFields {
@@ -323,14 +311,6 @@ struct ResolvedNullFirthFields {
     fallback_step_divisor: plan::PositiveF64,
     line_search_maximum_attempts: NonZeroU32,
     step_halving_scale: plan::StepScale,
-}
-
-struct ResolvedGenotypeFields {
-    use_block_firth_math: bool,
-}
-
-struct ResolvedJaxFields {
-    cache_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -21,7 +21,6 @@ struct ExecutionPlanPreparedTelemetryFields<'fields> {
     trait_type: &'fields str,
     phenotype_count: i64,
     chunk_size: i64,
-    variant_limit: Option<i64>,
     device: &'fields str,
 }
 
@@ -90,8 +89,6 @@ pub(crate) enum CoordinatedRunDetailError<BackendError, HookError> {
     ProcessedChunkCountOutOfRange,
     #[error("Association warning count exceeds native uint64 telemetry capacity.")]
     AssociationWarningCountOutOfRange,
-    #[error("Prepared run retained unresolved GPU genotype format.")]
-    UnresolvedGpuGenotypeFormat,
     #[error("Native run completed without a phenotype output.")]
     MissingPhenotypeOutput,
 }
@@ -175,9 +172,11 @@ where
     let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())
         .map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;
     let association_mode = run_plan.association_mode;
-    let trait_type = run_plan.analysis.trait_type;
-    let chunk_size = run_plan.analysis.chunk_size;
-    let variant_limit = run_plan.compute.variant_limit;
+    let trait_type = match association_mode {
+        g_plan::AssociationMode::Regenie2Linear => "quantitative",
+        g_plan::AssociationMode::Regenie2Binary => "binary",
+    };
+    let chunk_size = run_plan.chunk_size;
     let device = run_plan.compute.device;
     let single_phenotype_name =
         run_plan.phenotype_runs.first().filter(|_| phenotype_count == 1).map(|run| run.phenotype_name.clone());
@@ -197,14 +196,12 @@ where
     let association_backend_kind = match resolved_gpu_genotype_format {
         g_plan::GpuGenotypeFormat::Dosage => "jax_dosage",
         g_plan::GpuGenotypeFormat::Packed8 => "jax_packed8",
-        g_plan::GpuGenotypeFormat::Auto => return Err(CoordinatedRunDetailError::UnresolvedGpuGenotypeFormat),
     };
     let execution_plan_fields = ExecutionPlanPreparedTelemetryFields {
         association_mode: association_mode.as_str(),
-        trait_type: trait_type.as_str(),
+        trait_type,
         phenotype_count,
         chunk_size: i64::from(chunk_size),
-        variant_limit: variant_limit.map(i64::from),
         device: device.as_str(),
     };
     if telemetry_session.is_enabled() {

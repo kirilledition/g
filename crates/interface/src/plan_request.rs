@@ -5,19 +5,13 @@ use g_plan as plan;
 use super::resolved::RegenieConfigData;
 use super::{ConfigError, ConfigResult};
 
-const FIXED_ASSOCIATION_STAGING_DEPTH: u32 = 1;
-const FIXED_BGEN_DECODE_TILE_VARIANT_COUNT: u32 = 64;
-const FIXED_OUTPUT_CHUNKS_PER_PARQUET_FILE: u32 = 16;
-const FIXED_OUTPUT_WRITER_QUEUE_DEPTH: u32 = 16;
-const FIXED_TELEMETRY_QUEUE_SIZE: u32 = 65_536;
-
 /// Compile a resolved config into a native requested-run plan.
 ///
 /// # Errors
 ///
 /// Returns an error when required run inputs are absent or native planning
 /// policy rejects the requested correction/grouping configuration.
-pub fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPlan> {
+pub(crate) fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPlan> {
     let trait_type = config.trait_config.trait_type;
     let association_mode = match trait_type {
         plan::RegenieTraitType::Binary => plan::AssociationMode::Regenie2Binary,
@@ -26,19 +20,13 @@ pub fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan::RunPla
     let phenotype_names = config.input.pheno_columns.clone();
     Ok(plan::RunPlan {
         association_mode,
+        chunk_size: config.trait_config.bsize.get(),
         input: build_input_plan(config)?,
-        analysis: plan::AnalysisPlan { trait_type, chunk_size: config.trait_config.bsize.get() },
         compute: build_compute_plan(config),
         correction: build_correction_plan(config),
         output: build_output_plan(config)?,
-        runtime: build_runtime_plan(config),
-        diagnostics: build_diagnostics_plan(config),
+        telemetry: config.g_diagnostics.telemetry,
         phenotype_runs: build_phenotype_run_plans(&phenotype_names)?,
-        phenotype_compute_groups: plan::build_phenotype_compute_groups(
-            &phenotype_names,
-            config.g_compute.multi_phenotype_sample_mode,
-        )
-        .map_err(|error| ConfigError::new(error.clone()))?,
     })
 }
 
@@ -52,7 +40,6 @@ fn build_input_plan(config: &RegenieConfigData) -> ConfigResult<plan::InputPlan>
         prediction_list_path: require_config_path("--pred", config.input.pred.as_ref())?,
         covariate_path: config.input.covar_file.clone(),
         covariate_names: config.input.covar_columns.clone(),
-        sample_key_mode: plan::SampleKeyMode::FidIid,
     })
 }
 
@@ -67,13 +54,7 @@ fn build_compute_plan(config: &RegenieConfigData) -> plan::ComputePlan {
     plan::ComputePlan {
         device: config.g_compute.device,
         cpu_thread_count: config.g_compute.cpu_threads.map(std::num::NonZeroU32::get),
-        staging_depth: FIXED_ASSOCIATION_STAGING_DEPTH,
-        result_in_flight_limit: None,
-        variant_limit: None,
-        bgen_decode_tile_variant_count: FIXED_BGEN_DECODE_TILE_VARIANT_COUNT,
-        requested_gpu_genotype_format: plan::GpuGenotypeFormat::Auto,
-        trusted_no_missing_diploid: false,
-        trusted_bgen_validation_mode: plan::TrustedBgenValidationMode::CacheOnMiss,
+        jax_cache_directory: config.g_compute.jax_cache_dir.clone(),
         multi_phenotype_sample_mode: config.g_compute.multi_phenotype_sample_mode,
         kernels: plan::KernelPlan {
             linear: plan::LinearKernelPlan {
@@ -144,13 +125,9 @@ fn build_output_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputPla
     let output_run_root =
         config.g_output.output_run_directory.clone().unwrap_or_else(|| default_output_run_root(&output_prefix));
     Ok(plan::OutputPlan {
-        output_prefix,
         output_run_root,
         resume: config.g_output.resume,
-        resume_mode: plan::ResumeMode::Strict,
         writer_thread_count: config.g_output.writer_threads.get(),
-        writer_queue_depth: FIXED_OUTPUT_WRITER_QUEUE_DEPTH,
-        chunks_per_parquet_file: FIXED_OUTPUT_CHUNKS_PER_PARQUET_FILE,
     })
 }
 
@@ -158,44 +135,6 @@ fn default_output_run_root(output_prefix: &str) -> String {
     let output_prefix_path = Path::new(output_prefix);
     let output_name = output_prefix_path.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(output_prefix);
     output_prefix_path.with_file_name(format!("{output_name}.g")).display().to_string()
-}
-
-// Runtime plan
-
-#[must_use]
-fn build_runtime_plan(config: &RegenieConfigData) -> plan::RuntimePlan {
-    plan::RuntimePlan {
-        jax_cache_directory: config.g_compute.jax_cache_dir.clone(),
-        jax_matmul_precision: None,
-        persistent_cache_enabled: true,
-        persistent_cache_min_entry_size_bytes: -1,
-        persistent_cache_min_compile_time_seconds: 0,
-        xla_autotune_cache_enabled: false,
-        transfer_guard_enabled: false,
-    }
-}
-
-// Diagnostics plan
-
-#[must_use]
-fn build_diagnostics_plan(config: &RegenieConfigData) -> plan::DiagnosticsPlan {
-    let output_prefix = config.g_output.out.as_deref().expect("validated output prefix");
-    let output_run_root =
-        config.g_output.output_run_directory.clone().unwrap_or_else(|| default_output_run_root(output_prefix));
-    let log_directory = Path::new(&output_run_root).join("logs").display().to_string();
-    plan::DiagnosticsPlan {
-        telemetry: config.g_diagnostics.telemetry,
-        log_directory: Some(log_directory),
-        stage_timings_path: None,
-        log_filter: "info".to_string(),
-        log_file: None,
-        log_to_stderr: true,
-        profile_summary_path: None,
-        log_queue_size: FIXED_TELEMETRY_QUEUE_SIZE,
-        lossy_logging: true,
-        include_source_location: false,
-        include_span_events: false,
-    }
 }
 
 // Phenotype plans
@@ -208,7 +147,6 @@ fn build_phenotype_run_plans(phenotype_names: &[String]) -> ConfigResult<Vec<pla
             let output_index = u32::try_from(phenotype_index + 1)
                 .map_err(|_| ConfigError::new("Phenotype count exceeds native u32 capacity."))?;
             Ok(plan::PhenotypeRunPlan {
-                phenotype_index: output_index,
                 phenotype_name: phenotype_name.clone(),
                 output_directory_name: plan::build_phenotype_output_directory_name(output_index, phenotype_name),
             })

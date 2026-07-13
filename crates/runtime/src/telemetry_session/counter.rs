@@ -3,13 +3,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::Serialize;
 
 #[derive(Debug)]
-pub struct TelemetryEventCounterState {
+pub(crate) struct TelemetryEventCounterState {
     accepted_event_count: AtomicUsize,
     lossy: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
-pub struct TelemetryWriterCounterSnapshot {
+pub(crate) struct TelemetryWriterCounterSnapshot {
     pub accepted_event_count: u64,
     pub written_event_count: u64,
     pub dropped_event_count: u64,
@@ -19,11 +19,11 @@ pub struct TelemetryWriterCounterSnapshot {
 
 impl TelemetryEventCounterState {
     #[must_use]
-    pub const fn new(lossy: bool) -> Self {
+    pub(crate) const fn new(lossy: bool) -> Self {
         Self { accepted_event_count: AtomicUsize::new(0), lossy }
     }
 
-    pub fn record_event_count(&self, event_count: usize) {
+    pub(crate) fn record_event_count(&self, event_count: usize) {
         if event_count > 0 {
             let _result = self
                 .accepted_event_count
@@ -32,7 +32,7 @@ impl TelemetryEventCounterState {
     }
 
     #[must_use]
-    pub fn counter_snapshot(&self, queue_dropped_event_count: usize) -> TelemetryWriterCounterSnapshot {
+    pub(crate) fn counter_snapshot(&self, queue_dropped_event_count: usize) -> TelemetryWriterCounterSnapshot {
         let accepted_event_count = self.accepted_event_count.load(Ordering::Acquire);
         TelemetryWriterCounterSnapshot {
             accepted_event_count: supported_usize_to_u64(accepted_event_count),
@@ -46,7 +46,7 @@ impl TelemetryEventCounterState {
 
 impl TelemetryWriterCounterSnapshot {
     #[must_use]
-    pub const fn empty() -> Self {
+    pub(crate) const fn empty() -> Self {
         Self {
             accepted_event_count: 0,
             written_event_count: 0,

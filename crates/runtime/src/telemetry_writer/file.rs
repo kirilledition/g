@@ -8,7 +8,7 @@ use crate::telemetry_session::TelemetryEventCounterState;
 
 use super::{TelemetryWriterFactory, TelemetryWriterGuard};
 
-pub fn build_non_blocking_writer<Writer>(
+pub(crate) fn build_non_blocking_writer<Writer>(
     writer: Writer,
     thread_name: &str,
     log_queue_size: usize,
@@ -30,7 +30,7 @@ where
 /// # Errors
 ///
 /// Returns an I/O error when parent directory creation or file opening fails.
-pub fn build_log_file_writer(
+pub(crate) fn build_log_file_writer(
     path: &Path,
     log_queue_size: usize,
     log_lossy: bool,
@@ -47,7 +47,7 @@ pub fn build_log_file_writer(
 /// # Errors
 ///
 /// Returns an I/O error when file creation fails.
-pub fn build_telemetry_file_writer(
+pub(super) fn build_telemetry_file_writer(
     path: &Path,
     log_queue_size: usize,
     log_lossy: bool,

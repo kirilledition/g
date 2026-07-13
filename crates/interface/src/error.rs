@@ -3,7 +3,7 @@
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConfigError {
+pub(crate) struct ConfigError {
     message: String,
 }
 
@@ -21,4 +21,4 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-pub type ConfigResult<T> = Result<T, ConfigError>;
+pub(crate) type ConfigResult<T> = Result<T, ConfigError>;

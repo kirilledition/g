@@ -16,4 +16,4 @@ impl From<String> for InputError {
     }
 }
 
-pub type InputResult<T> = Result<T, InputError>;
+pub(crate) type InputResult<T> = Result<T, InputError>;

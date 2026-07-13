@@ -70,20 +70,21 @@ flowchart TD
     score --> firth --> output
 ```
 
-Changing the phenotype, covariates, Step 1 predictions, sample-key mode, multi-phenotype sample mode, trait type, or binary correction plan changes the statistical analysis, not just runtime behavior.[^regenie-step2]
+Changing the phenotype, covariates, Step 1 predictions, sample file,
+multi-phenotype sample mode, trait type, or binary correction plan changes the
+statistical analysis, not just runtime behavior.[^regenie-step2]
 
 ## Sample and input alignment
 
 For each requested phenotype, `g` builds the analysis sample set by matching rows across:
 
-- BGEN sample identifiers;
-- optional `.sample` file identifiers;
+- the required Oxford `.sample` file paired with the BGEN rows;
 - phenotype table;
 - optional covariate table;
 - Step 1 LOCO predictions.
 
-The matching key is controlled by `[compute] sample_key_mode`: either `IID` or
-`(FID, IID)`. Rows with missing selected phenotype or covariate values are
+Matching always uses non-empty, unique `(FID, IID)` pairs; there is no public
+IID-only mode. Rows with missing selected phenotype or covariate values are
 excluded for that phenotype. Binary phenotypes use REGENIE coding in the input
 file (`1 = control`, `2 = case`) and are recoded internally to `0/1`.
 
@@ -131,7 +132,7 @@ The same test can be viewed as the one-degree-of-freedom additive least-squares 
 Numerical policy:
 
 - If allele-one mean dosage is greater than `1`, `g` may shift or flip the internal genotype representation to reduce cancellation. The public `BETA` is restored to `ALLELE1` orientation.
-- A variant is invalid when residualized genotype variance is too close to zero under `--linear_minimum_variance` and `--linear_relative_variance_tolerance`.
+- A variant is invalid when residualized genotype variance is too close to zero under `[compute].linear_minimum_variance` and `[compute].linear_relative_variance_tolerance`.
 - A phenotype/chromosome state is invalid when the adjusted residual variance is not positive.
 
 ## Binary score test
@@ -144,9 +145,9 @@ logit(NullProbability) = Covariates × null effects + LOCO
 
 The null coefficients are estimated by iteratively reweighted least squares. The controls are:
 
-- `--binary_null_maximum_iterations`
-- `--binary_null_coefficient_tolerance`
-- `--null_logistic_nonconvergence_policy`
+- `[compute].binary_null_maximum_iterations`
+- `[compute].binary_null_coefficient_tolerance`
+- `[compute].null_logistic_nonconvergence_policy`
 
 After fitting the null model:
 
@@ -182,9 +183,9 @@ For score-test rows, `BETA` is a score-test effect estimate at the null model. I
 
 Numerical policy:
 
-- Fitted probabilities are clipped by `--binary_minimum_probability`.
-- Bernoulli variances and information matrices use `--binary_minimum_variance`.
-- A score row is invalid when the information is too close to zero under `--binary_relative_variance_tolerance`.
+- Fitted probabilities are clipped by `[compute].binary_minimum_probability`.
+- Bernoulli variances and information matrices use `[compute].binary_minimum_variance`.
+- A score row is invalid when the information is too close to zero under `[compute].binary_relative_variance_tolerance`.
 - High-frequency allele-one variants may be internally flipped; successful output is restored to `ALLELE1` orientation.
 
 ## Binary approximate Firth fallback
@@ -254,7 +255,7 @@ AlleleOneDosage =
     + 2 × homozygousAlleleOneProbability
 ```
 
-For trusted 8-bit BGEN probability-pair records:
+For packed8-compatible BGEN probability-pair records:
 
 ```text
 AlleleOneDosage =
@@ -273,7 +274,7 @@ Missing genotype dosages are represented as `NaN` during decode. Before the stat
 
 ## Multi-phenotype behavior
 
-Multiple phenotypes can be requested with repeated `--phenoCol` or with `--phenoColList`.
+Multiple phenotypes are requested with repeated `--phenoCol` options.
 
 `[compute] multi_phenotype_sample_mode = "per-phenotype"` is the default. Each phenotype keeps its own complete-case sample set. This matches separate single-phenotype runs, aside from execution optimizations.
 
@@ -284,18 +285,21 @@ Multiple phenotypes can be requested with repeated `--phenoCol` or with `--pheno
 | Option | Why it can change statistics |
 | --- | --- |
 | `--qt` / `--bt` | Selects the quantitative linear or binary logistic model. |
-| `--phenoCol`, `--phenoColList` | Selects the analyzed trait or traits. |
-| `--covarCol`, `--covarColList` | Changes covariate adjustment and degrees of freedom. |
+| Repeated `--phenoCol` | Selects the analyzed trait or traits. |
+| Repeated `--covarCol` | Changes covariate adjustment and degrees of freedom. |
 | `--pred` | Supplies chromosome-specific Step 1 predictions or offsets. |
-| `--sample`, `[compute] sample_key_mode` | Changes sample identity resolution and alignment. |
+| `--sample` | Supplies BGEN row identities and changes sample alignment. |
 | `[compute] multi_phenotype_sample_mode` | Changes whether phenotypes use independent or shared complete-case samples. |
 | `--binary-fallback firth_approximate` | Replaces selected binary score rows with approximate Firth rows. |
 | `--pThresh` | Changes which score-test rows become Firth candidates. |
 | `--firth-se` | Changes reported `SE` for successful Firth rows only. |
-| `[compute] score_dtype` | Can change compute precision. Persisted output precision is controlled separately by `[output] output_statistic_dtype`. |
 
-Runtime options such as `--bsize`, `--threads`, `[compute] device`, resume, and
-telemetry/logging settings should not intentionally change scientific
+Association scores and persisted public statistics use fixed `float32`
+precision. Approximate-Firth iterations use `float64` internally before results
+are converted to the public output precision.
+
+Runtime options such as `--bsize`, `[compute] cpu_threads`, `[compute] device`,
+resume, and `[diagnostics] telemetry` should not intentionally change scientific
 conclusions. If they change results beyond normal floating-point tolerance,
 treat that as a reproducibility bug.
 
@@ -314,10 +318,9 @@ Known intentional scope limits:
 - SPA fallback is not implemented.
 - BGEN 1.2 is the supported genotype source.
 
-Implementation choices such as chunk size, device, Parquet writer settings, and
-telemetry mode are operational. They should not change the mathematical
-contract, except for ordinary floating-point tolerance and explicitly
-documented dtype choices.
+Implementation choices such as chunk size, device, output writer concurrency,
+and telemetry mode are operational. They should not change the mathematical
+contract, except for ordinary floating-point tolerance.
 
 ## Reading output rows
 
@@ -364,7 +367,7 @@ For the binary score test, `WeightedResidualize(value, weights)` means the analo
 
 [^regenie-step2]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing”; Mbatchou et al., [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7), Extended Data Fig. 1.
 
-[^quantitative]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing → Quantitative traits”. Implementation: `src/g/compute/regenie2_linear/api.py`, `src/g/compute/regenie2_linear/state.py`, and `src/g/compute/regenie2_linear/score.py`.
+[^quantitative]: REGENIE documentation, [Overview](https://rgcgithub.github.io/regenie/overview/), “Step 2: Single-variant association testing → Quantitative traits”. Implementation: `src/g/compute/regenie2_linear/state.py` and `src/g/compute/regenie2_linear/score.py`.
 
 [^score-test]: Rao (1948), [Large sample tests of statistical hypotheses concerning several parameters with applications to problems of estimation](https://doi.org/10.1017/s0305004100023987), section 3; Mbatchou et al., [Nature Genetics 2021](https://www.nature.com/articles/s41588-021-00870-7), Extended Data Fig. 2 and 3.
 

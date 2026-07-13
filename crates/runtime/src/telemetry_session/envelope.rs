@@ -7,7 +7,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
-pub struct TelemetryEventEnvelope<'event> {
+pub(crate) struct TelemetryEventEnvelope<'event> {
     pub schema_version: i64,
     pub run_id: &'event str,
     #[serde(rename = "ts")]
@@ -22,7 +22,7 @@ pub struct TelemetryEventEnvelope<'event> {
 }
 
 #[must_use]
-pub fn build_current_telemetry_event_envelope<'event>(
+pub(crate) fn build_current_telemetry_event_envelope<'event>(
     run_id: &'event str,
     event: &'event str,
     level: &'event str,
@@ -42,7 +42,7 @@ pub fn build_current_telemetry_event_envelope<'event>(
 }
 
 #[must_use]
-pub fn generate_run_id() -> Arc<str> {
+pub(crate) fn generate_run_id() -> Arc<str> {
     let run_id = Uuid::new_v4();
     let mut buffer = Uuid::encode_buffer();
     Arc::from(&*run_id.simple().encode_lower(&mut buffer))

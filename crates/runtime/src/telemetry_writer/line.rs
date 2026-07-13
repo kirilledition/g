@@ -5,7 +5,7 @@ use tracing_appender::non_blocking::NonBlocking;
 
 use crate::telemetry_session::TelemetryEventCounterState;
 
-pub struct TelemetryLineWriter {
+pub(crate) struct TelemetryLineWriter {
     pub(super) writer: NonBlocking,
     pub(super) event_counter_state: Arc<TelemetryEventCounterState>,
 }

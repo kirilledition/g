@@ -19,7 +19,7 @@ where
 ///
 /// Returns a serialization error when the envelope or fields cannot be
 /// rendered as a flattened JSON object.
-pub fn serialize_telemetry_event_json_line<Fields>(
+pub(crate) fn serialize_telemetry_event_json_line<Fields>(
     envelope: &TelemetryEventEnvelope<'_>,
     fields: &Fields,
 ) -> Result<String, serde_json::Error>

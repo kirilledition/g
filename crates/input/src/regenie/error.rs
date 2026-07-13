@@ -21,7 +21,7 @@ pub enum PredictionError {
     #[error("LOCO header must start with 'FID_IID', found '{observed_marker}'.")]
     InvalidLocoHeaderMarker { observed_marker: String },
     #[error(
-        "Sample identifier at position {sample_index} ('{sample_identifier}') does not contain underscore separator for FID_IID format."
+        "Sample identifier at position {sample_index} ('{sample_identifier}') must contain non-empty FID and IID values separated by an underscore."
     )]
     InvalidLocoSampleIdentifier { sample_index: usize, sample_identifier: String },
     #[error("LOCO data line {line_number}: expected chromosome and predictions, found {field_count} fields.")]
@@ -38,12 +38,6 @@ pub enum PredictionError {
     TargetSampleLengthMismatch,
     #[error("Duplicate LOCO sample key: {sample_key}")]
     DuplicateLocoSampleKey { sample_key: String },
-    #[error(
-        "Duplicate LOCO IID '{individual_identifier}' found; sample_key_mode='iid' requires unique non-null IID values."
-    )]
-    DuplicateLocoIid { individual_identifier: String },
-    #[error("Empty LOCO IID found; sample_key_mode='iid' requires non-null IID values.")]
-    EmptyLocoIid,
     #[error("Target samples not found in LOCO file: {0}")]
     MissingTargetSamples(String),
     #[error(

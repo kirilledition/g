@@ -8,8 +8,8 @@ Output run preparation, manifest compatibility, resume validation, and chunked P
 
 `OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, opaque output
 writer sessions, native chunk handles, typed manifest inputs/fingerprints,
-trait-major statistic batches, and `OutputError`. Resume policy remains owned
-by `g-plan`.
+trait-major statistic batches, and `OutputError`. Strict on-disk reconciliation
+is fixed policy owned by this crate.
 
 ## Public functions
 
@@ -30,8 +30,9 @@ Consume canonical `g-genotype-contracts` columns directly; output must not
 depend on the BGEN implementation crate or introduce adapter mirrors.
 Fresh multi-trait chunks select all writer lanes without constructing an
 identity-index vector; only partially resumed chunks carry explicit indices.
-Compatible-sample groups share one output-owned Arrow metadata handle per
-union chunk; only sample-dependent statistics are materialized per group.
+Each delivered chunk constructs one output-owned Arrow metadata handle shared
+by its trait writers; only sample-dependent statistics are materialized per
+phenotype group.
 Metadata-handle construction rejects string columns beyond Arrow's 32-bit
 `Utf8` offset limit before lazy writer-side array construction can panic.
 Normal writes do not collect detailed timers or traverse Arrow memory; that
@@ -41,7 +42,14 @@ the writer maps them to the existing method/status dictionaries only when it
 builds the final record batch.
 Persisted row and chunk counts use checked signed 64-bit arithmetic because the
 manifest contract is JSON integer based; overflow must fail before mutation.
+The fixed `(FID, IID)` input invariant is not serialized as a configurable
+manifest field; input fingerprints and aligned-sample fingerprints cover the
+concrete files and selected cohort. Runtime compute-group fingerprints are
+required rather than nullable, including the aligned phenotype matrix digest
+that prevents mixed-trait resume.
 
 ## Allowed downstream users
 
-`g-engine`.
+`g-engine` and the private root PyO3 `AssociationBackend` adapter. The adapter
+constructs the output-owned statistic batch directly without invoking writer
+services.

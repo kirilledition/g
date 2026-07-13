@@ -22,16 +22,16 @@ const JAX_CONFIG_PERSISTENT_CACHE_ENABLE_XLA_CACHES: &str = "jax_persistent_cach
 const JAX_CONFIG_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS: &str = "jax_persistent_cache_min_compile_time_secs";
 const JAX_CONFIG_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: &str = "jax_persistent_cache_min_entry_size_bytes";
 const JAX_CONFIG_PLATFORMS: &str = "jax_platforms";
-const JAX_CONFIG_TRANSFER_GUARD: &str = "jax_transfer_guard";
+const JAX_MATMUL_PRECISION: &str = "float32";
+const JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS: i64 = 0;
+const JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: i64 = -1;
 const JAX_CUDA_PLATFORM_NAME: &str = "cuda";
 const JAX_CPU_PLATFORM_NAME: &str = "cpu";
 const JAX_GPU_DEVICE_PLATFORM_NAME: &str = "gpu";
-const JAX_TRANSFER_GUARD_DISALLOW: &str = "disallow";
 const NVIDIA_CONTROL_DEVICE_PATH: &str = "/dev/nvidiactl";
 const NVIDIA_DRIVER_DIRECTORY_PATH: &str = "/proc/driver/nvidia";
 const NVIDIA_UVM_DEVICE_PATH: &str = "/dev/nvidia-uvm";
 const XLA_AUXILIARY_CACHE_DISABLED: &str = "none";
-const XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE: &str = "xla_gpu_per_fusion_autotune_cache_dir";
 
 #[derive(Clone)]
 enum JaxCacheDirectory {
@@ -40,19 +40,9 @@ enum JaxCacheDirectory {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-struct JaxPersistentCachePolicy {
-    directory: JaxCacheDirectory,
-    min_entry_size_bytes: i64,
-    min_compile_time_seconds: i64,
-    xla_autotune_cache_enabled: bool,
-}
-
-#[derive(Clone, Eq, PartialEq)]
 pub(crate) struct JaxRuntimePolicy {
     device: g_plan::Device,
-    persistent_cache: Option<JaxPersistentCachePolicy>,
-    matmul_precision: g_plan::JaxMatmulPrecision,
-    transfer_guard_enabled: bool,
+    cache_directory: JaxCacheDirectory,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -123,25 +113,6 @@ impl JaxRuntimePolicy {
         match self.device {
             g_plan::Device::Cpu => JAX_CPU_PLATFORM_NAME,
             g_plan::Device::Gpu => JAX_CUDA_PLATFORM_NAME,
-        }
-    }
-
-    const fn xla_auxiliary_cache_mode(&self) -> &'static str {
-        if matches!(
-            self.persistent_cache.as_ref(),
-            Some(JaxPersistentCachePolicy { xla_autotune_cache_enabled: true, .. })
-        ) {
-            XLA_AUXILIARY_CACHE_PER_FUSION_AUTOTUNE
-        } else {
-            XLA_AUXILIARY_CACHE_DISABLED
-        }
-    }
-
-    const fn xla_auxiliary_cache_reason(&self) -> &'static str {
-        match &self.persistent_cache {
-            None => "persistent compilation cache is disabled",
-            Some(cache_policy) if cache_policy.xla_autotune_cache_enabled => "XLA auxiliary cache was requested",
-            Some(_) => "XLA auxiliary cache was not requested",
         }
     }
 }

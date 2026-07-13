@@ -1,9 +1,13 @@
+use std::mem::MaybeUninit;
+
 use crate::common::DosageSummary;
 #[cfg(test)]
 use crate::preprocess;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+const AVX2_PACKED8_SAMPLE_COUNT: usize = 16;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_ACCUMULATION_VECTOR_LIMIT: usize = 4096;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -114,15 +118,15 @@ impl EightBitRawIntegerSummary {
 
 pub(super) fn decode_unphased_eight_bit_identity_simd_or_scalar(
     packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
+    output_values: &mut [MaybeUninit<f32>],
     collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    debug_assert_eq!(packed_probability_bytes.len(), output_values.len() * 2);
+) -> Option<DosageSummary> {
+    assert_eq!(packed_probability_bytes.len(), output_values.len() * 2);
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
         if bgen_avx2_enabled() {
-            // Benchmarks on the trusted full-sample path selected raw-integer AVX2 over lookup-gather AVX2.
+            // Full-sample packed8 benchmarks selected raw-integer AVX2 over lookup-gather AVX2.
             return unsafe {
                 decode_unphased_eight_bit_identity_raw_avx2(
                     packed_probability_bytes,
@@ -140,40 +144,13 @@ pub(super) fn decode_unphased_eight_bit_identity_simd_or_scalar(
     )
 }
 
-pub(super) fn decode_unphased_eight_bit_identity_without_statistics_simd_or_scalar(
-    packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
-) {
-    debug_assert_eq!(packed_probability_bytes.len(), output_values.len() * 2);
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if bgen_avx2_enabled() {
-            unsafe {
-                decode_unphased_eight_bit_identity_raw_avx2_with_statistics_mode::<false>(
-                    packed_probability_bytes,
-                    output_values,
-                    false,
-                );
-            }
-            return;
-        }
-    }
-
-    decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode::<false>(
-        packed_probability_bytes,
-        output_values,
-        false,
-    );
-}
-
 pub(super) fn copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
     packed_probability_bytes: &[u8],
-    output_probability_bytes: &mut [u8],
+    output_probability_bytes: &mut [MaybeUninit<u8>],
     collect_sparse_candidate_counts: bool,
 ) -> DosageSummary {
-    debug_assert_eq!(packed_probability_bytes.len(), output_probability_bytes.len());
-    debug_assert_eq!(packed_probability_bytes.len() % 2, 0);
+    assert_eq!(packed_probability_bytes.len(), output_probability_bytes.len());
+    assert_eq!(packed_probability_bytes.len() % 2, 0);
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     {
@@ -206,6 +183,19 @@ pub(super) fn all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missi
     all_samples_present_diploid_scalar(sample_ploidy_and_missingness)
 }
 
+pub(super) fn all_unphased_eight_bit_probability_pairs_valid_simd_or_scalar(packed_probability_bytes: &[u8]) -> bool {
+    if !packed_probability_bytes.len().is_multiple_of(2) {
+        return false;
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if bgen_avx2_enabled() {
+            return unsafe { all_unphased_eight_bit_probability_pairs_valid_avx2(packed_probability_bytes) };
+        }
+    }
+    all_unphased_eight_bit_probability_pairs_valid_scalar(packed_probability_bytes)
+}
+
 fn all_samples_present_diploid_scalar(sample_ploidy_and_missingness: &[u8]) -> bool {
     let mut ploidy_chunks = sample_ploidy_and_missingness.chunks_exact(PRESENT_DIPLOID_BYTE_GROUP.len());
     for ploidy_chunk in &mut ploidy_chunks {
@@ -216,37 +206,34 @@ fn all_samples_present_diploid_scalar(sample_ploidy_and_missingness: &[u8]) -> b
     ploidy_chunks.remainder().iter().all(|ploidy_byte| *ploidy_byte == 2)
 }
 
-fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats(
-    packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
-    collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode::<true>(
-        packed_probability_bytes,
-        output_values,
-        collect_sparse_candidate_counts,
-    )
+fn all_unphased_eight_bit_probability_pairs_valid_scalar(packed_probability_bytes: &[u8]) -> bool {
+    packed_probability_bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .all(|probability_pair| u8::try_from(u16::from(probability_pair[0]) + u16::from(probability_pair[1])).is_ok())
 }
 
-fn decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode<const COLLECT_STATISTICS: bool>(
+fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats(
     packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
+    output_values: &mut [MaybeUninit<f32>],
     collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    debug_assert!(COLLECT_STATISTICS || !collect_sparse_candidate_counts);
+) -> Option<DosageSummary> {
     let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
-    decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode_from::<COLLECT_STATISTICS>(
+    if !decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
         packed_probability_bytes,
         output_values,
         0,
         &mut raw_integer_summary,
-    );
-    raw_integer_summary.into_decode_summary()
+    ) {
+        return None;
+    }
+    Some(raw_integer_summary.into_decode_summary())
 }
 
 fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_scalar_integer_stats(
     packed_probability_bytes: &[u8],
-    output_probability_bytes: &mut [u8],
+    output_probability_bytes: &mut [MaybeUninit<u8>],
     collect_sparse_candidate_counts: bool,
 ) -> DosageSummary {
     let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
@@ -261,7 +248,7 @@ fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_scalar_integer_st
 
 fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_scalar_integer_stats_from(
     packed_probability_bytes: &[u8],
-    output_probability_bytes: &mut [u8],
+    output_probability_bytes: &mut [MaybeUninit<u8>],
     start_sample_index: usize,
     raw_integer_summary: &mut EightBitRawIntegerSummary,
 ) {
@@ -269,10 +256,10 @@ fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_scalar_integer_st
     let (probability_pairs, _) = packed_probability_bytes[byte_start_index..].as_chunks::<2>();
     let (output_probability_pairs, _) = output_probability_bytes[byte_start_index..].as_chunks_mut::<2>();
     for ([homozygous_reference_probability_byte, heterozygous_probability_byte], output_probability_pair) in
-        probability_pairs.iter().copied().zip(output_probability_pairs.iter_mut())
+        probability_pairs.iter().copied().zip(output_probability_pairs)
     {
-        output_probability_pair[0] = homozygous_reference_probability_byte;
-        output_probability_pair[1] = heterozygous_probability_byte;
+        output_probability_pair[0].write(homozygous_reference_probability_byte);
+        output_probability_pair[1].write(heterozygous_probability_byte);
         raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer(
             homozygous_reference_probability_byte,
             heterozygous_probability_byte,
@@ -280,39 +267,27 @@ fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_scalar_integer_st
     }
 }
 
-#[cfg(test)]
 fn decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
     packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
+    output_values: &mut [MaybeUninit<f32>],
     start_sample_index: usize,
     raw_integer_summary: &mut EightBitRawIntegerSummary,
-) {
-    decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode_from::<true>(
-        packed_probability_bytes,
-        output_values,
-        start_sample_index,
-        raw_integer_summary,
-    );
-}
-
-fn decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode_from<const COLLECT_STATISTICS: bool>(
-    packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
-    start_sample_index: usize,
-    raw_integer_summary: &mut EightBitRawIntegerSummary,
-) {
+) -> bool {
     let (probability_pairs, _) = packed_probability_bytes[start_sample_index * 2..].as_chunks::<2>();
-    for (relative_sample_index, [homozygous_reference_probability_byte, heterozygous_probability_byte]) in
-        probability_pairs.iter().copied().take(output_values.len() - start_sample_index).enumerate()
+    for ([homozygous_reference_probability_byte, heterozygous_probability_byte], output_value) in
+        probability_pairs.iter().copied().zip(&mut output_values[start_sample_index..])
     {
-        let output_index = start_sample_index + relative_sample_index;
+        if u8::try_from(u16::from(homozygous_reference_probability_byte) + u16::from(heterozygous_probability_byte))
+            .is_err()
+        {
+            return false;
+        }
         let raw_dosage_integer =
             raw_dosage_integer(homozygous_reference_probability_byte, heterozygous_probability_byte);
-        output_values[output_index] = raw_dosage_value(raw_dosage_integer);
-        if COLLECT_STATISTICS {
-            raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer);
-        }
+        output_value.write(raw_dosage_value(raw_dosage_integer));
+        raw_integer_summary.record_raw_dosage_integer(raw_dosage_integer);
     }
+    true
 }
 
 #[cfg(test)]
@@ -394,20 +369,22 @@ fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::{
-    __m128i, __m256i, _mm_loadu_si128, _mm_storeu_si128, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
-    _mm256_cmpeq_epi8, _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
-    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps,
-    _mm256_storeu_si256, _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
+    _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_movemask_epi8,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32,
+    _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi16, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
+    _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m128i, __m256i, _mm_loadu_si128, _mm_storeu_si128, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
-    _mm256_cmpeq_epi8, _mm256_cmpeq_epi32, _mm256_cmpgt_epi32, _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32,
-    _mm256_loadu_si256, _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_storeu_ps,
-    _mm256_storeu_si256, _mm256_sub_epi32,
+    __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
+    _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_movemask_epi8,
+    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32,
+    _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi16, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
+    _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -427,6 +404,27 @@ unsafe fn all_samples_present_diploid_avx2(sample_ploidy_and_missingness: &[u8])
     }
 
     all_samples_present_diploid_scalar(&sample_ploidy_and_missingness[byte_index..])
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::cast_ptr_alignment)]
+unsafe fn all_unphased_eight_bit_probability_pairs_valid_avx2(packed_probability_bytes: &[u8]) -> bool {
+    let probability_byte_mask = _mm256_set1_epi16(0x00FF);
+    let maximum_probability_sum = _mm256_set1_epi16(i16::from(u8::MAX));
+    let mut byte_index = 0_usize;
+    while byte_index + AVX2_PLOIDY_BYTE_COUNT <= packed_probability_bytes.len() {
+        let probability_pointer = unsafe { packed_probability_bytes.as_ptr().add(byte_index).cast::<__m256i>() };
+        let probability_pairs = unsafe { _mm256_loadu_si256(probability_pointer) };
+        let first_probabilities = _mm256_and_si256(probability_pairs, probability_byte_mask);
+        let second_probabilities = _mm256_srli_epi16(probability_pairs, 8);
+        let probability_sums = _mm256_add_epi16(first_probabilities, second_probabilities);
+        if _mm256_movemask_epi8(_mm256_cmpgt_epi16(probability_sums, maximum_probability_sum)) != 0 {
+            return false;
+        }
+        byte_index += AVX2_PLOIDY_BYTE_COUNT;
+    }
+    all_unphased_eight_bit_probability_pairs_valid_scalar(&packed_probability_bytes[byte_index..])
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -460,30 +458,13 @@ unsafe fn record_raw_dosage_accumulators_avx2(
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn decode_unphased_eight_bit_identity_raw_avx2(
     packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
+    output_values: &mut [MaybeUninit<f32>],
     collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    unsafe {
-        decode_unphased_eight_bit_identity_raw_avx2_with_statistics_mode::<true>(
-            packed_probability_bytes,
-            output_values,
-            collect_sparse_candidate_counts,
-        )
-    }
-}
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-#[allow(clippy::cast_ptr_alignment)]
-unsafe fn decode_unphased_eight_bit_identity_raw_avx2_with_statistics_mode<const COLLECT_STATISTICS: bool>(
-    packed_probability_bytes: &[u8],
-    output_values: &mut [f32],
-    collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    debug_assert!(COLLECT_STATISTICS || !collect_sparse_candidate_counts);
+) -> Option<DosageSummary> {
     let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
     let probability_byte_mask = _mm256_set1_epi32(0xFF);
     let raw_dosage_base = _mm256_set1_epi32(510);
+    let maximum_probability_sum = _mm256_set1_epi32(i32::from(u8::MAX));
     let zero = _mm256_setzero_si256();
     let homozygous_alternate_lower_bound = _mm256_set1_epi32(382);
     let probability_scale_reciprocal = _mm256_set1_ps(EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL);
@@ -497,6 +478,10 @@ unsafe fn decode_unphased_eight_bit_identity_raw_avx2_with_statistics_mode<const
         let probability_indices = _mm256_cvtepu16_epi32(probability_words);
         let homozygous_reference_probability_bytes = _mm256_and_si256(probability_indices, probability_byte_mask);
         let heterozygous_probability_bytes = _mm256_srli_epi32(probability_indices, 8);
+        let probability_sums = _mm256_add_epi32(homozygous_reference_probability_bytes, heterozygous_probability_bytes);
+        if _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(probability_sums, maximum_probability_sum))) != 0 {
+            return None;
+        }
         let doubled_homozygous_reference_probability_bytes =
             _mm256_slli_epi32(homozygous_reference_probability_bytes, 1);
         let raw_dosage_integers = _mm256_sub_epi32(
@@ -505,101 +490,8 @@ unsafe fn decode_unphased_eight_bit_identity_raw_avx2_with_statistics_mode<const
         );
         let dosage_values = _mm256_mul_ps(_mm256_cvtepi32_ps(raw_dosage_integers), probability_scale_reciprocal);
         unsafe {
-            _mm256_storeu_ps(output_values.as_mut_ptr().add(sample_index), dosage_values);
+            _mm256_storeu_ps(output_values.as_mut_ptr().cast::<f32>().add(sample_index), dosage_values);
         }
-
-        if COLLECT_STATISTICS {
-            raw_sum_accumulator = _mm256_add_epi32(raw_sum_accumulator, raw_dosage_integers);
-            raw_square_sum_accumulator = _mm256_add_epi32(
-                raw_square_sum_accumulator,
-                _mm256_mullo_epi32(raw_dosage_integers, raw_dosage_integers),
-            );
-            accumulated_vector_count += 1;
-
-            if collect_sparse_candidate_counts {
-                raw_integer_summary.zero_count += avx2_mask_count(_mm256_movemask_ps(_mm256_castsi256_ps(
-                    _mm256_cmpeq_epi32(raw_dosage_integers, zero),
-                )));
-                raw_integer_summary.homozygous_alternate_count += avx2_mask_count(_mm256_movemask_ps(
-                    _mm256_castsi256_ps(_mm256_cmpgt_epi32(raw_dosage_integers, homozygous_alternate_lower_bound)),
-                ));
-            }
-
-            if accumulated_vector_count == AVX2_ACCUMULATION_VECTOR_LIMIT {
-                unsafe {
-                    record_raw_dosage_accumulators_avx2(
-                        &mut raw_integer_summary,
-                        raw_sum_accumulator,
-                        raw_square_sum_accumulator,
-                    );
-                }
-                raw_sum_accumulator = _mm256_setzero_si256();
-                raw_square_sum_accumulator = _mm256_setzero_si256();
-                accumulated_vector_count = 0;
-            }
-        }
-
-        sample_index += AVX2_SAMPLE_COUNT;
-    }
-
-    if COLLECT_STATISTICS {
-        if accumulated_vector_count > 0 {
-            unsafe {
-                record_raw_dosage_accumulators_avx2(
-                    &mut raw_integer_summary,
-                    raw_sum_accumulator,
-                    raw_square_sum_accumulator,
-                );
-            }
-        }
-        raw_integer_summary.selected_observation_count +=
-            i32::try_from(sample_index).expect("selected sample count should fit i32");
-    }
-    decode_unphased_eight_bit_identity_raw_scalar_with_statistics_mode_from::<COLLECT_STATISTICS>(
-        packed_probability_bytes,
-        output_values,
-        sample_index,
-        &mut raw_integer_summary,
-    );
-    raw_integer_summary.into_decode_summary()
-}
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-#[allow(clippy::cast_ptr_alignment)]
-unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
-    packed_probability_bytes: &[u8],
-    output_probability_bytes: &mut [u8],
-    collect_sparse_candidate_counts: bool,
-) -> DosageSummary {
-    let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
-    let probability_byte_mask = _mm256_set1_epi32(0xFF);
-    let raw_dosage_base = _mm256_set1_epi32(510);
-    let zero = _mm256_setzero_si256();
-    let homozygous_alternate_lower_bound = _mm256_set1_epi32(382);
-    let mut raw_sum_accumulator = _mm256_setzero_si256();
-    let mut raw_square_sum_accumulator = _mm256_setzero_si256();
-    let mut accumulated_vector_count = 0_usize;
-    let sample_count = packed_probability_bytes.len() / 2;
-    let mut sample_index = 0_usize;
-    while sample_index + AVX2_SAMPLE_COUNT <= sample_count {
-        let probability_pointer = unsafe { packed_probability_bytes.as_ptr().add(sample_index * 2).cast::<__m128i>() };
-        let probability_words = unsafe { _mm_loadu_si128(probability_pointer) };
-        let output_probability_pointer =
-            unsafe { output_probability_bytes.as_mut_ptr().add(sample_index * 2).cast::<__m128i>() };
-        unsafe {
-            _mm_storeu_si128(output_probability_pointer, probability_words);
-        }
-
-        let probability_indices = _mm256_cvtepu16_epi32(probability_words);
-        let homozygous_reference_probability_bytes = _mm256_and_si256(probability_indices, probability_byte_mask);
-        let heterozygous_probability_bytes = _mm256_srli_epi32(probability_indices, 8);
-        let doubled_homozygous_reference_probability_bytes =
-            _mm256_slli_epi32(homozygous_reference_probability_bytes, 1);
-        let raw_dosage_integers = _mm256_sub_epi32(
-            _mm256_sub_epi32(raw_dosage_base, doubled_homozygous_reference_probability_bytes),
-            heterozygous_probability_bytes,
-        );
 
         raw_sum_accumulator = _mm256_add_epi32(raw_sum_accumulator, raw_dosage_integers);
         raw_square_sum_accumulator =
@@ -628,6 +520,95 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
         }
 
         sample_index += AVX2_SAMPLE_COUNT;
+    }
+
+    if accumulated_vector_count > 0 {
+        unsafe {
+            record_raw_dosage_accumulators_avx2(
+                &mut raw_integer_summary,
+                raw_sum_accumulator,
+                raw_square_sum_accumulator,
+            );
+        }
+    }
+    raw_integer_summary.selected_observation_count +=
+        i32::try_from(sample_index).expect("selected sample count should fit i32");
+    if !decode_unphased_eight_bit_identity_raw_scalar_integer_stats_from(
+        packed_probability_bytes,
+        output_values,
+        sample_index,
+        &mut raw_integer_summary,
+    ) {
+        return None;
+    }
+    Some(raw_integer_summary.into_decode_summary())
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+#[allow(clippy::cast_ptr_alignment)]
+unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
+    packed_probability_bytes: &[u8],
+    output_probability_bytes: &mut [MaybeUninit<u8>],
+    collect_sparse_candidate_counts: bool,
+) -> DosageSummary {
+    let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
+    let probability_byte_mask = _mm256_set1_epi16(0xFF);
+    let raw_dosage_base = _mm256_set1_epi16(510);
+    let adjacent_lane_sum_multiplier = _mm256_set1_epi16(1);
+    let zero = _mm256_setzero_si256();
+    let homozygous_alternate_lower_bound = _mm256_set1_epi16(382);
+    let mut raw_sum_accumulator = _mm256_setzero_si256();
+    let mut raw_square_sum_accumulator = _mm256_setzero_si256();
+    let mut accumulated_vector_count = 0_usize;
+    let sample_count = packed_probability_bytes.len() / 2;
+    let mut sample_index = 0_usize;
+    while sample_index + AVX2_PACKED8_SAMPLE_COUNT <= sample_count {
+        let probability_pointer = unsafe { packed_probability_bytes.as_ptr().add(sample_index * 2).cast::<__m256i>() };
+        let probability_words = unsafe { _mm256_loadu_si256(probability_pointer) };
+        let output_probability_pointer =
+            unsafe { output_probability_bytes.as_mut_ptr().cast::<u8>().add(sample_index * 2).cast::<__m256i>() };
+        unsafe {
+            _mm256_storeu_si256(output_probability_pointer, probability_words);
+        }
+
+        let homozygous_reference_probability_bytes = _mm256_and_si256(probability_words, probability_byte_mask);
+        let heterozygous_probability_bytes = _mm256_srli_epi16(probability_words, 8);
+        let doubled_homozygous_reference_probability_bytes =
+            _mm256_slli_epi16(homozygous_reference_probability_bytes, 1);
+        let raw_dosage_integers = _mm256_sub_epi16(
+            _mm256_sub_epi16(raw_dosage_base, doubled_homozygous_reference_probability_bytes),
+            heterozygous_probability_bytes,
+        );
+
+        raw_sum_accumulator =
+            _mm256_add_epi32(raw_sum_accumulator, _mm256_madd_epi16(raw_dosage_integers, adjacent_lane_sum_multiplier));
+        raw_square_sum_accumulator =
+            _mm256_add_epi32(raw_square_sum_accumulator, _mm256_madd_epi16(raw_dosage_integers, raw_dosage_integers));
+        accumulated_vector_count += 1;
+
+        if collect_sparse_candidate_counts {
+            raw_integer_summary.zero_count +=
+                avx2_mask_count(_mm256_movemask_epi8(_mm256_cmpeq_epi16(raw_dosage_integers, zero))) / 2;
+            raw_integer_summary.homozygous_alternate_count += avx2_mask_count(_mm256_movemask_epi8(
+                _mm256_cmpgt_epi16(raw_dosage_integers, homozygous_alternate_lower_bound),
+            )) / 2;
+        }
+
+        if accumulated_vector_count == AVX2_ACCUMULATION_VECTOR_LIMIT {
+            unsafe {
+                record_raw_dosage_accumulators_avx2(
+                    &mut raw_integer_summary,
+                    raw_sum_accumulator,
+                    raw_square_sum_accumulator,
+                );
+            }
+            raw_sum_accumulator = _mm256_setzero_si256();
+            raw_square_sum_accumulator = _mm256_setzero_si256();
+            accumulated_vector_count = 0;
+        }
+
+        sample_index += AVX2_PACKED8_SAMPLE_COUNT;
     }
 
     if accumulated_vector_count > 0 {

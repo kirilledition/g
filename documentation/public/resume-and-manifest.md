@@ -27,20 +27,18 @@ optional TOML file, and explicit CLI overrides.
 - association mode;
 - BGEN, sample, phenotype, covariate, prediction-list, and selected LOCO
   prediction-file fingerprints;
-- phenotype name, covariate names, sample count, variant count, chunk size, and
-  variant limit;
+- phenotype name, covariate names, sample count, variant count, and chunk size;
 - multi-phenotype sample mode, phenotype compute-group identifier, sample-set
-  fingerprint, covariate-design fingerprint, and prediction-alignment
-  fingerprint;
+  fingerprint, covariate-design fingerprint, aligned phenotype-design
+  fingerprint, and prediction-alignment fingerprint;
 - selected association backend such as `jax_dosage` or `jax_packed8`, with the
-  resolved concrete GPU genotype format;
+  resolved genotype delivery format;
 - binary correction plan and binary kernel settings when applicable;
-- trusted BGEN policy, sample-key mode, JAX device/precision policy, dtype
-  choices;
+- JAX device/precision policy and dtype choices;
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
 
-Manifest schema version `11` stores immutable compatibility state once under
+Manifest schema version `14` stores immutable compatibility state once under
 `execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
 fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
@@ -49,12 +47,19 @@ state. The Parquet output schema remains version `3`.
 The manifest is the resume authority. It is intentionally stricter than a file
 name check.
 
+Sample identity is always the non-empty `(FID, IID)` pair, so there is no
+identity-mode field in the execution plan. Sample-file fingerprints and aligned
+sample-set fingerprints cover the concrete identity data used by the run.
+Prediction-alignment fingerprints bind the LOCO headers and chromosome rows
+seen during indexing plus the concrete per-trait sample-alignment recipe.
+
 File fingerprints include resolved path, file size, and `mtime_ns`. Smaller
 control files also include a SHA-256 content hash: sample, phenotype, covariate,
 prediction-list, and LOCO prediction files referenced by the selected
-phenotype or compute group. BGEN input fingerprints are metadata-only to avoid
-hashing large genotype files during normal startup; their manifest field records
-that metadata-only policy explicitly.
+phenotype or compute group. BGEN identity comes from the exact file opened by
+the native reader and includes device, inode, size, modification time, and
+change time. This rejects replacement or in-place mutation without hashing the
+large genotype file during normal startup.
 
 ## Starting A New Run
 
@@ -67,30 +72,27 @@ Output run directory '<path>' already exists and is not empty. Enable [output].r
 Choose a new `--out` prefix, delete stale local output intentionally, or run
 with `[output].resume = true` when the existing manifest belongs to the same planned run.
 
-## Resume Controls
+## Enabling Resume
 
 ```toml
 [output]
 resume = true
-resume_mode = "fast" # or "strict"
 ```
 
-| Mode | Behavior |
-| --- | --- |
-| `fast` | Trust committed chunk identifiers recorded in `run_manifest.json` after manifest compatibility passes. |
-| `strict` | Reconcile manifest chunk commits with chunk files on disk before resuming. |
+Resume is always strict: after manifest compatibility passes, `g` reconciles
+committed chunk identifiers with the chunk files on disk before continuing.
+There is no public resume-validation mode.
 
-Use `fast` for normal interruption recovery. Use `strict` after manual file
-movement, storage failures, or any situation where the manifest and chunk files
-might disagree.
-
-Strict resume requires current chunk commit metadata in every Parquet part.
+Resume requires current chunk commit metadata in every Parquet part.
 Parts without the native writer's `g.output.chunk_commits` footer metadata are
-rejected instead of being reconstructed from data columns.
+rejected instead of being reconstructed from data columns. Every part must use
+the current production Parquet schema, and its footer commits must have unique
+chunk identifiers, exact row counts, and ranges matching the current BGEN
+chunk plan.
 
 ## Compatibility Checks
 
-Resume first requires an existing schema-v11 `run_manifest.json`. It then
+Resume first requires an existing schema-v14 `run_manifest.json`. It then
 compares the current requested run against the canonical `execution_plan` and
 its hash. A mismatch fails with a message naming the first incompatible
 manifest field. Earlier manifest layouts are not adapted because the
@@ -109,11 +111,11 @@ Common mismatch causes:
 - changed phenotype or covariate columns;
 - changed trait mode, binary correction plan, or Firth settings;
 - changed selected association backend;
-- changed sample-key mode, multi-phenotype sample mode, aligned sample set,
+- changed multi-phenotype sample mode, aligned sample set, aligned phenotype or
   covariate design, or prediction alignment;
-- changed chunk size, variant limit, public statistic output dtype, Parquet
-  compression, writer grouping, or schema version;
-- changed JAX precision/dtype or trusted BGEN policy.
+- changed chunk size or schema version;
+- an application upgrade that changed fixed output-writer, result-dtype, or JAX
+  policy recorded in the execution plan.
 
 Resume is not a way to combine different analyses into one output directory.
 
@@ -129,10 +131,7 @@ After that, rerun the same command with a config containing:
 ```toml
 [output]
 resume = true
-resume_mode = "strict"
 ```
-
-or use `fast` when the previous interruption was clean and storage is trusted.
 
 ## Parquet Parts And Resume
 

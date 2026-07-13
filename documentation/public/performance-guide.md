@@ -32,8 +32,8 @@ portable guarantee.
 | GPU visible but little speedup | Single phenotype, small chunks, BGEN decode, host-device transfer, or output may dominate. |
 | First run slow but repeated work faster | JAX backend initialization and compilation are likely visible. |
 | Approximate Firth much slower than binary score test | Candidate density from `--pThresh` and Firth solver work dominate. |
-| Output stage slow | Storage throughput, writer threads, queue depth, part grouping, and Parquet compression. |
-| Resume startup slow | Manifest validation mode and strict chunk reconciliation. |
+| Output stage slow | Storage throughput and writer threads. |
+| Resume startup slow | Manifest validation and strict chunk reconciliation. |
 
 Binary score-only runs prepare only the null-logistic and score state. They do
 not pay the chromosome-level null-Firth fit, full-null deviance, or Firth-state
@@ -68,40 +68,39 @@ JAX/CUDA state and compiled executables. Shape changes may compile an additional
 executable, so group configs with stable shapes when throughput is the priority.
 
 Native decode buffers submitted to JAX transfer their allocation into NumPy;
-there is no full genotype memcpy at the binding boundary. Grouped-union runs
-retain only the union source buffer for projection reuse. Phenotype, covariate,
-and single-use LOCO matrices also transfer their allocations directly into
-NumPy. Native input indexes each selected LOCO file once using byte offsets and
-line numbers. Files with identical headers share one loader-side identifier
-index and one alignment recipe per group; those large header strings are
-discarded after source construction. Resume planning validates only chromosome
-blocks that still need output. When execution reaches one of those blocks,
-input reads, parses, finite-validates, and aligns just that chromosome into its
-final trait-major matrix. File metadata snapshots and raw-row SHA-256 digests
-reject changes between indexing and deferred reading. Fully committed
-chromosomes therefore never allocate or parse prediction values. A repeated
-noncontiguous chromosome block alone keeps one matrix for safe clones until its
-final planned use.
+there is no full genotype memcpy at the binding boundary. Phenotype,
+covariate, and single-use LOCO matrices also transfer their allocations
+directly into NumPy. Native input indexes each selected LOCO file once using
+byte offsets and line numbers. Files with identical headers share one
+loader-side identifier index and one alignment recipe per group; those large
+header strings are discarded after source construction. Resume planning
+validates only chromosome blocks that still need output. When execution
+reaches one of those blocks, input reads, parses, finite-validates, and aligns
+just that chromosome into its final trait-major matrix. File metadata snapshots
+and raw-row SHA-256 digests reject changes between indexing and deferred
+reading. Fully committed chromosomes therefore never allocate or parse
+prediction values. A repeated noncontiguous chromosome block alone keeps one
+matrix for safe clones until its final planned use.
 
-Packed8 GPU delivery keeps one device-compute variant shape across a run. A
-short chromosome-boundary or final chunk is padded only after exact BGEN decode
-to `min(bsize, effective scan size)`; metadata, statistics written to output,
-and result rows retain the logical variant count. This trades a bounded amount
-of final-chunk transfer and compute for one reusable JAX executable. A small
-`variant_limit` also caps the compute shape, so smoke runs do not expand to the
-configured production chunk size.
+For each complete JAX input shape, dosage and packed8 delivery keep the variant
+dimension fixed across chunks. A short chromosome-final chunk is padded only
+after exact BGEN decode to `min(bsize, input variant count)`; metadata,
+statistics written to output, and result rows retain the logical variant count.
+Chunk grids restart at each chromosome, avoiding the extra boundary fragment
+created by a whole-file grid. This trades bounded tail transfer and compute for
+reuse of that shape's executable. Different aligned sample counts or trait
+counts produce different complete JAX shapes and may compile separate
+executables.
 
 The native association scheduler starts one compute thread, one host-result
-materialization thread, and one bounded channel set for the delivery, independent
-of active phenotype-group count. Per-group state and counters preserve result
-routing. At a chromosome boundary, all results drain and the compute worker
-acknowledges destruction of each replaced JAX state before its successor is built,
-which avoids both per-chromosome worker churn and overlapping chromosome-state
-device memory. Group-level device state is created at first use and released
-after its final chromosome preparation. Fully resumed groups initialize progress but do not select BGEN
-samples, prepare JAX state, or start scheduler workers. Partial resume rebuilds
-the union from groups with pending output; one remaining group or a union without
-sample overlap uses direct delivery instead of union projection.
+materialization thread, and one bounded channel set for each direct delivery.
+At a chromosome boundary, all results drain and the compute worker acknowledges
+destruction of the replaced JAX state before its successor is built, avoiding
+both per-chromosome worker churn and overlapping chromosome-state device
+memory. Group-level device state is created at first use and released after its
+final chromosome preparation. Fully resumed phenotype groups initialize
+progress but do not select BGEN samples, prepare JAX state, or start scheduler
+workers; every remaining group uses the same direct delivery path.
 
 ## Runtime Knobs
 
@@ -110,25 +109,22 @@ Use the current packaged defaults first. Override only with measurements.
 | Option | Main effect |
 | --- | --- |
 | `--bsize` | Variants per chunk; affects memory, JAX shapes, compilation, and per-chunk overhead. |
-| `--threads` | Native Rayon thread request for Rust-owned work. |
 | `[compute] device` | JAX execution target, `cpu` or `gpu`. |
-| `[compute] staging_depth` | Decoded batches allowed ahead of device compute. |
-| `[compute] result_in_flight_limit` | Device results allowed ahead of host materialization. |
-| `[compute] bgen_decode_tile_variant_count` | Native BGEN decode tile size. |
-| `[compute] gpu_genotype_format` | Host-to-device representation; `auto` upgrades eligible single-trait binary GPU runs to packed8. |
+| `[compute] cpu_threads` | Native Rayon worker count for Rust-owned work. |
+| `[compute] multi_phenotype_sample_mode` | Per-phenotype or shared complete-case sample alignment. |
 | `[output] writer_threads` | Output writer worker count. |
-| `[output] writer_queue_depth` | Output writer queue depth. |
-| `[output] chunks_per_parquet_file` | Engine chunks grouped into each Parquet part. |
-| `[output] parquet_compression` | Parquet compression, `none` or `zstd`. |
 | `[compute] firth_batch_size` | Approximate-Firth candidate batch size. |
 | `[compute] firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
-| `[compute] jax_persistent_cache`, `jax_cache_dir` | JAX compilation cache behavior. |
+| `[compute] jax_cache_dir` | Optional location override for the always-enabled persistent JAX compilation cache. |
 | `[diagnostics] telemetry` | `off`, `progress`, or `profile`; profile mode can perturb timing. |
 
-`gpu_genotype_format = "auto"` resolves to packed8 only for single-trait binary
-GPU REGENIE Step 2 runs when trusted no-missing diploid BGEN validation passes.
-It falls back to dosage for CPU, linear, grouped, multi-phenotype, and
-incompatible BGEN cases. Explicit `packed8` keeps fail-fast validation behavior.
+The BGEN decode tile and GPU genotype representation are internal runtime
+policies, not configuration keys. The current reader uses 32-variant decode
+tiles. Linear and binary GPU runs use packed8 delivery when no-missing diploid
+compatibility validation passes, including multi-phenotype groups. CPU and
+otherwise-supported biallelic diploid Layout-2 inputs that are not
+packed8-compatible use dosage delivery. Multiallelic, non-diploid,
+Zstandard-compressed, or otherwise unsupported input fails instead.
 
 Current default values are in `crates/interface/src/config.default.toml`.
 The V100-tuned binary path uses 512-lane Firth batches and a
@@ -149,17 +145,17 @@ overridden.
 
 CPU runs exercise native BGEN decode, sample alignment, output writing, and JAX
 CPU kernels. For large scans on a cluster, submit to a compute node instead of a
-login node and pass the scheduler CPU count to `--threads`.
+login node and set `[compute].cpu_threads` to the scheduler CPU count.
 
 ```bash
 uv run --no-sync g regenie \
   --qt \
   --bgen /path/to/genotypes.bgen \
+  --sample /path/to/genotypes.sample \
   --phenoFile /path/to/phenotypes.tsv \
   --phenoCol phenotype_continuous \
   --pred /path/to/regenie_step1_qt_pred.list \
-  --out /path/to/output/g_cpu_regenie2 \
-  --threads "${SLURM_CPUS_PER_TASK:-16}"
+  --out /path/to/output/g_cpu_regenie2
 ```
 
 ## GPU Runs
@@ -192,10 +188,9 @@ before changing production scripts.
 
 ## Parquet Output
 
-Each phenotype run writes a `parts/` Parquet dataset. Tune writer threads,
-queue depth, part grouping, and compression against the target filesystem.
-Larger `chunks_per_parquet_file` values reduce file counts but delay each file
-commit and increase the amount of work repeated after an interruption.
+Each phenotype run writes a `parts/` Parquet dataset. `writer_threads` is the
+public filesystem-throughput control. Queue depth, part grouping, and
+compression are internal output policies.
 
 ## Measuring
 

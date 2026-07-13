@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-
-from g.compute.common import dtype as compute_dtype
-
-if typing.TYPE_CHECKING:
-    from g import types
 
 ALLELE_COUNT_MULTIPLIER = 2.0
 EIGHT_BIT_PROBABILITY_DENOMINATOR = 255.0
@@ -35,20 +29,17 @@ class RegenieGenotypeFlipResult:
 
 def decode_packed8_probability_pairs_to_variant_major_dosage(
     packed_probability_pairs_by_variant: jax.Array,
-    score_dtype: types.FloatingPointDtype,
 ) -> jax.Array:
-    """Decode trusted unphased 8-bit BGEN probability pairs to variant-major dosage.
+    """Decode validated unphased 8-bit BGEN probability pairs to variant-major dosage.
 
     Args:
         packed_probability_pairs_by_variant: Variant-major uint8 probability pairs.
-        score_dtype: Floating-point dtype for the decoded dosage matrix.
 
     Returns:
         Variant-major dosage matrix decoded on the active JAX device.
 
     """
-    compute_type = compute_dtype.resolve_jax_dtype(score_dtype)
-    probability_values = jnp.asarray(packed_probability_pairs_by_variant, dtype=compute_type)
+    probability_values = jnp.asarray(packed_probability_pairs_by_variant, dtype=jnp.float32)
     homozygous_reference_probability_byte = probability_values[:, :, 0]
     heterozygous_probability_byte = probability_values[:, :, 1]
     return (

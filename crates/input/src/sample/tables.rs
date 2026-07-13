@@ -2,15 +2,13 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use g_plan::SampleKeyMode;
-
 use super::SampleAlignmentResult;
 use super::keys::{ObservedTableSampleKeys, SampleRowIndicesByKey, duplicate_table_sample_key_error};
 
 const TABULAR_MISSING_VALUE_TOKENS: &[&str] = &["", "NA", "NaN", "nan", "-9"];
 
 struct TabularColumnSelection {
-    family_identifier_value_index: Option<usize>,
+    family_identifier_value_index: usize,
     individual_identifier_value_index: usize,
     data_value_indices: Vec<usize>,
     selected_columns: Vec<SelectedTabularColumn>,
@@ -52,18 +50,13 @@ pub(super) fn read_multi_phenotype_table(
     phenotype_path: &Path,
     phenotype_names: &[String],
     is_binary_trait: bool,
-    sample_key_mode: SampleKeyMode,
     sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     sample_count: usize,
 ) -> SampleAlignmentResult<MultiPhenotypeTable> {
     let mut reader = open_tabular_reader(phenotype_path, "phenotype table", b'\t')?;
     let headers = read_tabular_header(&mut reader, phenotype_path)?;
     let phenotype_path_text = phenotype_path.display().to_string();
-    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
-        Some(required_column_index(&headers, "FID", &phenotype_path_text)?)
-    } else {
-        None
-    };
+    let family_identifier_index = required_column_index(&headers, "FID", &phenotype_path_text)?;
     let individual_identifier_index = required_column_index(&headers, "IID", &phenotype_path_text)?;
     let phenotype_indices = phenotype_names
         .iter()
@@ -82,28 +75,19 @@ pub(super) fn read_multi_phenotype_table(
         individual_identifier_index,
         &phenotype_column_definitions,
     );
-    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_key_mode, sample_count);
+    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_count);
     let phenotype_count = phenotype_names.len();
     let mut phenotype_values = vec![0.0; phenotype_count * sample_count];
     let mut phenotype_masks = vec![false; phenotype_count * sample_count];
     while reader.read_next_record()? {
         let record = &reader.current_record;
         selection.validate_record(&reader, record)?;
+        let family_identifier = selection.record_value(record, selection.family_identifier_value_index);
         let individual_identifier = selection.record_value(record, selection.individual_identifier_value_index);
-        if individual_identifier.is_empty() {
-            continue;
-        }
-        let family_identifier = selection
-            .family_identifier_value_index
-            .map_or("", |value_index| selection.record_value(record, value_index));
+        validate_nonempty_sample_key(&reader, family_identifier, individual_identifier)?;
         let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
         if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
-            return Err(duplicate_table_sample_key_error(
-                "phenotype table",
-                sample_key_mode,
-                family_identifier,
-                individual_identifier,
-            ));
+            return Err(duplicate_table_sample_key_error("phenotype table", family_identifier, individual_identifier));
         }
         let Some(sample_array_index) = sample_array_index else {
             continue;
@@ -124,7 +108,6 @@ pub(super) fn read_multi_phenotype_table(
 pub(super) fn load_covariate_table(
     covariate_path: Option<&str>,
     covariate_names: Option<&[String]>,
-    sample_key_mode: SampleKeyMode,
     sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     parse_candidate_mask: &[bool],
     sample_count: usize,
@@ -133,7 +116,6 @@ pub(super) fn load_covariate_table(
         return read_covariate_table(
             Path::new(covariate_path),
             covariate_names,
-            sample_key_mode,
             sample_row_indices_by_key,
             parse_candidate_mask,
             sample_count,
@@ -247,6 +229,30 @@ fn is_empty_tabular_record(record: &csv::StringRecord) -> bool {
     record.iter().all(str::is_empty)
 }
 
+fn validate_nonempty_sample_key<R: Read>(
+    reader: &StreamingTabularReader<R>,
+    family_identifier: &str,
+    individual_identifier: &str,
+) -> SampleAlignmentResult<()> {
+    if family_identifier.is_empty() {
+        return Err(format!(
+            "{} '{}' line {} contains an empty FID; FID and IID must both be non-empty.",
+            reader.display_source_label(),
+            reader.path_text,
+            reader.current_line_number,
+        ));
+    }
+    if individual_identifier.is_empty() {
+        return Err(format!(
+            "{} '{}' line {} contains an empty IID; FID and IID must both be non-empty.",
+            reader.display_source_label(),
+            reader.path_text,
+            reader.current_line_number,
+        ));
+    }
+    Ok(())
+}
+
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> SampleAlignmentResult<usize> {
     column_index(headers, column_name).ok_or_else(|| {
         if column_name == "FID" || column_name == "IID" {
@@ -263,13 +269,13 @@ fn column_index(headers: &[String], column_name: &str) -> Option<usize> {
 
 impl TabularColumnSelection {
     fn new(
-        family_identifier_column_index: Option<usize>,
+        family_identifier_column_index: usize,
         individual_identifier_column_index: usize,
         data_column_definitions: &[TabularColumnDefinition<'_>],
     ) -> Self {
         let mut selected_columns = Vec::with_capacity(data_column_definitions.len() + 2);
-        let family_identifier_value_index = family_identifier_column_index
-            .map(|column_index| push_selected_column(&mut selected_columns, "FID", column_index));
+        let family_identifier_value_index =
+            push_selected_column(&mut selected_columns, "FID", family_identifier_column_index);
         let individual_identifier_value_index =
             push_selected_column(&mut selected_columns, "IID", individual_identifier_column_index);
         let data_value_indices = data_column_definitions
@@ -353,7 +359,6 @@ fn select_covariate_names(
 fn read_covariate_table(
     covariate_path: &Path,
     requested_covariate_names: Option<&[String]>,
-    sample_key_mode: SampleKeyMode,
     sample_row_indices_by_key: &SampleRowIndicesByKey<'_>,
     parse_candidate_mask: &[bool],
     sample_count: usize,
@@ -361,11 +366,7 @@ fn read_covariate_table(
     let mut reader = open_tabular_reader(covariate_path, "covariate table", b'\t')?;
     let headers = read_tabular_header(&mut reader, covariate_path)?;
     let covariate_path_text = covariate_path.display().to_string();
-    let family_identifier_index = if sample_key_mode == SampleKeyMode::FidIid {
-        Some(required_column_index(&headers, "FID", &covariate_path_text)?)
-    } else {
-        None
-    };
+    let family_identifier_index = required_column_index(&headers, "FID", &covariate_path_text)?;
     let individual_identifier_index = required_column_index(&headers, "IID", &covariate_path_text)?;
     let selected_covariate_names = select_covariate_names(&headers, requested_covariate_names, &covariate_path_text)?;
     let covariate_indices: Vec<usize> = selected_covariate_names
@@ -388,28 +389,19 @@ fn read_covariate_table(
         individual_identifier_index,
         &covariate_column_definitions,
     );
-    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_key_mode, sample_count);
+    let mut observed_sample_keys = ObservedTableSampleKeys::new(sample_count);
     let selected_covariate_count = selected_covariate_names.len();
     let mut covariate_values = vec![0.0; sample_count * selected_covariate_count];
     let mut covariate_mask = vec![false; sample_count];
     while reader.read_next_record()? {
         let record = &reader.current_record;
         selection.validate_record(&reader, record)?;
+        let family_identifier = selection.record_value(record, selection.family_identifier_value_index);
         let individual_identifier = selection.record_value(record, selection.individual_identifier_value_index);
-        if individual_identifier.is_empty() {
-            continue;
-        }
-        let family_identifier = selection
-            .family_identifier_value_index
-            .map_or("", |value_index| selection.record_value(record, value_index));
+        validate_nonempty_sample_key(&reader, family_identifier, individual_identifier)?;
         let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
         if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
-            return Err(duplicate_table_sample_key_error(
-                "covariate table",
-                sample_key_mode,
-                family_identifier,
-                individual_identifier,
-            ));
+            return Err(duplicate_table_sample_key_error("covariate table", family_identifier, individual_identifier));
         }
         let Some(sample_array_index) = sample_array_index else {
             continue;

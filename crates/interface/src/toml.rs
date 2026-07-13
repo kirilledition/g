@@ -69,7 +69,7 @@ fn clear_effective_default_binary_provenance(
 /// # Errors
 ///
 /// Returns an error when serialization fails or default metadata cannot be loaded.
-pub fn dumps_toml(config: &RegenieConfigData) -> ConfigResult<String> {
+pub(crate) fn dumps_toml(config: &RegenieConfigData) -> ConfigResult<String> {
     ::toml::to_string(&EffectiveConfigToml::new(config)?)
         .map_err(|error| ConfigError::new(format!("Failed to serialize TOML config: {error}")))
 }

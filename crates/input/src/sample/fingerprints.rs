@@ -5,6 +5,7 @@ use super::types::{AlignedPhenotypeGroupDraft, PhenotypeGroupLoadRequest};
 pub(super) fn build_phenotype_compute_group(
     request: &PhenotypeGroupLoadRequest<'_>,
     draft: &AlignedPhenotypeGroupDraft,
+    prediction_alignment_source_digest: &[u8; 32],
 ) -> Result<g_plan::PhenotypeComputeGroup, String> {
     let phenotype_indices = draft
         .phenotype_indices
@@ -37,20 +38,19 @@ pub(super) fn build_phenotype_compute_group(
     )?;
     let covariate_design_fingerprint =
         fingerprint_covariate_design(&draft.covariate_names, draft.sample_array_indices.len(), &draft.covariate_values);
-    let prediction_alignment_fingerprint = fingerprint_prediction_alignment(
-        request.prediction_list_path,
-        request.sample_key_mode,
-        &sample_set_fingerprint,
-        &phenotype_names,
-    );
+    let phenotype_design_fingerprint =
+        fingerprint_phenotype_design(&phenotype_names, draft.sample_array_indices.len(), &draft.phenotype_values);
+    let prediction_alignment_fingerprint =
+        fingerprint_prediction_alignment(prediction_alignment_source_digest, &sample_set_fingerprint, &phenotype_names);
     Ok(g_plan::PhenotypeComputeGroup {
         group_mode,
         phenotype_indices,
         phenotype_names,
         sample_mode,
-        sample_set_fingerprint: Some(sample_set_fingerprint),
-        covariate_design_fingerprint: Some(covariate_design_fingerprint),
-        prediction_alignment_fingerprint: Some(prediction_alignment_fingerprint),
+        sample_set_fingerprint,
+        covariate_design_fingerprint,
+        phenotype_design_fingerprint,
+        prediction_alignment_fingerprint,
     })
 }
 
@@ -80,16 +80,27 @@ fn fingerprint_covariate_design(covariate_names: &[String], sample_count: usize,
     hex::encode(fingerprint_hash.finalize())
 }
 
+fn fingerprint_phenotype_design(phenotype_names: &[String], sample_count: usize, phenotype_values: &[f32]) -> String {
+    let mut fingerprint_hash = Sha256::new();
+    update_fingerprint(&mut fingerprint_hash, "phenotype-design-v1");
+    update_string_sequence_fingerprint(&mut fingerprint_hash, phenotype_names);
+    update_f32_array_fingerprint(
+        &mut fingerprint_hash,
+        "float32",
+        &[phenotype_names.len(), sample_count],
+        phenotype_values,
+    );
+    hex::encode(fingerprint_hash.finalize())
+}
+
 fn fingerprint_prediction_alignment(
-    prediction_list_path: &str,
-    sample_key_mode: g_plan::SampleKeyMode,
+    prediction_alignment_source_digest: &[u8; 32],
     sample_set_fingerprint: &str,
     phenotype_names: &[String],
 ) -> String {
     let mut fingerprint_hash = Sha256::new();
-    update_fingerprint(&mut fingerprint_hash, "prediction-alignment-v1");
-    update_fingerprint(&mut fingerprint_hash, prediction_list_path);
-    update_fingerprint(&mut fingerprint_hash, sample_key_mode.as_str());
+    update_fingerprint(&mut fingerprint_hash, "prediction-alignment-v3");
+    fingerprint_hash.update(prediction_alignment_source_digest);
     update_fingerprint(&mut fingerprint_hash, sample_set_fingerprint);
     update_string_sequence_fingerprint(&mut fingerprint_hash, phenotype_names);
     hex::encode(fingerprint_hash.finalize())
@@ -106,7 +117,7 @@ fn update_usize_as_i64_array_fingerprint(
     for value in values {
         let schema_value =
             i64::try_from(*value).map_err(|_| "Sample index exceeds the fingerprint schema i64 range.".to_string())?;
-        fingerprint_hash.update(schema_value.to_ne_bytes());
+        fingerprint_hash.update(schema_value.to_le_bytes());
     }
     Ok(())
 }
@@ -115,7 +126,7 @@ fn update_f32_array_fingerprint(fingerprint_hash: &mut Sha256, dtype_name: &str,
     update_fingerprint(fingerprint_hash, dtype_name);
     update_fingerprint(fingerprint_hash, &python_shape_repr(shape));
     for value in values {
-        fingerprint_hash.update(value.to_ne_bytes());
+        fingerprint_hash.update(value.to_le_bytes());
     }
 }
 

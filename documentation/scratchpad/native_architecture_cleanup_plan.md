@@ -2,7 +2,15 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Implemented; stabilization deferred | Production `src/` and `crates/` code | Development maintainers |
+| Historical implementation ledger | Superseded production architecture plan | Development maintainers |
+
+This file preserves the decisions and acceptance language used during the
+earlier cleanup. It is not the current production contract: later work removed
+the grouped-union delivery, public raw-buffer wrappers, process-global BGEN
+decode state, and intermediary re-exports described below. See
+[Architecture](../development/architecture.md),
+[Rust Crate Boundaries](../development/rust-crate-boundaries.md), and each
+crate's `PUBLIC_API.md` for active ownership and dependency rules.
 
 ## Execution Ledger
 
@@ -18,7 +26,7 @@
 - [x] Thin binding, module flattening, numeric audit, and final dead-code sweep.
 - [x] Parquet-only result contract with chunked `parts/` as the completed dataset.
 - [x] Coarse `g-engine::execute_coordinated_run` ownership above prepared execution.
-- [x] Canonical manifest schema 11 with no JSON DTO crossing domain crates.
+- [x] Canonical manifest schema 14 with no JSON DTO crossing domain crates.
 - [x] Output schema 3 with dense Parquet columns and explicit correction method/status.
 - [x] Cached Parquet schemas/dictionaries, shared writer configuration, and single-open strict resume.
 
@@ -26,7 +34,7 @@
 
 - All pre-release APIs, configuration, manifests, telemetry, and output schemas may break.
 - Scientific formulas remain unchanged except for explicit numeric-policy fixes.
-- Rust host arrays remain `f32`; `score_dtype = "float64"` widens at the JAX boundary and controls JAX arithmetic/result dtype.
+- Rust host arrays, JAX score arithmetic, and public statistics use `float32`.
 - Approximate-Firth arithmetic is always `float64`; `firth_dtype` is removed.
 - The nonfunctional standalone Rust CLI binary is deleted. The installed `g` console remains the thin Python launcher into `_core`.
 - Tests, benchmarks, and tooling are not modified or run during this pass.
@@ -36,17 +44,15 @@
 ## Target Dependency Graph
 
 ```text
-g-plan
-|-- g-interface
-|-- g-input
-|-- g-runtime
-|-- g-output --> g-genotype
-`-- g-engine --> plan/input/genotype/output/runtime
+g-plan --> g-interface / g-input / g-output / g-engine / g-runner
+g-genotype-contracts --> g-genotype / g-output / g-engine
+g-runtime --> g-engine / g-runner
+g-engine --> g-runner
 
-_core --> interface + engine + runtime + PyO3/NumPy
+_core --> runner + the domain types adapted at the PyO3/NumPy boundary
 ```
 
-Keep the existing seven domain crates. Reassign misplaced responsibilities instead of adding, merging, or splitting crates by line count.
+Keep the existing eight domain crates. Reassign misplaced responsibilities instead of adding, merging, or splitting crates by line count.
 
 ## Implementation Sequence
 
@@ -55,7 +61,7 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
 3. Delete the production-dead row-major BGEN pipeline and confirmed dead scalar/single-trait Firth paths. Narrow final genotype statistics to production-consumed fields.
 4. Make `g-output` consume canonical genotype metadata/statistics. Move owned statistic matrices into Parquet's Arrow arrays once, slice trait rows without copying, and share immutable metadata arrays.
 5. Replace the global unbounded output pool and per-phenotype coordinators with a run-scoped `OutputManager` using fixed workers, bounded queues, owned joins, and deterministic finish/interruption/abort.
-6. Add `g-engine::RunEngine::prepare` and consuming `PreparedRun::execute<B: AssociationBackend>`. Normalize single, complete-case, per-phenotype, and grouped-union execution into `Vec<PreparedAssociationGroup>` and move all BGEN delivery, scheduling, resume, output, and lifecycle logic out of `src/binding`.
+6. Add `g-engine::RunEngine::prepare` and consuming `PreparedRun::execute_with_progress<B: AssociationBackend, H: RunHooks>`. Normalize single, complete-case, per-phenotype, and grouped-union execution into `Vec<PreparedAssociationGroup>` and move all BGEN delivery, scheduling, resume, output, and lifecycle logic out of `src/binding`.
 7. Bound every association stage, carry active trait indices through completed batches, reuse genotype buffers by capacity, and share grouped-union metadata rather than cloning it.
 8. Reduce `g-runtime` to generic logging, telemetry transport, timing, process/JAX policy, and shutdown. Move GWAS events/artifacts to engine and manifest extension logic to output. Replace event-forwarder functions with a small typed event model.
 9. Reduce `src/binding` to `_core` registration, CLI result adaptation, JAX configuration/device calls, four backend method calls, NumPy conversion, opaque Python state, and one native-error-to-Python boundary.
@@ -64,8 +70,9 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
 ## Implemented Architecture
 
 - `g-engine::RunEngine::open` owns one shared `RunPlan`; consuming `prepare`
-  resolves BGEN/input/resume/output state and consuming `PreparedRun::execute`
-  owns delivery plus terminal output policy.
+  resolves BGEN/input/resume/output state and consuming
+  `PreparedRun::execute_with_progress` owns delivery plus terminal output
+  policy.
 - `g-output::OutputManager` owns run directories, manifests, bounded Parquet
   writer workers, immutable shared resume sets, interruption, abort, and
   output completion.
@@ -78,8 +85,9 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
 - Stage timing stores only production-recorded stage totals/counts. Empty BGEN,
   null-logistic, queue, transfer, chunk-timing, and derived-metric schemas are
   removed, and the former timing submodule folder is flattened.
-- `g-plan` owns resume mode, Parquet compression, statistic dtype, telemetry
-  mode, and every other planning enum. There is no output-format enum.
+- `g-plan` carries request-derived policy only. `g-output` owns fixed strict
+  resume, Parquet grouping/compression, queue capacity, and statistic width;
+  runtime crates own their fixed execution policy.
 - The binding creates the Python-backed four-method JAX adapter and makes one
   coarse `g-engine::execute_coordinated_run` call. It has no input, BGEN,
   resume, writer, artifact-construction, or execution-report policy.
@@ -96,9 +104,12 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
   success or failure labels.
 - Internal correction codes are contiguous method/outcome states; no legacy
   output code or text label travels through JAX, PyO3, engine, or output.
-- Manifest schema 11 stores immutable compatibility data once in
+- Manifest schema 14 stores immutable compatibility data once in
   `execution_plan`. Engine passes typed phenotype-specific inputs and typed
   LOCO fingerprints; JSON is created only inside `g-output` at persistence.
+  Every compute group carries a required fingerprint of its aligned
+  trait-major phenotype values so resume cannot combine chunks computed from
+  different phenotype matrices.
 - Parquet schemas and dictionary values are process-cached, writer jobs share
   immutable configuration, and strict resume propagates directory errors while
   opening each part once.
@@ -121,15 +132,16 @@ Keep the existing seven domain crates. Reassign misplaced responsibilities inste
 
 - Configuration thresholds and tolerances are validated finite `f64` values.
 - Host phenotype, covariate, LOCO, dosage, and summary buffers remain `f32`.
-- `score_dtype` controls the dtype used after JAX device transfer. Output statistic dtype must be equal to or narrower than it.
-- Firth solver operands are always `f64`; corrected values merge into the configured score-result dtype.
+- Score-test operands and output statistics use `float32`.
+- Firth solver operands are always `f64`; corrected values narrow once into float32 score results.
 - Epsilon and convergence operands derive from the active JAX dtype. Step-halving scales are in `(0, 1)`, probability thresholds in `(0, 1)`, and sparse dosage thresholds in `(0, 2]`.
 - Rust memory indices and shapes use `usize`; JAX indices, loop counts, and count arrays use checked `i32`; persisted counts/byte sizes use fixed-width integers. Correctness paths do not use saturation or multi-stage sign-changing conversions.
 - [x] Enforce the integer contract end to end: deny unsafe Rust integer casts; keep raw pointers behind exposed-provenance wrappers; serialize telemetry counters as fixed width; retain unsigned host configuration but validate and expose JAX loop/capacity controls as `i32`; reject out-of-domain sample, trait, chunk, flattened-lane, and padded-batch sizes before backend dispatch; and force index-producing JAX operations to `int32` under x64 mode.
 
 ## Acceptance
 
-- Root `_core` has no direct dependency on `g-genotype`, `g-input`, or `g-output`.
+- Root `_core` uses domain crates only to implement the private PyO3/NumPy
+  adapter; it owns no domain orchestration or policy.
 - No unbounded association/output channels or global output worker pool remain.
 - No string/JSON execution DTO travels between Rust domain crates; JSON exists only at persistence and telemetry serialization edges.
 - Completed chunks do not clone genotype metadata/statistics or materialized result matrices before output.

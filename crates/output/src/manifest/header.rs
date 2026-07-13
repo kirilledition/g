@@ -8,23 +8,24 @@ use serde_json::{Value, json};
 use crate::error::OutputError;
 
 use super::{
-    JAX_MATMUL_PRECISION_WHEN_UNSET, ManifestFileFingerprintCache, OUTPUT_SCHEMA_VERSION, RESUME_POLICY,
-    RUN_MANIFEST_SCHEMA_VERSION, build_manifest_value_sha256, manifest_file_fingerprint_to_value,
+    ManifestFileFingerprintCache, OUTPUT_SCHEMA_VERSION, RESUME_POLICY, RUN_MANIFEST_SCHEMA_VERSION,
+    build_manifest_value_sha256, manifest_file_fingerprint_to_value,
 };
 
 pub struct CurrentRunManifestHeaderInput {
     pub phenotype_name: String,
+    pub bgen_source_identity: Arc<g_genotype_contracts::BgenSourceIdentity>,
     pub covariate_names: Arc<[String]>,
     pub prediction_loco_files: Arc<[PredictionLocoFileFingerprint]>,
     pub sample_count: usize,
     pub variant_count: usize,
-    pub effective_trusted_no_missing_diploid: bool,
     pub resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat,
-    pub output_sample_mode: g_plan::MultiPhenotypeSampleMode,
+    pub sample_mode: g_plan::MultiPhenotypeSampleMode,
     pub phenotype_compute_group_id: Arc<str>,
-    pub sample_set_fingerprint: Option<Arc<str>>,
-    pub covariate_design_fingerprint: Option<Arc<str>>,
-    pub prediction_alignment_fingerprint: Option<Arc<str>>,
+    pub sample_set_fingerprint: Arc<str>,
+    pub covariate_design_fingerprint: Arc<str>,
+    pub phenotype_design_fingerprint: Arc<str>,
+    pub prediction_alignment_fingerprint: Arc<str>,
 }
 
 #[derive(Clone)]
@@ -39,12 +40,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     input: &CurrentRunManifestHeaderInput,
     fingerprint_cache: &mut ManifestFileFingerprintCache,
 ) -> Result<Value, OutputError> {
-    let bgen_fingerprint = build_required_file_fingerprint_with_cache(
-        fingerprint_cache,
-        Path::new(&run_plan.input.bgen_path),
-        false,
-        "BGEN",
-    )?;
+    let bgen_fingerprint = bgen_source_identity_to_value(&input.bgen_source_identity);
     let sample_fingerprint = build_optional_file_fingerprint_with_cache(
         fingerprint_cache,
         Some(Path::new(&run_plan.input.sample_path)),
@@ -86,11 +82,6 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     let association_backend_kind = match input.resolved_gpu_genotype_format {
         g_plan::GpuGenotypeFormat::Dosage => "jax_dosage",
         g_plan::GpuGenotypeFormat::Packed8 => "jax_packed8",
-        g_plan::GpuGenotypeFormat::Auto => {
-            return Err(OutputError::InvalidInput(
-                "Resolved GPU genotype format cannot remain auto during manifest construction.".to_string(),
-            ));
-        }
     };
     let association_backend = json!({
         "kind": association_backend_kind,
@@ -99,12 +90,12 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     let jax_policy = json!({
         "device": run_plan.compute.device.as_str(),
         "enable_x64": true,
-        "matmul_precision": run_plan.runtime.jax_matmul_precision.map_or(JAX_MATMUL_PRECISION_WHEN_UNSET, g_plan::JaxMatmulPrecision::as_str),
+        "matmul_precision": "float32",
     });
     let output_writer = json!({
         "writer_thread_count": run_plan.output.writer_thread_count,
-        "writer_queue_depth": run_plan.output.writer_queue_depth,
-        "chunks_per_parquet_file": run_plan.output.chunks_per_parquet_file,
+        "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
+        "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
         "parquet_compression": "zstd",
         "result_statistic_dtype": "float32",
     });
@@ -124,22 +115,17 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "prediction_inputs": prediction_inputs,
         "sample_count": sample_count,
         "variant_count": variant_count,
-        "chunk_size": run_plan.analysis.chunk_size,
-        "variant_limit": run_plan.compute.variant_limit,
+        "chunk_size": run_plan.chunk_size,
         "binary_correction_plan": binary_correction_plan,
         "binary_kernel_config": binary_kernel_config,
-        "trusted_no_missing_diploid": input.effective_trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": run_plan.compute.trusted_bgen_validation_mode.as_str(),
-        "sample_key_mode": run_plan.input.sample_key_mode.as_str(),
-        "bgen_decode_tile_variant_count": run_plan.compute.bgen_decode_tile_variant_count,
         "jax_policy": jax_policy,
-        "requested_gpu_genotype_format": run_plan.compute.requested_gpu_genotype_format.as_str(),
         "score_dtype": "float32",
-        "multi_phenotype_sample_mode": input.output_sample_mode.as_str(),
+        "multi_phenotype_sample_mode": input.sample_mode.as_str(),
         "phenotype_compute_group_id": input.phenotype_compute_group_id.as_ref(),
-        "sample_set_fingerprint": input.sample_set_fingerprint.as_deref(),
-        "covariate_design_fingerprint": input.covariate_design_fingerprint.as_deref(),
-        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint.as_deref(),
+        "sample_set_fingerprint": input.sample_set_fingerprint.as_ref(),
+        "covariate_design_fingerprint": input.covariate_design_fingerprint.as_ref(),
+        "phenotype_design_fingerprint": input.phenotype_design_fingerprint.as_ref(),
+        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint.as_ref(),
         "output_writer": output_writer,
         "resume_policy": RESUME_POLICY,
     });
@@ -151,6 +137,21 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "execution_plan_hash": execution_plan_hash,
     });
     Ok(current_header)
+}
+
+fn bgen_source_identity_to_value(identity: &g_genotype_contracts::BgenSourceIdentity) -> Value {
+    let resolved_path = identity.canonical_path.as_ref().unwrap_or(&identity.configured_path);
+    json!({
+        "path": resolved_path.display().to_string(),
+        "configured_path": identity.configured_path.display().to_string(),
+        "size": identity.file_size,
+        "mtime_ns": identity.modification_time_nanoseconds,
+        "ctime_ns": identity.change_time_nanoseconds,
+        "device": identity.device_identifier,
+        "inode": identity.inode_identifier,
+        "content_hash_algorithm": "opened-file-identity",
+        "content_sha256": Value::Null,
+    })
 }
 
 fn prediction_loco_file_fingerprints_to_value(

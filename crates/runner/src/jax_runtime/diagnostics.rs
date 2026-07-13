@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use super::{JaxGpuValidationStatus, JaxRuntimeSetupSession};
+use super::{
+    JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS, JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES, JaxGpuValidationStatus,
+    JaxRuntimeSetupSession, XLA_AUXILIARY_CACHE_DISABLED,
+};
 
 const DIAGNOSTIC_LEVEL_ERROR: &str = "error";
 const DIAGNOSTIC_LEVEL_INFO: &str = "info";
@@ -64,59 +67,41 @@ pub(crate) fn emit_jax_runtime_setup_diagnostics(
         &JaxPlatformSelectedFields { requested_device: policy.device.as_str(), platform: platform_name },
     )?;
 
-    let cache_policy = policy.persistent_cache.as_ref();
-    let cache_directory = cache_policy.map(|cache_policy| cache_policy.directory.path().to_string_lossy());
-    let persistent_cache_message = if cache_policy.is_some() {
-        "JAX persistent compilation cache enabled."
-    } else {
-        "JAX persistent compilation cache disabled."
-    };
+    let cache_directory = policy.cache_directory.path().to_string_lossy();
     emit_jax_runtime_diagnostic(
         telemetry_session,
         thread_name,
         DIAGNOSTIC_LEVEL_INFO,
         "jax_persistent_cache_configured",
-        persistent_cache_message,
+        "JAX persistent compilation cache enabled.",
         &JaxPersistentCacheConfiguredFields {
-            enabled: cache_policy.is_some(),
-            cache_directory: cache_directory.as_deref(),
-            min_entry_size_bytes: cache_policy.map(|cache_policy| cache_policy.min_entry_size_bytes),
-            min_compile_time_seconds: cache_policy.map(|cache_policy| cache_policy.min_compile_time_seconds),
+            enabled: true,
+            cache_directory: Some(cache_directory.as_ref()),
+            min_entry_size_bytes: Some(JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES),
+            min_compile_time_seconds: Some(JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECONDS),
         },
     )?;
 
-    let xla_auxiliary_cache_mode = policy.xla_auxiliary_cache_mode();
-    let xla_auxiliary_cache_enabled = cache_policy.is_some_and(|cache_policy| cache_policy.xla_autotune_cache_enabled);
-    let xla_auxiliary_cache_message = if xla_auxiliary_cache_enabled {
-        "XLA auxiliary persistent cache enabled."
-    } else {
-        "XLA auxiliary persistent cache disabled."
-    };
     emit_jax_runtime_diagnostic(
         telemetry_session,
         thread_name,
         DIAGNOSTIC_LEVEL_INFO,
         "jax_xla_auxiliary_cache_configured",
-        xla_auxiliary_cache_message,
+        "XLA auxiliary persistent cache disabled.",
         &JaxAuxiliaryCacheConfiguredFields {
-            enabled: xla_auxiliary_cache_enabled,
-            mode: xla_auxiliary_cache_mode,
-            reason: policy.xla_auxiliary_cache_reason(),
+            enabled: false,
+            mode: XLA_AUXILIARY_CACHE_DISABLED,
+            reason: "XLA auxiliary caching is fixed off",
         },
     )?;
 
-    let transfer_guard_message = if policy.transfer_guard_enabled {
-        "JAX transfer guard diagnostics enabled."
-    } else {
-        "JAX transfer guard diagnostics disabled."
-    };
     emit_jax_runtime_diagnostic(
         telemetry_session,
         thread_name,
         DIAGNOSTIC_LEVEL_INFO,
         "jax_transfer_guard_configured",
-        transfer_guard_message,
-        &JaxTransferGuardConfiguredFields { enabled: policy.transfer_guard_enabled },
+        "JAX transfer guard diagnostics disabled.",
+        &JaxTransferGuardConfiguredFields { enabled: false },
     )?;
 
     let gpu_validation_status = setup_session.gpu_validation_status;

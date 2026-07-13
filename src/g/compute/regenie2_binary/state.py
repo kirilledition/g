@@ -3,20 +3,14 @@
 from __future__ import annotations
 
 import functools
-import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 
-from g.compute.common import dtype as compute_dtype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary import null_logistic as regenie2_binary_null_logistic
-from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
-
-if typing.TYPE_CHECKING:
-    from g import types as g_types
 
 
 @jax.tree_util.register_dataclass
@@ -137,13 +131,11 @@ class Regenie2MultiBinaryFirthChromosomeState:
 def build_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
-    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2MultiBinaryState:
     """Build reusable multi-trait binary step 2 state."""
-    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
     return Regenie2MultiBinaryState(
-        covariate_matrix=jnp.asarray(covariate_matrix, dtype=jax_dtype),
-        phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jax_dtype),
+        covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
+        phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jnp.float32),
     )
 
 
@@ -152,11 +144,9 @@ def prepare_binary_trait_state(
     phenotype_vector: jax.Array,
     loco_offset: jax.Array,
     kernel_config: regenie2_binary_config.BinaryScoreConfig,
-    score_dtype: g_types.FloatingPointDtype,
 ) -> PreparedBinaryTraitState:
     """Prepare shared null-logistic and score quantities for one trait."""
-    jax_dtype = compute_dtype.resolve_jax_dtype(score_dtype)
-    loco_offset_compute = jnp.asarray(loco_offset, dtype=jax_dtype)
+    loco_offset_compute = jnp.asarray(loco_offset, dtype=jnp.float32)
     null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
@@ -178,7 +168,8 @@ def prepare_binary_trait_state(
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jax_dtype) * kernel_config.numerical.minimum_variance
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32)
+        * kernel_config.numerical.minimum_variance
     )
     weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
         cholesky_factor,
@@ -227,30 +218,27 @@ def prepare_binary_traits(
     state: Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     kernel_config: regenie2_binary_config.BinaryScoreConfig,
-    score_dtype: g_types.FloatingPointDtype,
 ) -> PreparedBinaryTraitState:
     """Prepare shared null-logistic quantities for every requested trait."""
-    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=compute_dtype.resolve_jax_dtype(score_dtype))
+    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
     return jax.vmap(
         lambda phenotype_vector, loco_offset: prepare_binary_trait_state(
             state.covariate_matrix,
             phenotype_vector,
             loco_offset,
             kernel_config,
-            score_dtype,
         )
     )(state.phenotype_matrix, loco_offset_matrix_compute)
 
 
-@functools.partial(jax.jit, static_argnames=("kernel_config", "score_dtype"))
+@functools.partial(jax.jit, static_argnames=("kernel_config",))
 def build_multi_binary_score_chromosome_state(
     state: Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     kernel_config: regenie2_binary_config.BinaryScoreConfig,
-    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2MultiBinaryScoreChromosomeState:
     """Build chromosome state containing only binary score-kernel operands."""
-    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config, score_dtype)
+    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config)
     return build_multi_binary_score_chromosome_state_from_traits(trait_states)
 
 
@@ -266,15 +254,16 @@ def compute_full_null_deviance(phenotype_vector: jax.Array, null_firth_offset: j
     )
 
 
-@functools.partial(jax.jit, static_argnames=("kernel_config", "score_dtype"))
+@functools.partial(jax.jit, static_argnames=("kernel_config",))
 def build_multi_binary_firth_chromosome_state(
     state: Regenie2MultiBinaryState,
     loco_offset_matrix: jax.Array,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
-    score_dtype: g_types.FloatingPointDtype,
 ) -> Regenie2MultiBinaryFirthChromosomeState:
     """Build chromosome state with score operands and approximate-Firth null state."""
-    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config, score_dtype)
+    from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
+
+    trait_states = prepare_binary_traits(state, loco_offset_matrix, kernel_config)
 
     def prepare_firth_trait(score_state: PreparedBinaryTraitState) -> PreparedBinaryFirthTraitState:
         null_firth_result = regenie2_binary_firth_null.fit_covariate_only_firth_null_model(

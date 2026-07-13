@@ -25,7 +25,7 @@ reader APIs, manifests, or buffer ownership.
 | JAX indices and count reductions | explicit `jnp.int32` | Device index/count contract | Keep `int32` even with JAX x64 enabled; reject shapes and products above the domain. |
 | Materialization trait indices | checked `Vec<i32>` at PyO3 | Python/JAX boundary | Convert from engine `usize` at the binding edge. |
 | Telemetry counters | `usize` internally, checked `u64` when emitted | JSON/tracing boundary | Keep host counters internal and serialize nonnegative fixed-width snapshots. |
-| NumPy output buffer address and value count | `OutputBufferAddress`, `OutputValueCount` | Raw pointer/buffer boundary | Keep pointer-sized representation quarantined behind wrappers. |
+| BGEN decoded genotype allocation | `OwnedGenotypeBuffer` containing `Vec<f32>` or `Vec<u8>` | Rust ownership boundary | Move typed ownership; do not introduce pointer-sized interchange. |
 
 ## Boundary Decisions
 
@@ -34,15 +34,10 @@ indices. The binding converts engine-owned active trait indices to checked
 `i32` values when constructing the materialization request; no pointer-sized
 integer crosses PyO3.
 
-Caller-owned output buffers are explicit:
-
-- `OutputBufferAddress` identifies the raw writable allocation address.
-- `OutputValueCount` identifies the number of elements available at that
-  address.
-
-These wrappers do not make raw pointers safe by themselves. They make the
-unsafe boundary visible, keep raw `usize` pointer values out of higher-level
-reader signatures, and round-trip pointers through exposed-provenance APIs.
+Owned BGEN decode returns a `DecodedGenotypeBatch`. Its genotype allocation is
+a typed vector owned by `OwnedGenotypeBuffer`; the decoder initializes reserved
+spare capacity and publishes the vector length only after complete success.
+The API exposes neither an allocation address nor a pointer-sized value count.
 
 ## Enforcement Notes
 
@@ -52,8 +47,8 @@ audited exceptions live in `tooling/debug/integer_cast_allowlist.txt`.
 
 When a new cast is proposed, classify it as one of:
 
-- raw pointer address round trip, which must use exposed-provenance APIs rather
-  than a cast;
+- slice-derived SIMD or raw-pointer work, which must stay inside an audited
+  unsafe implementation and must not be converted to an integer;
 - float-to-float or float-to-integer conversion required by numerical code;
 - SIMD lane extraction or mask count conversion;
 - benchmark/test fixture setup;
@@ -75,8 +70,5 @@ avoids per-access conversion. A compact representation can be added only after
 a benchmark shows a material decode, preprocess, cache, memory-bandwidth, or
 end-to-end throughput benefit.
 
-Candidate surfaces for a future benchmark are:
-
-- large sample-selection arrays;
-- grouped union sample indices;
-- group position maps.
+The remaining candidate surface for a future benchmark is large
+sample-selection arrays.

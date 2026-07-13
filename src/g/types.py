@@ -4,13 +4,6 @@ import enum
 from dataclasses import dataclass
 
 
-class FloatingPointDtype(enum.StrEnum):
-    """Floating-point dtype selector for JAX compute kernels."""
-
-    FLOAT32 = "float32"
-    FLOAT64 = "float64"
-
-
 class BinaryCorrectionCode(enum.IntEnum):
     """Binary association correction method and outcome."""
 

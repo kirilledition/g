@@ -17,7 +17,6 @@ pub fn load_aligned_phenotype_groups(
     }
     let group_drafts = {
         let sample_row_indices_by_key = build_sample_row_indices_by_key(
-            request.sample_key_mode,
             request.sample_identifiers.family_identifiers.as_slice(),
             request.sample_identifiers.individual_identifiers.as_slice(),
         )?;
@@ -25,7 +24,6 @@ pub fn load_aligned_phenotype_groups(
             Path::new(request.phenotype_path),
             request.phenotype_names,
             request.is_binary_trait,
-            request.sample_key_mode,
             &sample_row_indices_by_key,
             request.sample_identifiers.family_identifiers.len(),
         )?;
@@ -33,7 +31,6 @@ pub fn load_aligned_phenotype_groups(
         let covariate_table = load_covariate_table(
             request.covariate_path,
             request.covariate_names,
-            request.sample_key_mode,
             &sample_row_indices_by_key,
             &parse_candidate_mask,
             request.sample_identifiers.family_identifiers.len(),
@@ -58,9 +55,9 @@ fn build_aligned_phenotype_group(
         request.sample_identifiers.family_identifiers.as_slice(),
         request.sample_identifiers.individual_identifiers.as_slice(),
         &draft.sample_array_indices,
-        request.sample_key_mode,
     )?;
-    let phenotype_group = build_phenotype_compute_group(request, &draft)?;
+    let prediction_alignment_source_digest = prediction_source.alignment_source_digest();
+    let phenotype_group = build_phenotype_compute_group(request, &draft, &prediction_alignment_source_digest)?;
     let sample_count = draft.sample_array_indices.len();
     let phenotype_value_count = phenotype_group
         .phenotype_names

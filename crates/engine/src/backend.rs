@@ -30,42 +30,13 @@ pub struct PreparedChromosome<State> {
     pub null_logistic_converged: Option<Vec<bool>>,
 }
 
-/// Owned variant-major genotype allocation transferred into the backend.
-#[derive(Debug, PartialEq)]
-pub enum OwnedGenotypeBuffer {
-    /// Dosage values with shape `variants x samples`.
-    Dosage(Vec<f32>),
-    /// BGEN probability pairs with shape `variants x samples x 2`.
-    Packed8(Vec<u8>),
-}
-
-/// Owned per-variant statistics transferred into association kernels.
-#[derive(Debug, PartialEq)]
-pub struct GenotypeBatchStatistics {
-    pub genotype_mean: Vec<f32>,
-    pub imputed_dosage_square_sum: Option<Vec<f32>>,
-    pub sparse_candidate_mask: Option<Vec<bool>>,
-}
-
 /// One genotype batch submitted to the device backend.
 #[derive(Debug, PartialEq)]
 pub struct GenotypeBatchInput {
     pub variant_count: usize,
     pub sample_count: usize,
-    pub genotypes: OwnedGenotypeBuffer,
-    pub statistics: GenotypeBatchStatistics,
-}
-
-/// One fully materialized host association batch.
-#[derive(Debug, PartialEq)]
-pub struct HostAssociationBatch {
-    pub trait_count: usize,
-    pub variant_count: usize,
-    pub beta: Vec<f32>,
-    pub standard_error: Vec<f32>,
-    pub chi_squared: Vec<f32>,
-    pub log10_p_value: Vec<f32>,
-    pub correction_codes: Option<Vec<u8>>,
+    pub genotypes: g_genotype::OwnedGenotypeBuffer,
+    pub statistics: g_genotype::ChunkComputeStatistics,
 }
 
 /// Chunk-oriented association compute implemented by the device runtime.
@@ -96,7 +67,7 @@ pub trait AssociationBackend: Send + Sync {
     fn prepare_chromosome(
         &self,
         group: &Self::GroupState,
-        predictions: TraitMajorMatrix,
+        predictions: g_input::ChromosomePredictionMatrix,
     ) -> Result<PreparedChromosome<Self::ChromosomeState>, Self::Error>;
 
     /// Release one chromosome state on the backend execution thread.
@@ -132,5 +103,5 @@ pub trait AssociationBackend: Send + Sync {
         result: Self::DeviceResult,
         active_trait_indices: Option<&[usize]>,
         logical_variant_count: usize,
-    ) -> Result<HostAssociationBatch, Self::Error>;
+    ) -> Result<g_output::Regenie2StatisticBatch, Self::Error>;
 }

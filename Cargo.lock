@@ -732,6 +732,9 @@ name = "g"
 version = "0.1.0"
 dependencies = [
  "g-engine",
+ "g-genotype",
+ "g-input",
+ "g-output",
  "g-plan",
  "g-runner",
  "numpy",
@@ -750,14 +753,11 @@ dependencies = [
  "g-output",
  "g-plan",
  "g-runtime",
- "hex",
  "nalgebra",
  "serde",
  "serde_json",
- "sha2",
  "thiserror",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -767,8 +767,10 @@ dependencies = [
  "criterion",
  "flate2",
  "g-genotype-contracts",
+ "hex",
  "memmap2",
  "rayon",
+ "sha2",
  "thiserror",
 ]
 
