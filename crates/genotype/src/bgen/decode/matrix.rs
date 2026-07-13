@@ -67,11 +67,16 @@ pub(in crate::bgen) fn read_eight_bit_probability_pair(buffer: &[u8], offset: us
 
 pub(in crate::bgen) struct ThreadScratch {
     pub(super) zlib_decompressor: Decompress,
+    pub(super) zstandard_decompressor: Option<zstd::bulk::Decompressor<'static>>,
     pub(super) decompressed_probability_block: Vec<u8>,
 }
 
 impl Default for ThreadScratch {
     fn default() -> Self {
-        Self { zlib_decompressor: Decompress::new(true), decompressed_probability_block: Vec::new() }
+        Self {
+            zlib_decompressor: Decompress::new(true),
+            zstandard_decompressor: None,
+            decompressed_probability_block: Vec::new(),
+        }
     }
 }

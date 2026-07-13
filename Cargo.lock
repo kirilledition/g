@@ -773,6 +773,7 @@ dependencies = [
  "rayon",
  "sha2",
  "thiserror",
+ "zstd",
 ]
 
 [[package]]

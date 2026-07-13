@@ -208,6 +208,19 @@ pub(in crate::bgen) fn read_probability_block<'a>(
             )?;
             Ok(&thread_scratch.decompressed_probability_block[..variant_record.declared_uncompressed_block_length])
         }
+        CompressionType::Zstandard => {
+            let compressed_payload = read_exact_bytes(
+                mmap,
+                variant_record.probability_payload_offset,
+                variant_record.probability_payload_length,
+            )?;
+            decompress_zstandard_block_into_scratch(
+                compressed_payload,
+                variant_record.declared_uncompressed_block_length,
+                thread_scratch,
+            )?;
+            Ok(&thread_scratch.decompressed_probability_block[..variant_record.declared_uncompressed_block_length])
+        }
     }
 }
 
@@ -245,6 +258,28 @@ fn decompress_zlib_block_into_scratch(
     if decompressed_length != expected_length {
         return Err(BgenError::InvalidFormat(format!(
             "Zlib-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
+        )));
+    }
+    Ok(())
+}
+
+fn decompress_zstandard_block_into_scratch(
+    compressed_payload: &[u8],
+    expected_length: usize,
+    thread_scratch: &mut ThreadScratch,
+) -> Result<(), BgenError> {
+    if thread_scratch.decompressed_probability_block.len() < expected_length {
+        thread_scratch.decompressed_probability_block.resize(expected_length, 0);
+    }
+    let zstandard_decompressor =
+        thread_scratch.zstandard_decompressor.get_or_insert_with(zstd::bulk::Decompressor::default);
+    let decompressed_length = zstandard_decompressor.decompress_to_buffer(
+        compressed_payload,
+        &mut thread_scratch.decompressed_probability_block[..expected_length],
+    )?;
+    if decompressed_length != expected_length {
+        return Err(BgenError::InvalidFormat(format!(
+            "Zstandard-compressed BGEN block expanded to {decompressed_length} bytes, but the header declared {expected_length} bytes.",
         )));
     }
     Ok(())

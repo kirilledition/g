@@ -67,6 +67,7 @@ tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.23.4", features = ["v4"] }
+zstd = { version = "0.13.3", default-features = false }
 
 [workspace.lints.clippy]
 cast_possible_truncation = "deny"

@@ -7,6 +7,7 @@ pub(super) const ALLELE_LENGTH_SIZE_IN_BYTES: usize = 4;
 pub(super) enum CompressionType {
     None,
     Zlib,
+    Zstandard,
 }
 
 impl TryFrom<u32> for CompressionType {
@@ -16,8 +17,9 @@ impl TryFrom<u32> for CompressionType {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Zlib),
+            2 => Ok(Self::Zstandard),
             unsupported_value => Err(BgenError::UnsupportedFormat(format!(
-                "Unsupported BGEN compression flag {unsupported_value}. Only uncompressed and zlib-compressed blocks are supported.",
+                "Unsupported BGEN compression flag {unsupported_value}. Only uncompressed, zlib-compressed, and Zstandard-compressed blocks are supported.",
             ))),
         }
     }
