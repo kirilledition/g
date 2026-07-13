@@ -21,7 +21,8 @@ use super::{
     RegenieStep2RecordBatchBuildTiming,
 };
 
-const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 122_880;
+// One complete part at the default 16,384-row chunk size, while bounding larger user chunks.
+const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 262_144;
 
 pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     chunks: Vec<RegenieStep2ChunkJob>,
