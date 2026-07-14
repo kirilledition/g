@@ -123,7 +123,7 @@ impl VariantMajorStatsBuffers {
 }
 
 impl BgenReadSession<'_> {
-    /// Decode one variant-major batch into a newly owned output allocation.
+    /// Decode one variant-major batch into an exclusively owned output buffer.
     ///
     /// Batches may include compute-only tail variants so every JAX submission
     /// retains one shape. Dosage tails are zero-filled; packed8 tails use
@@ -215,9 +215,9 @@ impl BgenReadSession<'_> {
             .ok_or_else(|| {
                 BgenError::Range("Integer overflow while sizing compute packed8 BGEN output.".to_string())
             })?;
-        let mut output_values = Vec::<u8>::with_capacity(compute_output_value_count);
+        let mut output_values = self.packed8_buffer_pool.acquire(compute_output_value_count);
         let statistics = {
-            let uninitialized_output = &mut output_values.spare_capacity_mut()[..compute_output_value_count];
+            let uninitialized_output = &mut output_values.values.spare_capacity_mut()[..compute_output_value_count];
             let (logical_output, compute_tail) = uninitialized_output.split_at_mut(logical_output_value_count);
             let statistics = self.reader.read_preprocessed_variant_major_packed8_probability_pairs_with_selection(
                 &self.sample_selection,
@@ -241,7 +241,7 @@ impl BgenReadSession<'_> {
         unsafe {
             // The logical decoder and explicit `[255, 0]` tail initialization
             // cover the entire compute allocation before success is published.
-            output_values.set_len(compute_output_value_count);
+            output_values.values.set_len(compute_output_value_count);
         }
         Ok(OwnedVariantMajorDecode { genotypes: OwnedGenotypeBuffer::Packed8(output_values), statistics })
     }

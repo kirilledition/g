@@ -2,10 +2,10 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
-use numpy::ndarray::{Array2, Array3, Ix2};
+use numpy::ndarray::{Array2, ArrayView3, Ix2};
 use numpy::{
-    Element, IntoPyArray, PyArray, PyArray1, PyArrayDescrMethods, PyArrayMethods, PyReadonlyArray2, PyUntypedArray,
-    PyUntypedArrayMethods, dtype,
+    Element, IntoPyArray, PyArray, PyArray1, PyArray3, PyArrayDescrMethods, PyArrayMethods, PyReadonlyArray2,
+    PyUntypedArray, PyUntypedArrayMethods, dtype,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -32,6 +32,11 @@ enum BackendKind {
 struct PythonGenotypeBatch {
     method_name: &'static str,
     values: Py<PyAny>,
+}
+
+#[pyclass(frozen)]
+struct Packed8ArrayOwner {
+    values: native_genotype::PooledPacked8Buffer,
 }
 
 /// Error crossing the engine-to-Python backend boundary.
@@ -264,7 +269,8 @@ fn compute_linear_batch(
         })?
         .into_pyarray(py);
     let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch = into_python_genotype_batch(py, genotypes, variant_count, sample_count);
+    let genotype_batch =
+        into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
     let result = backend.call_method1(
         genotype_batch.method_name,
         (chromosome.bind(py), genotype_batch.values, genotype_mean, imputed_dosage_square_sum),
@@ -285,7 +291,8 @@ fn compute_binary_score_batch(
         sparse_candidate_mask: _,
     } = statistics;
     let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch = into_python_genotype_batch(py, genotypes, variant_count, sample_count);
+    let genotype_batch =
+        into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
     let result =
         backend.call_method1(genotype_batch.method_name, (chromosome.bind(py), genotype_batch.values, genotype_mean));
     result.map(Bound::unbind).map_err(PyJaxBackendError::Python)
@@ -306,7 +313,8 @@ fn compute_binary_firth_batch(
         })?
         .into_pyarray(py);
     let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch = into_python_genotype_batch(py, genotypes, variant_count, sample_count);
+    let genotype_batch =
+        into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
     let result = backend.call_method1(
         genotype_batch.method_name,
         (chromosome.bind(py), genotype_batch.values, genotype_mean, sparse_candidate_mask),
@@ -319,24 +327,29 @@ fn into_python_genotype_batch(
     genotypes: native_genotype::OwnedGenotypeBuffer,
     variant_count: usize,
     sample_count: usize,
-) -> PythonGenotypeBatch {
+) -> PyResult<PythonGenotypeBatch> {
     match genotypes {
-        native_genotype::OwnedGenotypeBuffer::Dosage(values) => PythonGenotypeBatch {
+        native_genotype::OwnedGenotypeBuffer::Dosage(values) => Ok(PythonGenotypeBatch {
             method_name: "compute_dosage_batch",
             values: Array2::from_shape_vec((variant_count, sample_count), values)
                 .expect("engine-validated dosage matrix shape")
                 .into_pyarray(py)
                 .into_any()
                 .unbind(),
-        },
-        native_genotype::OwnedGenotypeBuffer::Packed8(values) => PythonGenotypeBatch {
-            method_name: "compute_packed8_batch",
-            values: Array3::from_shape_vec((variant_count, sample_count, 2), values)
-                .expect("engine-validated packed8 matrix shape")
-                .into_pyarray(py)
-                .into_any()
-                .unbind(),
-        },
+        }),
+        native_genotype::OwnedGenotypeBuffer::Packed8(values) => {
+            let owner = Bound::new(py, Packed8ArrayOwner { values })?;
+            let array_view = ArrayView3::from_shape((variant_count, sample_count, 2), &owner.get().values[..])
+                .map_err(|error| PyValueError::new_err(format!("Invalid packed8 genotype shape: {error}")))?;
+            let values = unsafe {
+                // The frozen private owner never mutates or reallocates its buffer. The ndarray
+                // receives an owned reference to that owner as its base, so the pooled allocation
+                // cannot be returned until the final ndarray reference is dropped.
+                PyArray3::borrow_from_array(&array_view, owner.clone().into_any())
+            };
+            values.readwrite().make_nonwriteable();
+            Ok(PythonGenotypeBatch { method_name: "compute_packed8_batch", values: values.into_any().unbind() })
+        }
     }
 }
 

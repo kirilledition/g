@@ -208,18 +208,16 @@ class ScalarFirthComponents:
     """Scalar approximate-Firth quantities for one beta value.
 
     Attributes:
-        probability_vector: Fitted probabilities for the active correction samples.
         genotype_information: Scalar genotype information.
-        genotype_information_diagonal: Per-sample contributions to genotype information.
+        score_adjustment: Scalar leverage adjustment to the logistic score.
         penalized_deviance: REGENIE approximate penalized deviance.
         score: Scalar modified score.
-        valid: Whether probabilities, weights, and information are finite and usable.
+        valid: Whether probabilities, the score, and information are finite and usable.
 
     """
 
-    probability_vector: jax.Array
     genotype_information: jax.Array
-    genotype_information_diagonal: jax.Array
+    score_adjustment: jax.Array
     penalized_deviance: jax.Array
     score: jax.Array
     valid: jax.Array
@@ -259,8 +257,7 @@ class ScalarNewtonRaphsonState:
     beta: jax.Array
     penalized_deviance: jax.Array
     genotype_information: jax.Array
-    genotype_information_diagonal: jax.Array
-    probability_vector: jax.Array
+    score: jax.Array
     iteration_count: jax.Array
     converged: jax.Array
     failed: jax.Array

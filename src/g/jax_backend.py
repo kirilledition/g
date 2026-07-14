@@ -146,7 +146,7 @@ class LinearJaxBackend(JaxBackendBase):
         """Transfer and submit one packed8 batch to the linear kernel."""
         return self._linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
             chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities),
+            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
             native_genotype_mean=jax.device_put(genotype_mean),
             genotype_imputed_dosage_square_sum=jax.device_put(imputed_dosage_square_sum),
             linear_minimum_variance=self.minimum_variance,
@@ -237,7 +237,7 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
         """Transfer and submit one packed8 batch to the binary score kernel."""
         return self._binary_score.compute_multi_binary_score_test_packed8_donating_inputs(
             chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities),
+            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
             firth_candidate_p_threshold=None,
             minimum_variance=self.score_config.numerical.minimum_variance,
             relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
@@ -371,7 +371,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         """Transfer and submit one packed8 batch to score and Firth kernels."""
         return self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
             chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities),
+            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
             correction_plan=self.correction_plan,
             kernel_config=self.binary_config,
             sparse_candidate_mask=jax.device_put(sparse_candidate_mask),

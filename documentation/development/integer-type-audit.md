@@ -25,7 +25,7 @@ reader APIs, manifests, or buffer ownership.
 | JAX indices and count reductions | explicit `jnp.int32` | Device index/count contract | Keep `int32` even with JAX x64 enabled; reject shapes and products above the domain. |
 | Materialization trait indices | checked `Vec<i32>` at PyO3 | Python/JAX boundary | Convert from engine `usize` at the binding edge. |
 | Telemetry counters | `usize` internally, checked `u64` when emitted | JSON/tracing boundary | Keep host counters internal and serialize nonnegative fixed-width snapshots. |
-| BGEN decoded genotype allocation | `OwnedGenotypeBuffer` containing `Vec<f32>` or `Vec<u8>` | Rust ownership boundary | Move typed ownership; do not introduce pointer-sized interchange. |
+| BGEN decoded genotype allocation | `OwnedGenotypeBuffer` containing `Vec<f32>` or pooled `Vec<u8>` ownership | Rust ownership boundary | Move typed ownership; do not introduce pointer-sized interchange. |
 
 ## Boundary Decisions
 
@@ -35,9 +35,10 @@ indices. The binding converts engine-owned active trait indices to checked
 integer crosses PyO3.
 
 Owned BGEN decode returns a `DecodedGenotypeBatch`. Its genotype allocation is
-a typed vector owned by `OwnedGenotypeBuffer`; the decoder initializes reserved
-spare capacity and publishes the vector length only after complete success.
-The API exposes neither an allocation address nor a pointer-sized value count.
+a typed vector owned directly or through `PooledPacked8Buffer`; the decoder
+initializes reserved spare capacity and publishes the vector length only after
+complete success. The API exposes neither an allocation address nor a
+pointer-sized value count.
 
 ## Enforcement Notes
 

@@ -63,23 +63,30 @@ def compute_scalar_firth_components_with_minimum_variance(
         + regenie2_binary_logistic.compute_logistic_deviance(phenotype_vector, probability_vector, active_sample_mask)
         - jnp.log(genotype_information)
     )
-    leverage_vector = genotype_information_diagonal / genotype_information
-    adjusted_response = phenotype_vector + leverage_vector * (
-        regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector
+    score_adjustment_numerator = jnp.sum(
+        jnp.where(
+            active_sample_mask,
+            genotype_vector
+            * genotype_information_diagonal
+            * (regenie2_binary_config.BINARY_CASE_THRESHOLD - probability_vector),
+            0.0,
+        )
     )
-    score = jnp.sum(jnp.where(active_sample_mask, genotype_vector * (adjusted_response - probability_vector), 0.0))
+    score_adjustment = score_adjustment_numerator / genotype_information
+    score = (
+        jnp.sum(jnp.where(active_sample_mask, genotype_vector * (phenotype_vector - probability_vector), 0.0))
+        + score_adjustment
+    )
     valid = (
         jnp.isfinite(genotype_information)
         & (genotype_information > minimum_variance)
         & jnp.isfinite(penalized_deviance)
         & jnp.isfinite(score)
         & jnp.all(jnp.isfinite(probability_vector))
-        & jnp.all(jnp.isfinite(weight_vector))
     )
     return regenie2_binary_firth_types.ScalarFirthComponents(
-        probability_vector=probability_vector,
         genotype_information=genotype_information,
-        genotype_information_diagonal=genotype_information_diagonal,
+        score_adjustment=score_adjustment,
         penalized_deviance=penalized_deviance,
         score=score,
         valid=valid,
@@ -91,7 +98,8 @@ def fit_scalar_pseudo_logistic_step(
     genotype_vector: jax.Array,
     active_sample_mask: jax.Array,
     offset_vector: jax.Array,
-    adjusted_response: jax.Array,
+    phenotype_vector: jax.Array,
+    score_adjustment: jax.Array,
     initial_score: jax.Array,
     initial_genotype_information: jax.Array,
     initial_beta: jax.Array,
@@ -116,12 +124,15 @@ def fit_scalar_pseudo_logistic_step(
         probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
             offset_vector + genotype_vector * updated_beta
         )
-        updated_score = jnp.sum(
-            jnp.where(
-                active_sample_mask,
-                genotype_vector * (adjusted_response - probability_vector),
-                0.0,
+        updated_score = (
+            jnp.sum(
+                jnp.where(
+                    active_sample_mask,
+                    genotype_vector * (phenotype_vector - probability_vector),
+                    0.0,
+                )
             )
+            + score_adjustment
         )
         weight_vector = probability_vector * (1.0 - probability_vector)
         active_weight_vector = jnp.where(active_sample_mask, weight_vector, 0.0)
@@ -224,15 +235,12 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
             )
 
         def update_beta(_: None) -> regenie2_binary_firth_types.ScalarPseudoFirthState:
-            leverage_vector = components.genotype_information_diagonal / components.genotype_information
-            adjusted_response = phenotype_vector + leverage_vector * (
-                regenie2_binary_config.BINARY_CASE_THRESHOLD - components.probability_vector
-            )
             logistic_state = fit_scalar_pseudo_logistic_step(
                 genotype_vector=genotype_vector,
                 active_sample_mask=active_sample_mask,
                 offset_vector=offset_vector,
-                adjusted_response=adjusted_response,
+                phenotype_vector=phenotype_vector,
+                score_adjustment=components.score_adjustment,
                 initial_score=components.score,
                 initial_genotype_information=components.genotype_information,
                 initial_beta=state.beta,
@@ -380,32 +388,22 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
     def run_iteration(
         state: regenie2_binary_firth_types.ScalarNewtonRaphsonState,
     ) -> regenie2_binary_firth_types.ScalarNewtonRaphsonState:
-        leverage_vector = state.genotype_information_diagonal / state.genotype_information
-        score = jnp.sum(
-            jnp.where(
-                active_sample_mask,
-                genotype_vector
-                * (phenotype_vector - state.probability_vector + leverage_vector * (0.5 - state.probability_vector)),
-                0.0,
-            )
-        )
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
-        converged = (jnp.abs(score) < tolerance) & (updated_iteration_count >= 2)
+        converged = (jnp.abs(state.score) < tolerance) & (updated_iteration_count >= 2)
 
         def finish_without_update(_: None) -> regenie2_binary_firth_types.ScalarNewtonRaphsonState:
             return regenie2_binary_firth_types.ScalarNewtonRaphsonState(
                 beta=state.beta,
                 penalized_deviance=state.penalized_deviance,
                 genotype_information=state.genotype_information,
-                genotype_information_diagonal=state.genotype_information_diagonal,
-                probability_vector=state.probability_vector,
+                score=state.score,
                 iteration_count=updated_iteration_count,
                 converged=converged,
                 failed=state.failed,
             )
 
         def update_beta(_: None) -> regenie2_binary_firth_types.ScalarNewtonRaphsonState:
-            raw_step_size = score / state.genotype_information
+            raw_step_size = state.score / state.genotype_information
             step_scale = jnp.maximum(jnp.abs(raw_step_size) / maximum_step_size, 1.0)
             line_search_state = run_scalar_line_search_with_minimum_variance(
                 phenotype_vector=phenotype_vector,
@@ -436,8 +434,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
                 beta=updated_beta,
                 penalized_deviance=updated_components.penalized_deviance,
                 genotype_information=updated_components.genotype_information,
-                genotype_information_diagonal=updated_components.genotype_information_diagonal,
-                probability_vector=updated_components.probability_vector,
+                score=updated_components.score,
                 iteration_count=updated_iteration_count,
                 converged=converged,
                 failed=failed,
@@ -452,8 +449,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
             beta=initial_beta,
             penalized_deviance=initial_components.penalized_deviance,
             genotype_information=initial_components.genotype_information,
-            genotype_information_diagonal=initial_components.genotype_information_diagonal,
-            probability_vector=initial_components.probability_vector,
+            score=initial_components.score,
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
             converged=jnp.asarray(0, dtype=jnp.bool_),
             failed=~initial_components.valid,

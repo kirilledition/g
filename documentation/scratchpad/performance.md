@@ -63,6 +63,47 @@ Next targets:
 - Profile the two dominant Firth reduction kernels before considering Pallas or
   custom CUDA fusion.
 
+## 2026-07-14 Binary GPU Scalar/Allocation Wave
+
+The target and machine match the crate wave above. Production CLI artifacts are
+under `data/benchmarks/next_wave_*_20260714` and
+`data/benchmarks/next_wave_{prod_baseline,scalar_candidate,pool_candidate}_*`.
+The obsolete binary-hot wrapper was not repaired because it still imports the
+removed `g.api`; comparisons use the production CLI and its native progress
+timestamps instead.
+
+Accepted:
+
+- Scalar approximate Firth now reduces the leverage adjustment directly and
+  carries only scalar information, deviance, adjustment, and score state. It no
+  longer carries a 512-by-2,504 probability matrix and information diagonal
+  through Newton iterations. Cold wall time improved from 58.75 to 47.19
+  seconds, and cold first-chunk time improved from 44.055 to 33.866 seconds.
+  Across three non-cold runs the median association window improved from 9.711
+  to 9.532 seconds. Full chr22 Parquet tables remained exactly equal.
+- Packed8 decode now reuses at most three session-owned host buffers. A private
+  immutable NumPy base object retains each allocation through JAX's asynchronous
+  transfer, and `device_put(..., may_alias=False)` makes the copy contract
+  explicit. The same-node Criterion median for a 16,384-by-2,504 batch improved
+  from 59.188 to 40.991 milliseconds (30.7%). The syscall trace contains only
+  three 82,055,168-byte mappings, all unmapped at process teardown, instead of
+  allocation churn in the decode loop.
+- Against three non-contended production baselines, the final three-run median
+  wall time improved from 21.61 to 20.88 seconds (3.38%), the association window
+  from 9.711 to 9.405 seconds (3.15%), and the post-first-chunk 25-batch window
+  from 1.571 to 1.321 seconds (15.9%). Median system CPU time fell from 3.82 to
+  2.53 seconds. The final output remains exactly equal across all 418,943 rows.
+
+Next targets:
+
+- Split the device-side 64/1,024/16,384 Firth mega-dispatch into separately
+  cached fixed-capacity executables selected by one host-visible candidate
+  count. Preserve overflow and candidate-ordering semantics, and reject the
+  change if the scalar synchronization regresses the warm 25-batch window.
+- Re-profile BGEN delivery after pooling before considering checksum elision.
+  A validated raw-deflate path is only worthwhile if Adler-32 remains visible
+  after allocation churn is gone.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

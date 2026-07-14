@@ -8,8 +8,7 @@ use rayon::prelude::*;
 
 use g_genotype_contracts::{VariantMetadataColumns, VariantMetadataStore};
 
-use crate::common::ChunkSpec;
-use crate::common::Packed8Compatibility;
+use crate::common::{ChunkSpec, Packed8BufferPool, Packed8Compatibility};
 use crate::error::GenotypeResult;
 
 use super::decode::{ThreadScratch, VariantDecodeFailure, read_exact_bytes, read_u32_at, u32_to_usize};
@@ -39,6 +38,7 @@ pub struct BgenReaderCore {
 pub struct BgenReadSession<'reader> {
     reader: &'reader BgenReaderCore,
     sample_selection: SampleSelection,
+    packed8_buffer_pool: Arc<Packed8BufferPool>,
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -138,6 +138,7 @@ impl BgenReaderCore {
         Ok(BgenReadSession {
             reader: self,
             sample_selection: build_sample_selection(self.sample_count, sample_indices)?,
+            packed8_buffer_pool: Arc::new(Packed8BufferPool::default()),
         })
     }
 

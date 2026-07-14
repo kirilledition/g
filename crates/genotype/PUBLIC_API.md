@@ -11,7 +11,7 @@ genotype preprocessing summaries.
 
 `BgenReaderCore`, `BgenReadSession`, `BgenError`,
 `GenotypeError`/`GenotypeResult`, chunk and statistics contracts,
-`DecodedGenotypeBatch`, `OwnedGenotypeBuffer`, and the typed
+`DecodedGenotypeBatch`, `OwnedGenotypeBuffer`, `PooledPacked8Buffer`, and the typed
 `Packed8Compatibility` negotiation result. Shared output-facing
 metadata and columns are owned by `g-genotype-contracts` and are not
 re-exported here.
@@ -42,7 +42,9 @@ scheduling, callback queues, PyO3 classes, or public `debug`, `ffi`, or
 
 Batch-oriented APIs only. Owned decode reserves the final typed vector,
 initializes its spare capacity, and publishes its length only after every tile
-succeeds. No raw address/count wrapper crosses the crate boundary. Produce
+succeeds. Packed8 delivery reuses a session-owned bounded pool; the immutable
+pooled buffer can outlive its read session and returns its allocation only when
+the final downstream owner drops. No raw address/count wrapper crosses the crate boundary. Produce
 immutable contract metadata slices, store variant IDs in a contiguous UTF-8
 arena, dictionary-code repeated chromosome/allele text, and avoid per-variant
 heap ownership, public calls, or JSON conversion. Normal

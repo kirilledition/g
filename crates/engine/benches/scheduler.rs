@@ -109,7 +109,7 @@ fn build_batch(metadata: &VariantMetadataColumns, batch_index: usize) -> Schedul
             logical_variant_count: VARIANT_COUNT,
             compute_variant_count: VARIANT_COUNT,
             sample_count: SAMPLE_COUNT,
-            genotypes: OwnedGenotypeBuffer::Packed8(vec![0_u8; genotype_value_count]),
+            genotypes: OwnedGenotypeBuffer::Packed8(vec![0_u8; genotype_value_count].into()),
             statistics: ChunkStats {
                 output: ChunkOutputStatistics {
                     allele_one_frequency: vec![0.0; VARIANT_COUNT],

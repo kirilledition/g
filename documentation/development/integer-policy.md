@@ -81,10 +81,10 @@ rejects the resulting timestamp.
 
 `BgenReadSession::decode_variant_major_batch` returns a
 `DecodedGenotypeBatch` whose `OwnedGenotypeBuffer` owns either a `Vec<f32>` or
-`Vec<u8>`. The decoder reserves the final capacity, initializes the vector's
-spare capacity, and sets its length only after every requested output position
-has been written successfully. No address or value-count wrapper crosses from
-`g-genotype` to `g-engine`.
+`PooledPacked8Buffer` backed by a `Vec<u8>`. The decoder reserves or reuses the
+final capacity, initializes the vector's spare capacity, and sets its length
+only after every requested output position has been written successfully. No
+address or value-count wrapper crosses from `g-genotype` to `g-engine`.
 
 ## Review Checklist
 
