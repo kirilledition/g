@@ -32,6 +32,7 @@ struct MockBackend;
 impl AssociationBackend for MockBackend {
     type GroupState = ();
     type ChromosomeState = ();
+    type TransferredInput = GenotypeBatchInput;
     type DeviceResult = usize;
     type Error = Infallible;
 
@@ -47,10 +48,14 @@ impl AssociationBackend for MockBackend {
         Ok(PreparedChromosome { state: (), null_logistic_converged: None })
     }
 
+    fn transfer_batch(&self, input: GenotypeBatchInput) -> Result<Self::TransferredInput, Self::Error> {
+        Ok(input)
+    }
+
     fn compute_batch(
         &self,
         _chromosome: &Self::ChromosomeState,
-        input: GenotypeBatchInput,
+        input: Self::TransferredInput,
     ) -> Result<Self::DeviceResult, Self::Error> {
         std::hint::black_box(input);
         Ok(VARIANT_COUNT)

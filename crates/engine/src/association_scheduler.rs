@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::backend::{AssociationBackend, GenotypeBatchInput};
-use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError, TrySendError};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError};
 use g_genotype::{ChunkStats, DecodedGenotypeBatch, OwnedGenotypeBuffer};
 use g_genotype_contracts::ChunkOutputStatistics;
 use g_output::NativeVariantMetadataHandle;
@@ -15,11 +15,12 @@ use crate::output_schedule::ActiveTraitSelection;
 
 const COMPUTE_WORKER_NAME: &str = "g-association-compute";
 const MATERIALIZATION_WORKER_NAME: &str = "g-association-materialization";
-const DECODED_BATCH_CAPACITY: usize = 1;
+const TRANSFERRED_BATCH_CAPACITY: usize = 1;
 const DEVICE_RESULT_CAPACITY: usize = 2;
-const DECODED_BATCH_QUEUE: &str = "decoded batch";
+const TRANSFERRED_BATCH_QUEUE: &str = "transferred batch";
 const DEVICE_RESULT_QUEUE: &str = "device result";
 const COMPLETED_BATCH_QUEUE: &str = "completed batch";
+const TRANSFER_STAGE: &str = "device transfer";
 const COMPUTE_WORKER: &str = "compute";
 const MATERIALIZATION_WORKER: &str = "materialization";
 const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -173,13 +174,18 @@ struct DeviceAssociationBatch<DeviceResult> {
     device_result: DeviceResult,
 }
 
+struct TransferredAssociationBatch<TransferredInput> {
+    output: AssociationBatchOutput,
+    input: TransferredInput,
+}
+
 // Keeping batches inline lets the bounded channel allocate its storage once;
 // boxing the hot variant would add one allocation to every submitted batch.
 #[allow(clippy::large_enum_variant)]
-enum ComputeCommand<ChromosomeState> {
+enum ComputeCommand<ChromosomeState, TransferredInput> {
     PrepareChromosome { state: ChromosomeState },
     ReleaseChromosome,
-    ComputeBatch { batch: ScheduledAssociationBatch },
+    ComputeBatch { batch: TransferredAssociationBatch<TransferredInput> },
 }
 
 #[derive(Debug, Default)]
@@ -228,11 +234,9 @@ impl<BackendError> SchedulerControl<BackendError> {
 pub(crate) struct AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     backend: Arc<Backend>,
-    compute_sender: Option<Sender<ComputeCommand<Backend::ChromosomeState>>>,
+    compute_sender: Option<Sender<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>>,
     event_receiver: Receiver<AssociationSchedulerEvent>,
     compute_worker: Option<thread::JoinHandle<()>>,
     materialization_worker: Option<thread::JoinHandle<()>>,
@@ -243,8 +247,6 @@ where
 impl<Backend> AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     /// Start one two-stage pipeline with the engine's bounded capacities.
     ///
@@ -252,7 +254,7 @@ where
     ///
     /// Returns an error when a worker thread cannot be started.
     pub(crate) fn new(backend: Arc<Backend>) -> SchedulerResult<Self, Backend::Error> {
-        let (compute_sender, compute_receiver) = crossbeam_channel::bounded(DECODED_BATCH_CAPACITY);
+        let (compute_sender, compute_receiver) = crossbeam_channel::bounded(TRANSFERRED_BATCH_CAPACITY);
         let (device_sender, device_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let (event_sender, event_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let control = Arc::new(SchedulerControl::new());
@@ -347,7 +349,7 @@ where
         }
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
         if let Err(error) = sender.send(ComputeCommand::PrepareChromosome { state: chromosome_state }) {
-            let scheduler_error = self.current_or_channel_error(DECODED_BATCH_QUEUE);
+            let scheduler_error = self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE);
             release_command_state(self.backend.as_ref(), error.0);
             return Err(scheduler_error);
         }
@@ -376,7 +378,7 @@ where
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
         sender
             .send(ComputeCommand::ReleaseChromosome)
-            .map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))?;
+            .map_err(|_| self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE))?;
         self.state.chromosome_prepared = false;
         self.state.chromosome_release_pending = true;
         match self.receive_scheduler_event()? {
@@ -387,17 +389,17 @@ where
         }
     }
 
-    /// Try to submit one owned decoded batch without blocking behind work.
+    /// Try to transfer and submit one decoded batch without blocking behind work.
     ///
     /// The first batch after a chromosome transition may briefly block until
     /// the compute worker consumes the preceding state command. Subsequent
-    /// backpressure returns ownership to the caller so it can drain completed
-    /// output before retrying.
+    /// backpressure returns the decoded batch before transfer so the caller can
+    /// drain completed output without increasing device residency.
     ///
     /// # Errors
     ///
-    /// Returns an error when the batch shape is invalid, the pipeline has been
-    /// closed or aborted, or a worker has failed.
+    /// Returns an error when the batch is invalid, the pipeline has been closed
+    /// or aborted, transfer fails, or a worker has failed.
     pub(crate) fn try_submit(
         &mut self,
         batch: ScheduledAssociationBatch,
@@ -410,23 +412,39 @@ where
         let next_submitted_batch_count =
             self.state.submitted_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
-        let command = ComputeCommand::ComputeBatch { batch };
-        if self.is_drained() {
-            sender.send(command).map_err(|_| self.current_or_channel_error(DECODED_BATCH_QUEUE))?;
-            self.state.submitted_batch_count = next_submitted_batch_count;
-            return Ok(None);
+        if !self.is_drained() && sender.is_full() {
+            return Ok(Some(batch));
         }
-        match sender.try_send(command) {
-            Ok(()) => {
-                self.state.submitted_batch_count = next_submitted_batch_count;
-                Ok(None)
-            }
-            Err(TrySendError::Full(ComputeCommand::ComputeBatch { batch })) => Ok(Some(batch)),
-            Err(TrySendError::Full(ComputeCommand::PrepareChromosome { .. } | ComputeCommand::ReleaseChromosome)) => {
-                unreachable!("batch submission cannot return a chromosome command")
-            }
-            Err(TrySendError::Disconnected(_)) => Err(self.current_or_channel_error(DECODED_BATCH_QUEUE)),
-        }
+        let ScheduledAssociationBatch { decoded, metadata, active_trait_selection } = batch;
+        let DecodedGenotypeBatch {
+            variant_start_index,
+            logical_variant_count: _,
+            compute_variant_count,
+            sample_count,
+            genotypes,
+            statistics,
+        } = decoded;
+        let ChunkStats { output: output_statistics, compute: compute_statistics } = statistics;
+        let input = self
+            .backend
+            .transfer_batch(GenotypeBatchInput {
+                variant_count: compute_variant_count,
+                sample_count,
+                genotypes,
+                statistics: compute_statistics,
+            })
+            .map_err(|source| SchedulerError::Backend { stage: TRANSFER_STAGE, source })?;
+        let output = AssociationBatchOutput {
+            variant_start_index,
+            metadata,
+            statistics: output_statistics,
+            active_trait_selection,
+        };
+        sender
+            .send(ComputeCommand::ComputeBatch { batch: TransferredAssociationBatch { output, input } })
+            .map_err(|_| self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE))?;
+        self.state.submitted_batch_count = next_submitted_batch_count;
+        Ok(None)
     }
 
     /// Receive the next submitted batch.
@@ -515,7 +533,7 @@ where
         self.state.submitted_batch_count == self.state.completed_batch_count
     }
 
-    /// Close the decoded-batch input so queued work can complete.
+    /// Close the transferred-batch input so queued work can complete.
     pub(crate) fn close_submission(&mut self) {
         self.state.chromosome_prepared = false;
         self.state.chromosome_release_pending = false;
@@ -614,8 +632,6 @@ where
 impl<Backend> Drop for AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     fn drop(&mut self) {
         self.control.abort();
@@ -626,7 +642,7 @@ where
 
 fn run_compute_worker<Backend>(
     backend: &Backend,
-    compute_receiver: &Receiver<ComputeCommand<Backend::ChromosomeState>>,
+    compute_receiver: &Receiver<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>,
     device_sender: &Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
     event_sender: &Sender<AssociationSchedulerEvent>,
     control: &SchedulerControl<Backend::Error>,
@@ -639,7 +655,7 @@ fn run_compute_worker<Backend>(
             release_command_state(backend, command);
             break;
         }
-        let scheduled_batch = match command {
+        let transferred_batch = match command {
             ComputeCommand::PrepareChromosome { state } => {
                 if chromosome.state.is_some() {
                     backend.release_chromosome(state);
@@ -666,22 +682,7 @@ fn run_compute_worker<Backend>(
             control.record_error(SchedulerError::ChromosomeNotPrepared);
             break;
         };
-        let ScheduledAssociationBatch { decoded, metadata, active_trait_selection } = scheduled_batch;
-        let DecodedGenotypeBatch {
-            variant_start_index,
-            logical_variant_count: _,
-            compute_variant_count,
-            sample_count,
-            genotypes,
-            statistics,
-        } = decoded;
-        let ChunkStats { output: output_statistics, compute: compute_statistics } = statistics;
-        let input = GenotypeBatchInput {
-            variant_count: compute_variant_count,
-            sample_count,
-            genotypes,
-            statistics: compute_statistics,
-        };
+        let TransferredAssociationBatch { output, input } = transferred_batch;
         let device_result = match backend.compute_batch(active_chromosome_state, input) {
             Ok(result) => result,
             Err(source) => {
@@ -692,12 +693,6 @@ fn run_compute_worker<Backend>(
         if control.is_aborted() {
             break;
         }
-        let output = AssociationBatchOutput {
-            variant_start_index,
-            metadata,
-            statistics: output_statistics,
-            active_trait_selection,
-        };
         if device_sender.send(DeviceAssociationBatch { output, device_result }).is_err() {
             if !control.is_aborted() {
                 control.record_error(SchedulerError::ChannelDisconnected { queue: DEVICE_RESULT_QUEUE });
@@ -765,8 +760,10 @@ fn send_scheduler_event<BackendError>(
     }
 }
 
-fn release_command_state<Backend>(backend: &Backend, command: ComputeCommand<Backend::ChromosomeState>)
-where
+fn release_command_state<Backend>(
+    backend: &Backend,
+    command: ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>,
+) where
     Backend: AssociationBackend,
 {
     if let ComputeCommand::PrepareChromosome { state } = command {
@@ -774,8 +771,10 @@ where
     }
 }
 
-fn drain_command_states<Backend>(backend: &Backend, receiver: &Receiver<ComputeCommand<Backend::ChromosomeState>>)
-where
+fn drain_command_states<Backend>(
+    backend: &Backend,
+    receiver: &Receiver<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>,
+) where
     Backend: AssociationBackend,
 {
     while let Ok(command) = receiver.try_recv() {

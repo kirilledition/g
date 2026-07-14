@@ -29,11 +29,6 @@ enum BackendKind {
     BinaryFirth,
 }
 
-struct PythonGenotypeBatch {
-    method_name: &'static str,
-    values: Py<PyAny>,
-}
-
 #[pyclass(frozen)]
 struct Packed8ArrayOwner {
     values: native_genotype::PooledPacked8Buffer,
@@ -138,6 +133,7 @@ fn binary_firth_backend_keyword_arguments<'py>(
 
 impl native_engine::AssociationBackend for PyJaxBackend {
     type ChromosomeState = Py<PyAny>;
+    type TransferredInput = Py<PyAny>;
     type DeviceResult = Py<PyAny>;
     type Error = PyJaxBackendError;
     type GroupState = Py<PyAny>;
@@ -217,15 +213,21 @@ impl native_engine::AssociationBackend for PyJaxBackend {
         Python::attach(|_| drop(chromosome));
     }
 
+    fn transfer_batch(&self, input: native_engine::GenotypeBatchInput) -> Result<Self::TransferredInput, Self::Error> {
+        Python::attach(|py| transfer_genotype_batch(py, self.backend.bind(py), input))
+    }
+
     fn compute_batch(
         &self,
         chromosome: &Self::ChromosomeState,
-        input: native_engine::GenotypeBatchInput,
+        input: Self::TransferredInput,
     ) -> Result<Self::DeviceResult, Self::Error> {
-        Python::attach(|py| match self.kind {
-            BackendKind::Linear => compute_linear_batch(py, self.backend.bind(py), chromosome, input),
-            BackendKind::BinaryScore => compute_binary_score_batch(py, self.backend.bind(py), chromosome, input),
-            BackendKind::BinaryFirth => compute_binary_firth_batch(py, self.backend.bind(py), chromosome, input),
+        Python::attach(|py| {
+            self.backend
+                .bind(py)
+                .call_method1("compute_batch", (chromosome.bind(py), input))
+                .map(Bound::unbind)
+                .map_err(PyJaxBackendError::Python)
         })
     }
 
@@ -254,72 +256,28 @@ impl native_engine::AssociationBackend for PyJaxBackend {
     }
 }
 
-fn compute_linear_batch(
+fn transfer_genotype_batch(
     py: Python<'_>,
     backend: &Bound<'_, PyAny>,
-    chromosome: &Py<PyAny>,
     input: native_engine::GenotypeBatchInput,
 ) -> Result<Py<PyAny>, PyJaxBackendError> {
     let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_genotype::ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum, sparse_candidate_mask: _ } =
+    let native_genotype::ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum, sparse_candidate_mask } =
         statistics;
-    let imputed_dosage_square_sum = imputed_dosage_square_sum
-        .ok_or_else(|| {
-            PyJaxBackendError::InvalidInput("linear association requires imputed dosage square sums".to_string())
-        })?
-        .into_pyarray(py);
-    let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch =
+    let genotype_values =
         into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
-    let result = backend.call_method1(
-        genotype_batch.method_name,
-        (chromosome.bind(py), genotype_batch.values, genotype_mean, imputed_dosage_square_sum),
-    );
-    result.map(Bound::unbind).map_err(PyJaxBackendError::Python)
-}
-
-fn compute_binary_score_batch(
-    py: Python<'_>,
-    backend: &Bound<'_, PyAny>,
-    chromosome: &Py<PyAny>,
-    input: native_engine::GenotypeBatchInput,
-) -> Result<Py<PyAny>, PyJaxBackendError> {
-    let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_genotype::ChunkComputeStatistics {
-        genotype_mean,
-        imputed_dosage_square_sum: _,
-        sparse_candidate_mask: _,
-    } = statistics;
-    let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch =
-        into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
-    let result =
-        backend.call_method1(genotype_batch.method_name, (chromosome.bind(py), genotype_batch.values, genotype_mean));
-    result.map(Bound::unbind).map_err(PyJaxBackendError::Python)
-}
-
-fn compute_binary_firth_batch(
-    py: Python<'_>,
-    backend: &Bound<'_, PyAny>,
-    chromosome: &Py<PyAny>,
-    input: native_engine::GenotypeBatchInput,
-) -> Result<Py<PyAny>, PyJaxBackendError> {
-    let native_engine::GenotypeBatchInput { variant_count, sample_count, genotypes, statistics, .. } = input;
-    let native_genotype::ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum: _, sparse_candidate_mask } =
-        statistics;
-    let sparse_candidate_mask = sparse_candidate_mask
-        .ok_or_else(|| {
-            PyJaxBackendError::InvalidInput("binary Firth association requires a sparse candidate mask".to_string())
-        })?
-        .into_pyarray(py);
-    let genotype_mean = genotype_mean.into_pyarray(py);
-    let genotype_batch =
-        into_python_genotype_batch(py, genotypes, variant_count, sample_count).map_err(PyJaxBackendError::Python)?;
-    let result = backend.call_method1(
-        genotype_batch.method_name,
-        (chromosome.bind(py), genotype_batch.values, genotype_mean, sparse_candidate_mask),
-    );
-    result.map(Bound::unbind).map_err(PyJaxBackendError::Python)
+    backend
+        .call_method1(
+            "transfer_batch",
+            (
+                genotype_values,
+                genotype_mean.into_pyarray(py),
+                imputed_dosage_square_sum.map(|values| values.into_pyarray(py)),
+                sparse_candidate_mask.map(|values| values.into_pyarray(py)),
+            ),
+        )
+        .map(Bound::unbind)
+        .map_err(PyJaxBackendError::Python)
 }
 
 fn into_python_genotype_batch(
@@ -327,16 +285,15 @@ fn into_python_genotype_batch(
     genotypes: native_genotype::OwnedGenotypeBuffer,
     variant_count: usize,
     sample_count: usize,
-) -> PyResult<PythonGenotypeBatch> {
+) -> PyResult<Py<PyAny>> {
     match genotypes {
-        native_genotype::OwnedGenotypeBuffer::Dosage(values) => Ok(PythonGenotypeBatch {
-            method_name: "compute_dosage_batch",
-            values: Array2::from_shape_vec((variant_count, sample_count), values)
+        native_genotype::OwnedGenotypeBuffer::Dosage(values) => {
+            Ok(Array2::from_shape_vec((variant_count, sample_count), values)
                 .expect("engine-validated dosage matrix shape")
                 .into_pyarray(py)
                 .into_any()
-                .unbind(),
-        }),
+                .unbind())
+        }
         native_genotype::OwnedGenotypeBuffer::Packed8(values) => {
             let owner = Bound::new(py, Packed8ArrayOwner { values })?;
             let array_view = ArrayView3::from_shape((variant_count, sample_count, 2), &owner.get().values[..])
@@ -348,7 +305,7 @@ fn into_python_genotype_batch(
                 PyArray3::borrow_from_array(&array_view, owner.clone().into_any())
             };
             values.readwrite().make_nonwriteable();
-            Ok(PythonGenotypeBatch { method_name: "compute_packed8_batch", values: values.into_any().unbind() })
+            Ok(values.into_any().unbind())
         }
     }
 }

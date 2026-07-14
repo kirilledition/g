@@ -201,8 +201,6 @@ impl PreparedRun {
     ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
     where
         Backend: AssociationBackend + 'static,
-        Backend::ChromosomeState: 'static,
-        Backend::DeviceResult: 'static,
         Hooks: RunHooks,
     {
         let PreparedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;

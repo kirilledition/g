@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import typing
+from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
@@ -25,8 +26,50 @@ type HostAssociationResult = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceGenotypeBatch:
+    """Genotype operands transferred for one association batch.
+
+    Attributes:
+        genotype_values: Dosages or packed probability pairs on the device.
+        genotype_mean: Native genotype means on the device.
+        imputed_dosage_square_sum: Linear-test square sums when required.
+        sparse_candidate_mask: Binary-Firth sparse candidates when required.
+        packed8: Whether genotype values contain packed probability pairs.
+
+    """
+
+    genotype_values: jax.Array
+    genotype_mean: jax.Array
+    imputed_dosage_square_sum: jax.Array | None
+    sparse_candidate_mask: jax.Array | None
+    packed8: bool
+
+
 class JaxBackendBase:
     """Shared host materialization for concrete association backends."""
+
+    def transfer_batch(
+        self,
+        genotype_values: npt.NDArray[np.float32] | npt.NDArray[np.uint8],
+        genotype_mean: npt.NDArray[np.float32],
+        imputed_dosage_square_sum: npt.NDArray[np.float32] | None,
+        sparse_candidate_mask: npt.NDArray[np.bool_] | None,
+    ) -> DeviceGenotypeBatch:
+        """Initiate asynchronous host-to-device transfer for one batch."""
+        packed8 = genotype_values.dtype == np.dtype(np.uint8)
+        device_genotype_values = (
+            jax.device_put(genotype_values, may_alias=False) if packed8 else jax.device_put(genotype_values)
+        )
+        return DeviceGenotypeBatch(
+            genotype_values=device_genotype_values,
+            genotype_mean=jax.device_put(genotype_mean),
+            imputed_dosage_square_sum=(
+                None if imputed_dosage_square_sum is None else jax.device_put(imputed_dosage_square_sum)
+            ),
+            sparse_candidate_mask=(None if sparse_candidate_mask is None else jax.device_put(sparse_candidate_mask)),
+            packed8=packed8,
+        )
 
     def materialize_batch(
         self,
@@ -119,36 +162,28 @@ class LinearJaxBackend(JaxBackendBase):
         jax.block_until_ready(chromosome_state.score_left_hand_matrix)
         return chromosome_state
 
-    def compute_dosage_batch(
+    def compute_batch(
         self,
         chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
-        dosage_matrix: npt.NDArray[np.float32],
-        genotype_mean: npt.NDArray[np.float32],
-        imputed_dosage_square_sum: npt.NDArray[np.float32],
+        batch: DeviceGenotypeBatch,
     ) -> DeviceAssociationResult:
-        """Transfer and submit one dosage batch to the linear kernel."""
+        """Submit one transferred batch to the matching linear kernel."""
+        if batch.imputed_dosage_square_sum is None:
+            raise ValueError("Linear association requires imputed dosage square sums.")
+        if batch.packed8:
+            return self._linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=batch.genotype_values,
+                native_genotype_mean=batch.genotype_mean,
+                genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
+                linear_minimum_variance=self.minimum_variance,
+                linear_relative_variance_tolerance=self.relative_variance_tolerance,
+            )
         return self._linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_donating_inputs(
             chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jax.device_put(dosage_matrix),
-            native_genotype_mean=jax.device_put(genotype_mean),
-            genotype_imputed_dosage_square_sum=jax.device_put(imputed_dosage_square_sum),
-            linear_minimum_variance=self.minimum_variance,
-            linear_relative_variance_tolerance=self.relative_variance_tolerance,
-        )
-
-    def compute_packed8_batch(
-        self,
-        chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
-        packed8_probabilities: npt.NDArray[np.uint8],
-        genotype_mean: npt.NDArray[np.float32],
-        imputed_dosage_square_sum: npt.NDArray[np.float32],
-    ) -> DeviceAssociationResult:
-        """Transfer and submit one packed8 batch to the linear kernel."""
-        return self._linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
-            chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
-            native_genotype_mean=jax.device_put(genotype_mean),
-            genotype_imputed_dosage_square_sum=jax.device_put(imputed_dosage_square_sum),
+            genotype_matrix_by_variant=batch.genotype_values,
+            native_genotype_mean=batch.genotype_mean,
+            genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
             linear_minimum_variance=self.minimum_variance,
             linear_relative_variance_tolerance=self.relative_variance_tolerance,
         )
@@ -212,36 +247,28 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
             kernel_config=self.score_config,
         )
 
-    def compute_dosage_batch(
+    def compute_batch(
         self,
         chromosome_state: regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState,
-        dosage_matrix: npt.NDArray[np.float32],
-        genotype_mean: npt.NDArray[np.float32],
+        batch: DeviceGenotypeBatch,
     ) -> DeviceAssociationResult:
-        """Transfer and submit one dosage batch to the binary score kernel."""
+        """Submit one transferred batch to the matching binary score kernel."""
+        if batch.packed8:
+            return self._binary_score.compute_multi_binary_score_test_packed8_donating_inputs(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=batch.genotype_values,
+                firth_candidate_p_threshold=None,
+                minimum_variance=self.score_config.numerical.minimum_variance,
+                relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
+                native_genotype_mean=batch.genotype_mean,
+            )
         return self._binary_score.compute_multi_binary_score_test_variant_major_donating_inputs(
             chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jax.device_put(dosage_matrix),
+            genotype_matrix_by_variant=batch.genotype_values,
             firth_candidate_p_threshold=None,
             minimum_variance=self.score_config.numerical.minimum_variance,
             relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
-            native_genotype_mean=jax.device_put(genotype_mean),
-        )
-
-    def compute_packed8_batch(
-        self,
-        chromosome_state: regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState,
-        packed8_probabilities: npt.NDArray[np.uint8],
-        genotype_mean: npt.NDArray[np.float32],
-    ) -> DeviceAssociationResult:
-        """Transfer and submit one packed8 batch to the binary score kernel."""
-        return self._binary_score.compute_multi_binary_score_test_packed8_donating_inputs(
-            chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
-            firth_candidate_p_threshold=None,
-            minimum_variance=self.score_config.numerical.minimum_variance,
-            relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
-            native_genotype_mean=jax.device_put(genotype_mean),
+            native_genotype_mean=batch.genotype_mean,
         )
 
 
@@ -344,36 +371,28 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
             kernel_config=self.binary_config,
         )
 
-    def compute_dosage_batch(
+    def compute_batch(
         self,
         chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
-        dosage_matrix: npt.NDArray[np.float32],
-        genotype_mean: npt.NDArray[np.float32],
-        sparse_candidate_mask: npt.NDArray[np.bool_],
+        batch: DeviceGenotypeBatch,
     ) -> DeviceAssociationResult:
-        """Transfer and submit one dosage batch to score and Firth kernels."""
+        """Submit one transferred batch to the matching score and Firth kernels."""
+        if batch.sparse_candidate_mask is None:
+            raise ValueError("Binary Firth association requires a sparse candidate mask.")
+        if batch.packed8:
+            return self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=batch.genotype_values,
+                correction_plan=self.correction_plan,
+                kernel_config=self.binary_config,
+                sparse_candidate_mask=batch.sparse_candidate_mask,
+                native_genotype_mean=batch.genotype_mean,
+            )
         return self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
             chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jax.device_put(dosage_matrix),
+            genotype_matrix_by_variant=batch.genotype_values,
             correction_plan=self.correction_plan,
             kernel_config=self.binary_config,
-            sparse_candidate_mask=jax.device_put(sparse_candidate_mask),
-            native_genotype_mean=jax.device_put(genotype_mean),
-        )
-
-    def compute_packed8_batch(
-        self,
-        chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
-        packed8_probabilities: npt.NDArray[np.uint8],
-        genotype_mean: npt.NDArray[np.float32],
-        sparse_candidate_mask: npt.NDArray[np.bool_],
-    ) -> DeviceAssociationResult:
-        """Transfer and submit one packed8 batch to score and Firth kernels."""
-        return self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
-            chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jax.device_put(packed8_probabilities, may_alias=False),
-            correction_plan=self.correction_plan,
-            kernel_config=self.binary_config,
-            sparse_candidate_mask=jax.device_put(sparse_candidate_mask),
-            native_genotype_mean=jax.device_put(genotype_mean),
+            sparse_candidate_mask=batch.sparse_candidate_mask,
+            native_genotype_mean=batch.genotype_mean,
         )

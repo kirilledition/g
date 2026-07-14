@@ -83,8 +83,6 @@ pub(crate) fn run_association_delivery<Backend, CheckInterruption, InterruptionE
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     validate_delivery_request::<Backend::Error, InterruptionError>(&request)?;
@@ -119,8 +117,6 @@ fn run_prepared_association_delivery<Backend, CheckInterruption, InterruptionErr
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     let group_state = backend
@@ -261,8 +257,6 @@ fn prepare_chromosome_state<Backend, InterruptionError>(
 ) -> DeliveryResult<Backend::ChromosomeState, Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     let predictions = group.take_chromosome_prediction_matrix(chromosome)?;
     let prepared_chromosome = backend
@@ -347,8 +341,6 @@ fn drain_available_batches<Backend, InterruptionError>(
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     while let Some(completed_batch) = pipeline.try_receive()? {
         write_completed_batch(completed_batch, settings)?;
@@ -363,8 +355,6 @@ fn submit_batch<Backend, InterruptionError>(
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     let mut pending_batch = scheduled_batch;
     loop {
@@ -384,8 +374,6 @@ fn drain_pending_batches<Backend, InterruptionError>(
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     while !pipeline.is_drained() {
         write_completed_batch(pipeline.receive()?, settings)?;
@@ -399,8 +387,6 @@ fn finish_and_drain_pipeline<Backend, InterruptionError>(
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
 {
     drain_pending_batches(pipeline, settings)?;
     pipeline.release_chromosome()?;

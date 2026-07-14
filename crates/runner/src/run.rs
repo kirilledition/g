@@ -166,8 +166,6 @@ pub fn run_cli<Host>(arguments: &[String], host: &mut Host) -> Result<CliRunResu
 where
     Host: NativeRunHost,
     Host::Backend: AssociationBackend + 'static,
-    <Host::Backend as AssociationBackend>::ChromosomeState: 'static,
-    <Host::Backend as AssociationBackend>::DeviceResult: 'static,
 {
     match g_interface::dispatch_cli(arguments) {
         CliDispatch::Exit { exit_code, stdout, stderr } => {
@@ -181,8 +179,6 @@ fn run_compiled_runs<Host>(mut compiled_runs: Vec<CompiledCliRun>, host: &mut Ho
 where
     Host: NativeRunHost,
     Host::Backend: AssociationBackend + 'static,
-    <Host::Backend as AssociationBackend>::ChromosomeState: 'static,
-    <Host::Backend as AssociationBackend>::DeviceResult: 'static,
 {
     if compiled_runs.len() == 1 {
         let compiled_run = compiled_runs.pop().expect("one compiled run was checked");
@@ -272,8 +268,6 @@ fn run_compiled_cli<Host>(
 where
     Host: NativeRunHost,
     Host::Backend: AssociationBackend + 'static,
-    <Host::Backend as AssociationBackend>::ChromosomeState: 'static,
-    <Host::Backend as AssociationBackend>::DeviceResult: 'static,
 {
     let mut output = CliRunResult::default();
     let native_session_policy = project_native_run_session_policy(&run_plan);

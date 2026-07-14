@@ -42,8 +42,9 @@ pub struct GenotypeBatchInput {
 /// Chunk-oriented association compute implemented by the device runtime.
 pub trait AssociationBackend: Send + Sync {
     type GroupState: Send;
-    type ChromosomeState: Send;
-    type DeviceResult: Send;
+    type ChromosomeState: Send + 'static;
+    type TransferredInput: Send + 'static;
+    type DeviceResult: Send + 'static;
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Prepare reusable device state for one phenotype group.
@@ -79,7 +80,16 @@ pub trait AssociationBackend: Send + Sync {
         drop(chromosome);
     }
 
-    /// Submit one genotype batch and return an opaque device result.
+    /// Asynchronously transfer one validated genotype batch to the device.
+    /// The delivery thread may call this concurrently with `compute_batch` and
+    /// `materialize_batch` calls on the pipeline workers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the genotype batch cannot be transferred.
+    fn transfer_batch(&self, input: GenotypeBatchInput) -> Result<Self::TransferredInput, Self::Error>;
+
+    /// Submit one transferred genotype batch and return an opaque device result.
     ///
     /// # Errors
     ///
@@ -88,7 +98,7 @@ pub trait AssociationBackend: Send + Sync {
     fn compute_batch(
         &self,
         chromosome: &Self::ChromosomeState,
-        input: GenotypeBatchInput,
+        input: Self::TransferredInput,
     ) -> Result<Self::DeviceResult, Self::Error>;
 
     /// Select active traits, transfer one result to host, and retain only its

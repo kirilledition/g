@@ -126,8 +126,6 @@ pub fn execute_coordinated_run<Backend, Hooks>(
 ) -> Result<Vec<PhenotypeRunArtifact>, EngineRunError<Hooks::Error>>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
     Hooks: RunHooks,
 {
     execute_coordinated_run_detail(
@@ -165,8 +163,6 @@ fn execute_coordinated_run_detail<Backend, Hooks>(
 ) -> Result<Vec<PhenotypeRunArtifact>, CoordinatedRunDetailError<Backend::Error, Hooks::Error>>
 where
     Backend: AssociationBackend + 'static,
-    Backend::ChromosomeState: 'static,
-    Backend::DeviceResult: 'static,
     Hooks: RunHooks,
 {
     let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())

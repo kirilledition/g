@@ -295,6 +295,53 @@ Next targets:
   for the next batch can overlap current compute; do not add another worker or
   custom CUDA memory layer.
 
+## 2026-07-14 Binary GPU Pre-Transfer Wave
+
+The bounded production confirmation runs are under
+`data/benchmarks/pretransfer_bounded_confirm_*`; the exact accepted build was
+profiled under `data/profiles/next_wave_deep_pretransfer_20260714`. The target,
+512-row Firth batches, 16,384-variant input chunks, and eight host threads are
+unchanged.
+
+Accepted:
+
+- The delivery thread now validates and splits the next decoded batch, asks the
+  backend to initiate its device transfer, and places the opaque transferred
+  input in the existing one-slot compute queue. The current batch computes
+  concurrently. This reuses the two established workers and bounded channels;
+  it adds no worker, staging queue, custom allocator, or CUDA implementation.
+  Queue capacity is checked before transfer, so backpressure retains the
+  decoded host batch and bounds genotype device residency to the active batch
+  plus one transferred successor.
+- The Rust/Python boundary now has one native-buffer conversion and transfer
+  path plus one generic compute call. Kernel selection remains in the concrete
+  JAX backend rather than being duplicated as three mode-specific binding
+  helpers.
+- Against the preceding seven-run reducer checkpoint, the seven-run
+  confirmation median improves from 4.669 to 4.362 seconds in native execution
+  (6.56%) and from 4.849 to 4.565 seconds in association time (5.86%). Native
+  execution ranges from 4.297 to 4.437 seconds. One association measurement is
+  4.889 seconds because input preparation, not native execution, paused for an
+  additional 395 milliseconds.
+- Nsight observes full packed8 transfer overlapping kernels for 14 of 26
+  batches, with 31.439 milliseconds of aggregate overlap. The 26 full transfers
+  move 2.133 GB in 207.949 milliseconds. Except for startup and three bounded
+  delivery waits, a kernel is queued within 0.02 milliseconds after each
+  transfer completes.
+- Output is bitwise identical to the reducer checkpoint across all 418,943
+  rows, including metadata, statistics, correction methods, and correction
+  statuses.
+
+Next targets:
+
+- The accepted profile records 17,801 kernel launches over a 4.051-second span
+  but only 294.231 milliseconds of aggregate kernel execution. The two dominant
+  correction kernels account for 3,723 launches and 210.127 milliseconds.
+  Reduce solver launch/control cadence before changing the now-overlapped BGEN
+  delivery path.
+- Revisit the full-component reducer only with hardware-counter evidence that a
+  custom implementation avoids spilling its 164-register state.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
