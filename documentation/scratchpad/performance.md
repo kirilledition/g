@@ -377,11 +377,27 @@ Compatibility:
   hash; the run-manifest schema is therefore version 15, and output directories
   created by an older binary run must not be resumed with this build.
 
+Measured follow-up:
+
+- Six, seven, and eight Rayon workers are indistinguishable after pre-transfer.
+  Their five-run native medians are 4.100, 4.134, and 4.122 seconds; mean and
+  median rankings disagree, and association medians differ by less than 0.5%.
+  Keep the explicit eight-worker target and do not add an automatic host-core
+  reservation policy.
+- The full-component validity predicate no longer reduces
+  `isfinite(probability_vector)` across every row. Validated predictors produce
+  finite clipped probabilities, while active-row failures already make the
+  deviance, information, or score invalid. The deleted fifth reducer uniquely
+  rejected only a NaN confined to masked-out sparse or padding rows.
+- Against a fresh seven-run control, the reduced predicate improves median
+  native execution from 4.135 to 4.107 seconds (0.68%) and median association
+  completion from 4.339 to 4.304 seconds (0.81%). Mean gains are only 0.30% and
+  0.32%, so treat the timing effect as below confidence; the deletion is kept
+  for guaranteed reducer and code debloat, not as a claimed performance win.
+  Output remains bitwise identical across all 418,943 rows.
+
 Next targets:
 
-- Measure six, seven, and eight Rayon workers after decoded-batch pre-transfer;
-  reserving a host core for PJRT and transfer progress could improve overlap
-  without adding code.
 - Prototype two-iteration blocks in the pseudo-logistic inner loop, preserving
   the exact stopping state with masked selection. Keep it only if production
   latency improves without material compile/cache-load growth.

@@ -78,7 +78,6 @@ def compute_scalar_firth_components_with_minimum_variance(
         & (genotype_information > minimum_variance)
         & jnp.isfinite(penalized_deviance)
         & jnp.isfinite(score)
-        & jnp.all(jnp.isfinite(probability_vector))
     )
     return regenie2_binary_firth_types.ScalarFirthComponents(
         genotype_information=genotype_information,
