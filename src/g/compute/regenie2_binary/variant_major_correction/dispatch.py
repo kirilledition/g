@@ -78,28 +78,19 @@ def apply_host_selected_corrections_multi_firth_variant_major(
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
     """Select one static Firth capacity after materializing the device count."""
-    capacity_plan = regenie2_binary_candidate_planning.build_multi_firth_candidate_capacity_plan(
-        trait_count=result.beta.shape[0],
-        variant_count=genotype_matrix_by_variant.shape[0],
-        preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
-    )
     firth_candidate_count = count_firth_candidates(result.correction_code)
     host_candidate_count = int(jax.device_get(firth_candidate_count))
     if host_candidate_count == 0:
         return result
 
-    if host_candidate_count <= capacity_plan.tiny_candidate_capacity:
-        candidate_capacity = capacity_plan.tiny_candidate_capacity
-        order_candidates = False
-    elif host_candidate_count <= capacity_plan.small_candidate_capacity:
-        candidate_capacity = capacity_plan.small_candidate_capacity
-        order_candidates = candidate_capacity > kernel_config.firth_candidate.batch_size
-    elif host_candidate_count <= capacity_plan.bounded_candidate_capacity:
-        candidate_capacity = capacity_plan.bounded_candidate_capacity
-        order_candidates = True
-    else:
-        candidate_capacity = capacity_plan.overflow_candidate_capacity
-        order_candidates = True
+    candidate_capacity = regenie2_binary_candidate_planning.select_multi_firth_candidate_capacity(
+        candidate_count=host_candidate_count,
+        trait_count=result.beta.shape[0],
+        variant_count=genotype_matrix_by_variant.shape[0],
+        preferred_candidate_capacity=kernel_config.firth_candidate.candidate_capacity,
+        firth_batch_size=kernel_config.firth_candidate.batch_size,
+    )
+    order_candidates = candidate_capacity > kernel_config.firth_candidate.batch_size
 
     return apply_fixed_capacity_corrections_multi_firth_variant_major_donating_result(
         chromosome_state=chromosome_state,

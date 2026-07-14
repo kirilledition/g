@@ -11,7 +11,6 @@ from g.compute.common import genotype as compute_genotype
 from g.compute.regenie2_binary import config as regenie2_binary_config
 
 TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 64
-SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT = 1024
 JAX_INT32_INDEX_MAXIMUM = 2_147_483_647
 
 
@@ -76,24 +75,6 @@ class ScalarFirthCandidateBatchInputs:
     null_failed_mask: jax.Array
 
 
-@dataclass(frozen=True)
-class FirthCandidateCapacityPlan:
-    """Static candidate capacities for tiered Firth correction paths.
-
-    Attributes:
-        tiny_candidate_capacity: Fixed capacity for very small candidate counts.
-        small_candidate_capacity: Fixed capacity for small candidate counts.
-        bounded_candidate_capacity: Preferred fixed candidate capacity, capped by the current chunk size.
-        overflow_candidate_capacity: Full chunk capacity used when candidate count exceeds the bounded capacity.
-
-    """
-
-    tiny_candidate_capacity: int
-    small_candidate_capacity: int
-    bounded_candidate_capacity: int
-    overflow_candidate_capacity: int
-
-
 def build_compact_int32_indices(active_mask: jax.Array, capacity: int) -> jax.Array:
     """Compact true-mask positions into a fixed-capacity int32 index vector."""
     if active_mask.ndim != 1:
@@ -112,58 +93,55 @@ def build_compact_int32_indices(active_mask: jax.Array, capacity: int) -> jax.Ar
     return jnp.zeros((capacity,), dtype=jnp.int32).at[scatter_positions].set(source_indices, mode="drop")
 
 
-def build_firth_candidate_capacity_plan(
+def select_multi_firth_candidate_capacity(
     *,
+    candidate_count: int,
+    trait_count: int,
     variant_count: int,
     preferred_candidate_capacity: int,
-    trait_count: int,
-) -> FirthCandidateCapacityPlan:
-    """Build static capacities for device Firth candidate dispatch."""
+    firth_batch_size: int,
+) -> int:
+    """Select a bounded static capacity bucket for observed Firth candidates."""
+    if candidate_count <= 0:
+        message = "Firth candidate count must be positive."
+        raise ValueError(message)
+    if trait_count <= 0:
+        message = "Trait count must be positive."
+        raise ValueError(message)
     if variant_count <= 0:
         message = "Variant count must be positive."
         raise ValueError(message)
     if preferred_candidate_capacity <= 0:
         message = "Preferred Firth candidate capacity must be positive."
         raise ValueError(message)
-    if trait_count <= 0:
-        message = "Trait count must be positive."
-        raise ValueError(message)
-    if variant_count > JAX_INT32_INDEX_MAXIMUM:
-        message = "Flattened Firth candidate count exceeds the JAX int32 index domain."
-        raise ValueError(message)
-    bounded_candidate_capacity = min(preferred_candidate_capacity, variant_count)
-    small_candidate_capacity = min(SMALL_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count, bounded_candidate_capacity)
-    tiny_candidate_capacity = min(TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count, small_candidate_capacity)
-    return FirthCandidateCapacityPlan(
-        tiny_candidate_capacity=tiny_candidate_capacity,
-        small_candidate_capacity=small_candidate_capacity,
-        bounded_candidate_capacity=bounded_candidate_capacity,
-        overflow_candidate_capacity=variant_count,
-    )
-
-
-def build_multi_firth_candidate_capacity_plan(
-    *,
-    trait_count: int,
-    variant_count: int,
-    preferred_candidate_capacity: int,
-) -> FirthCandidateCapacityPlan:
-    """Build flattened-lane capacities for multi-trait Firth correction."""
-    if trait_count <= 0:
-        message = "Trait count must be positive."
-        raise ValueError(message)
-    if variant_count <= 0:
-        message = "Variant count must be positive."
+    if firth_batch_size <= 0:
+        message = "Firth batch size must be positive."
         raise ValueError(message)
     flattened_candidate_count = trait_count * variant_count
     if flattened_candidate_count > JAX_INT32_INDEX_MAXIMUM:
         message = "Flattened trait-variant candidate count exceeds the JAX int32 index domain."
         raise ValueError(message)
-    return build_firth_candidate_capacity_plan(
-        variant_count=flattened_candidate_count,
-        preferred_candidate_capacity=preferred_candidate_capacity * trait_count,
-        trait_count=trait_count,
+    if candidate_count > flattened_candidate_count:
+        message = "Firth candidate count exceeds the flattened trait-variant count."
+        raise ValueError(message)
+
+    configured_candidate_capacity = min(
+        preferred_candidate_capacity * trait_count,
+        flattened_candidate_count,
     )
+    tiny_candidate_capacity = min(
+        TINY_FIRTH_CANDIDATE_CAPACITY_PER_TRAIT * trait_count,
+        configured_candidate_capacity,
+    )
+    if candidate_count <= tiny_candidate_capacity:
+        return tiny_candidate_capacity
+    if candidate_count > configured_candidate_capacity:
+        return flattened_candidate_count
+
+    required_batch_count = (candidate_count + firth_batch_size - 1) // firth_batch_size
+    # A one-batch bucket adds a second executable for the common 16K tail and costs more than its masked lanes save.
+    rounded_batch_count = max(2, 1 << (required_batch_count - 1).bit_length())
+    return min(rounded_batch_count * firth_batch_size, configured_candidate_capacity)
 
 
 def compute_firth_pre_dispatch_mask_without_mask(
