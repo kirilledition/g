@@ -104,6 +104,46 @@ Next targets:
   A validated raw-deflate path is only worthwhile if Adler-32 remains visible
   after allocation churn is gone.
 
+## 2026-07-14 Binary GPU Firth Dispatch Wave
+
+The target and machine are unchanged. Artifacts are under
+`data/benchmarks/next_wave_dispatch_{count,legacycache}_*`. The accepted design
+keeps the established score executable, computes the candidate count in one
+small JIT, materializes only that scalar, and invokes one separately cached
+fixed-capacity correction executable. The public compute API no longer builds
+or forwards the four capacity tiers, and the correction kernel receives only
+the `firth_se` flag it uses rather than the entire correction plan.
+
+Accepted:
+
+- Removing the nested 64/1,024/16,384/overflow `lax.cond` mega-executable cuts
+  cold fixed-capacity correction compilation from 36.225 to 11.525 seconds.
+  With an empty cache, cold wall time improves from 47.19 to 34.65 seconds and
+  the association window from 35.482 to 23.044 seconds.
+- Across three warm runs, median association time improves from 9.405 to 5.153
+  seconds (45.2%) and median wall time from 20.88 to 16.42 seconds (21.4%). The
+  per-chunk host synchronization is therefore decisively outweighed by the
+  smaller correction executable on this workload.
+- Repeated runs with the same compiled executables are bitwise identical across
+  all 418,943 rows. Reusing the baseline score executable also produces a
+  bitwise-identical table with the new dispatcher, including correction method
+  and status. Separately compiled empty-cache score executables show only the
+  expected GPU reduction variation and preserve all correction decisions.
+
+Rejected:
+
+- Folding the count reduction into a new retained-score wrapper was no faster
+  than the isolated count kernel and enlarged `api.py`. Keeping the score JIT
+  unchanged is smaller, cleaner, and permits existing score cache reuse.
+
+Next targets:
+
+- Re-profile the accepted pipeline. Prioritize Rust BGEN delivery if the GPU is
+  still starved; only pursue raw-deflate/checksum work when the profile shows a
+  measurable checksum share after buffer pooling.
+- Inspect the now-isolated 1,024-candidate correction executable before writing
+  custom GPU code. Require kernel-level evidence for any Pallas or CUDA path.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

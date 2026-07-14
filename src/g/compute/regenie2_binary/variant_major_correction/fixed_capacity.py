@@ -17,7 +17,6 @@ from g.compute.regenie2_binary.firth.batch import prepare as regenie2_binary_fir
 if typing.TYPE_CHECKING:
     import jax
 
-    from g import types
     from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
@@ -56,7 +55,7 @@ def apply_selected_firth_candidate_corrections(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     selected_rows: regenie2_binary_firth_batch_prepare.SelectedMultiFirthCandidateRows,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
-    correction_plan: types.BinaryCorrectionPlan,
+    firth_se: bool,
     fallback_count: jax.Array,
     candidate_capacity: int,
     firth_batch_size: int,
@@ -88,7 +87,7 @@ def apply_selected_firth_candidate_corrections(
             lanes=candidate_inputs.lanes,
             genotype_flip_mask=jnp.zeros_like(candidate_inputs.lanes.flat_active_mask),
             candidate_capacity=candidate_capacity,
-            firth_se=correction_plan.firth_se,
+            firth_se=firth_se,
         )
 
     candidate_inputs = regenie2_binary_firth_batch_prepare.prepare_scalar_firth_candidate_batch(
@@ -111,7 +110,7 @@ def apply_selected_firth_candidate_corrections(
         lanes=candidate_inputs.lanes,
         genotype_flip_mask=candidate_inputs.genotype_flip_mask,
         candidate_capacity=candidate_capacity,
-        firth_se=correction_plan.firth_se,
+        firth_se=firth_se,
     )
 
 
@@ -120,7 +119,7 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     genotype_matrix_by_variant: jax.Array,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
-    correction_plan: types.BinaryCorrectionPlan,
+    firth_se: bool,
     candidate_mask: jax.Array,
     fallback_count: jax.Array,
     candidate_capacity: int,
@@ -141,7 +140,7 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
         chromosome_state=chromosome_state,
         selected_rows=selected_rows,
         result=result,
-        correction_plan=correction_plan,
+        firth_se=firth_se,
         fallback_count=fallback_count,
         candidate_capacity=candidate_capacity,
         firth_batch_size=firth_batch_size,
