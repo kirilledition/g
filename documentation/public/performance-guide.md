@@ -127,6 +127,10 @@ packed8-compatible use dosage delivery. Multiallelic, non-diploid,
 or otherwise unsupported input fails instead.
 
 Current default values are in `crates/interface/src/config.default.toml`.
+Older pre-release configurations may contain
+`firth_newton_raphson_zero_start_iterations`. Remove that key when upgrading;
+the production scalar solver always starts at zero and the separate setting was
+unreachable, so it is no longer accepted.
 The V100-tuned binary path uses 512-lane Firth batches and a
 1,024-candidate-per-trait middle dispatch tier. Larger candidate sets retain
 the full-chunk overflow path.

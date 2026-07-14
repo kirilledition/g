@@ -38,7 +38,7 @@ optional TOML file, and explicit CLI overrides.
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
 
-Manifest schema version `14` stores immutable compatibility state once under
+Manifest schema version `15` stores immutable compatibility state once under
 `execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
 fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
@@ -118,6 +118,10 @@ Common mismatch causes:
   policy recorded in the execution plan.
 
 Resume is not a way to combine different analyses into one output directory.
+In particular, runs whose execution plan still contains the removed
+`firth_newton_raphson_zero_start_iterations` field have a different plan schema
+and hash. Start a new output directory instead of resuming those pre-release
+binary runs with a newer build.
 
 ## Graceful Interruption
 

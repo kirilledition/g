@@ -284,7 +284,6 @@ pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunP
         ("Firth maximum iterations", kernels.firth.maximum_iterations),
         ("Firth pseudo maximum iterations", kernels.firth.pseudo_maximum_iterations),
         ("Firth pseudo inner maximum iterations", kernels.firth.pseudo_inner_maximum_iterations),
-        ("Firth Newton-Raphson zero-start iterations", kernels.firth.newton_raphson_zero_start_iterations),
         ("Firth line-search maximum attempts", kernels.firth.line_search_maximum_attempts),
         ("Firth step-halving maximum attempts", kernels.firth.step_halving_maximum_attempts),
         ("null Firth maximum iterations", kernels.null_firth.maximum_iterations),

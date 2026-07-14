@@ -110,8 +110,6 @@ fn binary_firth_backend_keyword_arguments<'py>(
     keyword_arguments.set_item("firth_pseudo_maximum_iterations", kernels.firth.pseudo_maximum_iterations)?;
     keyword_arguments
         .set_item("firth_pseudo_inner_maximum_iterations", kernels.firth.pseudo_inner_maximum_iterations)?;
-    keyword_arguments
-        .set_item("firth_newton_raphson_zero_start_iterations", kernels.firth.newton_raphson_zero_start_iterations)?;
     keyword_arguments.set_item("firth_line_search_maximum_attempts", kernels.firth.line_search_maximum_attempts)?;
     keyword_arguments.set_item("firth_step_halving_maximum_attempts", kernels.firth.step_halving_maximum_attempts)?;
     keyword_arguments.set_item("firth_initial_response_scale", kernels.firth.initial_response_scale.get())?;

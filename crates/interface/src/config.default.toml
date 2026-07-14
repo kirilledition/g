@@ -29,7 +29,6 @@ firth_likelihood_tolerance = 2.5e-4
 firth_maximum_step_size = 5.0
 firth_pseudo_maximum_iterations = 50
 firth_pseudo_inner_maximum_iterations = 25
-firth_newton_raphson_zero_start_iterations = 100
 firth_line_search_maximum_attempts = 25
 firth_step_halving_maximum_attempts = 12
 firth_initial_response_scale = 4.863891244002886

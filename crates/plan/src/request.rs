@@ -74,7 +74,6 @@ pub struct FirthKernelPlan {
     pub maximum_step_size: PositiveF64,
     pub pseudo_maximum_iterations: u32,
     pub pseudo_inner_maximum_iterations: u32,
-    pub newton_raphson_zero_start_iterations: u32,
     pub line_search_maximum_attempts: u32,
     pub step_halving_maximum_attempts: u32,
     pub initial_response_scale: PositiveF64,

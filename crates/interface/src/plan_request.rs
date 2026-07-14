@@ -79,7 +79,6 @@ fn build_compute_plan(config: &RegenieConfigData) -> plan::ComputePlan {
                 maximum_step_size: config.g_compute.firth_maximum_step_size,
                 pseudo_maximum_iterations: config.g_compute.firth_pseudo_maximum_iterations.get(),
                 pseudo_inner_maximum_iterations: config.g_compute.firth_pseudo_inner_maximum_iterations.get(),
-                newton_raphson_zero_start_iterations: config.g_compute.firth_newton_raphson_zero_start_iterations.get(),
                 line_search_maximum_attempts: config.g_compute.firth_line_search_maximum_attempts.get(),
                 step_halving_maximum_attempts: config.g_compute.firth_step_halving_maximum_attempts.get(),
                 initial_response_scale: config.g_compute.firth_initial_response_scale,

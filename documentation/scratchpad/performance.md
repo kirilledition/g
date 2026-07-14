@@ -334,13 +334,57 @@ Accepted:
 
 Next targets:
 
-- The accepted profile records 17,801 kernel launches over a 4.051-second span
-  but only 294.231 milliseconds of aggregate kernel execution. The two dominant
-  correction kernels account for 3,723 launches and 210.127 milliseconds.
-  Reduce solver launch/control cadence before changing the now-overlapped BGEN
-  delivery path.
+- The accepted standard Nsight profile records 17,801 kernel launches and
+  useful relative kernel counts, but it disables XLA command buffers while
+  profiling. Its 6.252-second native execution is not representative of the
+  4.36--4.46-second production path, so do not optimize the apparent
+  4.051-second launch span. Re-profile solver-control experiments with command
+  buffers explicitly enabled during profiling.
 - Revisit the full-component reducer only with hardware-counter evidence that a
   custom implementation avoids spilling its 164-register state.
+
+## 2026-07-14 Binary GPU Scalar Initialization Reuse Wave
+
+Production comparisons are under
+`data/benchmarks/scalar_initial_reuse_clean_*`; the target, 512-row Firth
+batches, 16,384-variant input chunks, eight host threads, and the shared JAX
+cache are unchanged.
+
+Accepted:
+
+- Each active scalar lane now computes its beta-zero `ScalarFirthComponents`
+  once. Pseudo-Firth consumes that value directly, the likelihood-ratio null
+  deviance uses its genotype information, and the lazy Newton-Raphson fallback
+  reuses the same value. This removes a guaranteed probability/information
+  evaluation and another full-component evaluation whenever fallback runs.
+- Production only ever supplied a zero warm start. The unreachable nonzero
+  warm-start cascade, its three forwarding helpers, and the unused
+  `firth_newton_raphson_zero_start_iterations` configuration field are removed
+  through the Rust plan, binding, and JAX policy. The wave removes 110 net
+  production and benchmark lines rather than adding a second solver path.
+- Against the preceding seven-run bounded pre-transfer checkpoint, seven clean
+  runs improve median native execution from 4.362 to 4.245 seconds (2.69%) and
+  median association completion from 4.565 to 4.436 seconds (2.82%). Candidate
+  native execution ranges from 4.139 to 4.465 seconds.
+- Output remains bitwise identical across all 418,943 rows and every column,
+  including all 17,938 corrected statistics, methods, and statuses.
+
+Compatibility:
+
+- Pre-release configurations must delete
+  `firth_newton_raphson_zero_start_iterations`; it never selected a production
+  execution path. Its removal changes the serialized execution-plan schema and
+  hash; the run-manifest schema is therefore version 15, and output directories
+  created by an older binary run must not be resumed with this build.
+
+Next targets:
+
+- Measure six, seven, and eight Rayon workers after decoded-batch pre-transfer;
+  reserving a host core for PJRT and transfer progress could improve overlap
+  without adding code.
+- Prototype two-iteration blocks in the pseudo-logistic inner loop, preserving
+  the exact stopping state with masked selection. Keep it only if production
+  latency improves without material compile/cache-load growth.
 
 ## Output Performance
 

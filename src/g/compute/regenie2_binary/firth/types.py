@@ -290,7 +290,6 @@ class ScalarApproximateFirthSolverParameters:
     pseudo_maximum_iterations: jax.Array
     pseudo_inner_maximum_iterations: jax.Array
     newton_raphson_maximum_iterations: jax.Array
-    newton_raphson_zero_start_iterations: jax.Array
     line_search_maximum_attempts: jax.Array
 
 
@@ -303,8 +302,6 @@ class ScalarApproximateFirthDispatchOperands:
     genotype_vector: jax.Array
     offset_vector: jax.Array
     active_sample_mask: jax.Array
-    deviance_null: jax.Array
+    full_null_deviance: jax.Array
     non_active_deviance: jax.Array
-    sparse_correction: jax.Array
-    warm_start_beta: jax.Array
     solver_parameters: ScalarApproximateFirthSolverParameters

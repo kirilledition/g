@@ -94,7 +94,6 @@ pub(crate) struct GComputeConfigData {
     pub firth_maximum_step_size: plan::PositiveF64,
     pub firth_pseudo_maximum_iterations: NonZeroU32,
     pub firth_pseudo_inner_maximum_iterations: NonZeroU32,
-    pub firth_newton_raphson_zero_start_iterations: NonZeroU32,
     pub firth_line_search_maximum_attempts: NonZeroU32,
     pub firth_step_halving_maximum_attempts: NonZeroU32,
     pub firth_initial_response_scale: plan::PositiveF64,

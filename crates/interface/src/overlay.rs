@@ -142,7 +142,6 @@ impl PartialComputeConfig {
         overlay_option!(self, override_config, firth_maximum_step_size);
         overlay_option!(self, override_config, firth_pseudo_maximum_iterations);
         overlay_option!(self, override_config, firth_pseudo_inner_maximum_iterations);
-        overlay_option!(self, override_config, firth_newton_raphson_zero_start_iterations);
         overlay_option!(self, override_config, firth_line_search_maximum_attempts);
         overlay_option!(self, override_config, firth_step_halving_maximum_attempts);
         overlay_option!(self, override_config, firth_initial_response_scale);

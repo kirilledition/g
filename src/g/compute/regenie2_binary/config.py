@@ -66,7 +66,6 @@ class ApproximateFirthConfig:
         maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
         pseudo_maximum_iterations: Maximum approximate pseudo-Firth outer iterations.
         pseudo_inner_maximum_iterations: Maximum pseudo-response logistic inner iterations.
-        newton_raphson_zero_start_iterations: Maximum zero-start scalar Newton-Raphson iterations.
         line_search_maximum_attempts: Maximum scalar/full-model Firth line-search attempts.
         step_halving_maximum_attempts: Maximum full-model Firth step-halving attempts.
         initial_response_scale: Pseudo-response scale for block full-model Firth initialization.
@@ -83,7 +82,6 @@ class ApproximateFirthConfig:
     maximum_step_size: float
     pseudo_maximum_iterations: int
     pseudo_inner_maximum_iterations: int
-    newton_raphson_zero_start_iterations: int
     line_search_maximum_attempts: int
     step_halving_maximum_attempts: int
     initial_response_scale: float

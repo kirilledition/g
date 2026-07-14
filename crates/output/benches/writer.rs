@@ -140,7 +140,6 @@ fn benchmark_kernel_plan() -> g_plan::KernelPlan {
             maximum_step_size: g_plan::PositiveF64::try_from(5.0).expect("benchmark maximum step should be valid"),
             pseudo_maximum_iterations: 50,
             pseudo_inner_maximum_iterations: 25,
-            newton_raphson_zero_start_iterations: 100,
             line_search_maximum_attempts: 25,
             step_halving_maximum_attempts: 12,
             initial_response_scale: g_plan::PositiveF64::try_from(4.863_891_244_002_886)
