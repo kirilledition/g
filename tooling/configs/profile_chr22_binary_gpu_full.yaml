@@ -61,7 +61,7 @@ tool:
   output_writer_thread_counts:
     - 4
   firth_batch_sizes:
-    - 2048
+    - 512
   rayon_thread_counts:
     - 8
   top_finalists: 1
