@@ -189,35 +189,27 @@ pub(in crate::bgen) fn read_probability_block<'a>(
     variant_record: &VariantRecord,
     thread_scratch: &'a mut ThreadScratch,
 ) -> Result<&'a [u8], BgenError> {
+    let probability_payload_offset = usize::try_from(variant_record.probability_payload_offset)
+        .expect("uint64 BGEN offsets must fit the supported 64-bit usize domain");
+    let probability_payload_length = usize::try_from(variant_record.probability_payload_length)
+        .expect("uint32 BGEN payload lengths must fit the supported 64-bit usize domain");
+    let declared_uncompressed_block_length = usize::try_from(variant_record.declared_uncompressed_block_length)
+        .expect("uint32 BGEN block lengths must fit the supported 64-bit usize domain");
     match compression_type {
-        CompressionType::None => {
-            read_exact_bytes(mmap, variant_record.probability_payload_offset, variant_record.probability_payload_length)
-        }
+        CompressionType::None => read_exact_bytes(mmap, probability_payload_offset, probability_payload_length),
         CompressionType::Zlib => {
-            let compressed_payload = read_exact_bytes(
-                mmap,
-                variant_record.probability_payload_offset,
-                variant_record.probability_payload_length,
-            )?;
-            decompress_zlib_block_into_scratch(
-                compressed_payload,
-                variant_record.declared_uncompressed_block_length,
-                thread_scratch,
-            )?;
-            Ok(&thread_scratch.decompressed_probability_block[..variant_record.declared_uncompressed_block_length])
+            let compressed_payload = read_exact_bytes(mmap, probability_payload_offset, probability_payload_length)?;
+            decompress_zlib_block_into_scratch(compressed_payload, declared_uncompressed_block_length, thread_scratch)?;
+            Ok(&thread_scratch.decompressed_probability_block[..declared_uncompressed_block_length])
         }
         CompressionType::Zstandard => {
-            let compressed_payload = read_exact_bytes(
-                mmap,
-                variant_record.probability_payload_offset,
-                variant_record.probability_payload_length,
-            )?;
+            let compressed_payload = read_exact_bytes(mmap, probability_payload_offset, probability_payload_length)?;
             decompress_zstandard_block_into_scratch(
                 compressed_payload,
-                variant_record.declared_uncompressed_block_length,
+                declared_uncompressed_block_length,
                 thread_scratch,
             )?;
-            Ok(&thread_scratch.decompressed_probability_block[..variant_record.declared_uncompressed_block_length])
+            Ok(&thread_scratch.decompressed_probability_block[..declared_uncompressed_block_length])
         }
     }
 }
