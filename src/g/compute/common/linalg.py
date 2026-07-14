@@ -58,21 +58,3 @@ def solve_positive_definite_system(
         lower=True,
         transpose_a=True,
     )
-
-
-def solve_from_positive_definite_matrix(
-    positive_definite_matrix: jax.Array,
-    right_hand_side: jax.Array,
-) -> jax.Array:
-    """Solve a positive-definite system from its matrix form.
-
-    Args:
-        positive_definite_matrix: Symmetric positive-definite coefficient matrix.
-        right_hand_side: Right-hand side vector or matrix.
-
-    Returns:
-        Solution to the linear system.
-
-    """
-    cholesky_factor = jnp.linalg.cholesky(positive_definite_matrix)
-    return solve_positive_definite_system(cholesky_factor, right_hand_side)
