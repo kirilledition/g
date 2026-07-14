@@ -227,19 +227,25 @@ fn decompress_zlib_block_into_scratch(
     expected_length: usize,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), BgenError> {
-    ensure_decompression_buffer_length(&mut thread_scratch.decompressed_probability_block, expected_length)?;
-    let output_buffer = &mut thread_scratch.decompressed_probability_block[..expected_length];
+    let output_buffer = &mut thread_scratch.decompressed_probability_block;
+    output_buffer.clear();
+    output_buffer.try_reserve(expected_length).map_err(|source| {
+        BgenError::Range(format!(
+            "Could not reserve {expected_length} bytes for BGEN probability decompression: {source}.",
+        ))
+    })?;
+    let output_pointer = output_buffer.spare_capacity_mut()[..expected_length].as_mut_ptr().cast::<u8>();
     let mut consumed_input_length = 0;
     // SAFETY: the per-thread decompressor is live and uniquely borrowed. The
-    // index rejects empty compressed payloads, and both slices remain valid for
-    // the exact lengths passed to C.
+    // index rejects empty compressed payloads, and the reserved spare capacity
+    // remains valid for the exact output length passed to C.
     let result = unsafe {
         libdeflate_sys::libdeflate_zlib_decompress_ex(
             thread_scratch.zlib_decompressor.as_ptr(),
             compressed_payload.as_ptr().cast(),
             compressed_payload.len(),
-            output_buffer.as_mut_ptr().cast(),
-            output_buffer.len(),
+            output_pointer.cast(),
+            expected_length,
             &raw mut consumed_input_length,
             std::ptr::null_mut(),
         )
@@ -271,6 +277,9 @@ fn decompress_zlib_block_into_scratch(
             compressed_payload.len(),
         )));
     }
+    // SAFETY: with a null actual-output-length pointer, libdeflate reports
+    // success only after initializing exactly `expected_length` output bytes.
+    unsafe { output_buffer.set_len(expected_length) };
     Ok(())
 }
 
