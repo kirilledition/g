@@ -371,20 +371,22 @@ fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
 use std::arch::x86::{
     __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
     _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
-    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16,
-    _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
-    _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_extract_epi32, _mm256_hadd_epi32, _mm256_loadu_si256,
+    _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps,
+    _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256,
+    _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16,
+    _mm256_sub_epi32,
 };
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
     _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
-    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16,
-    _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16,
-    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
-    _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_extract_epi32, _mm256_hadd_epi32, _mm256_loadu_si256,
+    _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps,
+    _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256,
+    _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32, _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16,
+    _mm256_sub_epi32,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -451,6 +453,15 @@ unsafe fn record_raw_dosage_accumulators_avx2(
         raw_integer_summary.raw_dosage_square_total +=
             u64::try_from(raw_square_sum_lanes[lane_index]).expect("raw dosage square sum should fit u64");
     }
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn sum_i16_lanes_avx2(accumulator: __m256i) -> i32 {
+    let pair_sums = _mm256_madd_epi16(accumulator, _mm256_set1_epi16(1));
+    let quarter_sums = _mm256_hadd_epi32(pair_sums, pair_sums);
+    let half_sums = _mm256_hadd_epi32(quarter_sums, quarter_sums);
+    _mm256_extract_epi32::<0>(half_sums) + _mm256_extract_epi32::<4>(half_sums)
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -562,6 +573,8 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
     let homozygous_alternate_lower_bound = _mm256_set1_epi16(382);
     let mut raw_sum_accumulator = _mm256_setzero_si256();
     let mut raw_square_sum_accumulator = _mm256_setzero_si256();
+    let mut zero_count_accumulator = _mm256_setzero_si256();
+    let mut homozygous_alternate_count_accumulator = _mm256_setzero_si256();
     let mut accumulated_vector_count = 0_usize;
     let sample_count = packed_probability_bytes.len() / 2;
     let mut sample_index = 0_usize;
@@ -584,11 +597,12 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
         accumulated_vector_count += 1;
 
         if collect_sparse_candidate_counts {
-            raw_integer_summary.zero_count +=
-                avx2_mask_count(_mm256_movemask_epi8(_mm256_cmpeq_epi16(raw_dosage_integers, zero))) / 2;
-            raw_integer_summary.homozygous_alternate_count += avx2_mask_count(_mm256_movemask_epi8(
+            zero_count_accumulator =
+                _mm256_sub_epi16(zero_count_accumulator, _mm256_cmpeq_epi16(raw_dosage_integers, zero));
+            homozygous_alternate_count_accumulator = _mm256_sub_epi16(
+                homozygous_alternate_count_accumulator,
                 _mm256_cmpgt_epi16(raw_dosage_integers, homozygous_alternate_lower_bound),
-            )) / 2;
+            );
         }
 
         if accumulated_vector_count == AVX2_ACCUMULATION_VECTOR_LIMIT {
@@ -598,9 +612,16 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
                     raw_sum_accumulator,
                     raw_square_sum_accumulator,
                 );
+                if collect_sparse_candidate_counts {
+                    raw_integer_summary.zero_count += sum_i16_lanes_avx2(zero_count_accumulator);
+                    raw_integer_summary.homozygous_alternate_count +=
+                        sum_i16_lanes_avx2(homozygous_alternate_count_accumulator);
+                }
             }
             raw_sum_accumulator = _mm256_setzero_si256();
             raw_square_sum_accumulator = _mm256_setzero_si256();
+            zero_count_accumulator = _mm256_setzero_si256();
+            homozygous_alternate_count_accumulator = _mm256_setzero_si256();
             accumulated_vector_count = 0;
         }
 
@@ -614,6 +635,11 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
                 raw_sum_accumulator,
                 raw_square_sum_accumulator,
             );
+            if collect_sparse_candidate_counts {
+                raw_integer_summary.zero_count += sum_i16_lanes_avx2(zero_count_accumulator);
+                raw_integer_summary.homozygous_alternate_count +=
+                    sum_i16_lanes_avx2(homozygous_alternate_count_accumulator);
+            }
         }
     }
     raw_integer_summary.selected_observation_count +=
