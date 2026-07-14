@@ -396,11 +396,47 @@ Measured follow-up:
   for guaranteed reducer and code debloat, not as a claimed performance win.
   Output remains bitwise identical across all 418,943 rows.
 
+Command-buffer-aware profile:
+
+- The accepted executable is captured under
+  `data/profiles/final_command_buffers_20260714`, with
+  `--xla_enable_command_buffers_during_profiling=true`. Command-buffer-aware
+  Nsight profiling still perturbs the whole run severely: native execution
+  expands to 50.621 seconds, so neither its gaps nor absolute kernel timings
+  represent production. The cited hot reducers have no recorded graph ID.
+- A separate six-pair production control is indistinguishable with the default
+  command-buffer policy and `--xla_gpu_enable_command_buffer=`: native medians
+  are 4.408 and 4.405 seconds. Do not target command-buffer policy itself.
+- Structural comparison with the pre-initialization-reuse trace is useful. The
+  dominant `input_reduce_fusion_27` count falls from 1,700 to 1,653 and
+  `loop_select_fusion_20` from 2,023 to 1,976. Their aggregate device time in
+  the perturbed trace is 205.977 milliseconds. The hot reducer's registers per
+  thread fall from 164 to 160; the secondary reducer falls from 166 to 160.
+  This verifies that initialization reuse removes 47 hot
+  probability/reduction pairs and that reducer debloat lowers compiled state.
+- The trace contains 1,085 CUDA-graph launches and 18,645 recorded kernels,
+  including 568 profiler redzone kernels and 110 profiler delay kernels. Do not
+  compare that raw total with the op-by-op trace. The 26 full H2D copies still
+  move 2.133 GB in 209.670 milliseconds.
+
+Rejected:
+
+- Blocking two pseudo-logistic iterations per while-body is bitwise exact but
+  speculatively evaluates a discarded tail iteration for completed lanes. Six
+  valid hot runs average 4.236 seconds versus 4.113 seconds for the accepted
+  single-step loop, a 2.99% regression. The prototype is removed completely.
+
 Next targets:
 
-- Prototype two-iteration blocks in the pseudo-logistic inner loop, preserving
-  the exact stopping state with masked selection. Keep it only if production
-  latency improves without material compile/cache-load growth.
+- The remaining 1,653 hot scalar reductions are genuine solver iterations.
+  Reduce them only through a numerically reviewed solver change, or eliminate
+  map/reduce work inside the hot fused reducer with a benchmarked GPU kernel.
+  Do not add a second implementation without a decisive production win and
+  memory-traffic or hardware-counter evidence.
+- Treat the roughly nine-second separate-process JAX runtime setup and the
+  first executable load as the largest end-to-end architectural ceiling.
+  Evaluate a resident execution lifecycle before further sub-percent scalar
+  expression tuning.
 
 ## Output Performance
 
