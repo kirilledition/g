@@ -371,9 +371,9 @@ fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
 use std::arch::x86::{
     __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
     _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
-    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_movemask_epi8,
-    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32,
-    _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi16, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16,
+    _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16,
+    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
     _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
@@ -381,9 +381,9 @@ use std::arch::x86::{
 use std::arch::x86_64::{
     __m128i, __m256i, _mm_loadu_si128, _mm256_add_epi16, _mm256_add_epi32, _mm256_and_si256, _mm256_castsi256_ps,
     _mm256_cmpeq_epi8, _mm256_cmpeq_epi16, _mm256_cmpeq_epi32, _mm256_cmpgt_epi16, _mm256_cmpgt_epi32,
-    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_movemask_epi8,
-    _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16, _mm256_set1_epi32,
-    _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi16, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
+    _mm256_cvtepi32_ps, _mm256_cvtepu16_epi32, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_maddubs_epi16,
+    _mm256_movemask_epi8, _mm256_movemask_ps, _mm256_mul_ps, _mm256_mullo_epi32, _mm256_set1_epi8, _mm256_set1_epi16,
+    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srli_epi16, _mm256_srli_epi32,
     _mm256_storeu_ps, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
@@ -553,7 +553,9 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
     collect_sparse_candidate_counts: bool,
 ) -> DosageSummary {
     let mut raw_integer_summary = EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
-    let probability_byte_mask = _mm256_set1_epi16(0xFF);
+    // Probability pairs are little-endian bytes [reference, heterozygous], so
+    // 0x0102 applies the raw-dosage weights [2, 1] to every pair.
+    let raw_dosage_probability_multipliers = _mm256_set1_epi16(0x0102);
     let raw_dosage_base = _mm256_set1_epi16(510);
     let adjacent_lane_sum_multiplier = _mm256_set1_epi16(1);
     let zero = _mm256_setzero_si256();
@@ -572,14 +574,8 @@ unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
             _mm256_storeu_si256(output_probability_pointer, probability_words);
         }
 
-        let homozygous_reference_probability_bytes = _mm256_and_si256(probability_words, probability_byte_mask);
-        let heterozygous_probability_bytes = _mm256_srli_epi16(probability_words, 8);
-        let doubled_homozygous_reference_probability_bytes =
-            _mm256_slli_epi16(homozygous_reference_probability_bytes, 1);
-        let raw_dosage_integers = _mm256_sub_epi16(
-            _mm256_sub_epi16(raw_dosage_base, doubled_homozygous_reference_probability_bytes),
-            heterozygous_probability_bytes,
-        );
+        let weighted_probability_bytes = _mm256_maddubs_epi16(probability_words, raw_dosage_probability_multipliers);
+        let raw_dosage_integers = _mm256_sub_epi16(raw_dosage_base, weighted_probability_bytes);
 
         raw_sum_accumulator =
             _mm256_add_epi32(raw_sum_accumulator, _mm256_madd_epi16(raw_dosage_integers, adjacent_lane_sum_multiplier));
