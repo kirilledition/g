@@ -70,6 +70,18 @@ fn benchmark_variant_major_read(
     variant_group.finish();
 }
 
+fn benchmark_bgen_open(criterion: &mut Criterion) {
+    let bgen_path = benchmark_bgen_path();
+    criterion.bench_function("bgen_open_and_index", |benchmark| {
+        benchmark.iter(|| {
+            std::hint::black_box(
+                BgenReaderCore::open(std::hint::black_box(&bgen_path))
+                    .expect("native Rust BGEN reader should open benchmark input"),
+            );
+        });
+    });
+}
+
 #[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
@@ -141,5 +153,5 @@ fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, benchmark_native_bgen_read);
+criterion_group!(benches, benchmark_bgen_open, benchmark_native_bgen_read);
 criterion_main!(benches);

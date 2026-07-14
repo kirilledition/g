@@ -26,7 +26,7 @@ sweeps on a login node.
 | Area | Representative tests |
 | --- | --- |
 | Quantitative kernels | `tests/test_regenie2_linear.py`, `tests/test_regenie2_parity.py` |
-| Binary score and Firth kernels | `tests/test_regenie2_binary.py`, `tests/test_regenie2_binary_firth_null.py`, `tests/test_regenie2_binary_full_model.py`, `tests/test_regenie2_binary_scalar_firth.py` |
+| Binary score and scalar Firth kernels | `tests/test_regenie2_binary.py`, `tests/test_regenie2_binary_firth_null.py`, `tests/test_regenie2_binary_scalar_firth.py` |
 | REGENIE parity metadata and comparison helpers | `tests/parity/` |
 
 The Python suite intentionally excludes non-mathematical product contracts such

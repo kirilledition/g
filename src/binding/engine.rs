@@ -104,19 +104,13 @@ fn binary_firth_backend_keyword_arguments<'py>(
     keyword_arguments.set_item("firth_candidate_capacity", kernels.firth.candidate_capacity)?;
     keyword_arguments.set_item("firth_maximum_iterations", kernels.firth.maximum_iterations)?;
     keyword_arguments.set_item("firth_gradient_tolerance", kernels.firth.gradient_tolerance.get())?;
-    keyword_arguments.set_item("firth_coefficient_tolerance", kernels.firth.coefficient_tolerance.get())?;
-    keyword_arguments.set_item("firth_likelihood_tolerance", kernels.firth.likelihood_tolerance.get())?;
     keyword_arguments.set_item("firth_maximum_step_size", kernels.firth.maximum_step_size.get())?;
     keyword_arguments.set_item("firth_pseudo_maximum_iterations", kernels.firth.pseudo_maximum_iterations)?;
     keyword_arguments
         .set_item("firth_pseudo_inner_maximum_iterations", kernels.firth.pseudo_inner_maximum_iterations)?;
     keyword_arguments.set_item("firth_line_search_maximum_attempts", kernels.firth.line_search_maximum_attempts)?;
-    keyword_arguments.set_item("firth_step_halving_maximum_attempts", kernels.firth.step_halving_maximum_attempts)?;
-    keyword_arguments.set_item("firth_initial_response_scale", kernels.firth.initial_response_scale.get())?;
     keyword_arguments
         .set_item("firth_sparse_carrier_dosage_threshold", kernels.firth.sparse_carrier_dosage_threshold.get())?;
-    keyword_arguments.set_item("firth_step_halving_scale", kernels.firth.step_halving_scale.get())?;
-    keyword_arguments.set_item("firth_use_block_math", kernels.firth.use_block_math)?;
     keyword_arguments.set_item("null_firth_maximum_iterations", kernels.null_firth.maximum_iterations)?;
     keyword_arguments.set_item("null_firth_gradient_tolerance", kernels.null_firth.gradient_tolerance.get())?;
     keyword_arguments.set_item("null_firth_maximum_step_size", kernels.null_firth.maximum_step_size.get())?;

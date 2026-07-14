@@ -61,33 +61,21 @@ class ApproximateFirthConfig:
     Attributes:
         maximum_iterations: Maximum Firth solver iterations.
         gradient_tolerance: Firth adjusted-score convergence tolerance.
-        coefficient_tolerance: Firth coefficient-step convergence tolerance.
-        likelihood_tolerance: Firth penalized-likelihood convergence tolerance.
         maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
         pseudo_maximum_iterations: Maximum approximate pseudo-Firth outer iterations.
         pseudo_inner_maximum_iterations: Maximum pseudo-response logistic inner iterations.
-        line_search_maximum_attempts: Maximum scalar/full-model Firth line-search attempts.
-        step_halving_maximum_attempts: Maximum full-model Firth step-halving attempts.
-        initial_response_scale: Pseudo-response scale for block full-model Firth initialization.
+        line_search_maximum_attempts: Maximum scalar Firth line-search attempts.
         sparse_carrier_dosage_threshold: Raw dosage threshold for sparse carrier-only Firth samples.
-        step_halving_scale: Full-model Firth step multiplier after each rejected backtracking attempt.
-        use_block_math: Whether to use the experimental block-matrix Firth path.
 
     """
 
     maximum_iterations: int
     gradient_tolerance: float
-    coefficient_tolerance: float
-    likelihood_tolerance: float
     maximum_step_size: float
     pseudo_maximum_iterations: int
     pseudo_inner_maximum_iterations: int
     line_search_maximum_attempts: int
-    step_halving_maximum_attempts: int
-    initial_response_scale: float
     sparse_carrier_dosage_threshold: float
-    step_halving_scale: float
-    use_block_math: bool
 
 
 @dataclass(frozen=True)

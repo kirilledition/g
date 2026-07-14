@@ -70,7 +70,7 @@ consolidation pass.
 
 ## Manifest And Resume Contract
 
-`run_manifest.json` is the resume authority. Manifest schema version `15`
+`run_manifest.json` is the resume authority. Manifest schema version `16`
 stores prepared-run fields, input fingerprints, and Parquet writer settings in
 one canonical `execution_plan` object plus `execution_plan_hash`. Top-level
 state is limited to schema and mutable lifecycle fields such as committed

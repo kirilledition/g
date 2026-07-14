@@ -54,7 +54,7 @@ Binary kernels implement:
 
 - chromosome-specific logistic null fitting with LOCO offset;
 - binary score statistic;
-- optional approximate-Firth candidate selection and correction;
+- optional scalar approximate-Firth candidate selection and correction;
 - Firth and null-Firth solver diagnostics;
 - correction method and status labels for successful and failed rows.
 
@@ -97,7 +97,6 @@ Relevant tests include:
 - `tests/test_regenie2_linear.py`;
 - `tests/test_regenie2_binary.py`;
 - `tests/test_regenie2_binary_firth_null.py`;
-- `tests/test_regenie2_binary_full_model.py`;
 - `tests/test_regenie2_binary_scalar_firth.py`;
 - `tests/test_regenie2_parity.py`;
 - `tests/parity/`.

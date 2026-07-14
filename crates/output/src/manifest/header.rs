@@ -97,6 +97,10 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
         "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
         "parquet_compression": "zstd",
+        "parquet_writer_version": crate::writer::REGENIE_STEP2_PARQUET_WRITER_VERSION.as_num(),
+        "parquet_write_batch_size": crate::writer::REGENIE_STEP2_PARQUET_WRITE_BATCH_SIZE,
+        "parquet_max_row_group_size": crate::writer::REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE,
+        "parquet_float_column_encoding": crate::writer::REGENIE_STEP2_PARQUET_FLOAT_ENCODING.to_string(),
         "result_statistic_dtype": "float32",
     });
     let sample_count = i64::try_from(input.sample_count)

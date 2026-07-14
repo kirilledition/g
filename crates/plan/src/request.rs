@@ -69,17 +69,11 @@ pub struct FirthKernelPlan {
     pub candidate_capacity: u32,
     pub maximum_iterations: u32,
     pub gradient_tolerance: PositiveF64,
-    pub coefficient_tolerance: PositiveF64,
-    pub likelihood_tolerance: PositiveF64,
     pub maximum_step_size: PositiveF64,
     pub pseudo_maximum_iterations: u32,
     pub pseudo_inner_maximum_iterations: u32,
     pub line_search_maximum_attempts: u32,
-    pub step_halving_maximum_attempts: u32,
-    pub initial_response_scale: PositiveF64,
     pub sparse_carrier_dosage_threshold: DosageThreshold,
-    pub step_halving_scale: StepScale,
-    pub use_block_math: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

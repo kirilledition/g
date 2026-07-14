@@ -76,27 +76,6 @@ class ScalarFirthCandidateBatchInputs:
     null_failed_mask: jax.Array
 
 
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class BlockFirthCandidateBatchInputs:
-    """Fixed-shape candidate inputs retained by the block Firth solver.
-
-    Attributes:
-        lanes: Common candidate indices, activity, and phenotypes.
-        genotype_matrix_by_variant: Candidate genotypes in original allele orientation.
-        initial_coefficients: Lane-specific full-model starting coefficients.
-        loco_offset_matrix: Lane-specific LOCO offsets.
-        null_firth_penalized_log_likelihood: Lane-specific null penalized log-likelihoods.
-
-    """
-
-    lanes: FirthCandidateLaneInputs
-    genotype_matrix_by_variant: jax.Array
-    initial_coefficients: jax.Array
-    loco_offset_matrix: jax.Array
-    null_firth_penalized_log_likelihood: jax.Array
-
-
 @dataclass(frozen=True)
 class FirthCandidateCapacityPlan:
     """Static candidate capacities for tiered Firth correction paths.
@@ -325,30 +304,4 @@ def group_scalar_firth_candidate_batch_inputs(
         null_firth_offset_matrix=jnp.take(candidate_inputs.null_firth_offset_matrix, sort_order, axis=0),
         full_null_deviance=jnp.take(candidate_inputs.full_null_deviance, sort_order, axis=0),
         null_failed_mask=jnp.take(candidate_inputs.null_failed_mask, sort_order, axis=0),
-    )
-
-
-def group_block_firth_candidate_batch_inputs(
-    *,
-    candidate_inputs: BlockFirthCandidateBatchInputs,
-    heuristic_firth_mask: jax.Array,
-    order_candidates: bool,
-) -> BlockFirthCandidateBatchInputs:
-    """Group likely long-running block Firth lanes before fixed-size batching."""
-    if not order_candidates:
-        return candidate_inputs
-    sort_order = build_firth_candidate_bucket_order(
-        flat_active_mask=candidate_inputs.lanes.flat_active_mask,
-        heuristic_firth_mask=heuristic_firth_mask,
-    )
-    return BlockFirthCandidateBatchInputs(
-        lanes=reorder_firth_candidate_lane_inputs(candidate_inputs.lanes, sort_order),
-        genotype_matrix_by_variant=jnp.take(candidate_inputs.genotype_matrix_by_variant, sort_order, axis=0),
-        initial_coefficients=jnp.take(candidate_inputs.initial_coefficients, sort_order, axis=0),
-        loco_offset_matrix=jnp.take(candidate_inputs.loco_offset_matrix, sort_order, axis=0),
-        null_firth_penalized_log_likelihood=jnp.take(
-            candidate_inputs.null_firth_penalized_log_likelihood,
-            sort_order,
-            axis=0,
-        ),
     )

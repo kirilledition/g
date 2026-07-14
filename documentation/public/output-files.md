@@ -55,6 +55,14 @@ internal output grouping policy. A single-chunk file uses
 Chunk grouping and Parquet compression are internal policies, not public
 configuration keys.
 
+Current parts use Parquet format version 2.0. Integer and string columns use
+the format's delta fallbacks where applicable, and all `Float32` result columns
+use `BYTE_STREAM_SPLIT` before Zstandard compression. These are physical
+encodings only: the logical schema below remains output schema version `3`.
+Supported Python readers are PyArrow `>=24.0.0` and Polars `>=1.41.2`, matching
+the project's dependency floors. Older readers must support Parquet 2.0 and
+`BYTE_STREAM_SPLIT` or be upgraded before consuming current parts.
+
 Read `parts/` directly as a Parquet dataset. For example:
 
 ```python

@@ -10,7 +10,6 @@ import jax
 import jax.numpy as jnp
 
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidate_planning
-from g.compute.regenie2_binary.firth import full_model as regenie2_binary_firth_full_model
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
@@ -78,47 +77,6 @@ def compute_scalar_firth_multi_variantwise(
         skip_firth_mask,
         sparse_correction_mask,
         null_failed_mask,
-    )
-
-
-def compute_block_firth_multi_variantwise(
-    covariate_matrix: jax.Array,
-    phenotype_matrix: jax.Array,
-    genotype_matrix_by_variant: jax.Array,
-    loco_offset_matrix: jax.Array,
-    initial_coefficients: jax.Array,
-    skip_firth_mask: jax.Array,
-    null_penalized_log_likelihood: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Compute block full-model Firth fits for lane-specific candidates."""
-
-    def fit_variant(
-        phenotype_vector: jax.Array,
-        genotype_vector: jax.Array,
-        loco_offset: jax.Array,
-        variant_initial_coefficients: jax.Array,
-        skip_firth: jax.Array,
-        lane_null_penalized_log_likelihood: jax.Array,
-    ) -> regenie2_binary_firth_types.FirthVariantResult:
-        return regenie2_binary_firth_full_model.fit_single_variant_firth_logistic_regression(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            genotype_vector=genotype_vector,
-            loco_offset=loco_offset,
-            initial_coefficients=variant_initial_coefficients,
-            skip_firth=skip_firth,
-            null_penalized_log_likelihood=lane_null_penalized_log_likelihood,
-            kernel_config=kernel_config,
-        )
-
-    return jax.vmap(fit_variant)(
-        phenotype_matrix,
-        genotype_matrix_by_variant,
-        loco_offset_matrix,
-        initial_coefficients,
-        skip_firth_mask,
-        null_penalized_log_likelihood,
     )
 
 
@@ -308,62 +266,6 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
                 skip_firth_mask=~active_mask_batches[batch_index],
                 sparse_correction_mask=sparse_correction_mask_batches[batch_index],
                 null_failed_mask=null_failed_mask_batches[batch_index],
-                kernel_config=kernel_config,
-            )
-
-        batch_result = jax.lax.cond(
-            batch_index < active_batch_count,
-            run_active_batch,
-            lambda _: empty_firth_variant_result,
-            operand=None,
-        )
-        return None, batch_result
-
-    _, batched_firth_result = jax.lax.scan(
-        compute_firth_batch,
-        None,
-        jnp.arange(batch_count, dtype=jnp.int32),
-    )
-    return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
-
-
-def compute_block_firth_multi_variantwise_fixed_batches(
-    *,
-    covariate_matrix: jax.Array,
-    candidate_inputs: regenie2_binary_candidate_planning.BlockFirthCandidateBatchInputs,
-    fallback_count: jax.Array,
-    firth_batch_size: int,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Compute block full-model Firth fits using fixed-size candidate batches."""
-    active_mask = candidate_inputs.lanes.flat_active_mask
-    batch_count = active_mask.shape[0] // firth_batch_size
-    active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
-    phenotype_batches = candidate_inputs.lanes.phenotype_matrix.reshape((batch_count, firth_batch_size, -1))
-    genotype_batches = candidate_inputs.genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
-    loco_offset_batches = candidate_inputs.loco_offset_matrix.reshape((batch_count, firth_batch_size, -1))
-    initial_coefficient_batches = candidate_inputs.initial_coefficients.reshape((batch_count, firth_batch_size, -1))
-    active_mask_batches = active_mask.reshape((batch_count, firth_batch_size))
-    null_penalized_log_likelihood_batches = candidate_inputs.null_firth_penalized_log_likelihood.reshape(
-        (batch_count, firth_batch_size)
-    )
-    empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
-
-    def compute_firth_batch(
-        carry: None,
-        batch_index: jax.Array,
-    ) -> tuple[None, regenie2_binary_firth_types.FirthVariantResult]:
-        del carry
-
-        def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-            return compute_block_firth_multi_variantwise(
-                covariate_matrix=covariate_matrix,
-                phenotype_matrix=phenotype_batches[batch_index],
-                genotype_matrix_by_variant=genotype_batches[batch_index],
-                loco_offset_matrix=loco_offset_batches[batch_index],
-                initial_coefficients=initial_coefficient_batches[batch_index],
-                skip_firth_mask=~active_mask_batches[batch_index],
-                null_penalized_log_likelihood=null_penalized_log_likelihood_batches[batch_index],
                 kernel_config=kernel_config,
             )
 

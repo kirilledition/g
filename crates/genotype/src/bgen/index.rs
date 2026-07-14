@@ -75,6 +75,7 @@ pub(super) fn validate_sample_identifier_block(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn parse_variant_index(
     mmap: &[u8],
     first_variant_offset: usize,
@@ -96,6 +97,8 @@ pub(super) fn parse_variant_index(
     let mut chromosome_boundary_indices = Vec::with_capacity(variant_count.min(256) + 1);
     chromosome_boundary_indices.push(0);
     let mut metadata_text_dictionary = StringDictionaryBuilder::default();
+    let mut previous_chromosome_bytes: &[u8] = &[];
+    let mut previous_chromosome_code = 0_u32;
 
     for variant_index in 0..variant_count {
         let variant_identifier_length = usize::from(read_u16_at(mmap, cursor)?);
@@ -110,7 +113,14 @@ pub(super) fn parse_variant_index(
 
         let chromosome_length = usize::from(read_u16_at(mmap, cursor)?);
         cursor += VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES;
-        let chromosome_code = metadata_text_dictionary.intern(read_exact_bytes(mmap, cursor, chromosome_length)?)?;
+        let chromosome_bytes = read_exact_bytes(mmap, cursor, chromosome_length)?;
+        let chromosome_code = if variant_index > 0 && chromosome_bytes == previous_chromosome_bytes {
+            previous_chromosome_code
+        } else {
+            metadata_text_dictionary.intern(chromosome_bytes)?
+        };
+        previous_chromosome_bytes = chromosome_bytes;
+        previous_chromosome_code = chromosome_code;
         cursor += chromosome_length;
 
         let variant_position = i64::from(read_u32_at(mmap, cursor)?);

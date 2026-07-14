@@ -137,16 +137,11 @@ impl PartialComputeConfig {
         overlay_option!(self, override_config, linear_relative_variance_tolerance);
         overlay_option!(self, override_config, firth_maximum_iterations);
         overlay_option!(self, override_config, firth_gradient_tolerance);
-        overlay_option!(self, override_config, firth_coefficient_tolerance);
-        overlay_option!(self, override_config, firth_likelihood_tolerance);
         overlay_option!(self, override_config, firth_maximum_step_size);
         overlay_option!(self, override_config, firth_pseudo_maximum_iterations);
         overlay_option!(self, override_config, firth_pseudo_inner_maximum_iterations);
         overlay_option!(self, override_config, firth_line_search_maximum_attempts);
-        overlay_option!(self, override_config, firth_step_halving_maximum_attempts);
-        overlay_option!(self, override_config, firth_initial_response_scale);
         overlay_option!(self, override_config, firth_sparse_carrier_dosage_threshold);
-        overlay_option!(self, override_config, firth_step_halving_scale);
         overlay_option!(self, override_config, null_firth_maximum_iterations);
         overlay_option!(self, override_config, null_firth_gradient_tolerance);
         overlay_option!(self, override_config, null_firth_maximum_step_size);
@@ -154,7 +149,6 @@ impl PartialComputeConfig {
         overlay_option!(self, override_config, null_firth_fallback_step_divisor);
         overlay_option!(self, override_config, null_firth_line_search_maximum_attempts);
         overlay_option!(self, override_config, null_firth_step_halving_scale);
-        overlay_option!(self, override_config, use_block_firth_math);
         overlay_option!(self, override_config, jax_cache_dir);
     }
 }

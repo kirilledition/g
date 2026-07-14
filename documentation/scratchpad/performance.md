@@ -438,6 +438,56 @@ Next targets:
   Evaluate a resident execution lifecycle before further sub-percent scalar
   expression tuning.
 
+## 2026-07-14 Binary GPU Architecture And Crate Wave
+
+The production cleanup comparison is under
+`data/benchmarks/block_cleanup_paired_isolated_*`. The target remains one
+binary trait with approximate Firth, full 1KG chromosome 22, 512-row Firth
+batches, 16,384-variant chunks, eight host threads, and a V100 on `landau`.
+
+Accepted:
+
+- The unused experimental block-Firth implementation, its separate line search,
+  block-only containers, and six block-only configuration fields are removed.
+  Seven order-alternated isolated pairs are bitwise identical across all
+  418,943 rows and columns. Median native execution is neutral-to-better at
+  4.238 versus 4.202 seconds (-0.83%, paired p=0.12); retain the roughly
+  1,000-line deletion for architecture and bloat reduction, not a speed claim.
+- BGEN index construction reuses a chromosome dictionary code while adjacent
+  raw chromosome bytes are equal. Open/index improves from 96.389 to 93.341
+  milliseconds (3.16%, p<0.01), with a longer confirmation improving 5.28%.
+  Packed8 16,384-variant decode is neutral at 26.462 versus 26.469 milliseconds.
+- LOCO sample indexing retains one raw header and byte bounds instead of two
+  owned strings per sample. The 100,000-sample core improves from 16.079 to
+  2.166 milliseconds (7.42x) and removes 200,000 heap-string allocations.
+  At 500,000 samples, direct indexed row reading improves a 2.50 MB row from
+  28.746 to 25.119 milliseconds and a 6.00 MB row from 66.086 to 57.849
+  milliseconds while eliminating one row-sized buffer.
+- The Parquet writer uses Data Page V2 delta fallbacks, 16,384-row internal
+  batches, and `BYTE_STREAM_SPLIT` for all six `Float32` columns. The exact
+  418,943-row benchmark improves score-only writing from 180.48 to 155.23
+  milliseconds and Firth-success writing from 182.41 to 159.45 milliseconds;
+  output shrinks from 11,512,914 to 10,471,971 bytes. The physical policy is
+  fingerprinted in manifest schema 16; logical output schema remains 3.
+- The final order-alternated `main`-versus-wave GPU gate uses seven warm pairs
+  in one `landau` allocation. Native execution is neutral-to-better: paired
+  geometric mean is -0.34%, paired median is -0.06%, and paired t-test
+  p=0.49. The writer paired median improves 7.64%; observed Parquet size falls
+  from 10,792,165 to 10,768,924 bytes. The paired datasets are bitwise
+  identical in every column across all 418,943 rows.
+
+Rejected:
+
+- A Pallas/Triton scalar-Firth reduction cannot run on the V100: installed JAX
+  requires compute capability 8.0 or newer, while `landau` is 7.0. Do not add an
+  unmeasured CUDA extension or an Ampere-only production branch.
+- Skylos Rust dead-code entries 3502--3529 are cross-module, Serde, PyO3, or
+  shutdown/telemetry uses missed by the analyzer. Every symbol has a live
+  production reference; none is removed.
+- AHash interning, statistics-buffer reuse, lexical parsing, and unsafe
+  preflight-SVD prototypes either regress, are statistically neutral, or save
+  too little to justify their complexity. All prototypes are removed.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

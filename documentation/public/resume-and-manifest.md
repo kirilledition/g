@@ -38,7 +38,7 @@ optional TOML file, and explicit CLI overrides.
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
 
-Manifest schema version `15` stores immutable compatibility state once under
+Manifest schema version `16` stores immutable compatibility state once under
 `execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
 fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
@@ -122,6 +122,14 @@ In particular, runs whose execution plan still contains the removed
 `firth_newton_raphson_zero_start_iterations` field have a different plan schema
 and hash. Start a new output directory instead of resuming those pre-release
 binary runs with a newer build.
+
+The scalar approximate-Firth solver is the only supported correction path.
+Pre-release configurations and manifests must remove the experimental
+`use_block_firth_math` option and its block-only coefficient, likelihood,
+step-halving, and initial-response settings. Effective configuration metadata
+uses option schema version `6`, and these fields are not accepted by manifest
+schema version `16`; start a new output directory instead of resuming an older
+block-Firth-compatible run.
 
 ## Graceful Interruption
 

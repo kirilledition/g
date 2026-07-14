@@ -64,32 +64,7 @@ def apply_selected_firth_candidate_corrections(
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
-    """Prepare, compute, and merge one statically selected Firth solver payload."""
-    if kernel_config.approximate_firth.use_block_math:
-        candidate_inputs = regenie2_binary_firth_batch_prepare.prepare_block_firth_candidate_batch(
-            chromosome_state=chromosome_state,
-            selected_rows=selected_rows,
-            score_beta=result.beta,
-            sparse_candidate_mask=sparse_candidate_mask,
-            order_candidates=order_candidates,
-            kernel_config=kernel_config,
-        )
-        firth_result = regenie2_binary_firth_batch_compute.compute_block_firth_multi_variantwise_fixed_batches(
-            covariate_matrix=chromosome_state.covariate_matrix,
-            candidate_inputs=candidate_inputs,
-            fallback_count=fallback_count,
-            firth_batch_size=firth_batch_size,
-            kernel_config=kernel_config,
-        )
-        return merge_fixed_capacity_firth_result(
-            result=result,
-            firth_result=firth_result,
-            lanes=candidate_inputs.lanes,
-            genotype_flip_mask=jnp.zeros_like(candidate_inputs.lanes.flat_active_mask),
-            candidate_capacity=candidate_capacity,
-            firth_se=firth_se,
-        )
-
+    """Prepare, compute, and merge one scalar Firth solver payload."""
     candidate_inputs = regenie2_binary_firth_batch_prepare.prepare_scalar_firth_candidate_batch(
         chromosome_state=chromosome_state,
         selected_rows=selected_rows,

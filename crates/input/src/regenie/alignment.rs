@@ -12,11 +12,10 @@ pub(super) enum LocoSampleAlignment {
 }
 
 pub(super) fn validate_loco_sample_keys(loco_sample_index: &LocoSampleIndex) -> Result<(), PredictionError> {
-    let mut observed_sample_keys = HashSet::with_capacity(loco_sample_index.family_identifiers.len());
-    for (family_identifier, individual_identifier) in
-        loco_sample_index.family_identifiers.iter().zip(loco_sample_index.individual_identifiers.iter())
-    {
-        let sample_key = (family_identifier.as_str(), individual_identifier.as_str());
+    let sample_identifiers = loco_sample_index.identifiers();
+    let mut observed_sample_keys = HashSet::with_capacity(sample_identifiers.len());
+    for (family_identifier, individual_identifier) in sample_identifiers {
+        let sample_key = (family_identifier, individual_identifier);
         if !observed_sample_keys.insert(sample_key) {
             return Err(PredictionError::DuplicateLocoSampleKey {
                 sample_key: format!("{family_identifier}_{individual_identifier}"),
@@ -36,22 +35,21 @@ pub(super) fn build_sample_alignment(
         return Err(PredictionError::TargetSampleLengthMismatch);
     }
 
-    if target_sample_indices.len() == loco_sample_index.family_identifiers.len()
-        && target_sample_indices
-            .iter()
-            .zip(loco_sample_index.family_identifiers.iter().zip(&loco_sample_index.individual_identifiers))
-            .all(|(target_sample_index, (source_family, source_individual))| {
-                target_family_identifiers[*target_sample_index] == *source_family
-                    && target_individual_identifiers[*target_sample_index] == *source_individual
-            })
+    let source_sample_identifiers = loco_sample_index.identifiers();
+    if target_sample_indices.len() == source_sample_identifiers.len()
+        && target_sample_indices.iter().zip(source_sample_identifiers).all(
+            |(target_sample_index, (source_family, source_individual))| {
+                target_family_identifiers[*target_sample_index] == source_family
+                    && target_individual_identifiers[*target_sample_index] == source_individual
+            },
+        )
     {
         return Ok(LocoSampleAlignment::Identity);
     }
-    let mut loco_lookup = HashMap::with_capacity(loco_sample_index.family_identifiers.len());
-    for (sample_index, (family_identifier, individual_identifier)) in
-        loco_sample_index.family_identifiers.iter().zip(loco_sample_index.individual_identifiers.iter()).enumerate()
-    {
-        loco_lookup.insert((family_identifier.as_str(), individual_identifier.as_str()), sample_index);
+    let source_sample_identifiers = loco_sample_index.identifiers();
+    let mut loco_lookup = HashMap::with_capacity(source_sample_identifiers.len());
+    for (sample_index, (family_identifier, individual_identifier)) in source_sample_identifiers.enumerate() {
+        loco_lookup.insert((family_identifier, individual_identifier), sample_index);
     }
 
     let mut alignment_indices = Vec::with_capacity(target_sample_indices.len());

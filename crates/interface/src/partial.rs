@@ -117,16 +117,11 @@ pub(crate) struct PartialComputeConfig {
     pub(crate) linear_relative_variance_tolerance: Option<plan::PositiveF32>,
     pub(crate) firth_maximum_iterations: Option<NonZeroU32>,
     pub(crate) firth_gradient_tolerance: Option<plan::PositiveF64>,
-    pub(crate) firth_coefficient_tolerance: Option<plan::PositiveF64>,
-    pub(crate) firth_likelihood_tolerance: Option<plan::PositiveF64>,
     pub(crate) firth_maximum_step_size: Option<plan::PositiveF64>,
     pub(crate) firth_pseudo_maximum_iterations: Option<NonZeroU32>,
     pub(crate) firth_pseudo_inner_maximum_iterations: Option<NonZeroU32>,
     pub(crate) firth_line_search_maximum_attempts: Option<NonZeroU32>,
-    pub(crate) firth_step_halving_maximum_attempts: Option<NonZeroU32>,
-    pub(crate) firth_initial_response_scale: Option<plan::PositiveF64>,
     pub(crate) firth_sparse_carrier_dosage_threshold: Option<plan::DosageThreshold>,
-    pub(crate) firth_step_halving_scale: Option<plan::StepScale>,
     pub(crate) null_firth_maximum_iterations: Option<NonZeroU32>,
     pub(crate) null_firth_gradient_tolerance: Option<plan::PositiveF64>,
     pub(crate) null_firth_maximum_step_size: Option<plan::PositiveF64>,
@@ -134,7 +129,6 @@ pub(crate) struct PartialComputeConfig {
     pub(crate) null_firth_fallback_step_divisor: Option<plan::PositiveF64>,
     pub(crate) null_firth_line_search_maximum_attempts: Option<NonZeroU32>,
     pub(crate) null_firth_step_halving_scale: Option<plan::StepScale>,
-    pub(crate) use_block_firth_math: Option<bool>,
     pub(crate) jax_cache_dir: Option<String>,
 }
 
@@ -159,16 +153,11 @@ impl PartialComputeConfig {
             linear_relative_variance_tolerance: core.linear_relative_variance_tolerance,
             firth_maximum_iterations: firth.maximum_iterations,
             firth_gradient_tolerance: firth.gradient_tolerance,
-            firth_coefficient_tolerance: firth.coefficient_tolerance,
-            firth_likelihood_tolerance: firth.likelihood_tolerance,
             firth_maximum_step_size: firth.maximum_step_size,
             firth_pseudo_maximum_iterations: firth.pseudo_maximum_iterations,
             firth_pseudo_inner_maximum_iterations: firth.pseudo_inner_maximum_iterations,
             firth_line_search_maximum_attempts: firth.line_search_maximum_attempts,
-            firth_step_halving_maximum_attempts: firth.step_halving_maximum_attempts,
-            firth_initial_response_scale: firth.initial_response_scale,
             firth_sparse_carrier_dosage_threshold: firth.sparse_carrier_dosage_threshold,
-            firth_step_halving_scale: firth.step_halving_scale,
             null_firth_maximum_iterations: null_firth.maximum_iterations,
             null_firth_gradient_tolerance: null_firth.gradient_tolerance,
             null_firth_maximum_step_size: null_firth.maximum_step_size,
@@ -176,7 +165,6 @@ impl PartialComputeConfig {
             null_firth_fallback_step_divisor: null_firth.fallback_step_divisor,
             null_firth_line_search_maximum_attempts: null_firth.line_search_maximum_attempts,
             null_firth_step_halving_scale: null_firth.step_halving_scale,
-            use_block_firth_math: required("use_block_firth_math", self.use_block_firth_math)?,
             jax_cache_dir: self.jax_cache_dir.clone(),
         })
     }
@@ -218,8 +206,6 @@ impl PartialComputeConfig {
         Ok(ResolvedFirthFields {
             maximum_iterations: required("firth_maximum_iterations", self.firth_maximum_iterations)?,
             gradient_tolerance: required("firth_gradient_tolerance", self.firth_gradient_tolerance)?,
-            coefficient_tolerance: required("firth_coefficient_tolerance", self.firth_coefficient_tolerance)?,
-            likelihood_tolerance: required("firth_likelihood_tolerance", self.firth_likelihood_tolerance)?,
             maximum_step_size: required("firth_maximum_step_size", self.firth_maximum_step_size)?,
             pseudo_maximum_iterations: required(
                 "firth_pseudo_maximum_iterations",
@@ -233,16 +219,10 @@ impl PartialComputeConfig {
                 "firth_line_search_maximum_attempts",
                 self.firth_line_search_maximum_attempts,
             )?,
-            step_halving_maximum_attempts: required(
-                "firth_step_halving_maximum_attempts",
-                self.firth_step_halving_maximum_attempts,
-            )?,
-            initial_response_scale: required("firth_initial_response_scale", self.firth_initial_response_scale)?,
             sparse_carrier_dosage_threshold: required(
                 "firth_sparse_carrier_dosage_threshold",
                 self.firth_sparse_carrier_dosage_threshold,
             )?,
-            step_halving_scale: required("firth_step_halving_scale", self.firth_step_halving_scale)?,
         })
     }
 
@@ -284,16 +264,11 @@ struct ResolvedComputeCoreFields {
 struct ResolvedFirthFields {
     maximum_iterations: NonZeroU32,
     gradient_tolerance: plan::PositiveF64,
-    coefficient_tolerance: plan::PositiveF64,
-    likelihood_tolerance: plan::PositiveF64,
     maximum_step_size: plan::PositiveF64,
     pseudo_maximum_iterations: NonZeroU32,
     pseudo_inner_maximum_iterations: NonZeroU32,
     line_search_maximum_attempts: NonZeroU32,
-    step_halving_maximum_attempts: NonZeroU32,
-    initial_response_scale: plan::PositiveF64,
     sparse_carrier_dosage_threshold: plan::DosageThreshold,
-    step_halving_scale: plan::StepScale,
 }
 
 struct ResolvedNullFirthFields {

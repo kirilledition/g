@@ -46,8 +46,9 @@ succeeds. Packed8 delivery reuses a session-owned bounded pool; the immutable
 pooled buffer can outlive its read session and returns its allocation only when
 the final downstream owner drops. No raw address/count wrapper crosses the crate boundary. Produce
 immutable contract metadata slices, store variant IDs in a contiguous UTF-8
-arena, dictionary-code repeated chromosome/allele text, and avoid per-variant
-heap ownership, public calls, or JSON conversion. Normal
+arena, dictionary-code repeated chromosome/allele text, reuse the dictionary
+code across each contiguous chromosome run, and avoid per-variant heap
+ownership, public calls, or JSON conversion. Normal
 preprocessing reuses the dosage-sum allocation for the final genotype-mean
 vector after INFO and sparse-candidate calculations; output observation counts
 remain output-only and are not cloned or transferred to JAX. Nullable INFO

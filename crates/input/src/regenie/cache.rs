@@ -31,10 +31,11 @@ impl LocoFileIndexCache {
             let indexed_file = index_loco_file(&cache_key)?;
             match self.headers_by_digest.entry(indexed_file.file_index.header_digest) {
                 std::collections::hash_map::Entry::Occupied(entry) => {
-                    debug_assert_eq!(entry.get().family_identifiers.len(), indexed_file.file_index.sample_count);
+                    debug_assert_eq!(entry.get().identifiers().len(), indexed_file.file_index.sample_count);
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    let sample_index = parse_loco_sample_identifiers(&indexed_file.header_line)?;
+                    let sample_index =
+                        parse_loco_sample_identifiers(indexed_file.header_line, indexed_file.file_index.sample_count);
                     validate_loco_sample_keys(&sample_index)?;
                     entry.insert(Arc::new(sample_index));
                 }

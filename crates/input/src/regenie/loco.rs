@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -36,14 +36,22 @@ pub(super) struct IndexedLocoFile {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LocoRowIndex {
     byte_offset: u64,
+    byte_count: usize,
     line_number: usize,
     raw_digest: [u8; 32],
 }
 
 #[derive(Debug)]
 pub(super) struct LocoSampleIndex {
-    pub(super) family_identifiers: Vec<String>,
-    pub(super) individual_identifiers: Vec<String>,
+    header_line: String,
+    identifier_bounds: Vec<LocoSampleIdentifierBounds>,
+}
+
+#[derive(Debug)]
+struct LocoSampleIdentifierBounds {
+    identifier_start: usize,
+    separator_position: usize,
+    identifier_end: usize,
 }
 
 pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, PredictionError> {
@@ -64,24 +72,22 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
     loop {
         let byte_offset = reader.stream_position()?;
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        let byte_count = reader.read_line(&mut line)?;
+        if byte_count == 0 {
             break;
         }
         line_number += 1;
-        let stripped_line = line.trim();
-        if stripped_line.is_empty() {
+        let mut fields = line.split_ascii_whitespace();
+        let Some(first_field) = fields.next() else {
             continue;
-        }
+        };
         if line_number == 1 {
             header_digest = Some(Sha256::digest(line.as_bytes()).into());
-            sample_count = Some(validate_loco_header(stripped_line)?);
+            sample_count = Some(validate_loco_header(&line)?);
             header_line = Some(std::mem::take(&mut line));
             continue;
         }
-        let mut fields = stripped_line.split_ascii_whitespace();
-        let Some(chromosome_field) = fields.next() else {
-            return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: 0 });
-        };
+        let chromosome_field = first_field;
         if fields.next().is_none() {
             return Err(PredictionError::InvalidLocoDataLine { line_number, field_count: 1 });
         }
@@ -97,7 +103,10 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
         }
         let chromosome = normalize_chromosome(chromosome_field);
         let raw_digest = Sha256::digest(line.as_bytes()).into();
-        if chromosome_rows.insert(chromosome.clone(), LocoRowIndex { byte_offset, line_number, raw_digest }).is_some() {
+        if chromosome_rows
+            .insert(chromosome.clone(), LocoRowIndex { byte_offset, byte_count, line_number, raw_digest })
+            .is_some()
+        {
             return Err(PredictionError::DuplicateChromosome { chromosome });
         }
     }
@@ -154,16 +163,16 @@ pub(super) fn read_loco_chromosome_predictions_into(
         .chromosome_rows
         .get(chromosome)
         .expect("planned LOCO chromosomes are validated against every file index");
-    let file = File::open(&loco_file_index.file_path)?;
+    let mut file = File::open(&loco_file_index.file_path)?;
     if LocoSourceIdentity::from_metadata(&file.metadata()?) != loco_file_index.source_identity {
         return Err(PredictionError::IndexedLocoFileChanged { path: loco_file_index.file_path.clone() });
     }
-    let mut reader = BufReader::new(file);
-    reader.seek(SeekFrom::Start(row_index.byte_offset))?;
-    let mut line = String::new();
-    let read_byte_count = reader.read_line(&mut line)?;
-    let metadata_changed =
-        LocoSourceIdentity::from_metadata(&reader.get_ref().metadata()?) != loco_file_index.source_identity;
+    file.seek(SeekFrom::Start(row_index.byte_offset))?;
+    let mut line = String::with_capacity(row_index.byte_count);
+    let read_byte_count = Read::by_ref(&mut file)
+        .take(u64::try_from(row_index.byte_count).expect("supported Rust targets represent usize within u64"))
+        .read_to_string(&mut line)?;
+    let metadata_changed = LocoSourceIdentity::from_metadata(&file.metadata()?) != loco_file_index.source_identity;
     if read_byte_count == 0 {
         if metadata_changed {
             return Err(PredictionError::IndexedLocoFileChanged { path: loco_file_index.file_path.clone() });
@@ -282,43 +291,62 @@ fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
     let Some(observed_marker) = fields.next() else {
         return Err(PredictionError::EmptyLocoHeader);
     };
-    let sample_identifier_count = fields.clone().count();
+    let mut sample_identifier_count = 0_usize;
+    let mut invalid_sample_identifier = None;
+    for (sample_index, sample_identifier) in fields.enumerate() {
+        sample_identifier_count += 1;
+        if invalid_sample_identifier.is_none()
+            && !sample_identifier.split_once('_').is_some_and(|(family_identifier, individual_identifier)| {
+                !family_identifier.is_empty() && !individual_identifier.is_empty()
+            })
+        {
+            invalid_sample_identifier = Some((sample_index, sample_identifier));
+        }
+    }
     if sample_identifier_count == 0 {
         return Err(PredictionError::EmptyLocoHeader);
     }
     if observed_marker != "FID_IID" {
         return Err(PredictionError::InvalidLocoHeaderMarker { observed_marker: observed_marker.to_string() });
     }
-
-    for (sample_index, sample_identifier) in fields.enumerate() {
-        let valid_sample_identifier =
-            sample_identifier.split_once('_').is_some_and(|(family_identifier, individual_identifier)| {
-                !family_identifier.is_empty() && !individual_identifier.is_empty()
-            });
-        if !valid_sample_identifier {
-            return Err(PredictionError::InvalidLocoSampleIdentifier {
-                sample_index,
-                sample_identifier: sample_identifier.to_string(),
-            });
-        }
+    if let Some((sample_index, sample_identifier)) = invalid_sample_identifier {
+        return Err(PredictionError::InvalidLocoSampleIdentifier {
+            sample_index,
+            sample_identifier: sample_identifier.to_string(),
+        });
     }
     Ok(sample_identifier_count)
 }
 
-pub(super) fn parse_loco_sample_identifiers(header_line: &str) -> Result<LocoSampleIndex, PredictionError> {
-    let sample_identifier_count = validate_loco_header(header_line)?;
+pub(super) fn parse_loco_sample_identifiers(header_line: String, sample_identifier_count: usize) -> LocoSampleIndex {
+    let header_address = header_line.as_ptr().addr();
     let mut fields = header_line.split_ascii_whitespace();
     let _ = fields.next().expect("validated LOCO headers contain their marker");
 
-    let mut family_identifiers = Vec::with_capacity(sample_identifier_count);
-    let mut individual_identifiers = Vec::with_capacity(sample_identifier_count);
+    let mut identifier_bounds = Vec::with_capacity(sample_identifier_count);
     for (sample_index, sample_identifier) in fields.enumerate() {
-        let (family_identifier, individual_identifier) = sample_identifier
-            .split_once('_')
+        let separator_offset = sample_identifier
+            .find('_')
             .unwrap_or_else(|| unreachable!("LOCO sample identifier {sample_index} was validated immediately above"));
-        family_identifiers.push(family_identifier.to_string());
-        individual_identifiers.push(individual_identifier.to_string());
+        let identifier_start_index = sample_identifier.as_ptr().addr() - header_address;
+        identifier_bounds.push(LocoSampleIdentifierBounds {
+            identifier_start: identifier_start_index,
+            separator_position: identifier_start_index + separator_offset,
+            identifier_end: identifier_start_index + sample_identifier.len(),
+        });
     }
+    debug_assert_eq!(identifier_bounds.len(), sample_identifier_count);
 
-    Ok(LocoSampleIndex { family_identifiers, individual_identifiers })
+    LocoSampleIndex { header_line, identifier_bounds }
+}
+
+impl LocoSampleIndex {
+    pub(super) fn identifiers(&self) -> impl ExactSizeIterator<Item = (&str, &str)> {
+        self.identifier_bounds.iter().map(|bounds| {
+            (
+                &self.header_line[bounds.identifier_start..bounds.separator_position],
+                &self.header_line[bounds.separator_position + 1..bounds.identifier_end],
+            )
+        })
+    }
 }

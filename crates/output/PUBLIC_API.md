@@ -40,6 +40,9 @@ instrumentation is enabled only for explicit stage timing/profile modes.
 Binary correction codes remain `uint8` through device, host, and Arrow staging;
 the writer maps them to the existing method/status dictionaries only when it
 builds the final record batch.
+Parquet parts use version-2 delta fallbacks, 16,384-row internal write batches,
+and byte-stream-split encoding for every floating-point result column. These
+physical encodings must not change the logical output schema.
 Persisted row and chunk counts use checked signed 64-bit arithmetic because the
 manifest contract is JSON integer based; overflow must fail before mutation.
 The fixed `(FID, IID)` input invariant is not serialized as a configurable

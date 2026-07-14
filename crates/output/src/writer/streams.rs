@@ -17,12 +17,10 @@ use crate::timing::start_optional_timing;
 use super::chunk_manifest;
 use super::record_batch::{RegenieStep2RecordBatchArrayCache, build_regenie_step2_record_batch};
 use super::{
-    OutputResult, RegenieStep2ChunkJob, RegenieStep2ChunkStreamWriteResult, RegenieStep2ParquetFileWriteTiming,
-    RegenieStep2RecordBatchBuildTiming,
+    OutputResult, REGENIE_STEP2_PARQUET_FLOAT_ENCODING, REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE,
+    REGENIE_STEP2_PARQUET_WRITE_BATCH_SIZE, REGENIE_STEP2_PARQUET_WRITER_VERSION, RegenieStep2ChunkJob,
+    RegenieStep2ChunkStreamWriteResult, RegenieStep2ParquetFileWriteTiming, RegenieStep2RecordBatchBuildTiming,
 };
-
-// One complete part at the default 16,384-row chunk size, while bounding larger user chunks.
-const REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE: usize = 262_144;
 
 pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     chunks: Vec<RegenieStep2ChunkJob>,
@@ -83,8 +81,10 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
 
 fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
     let compression = Compression::ZSTD(ZstdLevel::default());
-    WriterProperties::builder()
+    let mut properties = WriterProperties::builder()
+        .set_writer_version(REGENIE_STEP2_PARQUET_WRITER_VERSION)
         .set_compression(compression)
+        .set_write_batch_size(REGENIE_STEP2_PARQUET_WRITE_BATCH_SIZE)
         .set_max_row_group_row_count(Some(REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE))
         .set_dictionary_enabled(false)
         .set_column_dictionary_enabled(ColumnPath::from("CHROM"), true)
@@ -92,6 +92,10 @@ fn build_regenie_step2_parquet_writer_properties() -> WriterProperties {
         .set_column_dictionary_enabled(ColumnPath::from("ALLELE1"), true)
         .set_column_dictionary_enabled(ColumnPath::from("N"), true)
         .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_METHOD"), true)
-        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_STATUS"), true)
-        .build()
+        .set_column_dictionary_enabled(ColumnPath::from("CORRECTION_STATUS"), true);
+    for column_name in ["A1FREQ", "INFO", "BETA", "SE", "CHISQ", "LOG10P"] {
+        properties =
+            properties.set_column_encoding(ColumnPath::from(column_name), REGENIE_STEP2_PARQUET_FLOAT_ENCODING);
+    }
+    properties.build()
 }

@@ -13,15 +13,19 @@ use g_output::{
     Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 
-const BENCHMARK_CHUNK_ROW_COUNT: usize = 8_192;
-const BENCHMARK_CHUNK_COUNT: usize = 32;
+const BENCHMARK_CHUNK_ROW_COUNT: usize = 16_384;
+const BENCHMARK_CHUNK_COUNT: usize = 26;
+const BENCHMARK_TAIL_ROW_COUNT: usize = 9_343;
+const BENCHMARK_TOTAL_ROW_COUNT: usize =
+    BENCHMARK_CHUNK_ROW_COUNT * (BENCHMARK_CHUNK_COUNT - 1) + BENCHMARK_TAIL_ROW_COUNT;
+const BENCHMARK_FIRTH_SUCCESS_COUNT: usize = 17_938;
 const BENCHMARK_PHENOTYPE_NAME: &str = "binary_trait";
 const BENCHMARK_WRITER_THREAD_COUNT: u32 = 4;
 
 #[derive(Clone, Copy)]
 enum CorrectionPattern {
     ScoreOnly,
-    FirthMixed,
+    FirthSuccesses,
 }
 
 struct BenchmarkRoot {
@@ -133,21 +137,12 @@ fn benchmark_kernel_plan() -> g_plan::KernelPlan {
             maximum_iterations: 250,
             gradient_tolerance: g_plan::PositiveF64::try_from(2.5e-4)
                 .expect("benchmark gradient tolerance should be valid"),
-            coefficient_tolerance: g_plan::PositiveF64::try_from(2.5e-4)
-                .expect("benchmark coefficient tolerance should be valid"),
-            likelihood_tolerance: g_plan::PositiveF64::try_from(2.5e-4)
-                .expect("benchmark likelihood tolerance should be valid"),
             maximum_step_size: g_plan::PositiveF64::try_from(5.0).expect("benchmark maximum step should be valid"),
             pseudo_maximum_iterations: 50,
             pseudo_inner_maximum_iterations: 25,
             line_search_maximum_attempts: 25,
-            step_halving_maximum_attempts: 12,
-            initial_response_scale: g_plan::PositiveF64::try_from(4.863_891_244_002_886)
-                .expect("benchmark response scale should be valid"),
             sparse_carrier_dosage_threshold: g_plan::DosageThreshold::try_from(1.0e-4)
                 .expect("benchmark dosage threshold should be valid"),
-            step_halving_scale: g_plan::StepScale::try_from(0.5).expect("benchmark step scale should be valid"),
-            use_block_math: false,
         },
         null_firth: g_plan::NullFirthKernelPlan {
             maximum_iterations: 1_000,
@@ -226,7 +221,8 @@ fn benchmark_metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
     for variant_index in 0..variant_count {
         use std::fmt::Write as _;
 
-        write!(&mut variant_identifier_text, "variant_{variant_index}")
+        let identifier_number = benchmark_mixed_value(variant_index, 0x69d2_5f85_2536_5e21) % 900_000_000;
+        write!(&mut variant_identifier_text, "rs{:09}", identifier_number + 100_000_000)
             .expect("benchmark identifier should write to string");
         variant_identifier_offsets
             .push(u32::try_from(variant_identifier_text.len()).expect("benchmark identifier text should fit uint32"));
@@ -247,64 +243,65 @@ fn benchmark_chunk(
     chunk_index: usize,
     correction_pattern: CorrectionPattern,
 ) -> BenchmarkChunk {
-    let variant_start_index =
-        chunk_index.checked_mul(BENCHMARK_CHUNK_ROW_COUNT).expect("benchmark chunk start should not overflow");
-    let variant_stop_index =
-        variant_start_index.checked_add(BENCHMARK_CHUNK_ROW_COUNT).expect("benchmark chunk stop should not overflow");
-    let metadata = VariantMetadataColumns::new(Arc::clone(metadata_store), variant_start_index..variant_stop_index);
+    let chunk_range = benchmark_chunk_range(chunk_index);
+    let variant_start_index = chunk_range.start;
+    let row_count = chunk_range.len();
+    let metadata = VariantMetadataColumns::new(Arc::clone(metadata_store), chunk_range);
     let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata)
         .expect("benchmark native metadata handle should be constructed");
-    let statistics = benchmark_chunk_statistics(variant_start_index);
+    let statistics = benchmark_chunk_statistics(variant_start_index, row_count);
     let chunk_identifier = i64::try_from(variant_start_index).expect("benchmark chunk identifier should fit int64");
     let chunk_handle = NativeChunkHandle::try_new(metadata_handle, statistics, chunk_identifier)
         .expect("benchmark native chunk should be constructed");
-    BenchmarkChunk { chunk_handle, statistic_batch: benchmark_statistic_batch(variant_start_index, correction_pattern) }
+    BenchmarkChunk {
+        chunk_handle,
+        statistic_batch: benchmark_statistic_batch(variant_start_index, row_count, correction_pattern),
+    }
 }
 
-fn benchmark_chunk_statistics(variant_start_index: usize) -> ChunkOutputStatistics {
-    let mut allele_one_frequency = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
-    let mut observation_count = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
+fn benchmark_chunk_range(chunk_index: usize) -> Range<usize> {
+    let variant_start_index =
+        chunk_index.checked_mul(BENCHMARK_CHUNK_ROW_COUNT).expect("benchmark chunk start should not overflow");
+    let variant_stop_index = variant_start_index
+        .checked_add(BENCHMARK_CHUNK_ROW_COUNT)
+        .expect("benchmark chunk stop should not overflow")
+        .min(BENCHMARK_TOTAL_ROW_COUNT);
+    variant_start_index..variant_stop_index
+}
+
+fn benchmark_chunk_statistics(variant_start_index: usize, row_count: usize) -> ChunkOutputStatistics {
+    let mut allele_one_frequency = Vec::with_capacity(row_count);
+    let mut observation_count = Vec::with_capacity(row_count);
     let mut info_score = NullableFloat32Column {
-        values: Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT),
-        validity_bytes: Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT.div_ceil(8)),
+        values: Vec::with_capacity(row_count),
+        validity_bytes: Vec::with_capacity(row_count.div_ceil(8)),
     };
-    for row_index in 0..BENCHMARK_CHUNK_ROW_COUNT {
+    for row_index in 0..row_count {
         let variant_index = variant_start_index + row_index;
-        allele_one_frequency.push(
-            0.01 + f32::from(
-                u16::try_from(variant_index % 4_900).expect("benchmark frequency offset should fit uint16"),
-            ) / 10_000.0,
-        );
+        allele_one_frequency.push(0.001 + 0.499 * benchmark_unit_interval_value(variant_index, 0x9dca_8e31_79f5_8a1b));
         observation_count.push(487_409 - i32::try_from(variant_index % 31).expect("missing count should fit int32"));
-        info_score.push(
-            0.8 + f32::from(u16::try_from(variant_index % 2_000).expect("benchmark INFO offset should fit uint16"))
-                / 10_000.0,
-            true,
-        );
+        info_score.push(0.8 + 0.2 * benchmark_unit_interval_value(variant_index, 0xf3a6_7c41_8e29_b5d0), true);
     }
     ChunkOutputStatistics { allele_one_frequency, observation_count, info_score }
 }
 
 fn benchmark_statistic_batch(
     variant_start_index: usize,
+    row_count: usize,
     correction_pattern: CorrectionPattern,
 ) -> Regenie2StatisticBatch {
-    let mut beta = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
-    let mut standard_error = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
-    let mut chi_squared = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
-    let mut log10_p_value = Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT);
+    let mut beta = Vec::with_capacity(row_count);
+    let mut standard_error = Vec::with_capacity(row_count);
+    let mut chi_squared = Vec::with_capacity(row_count);
+    let mut log10_p_value = Vec::with_capacity(row_count);
     let mut correction_code = match correction_pattern {
         CorrectionPattern::ScoreOnly => None,
-        CorrectionPattern::FirthMixed => Some(Vec::with_capacity(BENCHMARK_CHUNK_ROW_COUNT)),
+        CorrectionPattern::FirthSuccesses => Some(Vec::with_capacity(row_count)),
     };
-    for row_index in 0..BENCHMARK_CHUNK_ROW_COUNT {
+    for row_index in 0..row_count {
         let variant_index = variant_start_index + row_index;
-        let beta_value =
-            (f32::from(u16::try_from(variant_index % 401).expect("benchmark beta offset should fit uint16")) - 200.0)
-                / 10_000.0;
-        let standard_error_value = 0.01
-            + f32::from(u16::try_from(variant_index % 101).expect("benchmark standard-error offset should fit uint16"))
-                / 100_000.0;
+        let beta_value = (benchmark_unit_interval_value(variant_index, 0x42b7_1ce9_a85f_630d) - 0.5) * 0.1;
+        let standard_error_value = 0.005 + 0.045 * benchmark_unit_interval_value(variant_index, 0x7e14_d3a9_5b62_c8f0);
         let chi_squared_value = (beta_value / standard_error_value).powi(2);
         beta.push(beta_value);
         standard_error.push(standard_error_value);
@@ -316,7 +313,7 @@ fn benchmark_statistic_batch(
     }
     Regenie2StatisticBatch {
         trait_count: 1,
-        variant_count: BENCHMARK_CHUNK_ROW_COUNT,
+        variant_count: row_count,
         beta,
         standard_error,
         chi_squared,
@@ -326,13 +323,32 @@ fn benchmark_statistic_batch(
 }
 
 fn benchmark_correction_code(variant_index: usize) -> u8 {
-    if variant_index.is_multiple_of(8_191) {
-        3
-    } else if variant_index.is_multiple_of(257) {
-        2
-    } else {
-        u8::from(variant_index.is_multiple_of(4_093))
-    }
+    let success_count_before = variant_index
+        .checked_mul(BENCHMARK_FIRTH_SUCCESS_COUNT)
+        .expect("benchmark Firth-success distribution should not overflow")
+        / BENCHMARK_TOTAL_ROW_COUNT;
+    let success_count_through = variant_index
+        .checked_add(1)
+        .and_then(|variant_count| variant_count.checked_mul(BENCHMARK_FIRTH_SUCCESS_COUNT))
+        .expect("benchmark Firth-success distribution should not overflow")
+        / BENCHMARK_TOTAL_ROW_COUNT;
+    if success_count_through > success_count_before { 2 } else { 0 }
+}
+
+fn benchmark_mixed_value(variant_index: usize, salt: u64) -> u64 {
+    let mut value = u64::try_from(variant_index).expect("benchmark variant index should fit uint64") ^ salt;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn benchmark_unit_interval_value(variant_index: usize, salt: u64) -> f32 {
+    let mixed_value = benchmark_mixed_value(variant_index, salt);
+    let fraction_bits = mixed_value & 0x00ff_ffff;
+    let high_fraction_bits = u16::try_from(fraction_bits >> 8).expect("high benchmark fraction bits should fit uint16");
+    let low_fraction_bits =
+        u8::try_from(fraction_bits & u64::from(u8::MAX)).expect("low benchmark fraction bits should fit uint8");
+    f32::from(high_fraction_bits) * (1.0 / 65_536.0) + f32::from(low_fraction_bits) * (1.0 / 16_777_216.0)
 }
 
 fn prepare_benchmark_run(benchmark_name: &str, correction_pattern: CorrectionPattern) -> PreparedBenchmarkRun {
@@ -345,27 +361,23 @@ fn prepare_benchmark_run(benchmark_name: &str, correction_pattern: CorrectionPat
     let prediction_list_path =
         write_benchmark_file(&benchmark_root.root_path, "predictions.list", b"22 predictions.loco\n");
     let output_root = benchmark_root.root_path.join("output");
-    let variant_count = BENCHMARK_CHUNK_ROW_COUNT
-        .checked_mul(BENCHMARK_CHUNK_COUNT)
-        .expect("benchmark variant count should not overflow");
     let run_plan =
         Arc::new(benchmark_run_plan(&output_root, &bgen_path, &sample_path, &phenotype_path, &prediction_list_path));
     let mut output_manager = OutputManager::open(run_plan, "# benchmark configuration\n".to_string())
         .expect("benchmark output manager should open");
-    let planned_chunk_ranges = (0..BENCHMARK_CHUNK_COUNT)
-        .map(|chunk_index| {
-            let variant_start_index = chunk_index * BENCHMARK_CHUNK_ROW_COUNT;
-            variant_start_index..variant_start_index + BENCHMARK_CHUNK_ROW_COUNT
-        })
-        .collect::<Vec<Range<usize>>>();
+    let planned_chunk_ranges = (0..BENCHMARK_CHUNK_COUNT).map(benchmark_chunk_range).collect::<Vec<Range<usize>>>();
     output_manager
-        .initialize(vec![benchmark_manifest_header(&bgen_path, variant_count)], &planned_chunk_ranges, false)
+        .initialize(
+            vec![benchmark_manifest_header(&bgen_path, BENCHMARK_TOTAL_ROW_COUNT)],
+            &planned_chunk_ranges,
+            false,
+        )
         .expect("benchmark output manager should initialize");
     let writer_sessions = output_manager
         .delivery_state_for_phenotypes(&[BENCHMARK_PHENOTYPE_NAME.to_string()])
         .expect("benchmark output delivery state should be available")
         .writer_sessions;
-    let metadata_store = benchmark_metadata_store(variant_count);
+    let metadata_store = benchmark_metadata_store(BENCHMARK_TOTAL_ROW_COUNT);
     let chunks = (0..BENCHMARK_CHUNK_COUNT)
         .map(|chunk_index| benchmark_chunk(&metadata_store, chunk_index, correction_pattern))
         .collect();
@@ -388,13 +400,35 @@ fn write_and_finish_benchmark_run(prepared_run: PreparedBenchmarkRun) -> Complet
     CompletedBenchmarkRun { completed_outputs, benchmark_root }
 }
 
+fn measure_parquet_file_bytes(benchmark_name: &str, correction_pattern: CorrectionPattern) -> u64 {
+    let completed_run = write_and_finish_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern));
+    completed_run
+        .completed_outputs
+        .iter()
+        .flat_map(|completed_output| {
+            std::fs::read_dir(&completed_output.parts_directory)
+                .expect("benchmark parts directory should be readable")
+                .map(|entry| entry.expect("benchmark part entry should be readable"))
+        })
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "parquet"))
+        .map(|entry| entry.metadata().expect("benchmark part metadata should be readable").len())
+        .sum()
+}
+
 fn bench_binary_parquet_writer(criterion: &mut Criterion) {
     let mut benchmark_group = criterion.benchmark_group("binary_parquet_writer");
-    let total_row_count = BENCHMARK_CHUNK_ROW_COUNT * BENCHMARK_CHUNK_COUNT;
+    let score_only_file_bytes = measure_parquet_file_bytes("score_only_size", CorrectionPattern::ScoreOnly);
+    let firth_success_file_bytes = measure_parquet_file_bytes("firth_success_size", CorrectionPattern::FirthSuccesses);
+    let observed_firth_success_count =
+        (0..BENCHMARK_TOTAL_ROW_COUNT).filter(|variant_index| benchmark_correction_code(*variant_index) == 2).count();
+    assert_eq!(observed_firth_success_count, BENCHMARK_FIRTH_SUCCESS_COUNT);
+    eprintln!(
+        "binary_parquet_writer rows={BENCHMARK_TOTAL_ROW_COUNT} tail_rows={BENCHMARK_TAIL_ROW_COUNT} firth_successes={observed_firth_success_count} firth_failures=0 score_only_bytes={score_only_file_bytes} firth_success_bytes={firth_success_file_bytes}"
+    );
     benchmark_group.throughput(Throughput::Elements(
-        u64::try_from(total_row_count).expect("benchmark row count should fit uint64"),
+        u64::try_from(BENCHMARK_TOTAL_ROW_COUNT).expect("benchmark row count should fit uint64"),
     ));
-    benchmark_group.bench_function("score_only_32x8192", |bencher| {
+    benchmark_group.bench_function("score_only_chr22", |bencher| {
         bencher.iter_batched(
             || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly),
             |prepared_run| {
@@ -406,9 +440,9 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
             BatchSize::PerIteration,
         );
     });
-    benchmark_group.bench_function("firth_mixed_32x8192", |bencher| {
+    benchmark_group.bench_function("firth_success_chr22", |bencher| {
         bencher.iter_batched(
-            || prepare_benchmark_run("firth_mixed", CorrectionPattern::FirthMixed),
+            || prepare_benchmark_run("firth_success", CorrectionPattern::FirthSuccesses),
             |prepared_run| {
                 let completed_run = write_and_finish_benchmark_run(prepared_run);
                 std::hint::black_box(&completed_run.completed_outputs);

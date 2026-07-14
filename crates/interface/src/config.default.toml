@@ -24,16 +24,11 @@ linear_minimum_variance = 1.0e-8
 linear_relative_variance_tolerance = 1.0e-6
 firth_maximum_iterations = 250
 firth_gradient_tolerance = 2.5e-4
-firth_coefficient_tolerance = 2.5e-4
-firth_likelihood_tolerance = 2.5e-4
 firth_maximum_step_size = 5.0
 firth_pseudo_maximum_iterations = 50
 firth_pseudo_inner_maximum_iterations = 25
 firth_line_search_maximum_attempts = 25
-firth_step_halving_maximum_attempts = 12
-firth_initial_response_scale = 4.863891244002886
 firth_sparse_carrier_dosage_threshold = 1.0e-4
-firth_step_halving_scale = 0.5
 null_firth_maximum_iterations = 1000
 null_firth_gradient_tolerance = 50.0e-6
 null_firth_maximum_step_size = 25.0
@@ -41,7 +36,6 @@ null_firth_fallback_iteration_multiplier = 5
 null_firth_fallback_step_divisor = 5.0
 null_firth_line_search_maximum_attempts = 25
 null_firth_step_halving_scale = 0.5
-use_block_firth_math = false
 # Optional persistent JAX compilation-cache directory.
 # jax_cache_dir = "/path/to/jax-cache"
 
