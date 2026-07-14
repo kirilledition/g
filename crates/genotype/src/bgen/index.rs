@@ -137,12 +137,13 @@ pub(super) fn parse_variant_index(
         let reference_allele_code = read_allele(mmap, &mut cursor, &mut metadata_text_dictionary)?;
         let counted_allele_code = read_allele(mmap, &mut cursor, &mut metadata_text_dictionary)?;
 
-        let total_block_length = u32_to_usize(read_u32_at(mmap, cursor)?)?;
+        let total_block_length = read_u32_at(mmap, cursor)?;
+        let total_block_length_usize = u32_to_usize(total_block_length)?;
         let (probability_payload_offset, probability_payload_length, uncompressed_block_length) = match compression_type
         {
             CompressionType::None => (cursor + 4, total_block_length, total_block_length),
             CompressionType::Zlib | CompressionType::Zstandard => {
-                let uncompressed_block_length = u32_to_usize(read_u32_at(mmap, cursor + 4)?)?;
+                let uncompressed_block_length = read_u32_at(mmap, cursor + 4)?;
                 let probability_payload_length = total_block_length
                     .checked_sub(4)
                     .filter(|payload_length| *payload_length != 0)
@@ -155,8 +156,13 @@ pub(super) fn parse_variant_index(
                 (cursor + 8, probability_payload_length, uncompressed_block_length)
             }
         };
-        validate_block_length(uncompressed_block_length, minimum_block_length, maximum_block_length, variant_index)?;
-        cursor += 4 + total_block_length;
+        validate_block_length(
+            u32_to_usize(uncompressed_block_length)?,
+            minimum_block_length,
+            maximum_block_length,
+            variant_index,
+        )?;
+        cursor += 4 + total_block_length_usize;
         if cursor > mmap.len() {
             return Err(BgenError::InvalidFormat(format!(
                 "Variant index {variant_index} points beyond the end of the BGEN file.",
@@ -170,7 +176,8 @@ pub(super) fn parse_variant_index(
         })?;
         variant_identifier_offsets.push(variant_identifier_stop);
         let variant_record = VariantRecord {
-            probability_payload_offset,
+            probability_payload_offset: u64::try_from(probability_payload_offset)
+                .expect("BGEN payload offsets from the supported 64-bit usize domain must fit uint64"),
             probability_payload_length,
             declared_uncompressed_block_length: uncompressed_block_length,
         };
