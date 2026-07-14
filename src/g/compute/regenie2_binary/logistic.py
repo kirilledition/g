@@ -45,19 +45,10 @@ def compute_logistic_deviance(
     probability_vector: jax.Array,
     active_sample_mask: jax.Array,
 ) -> jax.Array:
-    """Compute REGENIE's Bernoulli deviance over active samples."""
-    epsilon = jnp.asarray(
-        regenie2_binary_config.REGENIE_NUMERICAL_EPSILON_MULTIPLIER * jnp.finfo(probability_vector.dtype).eps,
-        dtype=probability_vector.dtype,
-    )
-    clipped_probability = jnp.clip(
-        probability_vector,
-        epsilon / (1.0 + epsilon),
-        jnp.reciprocal(1.0 + epsilon),
-    )
+    """Compute Bernoulli deviance from REGENIE-clipped probabilities."""
     negative_log_likelihood = -jnp.where(
         phenotype_vector > regenie2_binary_config.BINARY_CASE_THRESHOLD,
-        jnp.log(clipped_probability),
-        jnp.log1p(-clipped_probability),
+        jnp.log(probability_vector),
+        jnp.log1p(-probability_vector),
     )
     return 2.0 * jnp.sum(jnp.where(active_sample_mask, negative_log_likelihood, 0.0))

@@ -137,14 +137,13 @@ def fit_scalar_pseudo_logistic_step(
         weight_vector = probability_vector * (1.0 - probability_vector)
         active_weight_vector = jnp.where(active_sample_mask, weight_vector, 0.0)
         updated_genotype_information = jnp.sum(genotype_vector * genotype_vector * active_weight_vector)
-        probability_failed = jnp.any(active_sample_mask & (weight_vector == 0.0))
         numerical_failed = (
             (~jnp.isfinite(updated_beta))
             | (~jnp.isfinite(updated_score))
             | (~jnp.isfinite(updated_genotype_information))
             | (updated_genotype_information <= 0.0)
         )
-        failed = step_increased | probability_failed | numerical_failed
+        failed = step_increased | numerical_failed
         return regenie2_binary_firth_types.ScalarPseudoLogisticState(
             beta=jnp.where(failed, state.beta, updated_beta),
             score=jnp.where(failed, state.score, updated_score),

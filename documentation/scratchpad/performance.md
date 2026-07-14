@@ -244,6 +244,57 @@ Next targets:
 - Treat H2D transfer and decoded-batch delivery as the primary warm-path target;
   they now dominate the gap between correction launches.
 
+## 2026-07-14 Binary GPU Reducer Debloat Wave
+
+The pseudo-state deep profile is under
+`data/profiles/next_wave_deep_pseudo_20260714`; the paired reducer comparison is
+under `data/benchmarks/clamp_{control,candidate}_*`.
+
+Profile findings:
+
+- Pseudo-state reuse reduced finalist native execution from 4.793 to 4.661
+  seconds (2.76%) and the headline native execution from 4.821 to 4.738 seconds
+  (1.74%). Excluding first use, correction mean fell from 18.107 to 17.722
+  milliseconds and its median from 17.954 to 17.802 milliseconds.
+- The compiled full-component reducers remain the compute hotspot. Their 1,869
+  dense launches process 512 by 2,504 samples and use 162 registers per thread.
+  The preceding probability materialization accounts for another 2,083 launches
+  and 97.169 milliseconds.
+- Full packed8 H2D copies remain serialized with compute. The 26 copies move
+  2.133 GB and take about 216 milliseconds; the warm buffers are already pinned
+  and reuse their registration, so custom pinned allocators are not a target.
+
+Accepted:
+
+- Logistic deviance now consumes the probabilities already clipped by
+  `compute_regenie_logistic_probability` instead of applying the same bounds a
+  second time. The pseudo-logistic inner solver also omits its zero-weight
+  reduction: endpoint clipping makes zero weight impossible, while the existing
+  score and information finiteness checks still reject NaNs.
+- Against the immediate five-run control, median native execution improves from
+  4.767 to 4.661 seconds (2.21%) and median association time from 4.940 to 4.846
+  seconds (1.92%). Mean improvements are 1.57% and 1.40%, respectively.
+- All 418,943 correction methods and statuses remain identical. Independently
+  lowered GPU executables differ only by normal float32 reassociation, with a
+  maximum absolute statistic delta of 1.91e-6.
+
+Deferred:
+
+- A custom Pallas or CUDA map-reduce could remove the separate probability
+  materialization, but fusing it into a 162-register reducer risks spills and
+  adds a second kernel implementation. Do not add that architecture without
+  hardware-counter evidence and a decisive end-to-end result.
+- A bounded session-owned pool for Rayon worker libdeflate contexts regressed
+  the same-node packed8 Criterion median from 40.921 to 41.647 milliseconds
+  (1.78%). The lock and guard machinery was removed; retain the smaller
+  per-iterator-state scratch allocation.
+
+Next targets:
+
+- Prototype decoded-batch pre-transfer on the existing delivery thread so H2D
+  for the next batch can overlap current compute; do not add another worker or
+  custom CUDA memory layer.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
