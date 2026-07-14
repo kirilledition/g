@@ -144,6 +144,58 @@ Next targets:
 - Inspect the now-isolated 1,024-candidate correction executable before writing
   custom GPU code. Require kernel-level evidence for any Pallas or CUDA path.
 
+## 2026-07-14 Binary GPU Newton Reuse Wave
+
+The target and machine are unchanged. The clean dispatch profile is under
+`data/profiles/next_wave_deep_dispatch_clean_20260714`; production comparisons
+are under `data/benchmarks/newton_{reuse,control,legacycache}_*`. All production
+runs use 512-row Firth batches, 16,384-variant input chunks, eight host threads,
+and four output writers.
+
+Accepted:
+
+- Newton step-halving now carries the accepted candidate's penalized deviance,
+  genotype information, and score back to the outer iteration. The outer loop
+  no longer recomputes the same full-sample Firth components immediately after
+  line search. Failed or exhausted searches retain the already-known current
+  scalars and follow the existing failure path.
+- In seven candidate and seven immediately subsequent old-code control runs,
+  median association time improved from 5.144 to 5.036 seconds (2.11%) and
+  median native execution from 4.944 to 4.852 seconds (1.87%). Mean improvements
+  were 1.83% and 1.78%, respectively.
+- In the shared-cache comparison, every one of the 17,938 Firth-corrected rows
+  remained bitwise equal, including correction method and status. Independently
+  compiled score executables retain the previously documented GPU reduction
+  variation.
+
+Rejected:
+
+- A five-result variadic Firth reduction is neutral end to end: 5.113 seconds
+  median versus 5.122 seconds for the established implementation. GPU XLA was
+  already combining the reductions, so the additional reducer and contribution
+  helper were removed.
+- Raw DEFLATE delivery that omitted Adler-32 after packed8 cache attestation is
+  neutral when both candidate and baseline are compiled natively on `landau`:
+  5.125 versus 5.122 seconds median association time. It also weakened detection
+  of silent content changes, so all 100-plus experimental lines were removed.
+- A 256-row Firth batch is 2.23% slower than 512 rows in the five-run median.
+  Keep 512 for this target.
+- The eight-thread packed8 Criterion median is 22.308 milliseconds with 32-row
+  Rayon tiles. A 16-row tile is indistinguishable at 22.265 milliseconds; 64 and
+  128 rows regress to 22.591 and 22.902 milliseconds. Keep the smaller existing
+  code and the 32-row constant.
+
+Next targets:
+
+- Measure the marginal cost of packed8 sparse statistics before moving any
+  integer summaries to the GPU. Do not add a public benchmark-only reader API.
+- Evaluate pseudo-Firth component-state reuse only if it removes a guaranteed
+  full-sample evaluation without introducing array state or batched conditional
+  work.
+- Re-profile the accepted Newton executable before considering a custom GPU
+  kernel; the current profile lacks hardware counters because NCU access is
+  disabled on `landau`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

@@ -307,6 +307,8 @@ def run_scalar_line_search_with_minimum_variance(
     non_active_deviance: jax.Array,
     current_beta: jax.Array,
     current_penalized_deviance: jax.Array,
+    current_genotype_information: jax.Array,
+    current_score: jax.Array,
     current_valid: jax.Array,
     initial_step_size: jax.Array,
     maximum_attempts: int | jax.Array,
@@ -336,6 +338,17 @@ def run_scalar_line_search_with_minimum_variance(
         return regenie2_binary_firth_types.ScalarLineSearchState(
             beta=jnp.where(accepted, candidate_beta, state.beta),
             step_size=adjusted_step_size,
+            penalized_deviance=jnp.where(
+                accepted,
+                components.penalized_deviance,
+                state.penalized_deviance,
+            ),
+            genotype_information=jnp.where(
+                accepted,
+                components.genotype_information,
+                state.genotype_information,
+            ),
+            score=jnp.where(accepted, components.score, state.score),
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
             accepted=accepted,
             valid=state.valid & components.valid,
@@ -347,6 +360,9 @@ def run_scalar_line_search_with_minimum_variance(
         regenie2_binary_firth_types.ScalarLineSearchState(
             beta=current_beta,
             step_size=initial_step_size,
+            penalized_deviance=current_penalized_deviance,
+            genotype_information=current_genotype_information,
+            score=current_score,
             attempt_count=jnp.asarray(0, dtype=jnp.int32),
             accepted=jnp.asarray(0, dtype=jnp.bool_),
             valid=current_valid,
@@ -413,28 +429,20 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
                 non_active_deviance=non_active_deviance,
                 current_beta=state.beta,
                 current_penalized_deviance=state.penalized_deviance,
+                current_genotype_information=state.genotype_information,
+                current_score=state.score,
                 current_valid=~state.failed,
                 initial_step_size=raw_step_size / step_scale,
                 maximum_attempts=line_search_maximum_attempt_count,
                 minimum_variance=minimum_variance,
             )
             line_search_failed = ~line_search_state.accepted
-            updated_beta = jnp.where(line_search_failed, state.beta, line_search_state.beta)
-            updated_components = compute_scalar_firth_components_with_minimum_variance(
-                phenotype_vector=phenotype_vector,
-                genotype_vector=genotype_vector,
-                offset_vector=offset_vector,
-                active_sample_mask=active_sample_mask,
-                non_active_deviance=non_active_deviance,
-                beta=updated_beta,
-                minimum_variance=minimum_variance,
-            )
-            failed = (~state.failed) & (line_search_failed | (~updated_components.valid) | (~line_search_state.valid))
+            failed = (~state.failed) & (line_search_failed | (~line_search_state.valid))
             return regenie2_binary_firth_types.ScalarNewtonRaphsonState(
-                beta=updated_beta,
-                penalized_deviance=updated_components.penalized_deviance,
-                genotype_information=updated_components.genotype_information,
-                score=updated_components.score,
+                beta=line_search_state.beta,
+                penalized_deviance=line_search_state.penalized_deviance,
+                genotype_information=line_search_state.genotype_information,
+                score=line_search_state.score,
                 iteration_count=updated_iteration_count,
                 converged=converged,
                 failed=failed,

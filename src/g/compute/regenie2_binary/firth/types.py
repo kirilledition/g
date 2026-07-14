@@ -270,6 +270,9 @@ class ScalarLineSearchState:
 
     beta: jax.Array
     step_size: jax.Array
+    penalized_deviance: jax.Array
+    genotype_information: jax.Array
+    score: jax.Array
     attempt_count: jax.Array
     accepted: jax.Array
     valid: jax.Array
