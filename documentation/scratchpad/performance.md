@@ -488,6 +488,93 @@ Rejected:
   preflight-SVD prototypes either regress, are statistically neutral, or save
   too little to justify their complexity. All prototypes are removed.
 
+## 2026-07-14 Capacity And BGEN Follow-up Wave
+
+The target remains one binary trait with approximate Firth, full 1KG
+chromosome 22, 512-row Firth batches, 16,384-variant chunks, eight host
+threads, and a V100 on `landau`. CPU microbenchmarks use paired builds on the
+same allocated node. All accepted BGEN changes preserve exact packed bytes,
+summary fields, and decoded values on actual chromosome-22 input.
+
+Accepted:
+
+- Candidate capacity selection now rounds the observed correction count to a
+  bounded power of two, keeps the two-batch floor, and retains the established
+  overflow path. Removing the capacity-tier plan deletes 74 lines while adding
+  43. Fifteen paired production runs are statistically neutral at -0.27%
+  median, so retain this as an architecture and executable-cache simplification,
+  not a speed claim.
+- Packed8 raw dosage uses one AVX2 `maddubs` operation with exact `[2, 1]`
+  weights instead of five vector operations. Four paired Criterion runs improve
+  16,384-variant decoding from 42.041 to 40.836 milliseconds (2.87%) and
+  32,768-variant decoding from 81.963 to 80.168 milliseconds (2.19%). The hot
+  function shrinks by 16 bytes and introduces no spills.
+- Sparse zero and homozygous-alternate counts accumulate in 16-bit AVX2 lanes
+  and reduce once per bounded 4,096-vector window. This removes two serial
+  `movemask`/`popcnt` chains per vector without overflow or hot-loop spills. A
+  decompression-free benchmark over actual 1KG probability bytes improves
+  3.82% across four of four pairs. Seven full chromosome-22 GPU pairs improve
+  native execution from 4.238956 to 4.164570 seconds (1.755%, paired
+  p=0.00034), with all Parquet parts byte-identical. An apparent 33% whole-reader
+  result is discarded because function growth shifted downstream `libdeflate`
+  addresses; it is not attributed to the SIMD change.
+- Zlib decompression writes into reserved spare vector capacity and publishes
+  the length only after `libdeflate` reports exact success and complete input
+  consumption. This removes the output-sized zero fill without weakening error
+  handling. Actual 1KG reads are neutral within 0.34%; synthetic UK Biobank
+  blocks improve 14.82% at 1.5 MB and 16.43% at 4.5 MB.
+- BGEN variant records retain format-native 32-bit compressed and uncompressed
+  lengths beside a 64-bit file offset. Each record shrinks from 24 to 16 bytes.
+  Opening chromosome 10 reduces median RSS by 11.36 MiB and chromosome-22
+  open/index time improves from 86.876 to 85.456 milliseconds, while dosage
+  and packed8 throughput remain unchanged.
+- A fresh all-file Skylos scan finds one unreferenced JAX helper that only
+  performs Cholesky decomposition before calling the existing factor solver;
+  it is removed. Other reported production symbols are stale or have verified
+  Rust trait, macro, PyO3 dynamic, telemetry, cache, scheduler, or required JAX
+  callback consumers. No hot JAX function is split solely to satisfy structural
+  heuristics.
+
+Rejected:
+
+- Packed8 non-temporal stores improve an isolated decode loop by roughly 28%,
+  but 14 valid full GPU pairs regress 0.39% in the median, with a 95% interval
+  from -0.86% to +1.65%. The 126-line unsafe implementation is removed.
+- Dynamic and static dense-Firth sentinel specializations are neutral. The
+  dynamic form measures -0.93% with a confidence interval crossing zero; the
+  static form wins only five of 15 pairs and regresses 0.20% in the paired
+  median. Both prototypes are removed.
+- A private typed CUDA Firth reduction is numerically close on a
+  512-by-2,504 V100 smoke case, but takes 0.38--0.44 milliseconds versus 0.11
+  milliseconds for XLA and adds more than 600 lines. The prototype is removed.
+
+Final deep-profile evidence:
+
+- A fresh `landau` campaign at commit `478f83e2` completed the headline run,
+  JAX trace and device-memory capture, cProfile, py-spy, Scalene, Memray, and
+  Nsight Systems. The artifact bundle is
+  `data/profiles/next_wave_final_deep_20260715`. NVIDIA Compute profiling was
+  unavailable because the node denies hardware performance counters, and
+  Linux `perf` was unavailable with `perf_event_paranoid=4`; both are recorded
+  as skipped rather than successful measurements.
+- The one-shot headline records 4.068 seconds in native execution, 0.176
+  seconds in native preparation, 8.728 seconds in JAX runtime configuration,
+  and 13.241 seconds in the runner. Native execution is 0.37% below the
+  pre-wave one-shot profile, but this unpaired comparison is not used as the
+  speed claim; the seven-pair GPU gate above isolates the causal 1.755% gain.
+- Nsight records a 3.732-second kernel-launch span. Its dominant kernels remain
+  `input_reduce_fusion_27` at 122.500 milliseconds across 1,836 launches and
+  `loop_select_fusion_20` at 101.065 milliseconds across 2,159 launches.
+  Host-to-device transfer remains 1.989 GiB across 110 copies and consumes
+  211.849 milliseconds. The final run executes more solver kernels than the
+  baseline, so kernel totals are not interpreted as an optimization regression.
+- cProfile attributes most process time outside native execution to imports,
+  backend initialization, plugin discovery, and shared-library loading. A
+  resident multi-run lifecycle is explicitly outside this wave's scope. The
+  next in-scope opportunities are therefore the dominant Firth reduction and
+  selection fusions and host delivery, each requiring a numerically bounded
+  implementation and the same paired GPU gate before acceptance.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
