@@ -196,6 +196,54 @@ Next targets:
   kernel; the current profile lacks hardware counters because NCU access is
   disabled on `landau`.
 
+## 2026-07-14 Binary GPU Pseudo-State Reuse Wave
+
+The post-Newton profile is under
+`data/profiles/next_wave_deep_newton_20260714`; production comparisons are under
+`data/benchmarks/pseudo_{reuse,sharedcache}_*`.
+
+Profile findings:
+
+- Newton line-search reuse reduced native execution from 4.932 to 4.821 seconds
+  in the deep-profile headline and from 4.895 to 4.793 seconds in the finalist.
+  Nsight kernel calls fell from 19,196 to 17,303, total kernel time from 315.837
+  to 288.871 milliseconds, and the GPU kernel span from 4.843 to 4.640 seconds.
+- Warm correction work now has a 17.954-millisecond median, while correction
+  starts remain 51.208 milliseconds apart. The 32.894-millisecond post-kernel
+  delivery gap makes the full path host-delivery-bound even though solver work
+  remains worth reducing for cold latency and future reader improvements.
+
+Accepted:
+
+- `ScalarPseudoFirthState` now carries the existing five-scalar
+  `ScalarFirthComponents` value. It consumes the initial components directly,
+  refreshes them once at each returned beta, preserves them on convergence, and
+  uses the final state value for output. This removes the guaranteed initial
+  duplicate and the normal converged-final duplicate without redefining the
+  component fields or carrying sample-sized arrays.
+- Across seven runs, median association time improves from 5.036 to 4.913
+  seconds (2.44%) and median native execution from 4.852 to 4.728 seconds
+  (2.56%). Fresh-cache cold wall time improves from 33.08 to 31.95 seconds and
+  the cold association window from 21.763 to 20.536 seconds.
+- Reusing the pre-change score cache produces a bitwise-identical table across
+  all 418,943 rows, including every score, corrected statistic, correction
+  method, and correction status.
+
+Deferred:
+
+- Disabling packed8 sparse-candidate counts improves the isolated eight-thread
+  reader median from 22.308 to 21.678 milliseconds (2.82%). The absolute saving
+  is only about 0.63 milliseconds per chunk, roughly a 0.3% association-time
+  ceiling before adding replacement GPU reductions. Keep the current exact host
+  mask until a lean correction-side derivation demonstrates an end-to-end win.
+
+Next targets:
+
+- Deep-profile the pseudo-state executable and verify that initial/final
+  component kernels disappear before attempting further solver state changes.
+- Treat H2D transfer and decoded-batch delivery as the primary warm-path target;
+  they now dominate the gap between correction launches.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

@@ -229,6 +229,7 @@ class ScalarPseudoFirthState:
     """Loop state for REGENIE scalar pseudo-Firth."""
 
     beta: jax.Array
+    components: ScalarFirthComponents
     outer_iteration_count: jax.Array
     beta_iteration_14: jax.Array
     converged: jax.Array

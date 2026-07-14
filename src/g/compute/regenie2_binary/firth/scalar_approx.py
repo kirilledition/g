@@ -204,15 +204,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
     def run_iteration(
         state: regenie2_binary_firth_types.ScalarPseudoFirthState,
     ) -> regenie2_binary_firth_types.ScalarPseudoFirthState:
-        components = compute_scalar_firth_components_with_minimum_variance(
-            phenotype_vector=phenotype_vector,
-            genotype_vector=genotype_vector,
-            offset_vector=offset_vector,
-            active_sample_mask=active_sample_mask,
-            non_active_deviance=non_active_deviance,
-            beta=state.beta,
-            minimum_variance=minimum_variance,
-        )
+        components = state.components
         updated_outer_iteration_count = state.outer_iteration_count + jnp.asarray(1, dtype=jnp.int32)
         converged = (jnp.abs(components.score) < tolerance) & (updated_outer_iteration_count >= 2)
         beta_iteration_14 = jnp.where(
@@ -228,6 +220,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
             failed = (~components.valid) | slow_convergence_failure
             return regenie2_binary_firth_types.ScalarPseudoFirthState(
                 beta=state.beta,
+                components=components,
                 outer_iteration_count=updated_outer_iteration_count,
                 beta_iteration_14=beta_iteration_14,
                 converged=converged & (~failed),
@@ -249,8 +242,19 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
                 maximum_step_size=maximum_step_size,
             )
             failed = (~components.valid) | slow_convergence_failure | logistic_state.failed
+            updated_beta = jnp.where(failed, state.beta, logistic_state.beta)
+            updated_components = compute_scalar_firth_components_with_minimum_variance(
+                phenotype_vector=phenotype_vector,
+                genotype_vector=genotype_vector,
+                offset_vector=offset_vector,
+                active_sample_mask=active_sample_mask,
+                non_active_deviance=non_active_deviance,
+                beta=updated_beta,
+                minimum_variance=minimum_variance,
+            )
             return regenie2_binary_firth_types.ScalarPseudoFirthState(
-                beta=jnp.where(failed, state.beta, logistic_state.beta),
+                beta=updated_beta,
+                components=updated_components,
                 outer_iteration_count=updated_outer_iteration_count,
                 beta_iteration_14=beta_iteration_14,
                 converged=converged,
@@ -264,21 +268,14 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
         run_iteration,
         regenie2_binary_firth_types.ScalarPseudoFirthState(
             beta=initial_beta,
+            components=initial_components,
             outer_iteration_count=jnp.asarray(0, dtype=jnp.int32),
             beta_iteration_14=jnp.asarray(0.0, dtype=initial_beta.dtype),
             converged=jnp.asarray(0, dtype=jnp.bool_),
             failed=~initial_components.valid,
         ),
     )
-    final_components = compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=non_active_deviance,
-        beta=final_state.beta,
-        minimum_variance=minimum_variance,
-    )
+    final_components = final_state.components
     maximum_iteration_failure = (~final_state.converged) & (~final_state.failed)
     chi_squared = deviance_null - final_components.penalized_deviance
     negative_lrt_failure = final_state.converged & (chi_squared < 0.0)
