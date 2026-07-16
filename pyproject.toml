@@ -39,7 +39,7 @@ docs = [
     "mkdocstrings-python>=2.0.4",
     "zensical>=0.0.44,<0.0.45",
 ]
-cpu = ["jax[cpu]>=0.10.1"]
+cpu = ["jax[cpu]>=0.10.2"]
 
 [project.scripts]
 g = "g.cli:main"
