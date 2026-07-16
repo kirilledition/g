@@ -104,11 +104,8 @@ class Regenie2MultiBinaryFirthChromosomeState:
 
     Attributes:
         score_state: Minimal state consumed by the shared score kernel.
-        covariate_matrix: Shared covariate design matrix including intercept.
         phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
-        null_logistic_coefficients: Per-trait null logistic coefficients.
         null_firth_offset_matrix: Per-trait null Firth predictors plus LOCO offsets.
-        loco_offset_matrix: Per-trait LOCO offsets.
         square_root_weight: Per-trait square root Bernoulli variance.
         weighted_genotype_projection_matrix: Per-trait weighted covariate projection matrix.
         full_null_deviance: Per-trait full-sample null deviance.
@@ -117,11 +114,8 @@ class Regenie2MultiBinaryFirthChromosomeState:
     """
 
     score_state: Regenie2MultiBinaryScoreChromosomeState
-    covariate_matrix: jax.Array
     phenotype_matrix: jax.Array
-    null_logistic_coefficients: jax.Array
     null_firth_offset_matrix: jax.Array
-    loco_offset_matrix: jax.Array
     square_root_weight: jax.Array
     weighted_genotype_projection_matrix: jax.Array
     full_null_deviance: jax.Array
@@ -287,11 +281,8 @@ def build_multi_binary_firth_chromosome_state(
     score_trait_states = firth_trait_states.score_state
     return Regenie2MultiBinaryFirthChromosomeState(
         score_state=build_multi_binary_score_chromosome_state_from_traits(score_trait_states),
-        covariate_matrix=state.covariate_matrix,
         phenotype_matrix=state.phenotype_matrix,
-        null_logistic_coefficients=score_trait_states.null_logistic_coefficients,
         null_firth_offset_matrix=firth_trait_states.null_firth_offset,
-        loco_offset_matrix=score_trait_states.loco_offset,
         square_root_weight=score_trait_states.square_root_weight,
         weighted_genotype_projection_matrix=score_trait_states.weighted_genotype_projection_matrix,
         full_null_deviance=firth_trait_states.full_null_deviance,
