@@ -3,8 +3,8 @@
 `packed8_kernel.cu` is the maintained source for the embedded
 `packed8_kernel.compute_70.ptx` artifact. The frozen files have these hashes:
 
-- source: `sha256:a241892e57847b9afbbeb2280bf8280951b0f3e046e899181926050bf43afe1b`
-- PTX: `sha256:0d4541020f5d2d8a67ea2c338f4d5e5ef4ac05ff0d9d473813bc7c9869e7e26b`
+- source: `sha256:7b42f6c03be38dfebd21e748b3282dd98abaf4e32c88ac82b12670347c5a050d`
+- PTX: `sha256:a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088`
 
 The PTX was generated twice reproducibly with CUDA NVRTC 12.2.140 for
 `compute_70`; it declares PTX ISA 8.2 and target `sm_70`. NVRTC is a generation
@@ -16,6 +16,20 @@ The finalizer computes the packed8 genotype mean with explicit
 `cvt.rn.f32.u64`, `mul.rn.f32`, and `div.rn.f32` instructions. This preserves
 the host's sequential float32 conversion and operations instead of allowing an
 XLA consumer to reassociate the scale and sample-count division.
+
+The finalizer partitions every BGEN row byte exactly once among the CUDA
+threads, computes Adler-32 from unreduced integer byte and weighted-byte sums,
+and reduces those sums and the packed8 statistics through warp shuffles. An
+identity sample selection emits probabilities and accumulates statistics during
+that same source pass; other selection modes retain the indexed gather pass.
+The private FFI rejects source sample counts above 126,789,562, the largest
+count for which the unreduced Adler weighted sum is proven to fit in `uint64_t`
+for a `3 * sample_count + 10` byte packed8 row.
+
+CUDA 12.4 `ptxas` reports 40 registers, 360 bytes of static shared memory, no
+stack frame, and no spills for the finalizer on `sm_70`. The generated finalizer
+contains two block barriers and no integer divide or remainder instructions;
+the descriptor kernel retains its separate dynamic-alignment remainder.
 
 The private FFI accepts compressed bytes only from `g-genotype`'s trusted
 packed8 transport. That transport is selected after the exact-source
@@ -44,7 +58,15 @@ out-of-range and misaligned offsets, zero-length members, valid short output,
 an injected nvCOMP failure status, and full-length Adler corruption. Invalid or
 short rows produced neutral outputs without being read by the finalizer.
 
-The current PTX and seven-result FFI were execution-validated in SLURM job
-45263. Full and partial 16,384-variant batches matched the canonical host
-decoder bit-for-bit for probability bytes, integer summaries, status values,
-neutral compute-tail rows, and genotype means.
+The original seven-result FFI was execution-validated in SLURM job 45263.
+Full and partial 16,384-variant batches matched the canonical host decoder
+bit-for-bit for probability bytes, integer summaries, status values, neutral
+compute-tail rows, and genotype means.
+
+The current fused finalizer PTX was execution-validated on a V100 in SLURM
+jobs 45291 and 45293. The production-path diagnostic matched canonical host
+inputs, decoded dosage, score results, and full approximate-Firth results
+bit-for-bit. The direct FFI diagnostic covered full and tail batches,
+contiguous and nonmonotonic indexed selections, an out-of-range selected index,
+Adler-32 corruption, and an invalid descriptor; valid results matched exactly,
+and error rows retained their established status and neutral-output contracts.

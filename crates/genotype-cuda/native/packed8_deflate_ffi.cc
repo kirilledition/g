@@ -77,6 +77,10 @@ constexpr std::string_view kFinalizeKernelName = "finalize_packed8";
 constexpr std::int32_t kMinimumCudaDriverVersion = 12020;
 constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;
 constexpr unsigned int kKernelBlockSize = 256;
+// For a row of n bytes, the unreduced Adler B numerator is bounded by
+// n + 255*n*(n+1)/2. This sample limit keeps that expression within uint64_t
+// for n = 3*source_sample_count + 10 while exceeding practical BGEN sizes.
+constexpr std::size_t kMaximumExactAdlerSourceSampleCount = 126'789'562;
 static_assert(kKernelBlockSize == 256);
 
 constexpr char kPacked8KernelPtx[] =
@@ -718,6 +722,10 @@ Error decode_packed8(
       return Error::InvalidArgument("source_sample_count must be positive");
     }
     const std::size_t source_sample_count = static_cast<std::size_t>(source_sample_count_attribute);
+    if (source_sample_count > kMaximumExactAdlerSourceSampleCount) {
+      return Error::InvalidArgument(
+          "source_sample_count exceeds the 126789562-sample exact CUDA Adler-32 accumulator limit");
+    }
     if (source_sample_count > (std::numeric_limits<std::size_t>::max() - 10) / 3) {
       return Error::InvalidArgument("packed8 output stride overflows size_t");
     }

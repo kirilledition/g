@@ -635,6 +635,73 @@ Next:
   first-failure result. Each change must pass the same exact decode probes and
   paired hot GPU gate.
 
+## 2026-07-16 Packed8 CUDA Finalizer Wave
+
+The target remains one binary trait with approximate Firth, full 1KG
+chromosome 22, 512-row Firth batches, 16,384-variant chunks, eight host
+threads, and a V100 on `landau`.
+
+Baseline evidence:
+
+- The integrated nvCOMP delivery commit `ca8a5bda` was profiled in SLURM job
+  45281. The complete bundle is
+  `data/profiles/nvcomp_delivery_ca8a5bda68b_20260716`; headline, JAX,
+  cProfile, py-spy, Scalene, Memray, and Nsight Systems passes completed.
+  Nsight Compute and Linux `perf` remain unavailable because the node denies
+  their hardware counters.
+- The one-shot profile records 3.873 seconds of native execution. Across 26
+  batches, nvCOMP inflate consumes 136.485 milliseconds and the packed8
+  finalizer consumes 40.975 milliseconds, or 1.576 milliseconds per batch.
+  The finalizer alone is 8.7% of recorded GPU kernel time.
+- A fresh low-threshold `skylos --all` scan completed in job 45285 and reported
+  318 findings. Manual review found no dead production symbol: reported Rust
+  facade imports, PyO3 and Serde callbacks, trait imports, JAX scan arguments,
+  and the dynamically loaded nvCOMP package all have live consumers. Function
+  length and clone-group suggestions would split cohesive JIT graphs or merge
+  semantically distinct state. No code is changed merely to satisfy those
+  heuristics.
+
+Accepted:
+
+- Identity selection now validates the packed8 row, accumulates Adler-32,
+  emits probability pairs, and computes exact integer statistics in one
+  coalesced source pass. Direct weighted-byte accumulation removes two runtime
+  64-bit division helpers per thread. Other selection modes retain the indexed
+  gather pass and the FFI ABI is unchanged.
+- Eight 256-element shared-memory reduction arrays and an eleven-barrier tree
+  are replaced by warp-shuffle reductions through eight warp partials. CUDA
+  reports 40 registers, 360 bytes of static shared memory, no stack frame or
+  spills, two block barriers, and no integer divide or remainder in the
+  finalizer. The host rejects source counts above 126,789,562, where the exact
+  unreduced Adler weighted sum no longer fits its 64-bit accumulator.
+- Production-path parity in job 45291 is bit-exact for FFI inputs, integer
+  summaries, sparse classification, decoded dosage, every score field, and
+  every full approximate-Firth field. The rebuilt direct probe in job 45293
+  additionally passes full and tail batches, contiguous and nonmonotonic
+  indexed selections, out-of-range index handling, Adler corruption, and the
+  descriptor neutral-output gate.
+- The 14-run order-alternated hot gate in job 45294 improves the median from
+  0.978769 to 0.947684 seconds, a 3.18% reduction. The paired geometric time
+  reduction is 3.49%; the candidate wins all seven pairs, giving a two-sided
+  all-wins sign-test p-value of 0.015625.
+- A CUDA-profiler-API-bounded Nsight capture in job 45296 confirms causality.
+  The finalizer falls from 1.575946 to 0.449548 milliseconds per batch, a
+  71.47% reduction. Its 26-batch total falls from 40.975 to 11.688
+  milliseconds, saving 29.286 milliseconds and explaining about 94% of the
+  31.086-millisecond median end-to-end gain. nvCOMP inflate is now the largest
+  delivery kernel at 139.486 milliseconds in that trace.
+
+Deferred:
+
+- Returning the sparse predicate directly from CUDA would remove two small
+  count outputs and one post-FFI fusion, but the current profile bounds that
+  opportunity below one millisecond per run. Do not enlarge this accepted
+  causal patch for it.
+- The next delivery experiment should measure aligned decompressed-row or slab
+  geometry against nvCOMP inflate. The next compute experiment should target
+  the dominant Firth `input_reduce_fusion_27` and `loop_select_fusion_20`
+  kernels with exact numerical and paired hot gates.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

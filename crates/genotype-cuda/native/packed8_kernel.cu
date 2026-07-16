@@ -97,8 +97,16 @@ extern "C" __global__ void finalize_packed8(
     unsigned int* homozygous_alternate_counts,
     unsigned int* statuses,
     float* genotype_means) {
+  constexpr unsigned int adler_modulus = 65521;
+  constexpr unsigned int kernel_block_size = 256;
+  constexpr unsigned int warp_size = 32;
+  constexpr unsigned int warp_count = kernel_block_size / warp_size;
+  constexpr unsigned int full_warp_mask = 0xffffffffu;
+
   const unsigned long long variant_index = blockIdx.x;
   const unsigned int thread_index = threadIdx.x;
+  const unsigned int lane_index = thread_index % warp_size;
+  const unsigned int warp_index = thread_index / warp_size;
   if (variant_index >= compute_variant_count) {
     return;
   }
@@ -108,7 +116,7 @@ extern "C" __global__ void finalize_packed8(
   if (variant_index >= logical_variant_count) {
     for (unsigned long long selected_index = thread_index;
          selected_index < selected_sample_count;
-         selected_index += blockDim.x) {
+         selected_index += kernel_block_size) {
       probability_row[selected_index * 2] = 255;
       probability_row[selected_index * 2 + 1] = 0;
     }
@@ -138,7 +146,7 @@ extern "C" __global__ void finalize_packed8(
   if (row_gate_status != 0) {
     for (unsigned long long selected_index = thread_index;
          selected_index < selected_sample_count;
-         selected_index += blockDim.x) {
+         selected_index += kernel_block_size) {
       probability_row[selected_index * 2] = 255;
       probability_row[selected_index * 2 + 1] = 0;
     }
@@ -154,131 +162,209 @@ extern "C" __global__ void finalize_packed8(
   }
 
   const unsigned char* row = decompressed_slab + variant_index * output_stride;
+  const unsigned long long probability_offset = 10 + source_sample_count;
+  const bool identity_selection =
+      selection_start == 0 && selected_sample_count == source_sample_count;
+  unsigned long long local_sum = 0;
+  unsigned long long local_square_sum = 0;
+  unsigned long long local_adler_sum = 0;
+  unsigned long long local_adler_weighted_sum = 0;
+  unsigned int local_zero_count = 0;
+  unsigned int local_homozygous_alternate_count = 0;
   unsigned int local_status = 0;
+
   if (thread_index == 0) {
-    if (load_u32_little_endian(row) != source_sample_count) {
+    const unsigned char header_bytes[8] = {
+        row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]};
+    if (load_u32_little_endian(header_bytes) != source_sample_count) {
       local_status |= STATUS_SAMPLE_COUNT;
     }
-    if (((unsigned int)row[4] | ((unsigned int)row[5] << 8)) != 2) {
+    if (((unsigned int)header_bytes[4] |
+         ((unsigned int)header_bytes[5] << 8)) != 2) {
       local_status |= STATUS_ALLELE_COUNT;
     }
-    if (row[6] != 2 || row[7] != 2) {
+    if (header_bytes[6] != 2 || header_bytes[7] != 2) {
       local_status |= STATUS_PLOIDY_RANGE;
     }
-    if (row[8 + source_sample_count] != 0) {
+    for (unsigned int header_index = 0; header_index < 8; ++header_index) {
+      const unsigned long long byte_value = header_bytes[header_index];
+      local_adler_sum += byte_value;
+      local_adler_weighted_sum +=
+          (output_stride - header_index) * byte_value;
+    }
+    const unsigned long long phase_index = 8 + source_sample_count;
+    const unsigned long long bit_count_index = phase_index + 1;
+    const unsigned char phase = row[phase_index];
+    const unsigned char bit_count = row[bit_count_index];
+    if (phase != 0) {
       local_status |= STATUS_PHASE;
     }
-    if (row[9 + source_sample_count] != 8) {
+    if (bit_count != 8) {
       local_status |= STATUS_BIT_COUNT;
     }
+    local_adler_sum += phase + bit_count;
+    local_adler_weighted_sum +=
+        (output_stride - phase_index) * phase +
+        (output_stride - bit_count_index) * bit_count;
   }
 
-  const unsigned long long probability_offset = 10 + source_sample_count;
   for (unsigned long long source_index = thread_index;
        source_index < source_sample_count;
-       source_index += blockDim.x) {
-    if (row[8 + source_index] != 2) {
+       source_index += kernel_block_size) {
+    const unsigned long long ploidy_index = 8 + source_index;
+    const unsigned long long first_probability_index =
+        probability_offset + source_index * 2;
+    const unsigned long long second_probability_index =
+        first_probability_index + 1;
+    const unsigned int ploidy = row[ploidy_index];
+    const unsigned int first_probability = row[first_probability_index];
+    const unsigned int second_probability = row[second_probability_index];
+    if (ploidy != 2) {
       local_status |= STATUS_SAMPLE_PLOIDY;
     }
-    const unsigned int first_probability = row[probability_offset + source_index * 2];
-    const unsigned int second_probability = row[probability_offset + source_index * 2 + 1];
     if (first_probability + second_probability > 255) {
       local_status |= STATUS_PAIR_SUM;
     }
-  }
+    local_adler_sum += ploidy + first_probability + second_probability;
+    local_adler_weighted_sum +=
+        (output_stride - ploidy_index) * ploidy +
+        (output_stride - first_probability_index) * first_probability +
+        (output_stride - second_probability_index) * second_probability;
 
-  unsigned long long local_sum = 0;
-  unsigned long long local_square_sum = 0;
-  unsigned int local_zero_count = 0;
-  unsigned int local_homozygous_alternate_count = 0;
-  for (unsigned long long selected_index = thread_index;
-       selected_index < selected_sample_count;
-       selected_index += blockDim.x) {
-    const unsigned long long source_index = selection_start >= 0
-        ? (unsigned long long)selection_start + selected_index
-        : selected_sample_indices[selected_index];
-    unsigned int first_probability = 255;
-    unsigned int second_probability = 0;
-    if (source_index < source_sample_count) {
-      first_probability = row[probability_offset + (unsigned long long)source_index * 2];
-      second_probability = row[probability_offset + (unsigned long long)source_index * 2 + 1];
-    } else {
-      local_status |= STATUS_SAMPLE_INDEX;
+    if (identity_selection) {
+      probability_row[source_index * 2] = (unsigned char)first_probability;
+      probability_row[source_index * 2 + 1] =
+          (unsigned char)second_probability;
+      const unsigned long long raw_dosage =
+          510 - 2 * first_probability - second_probability;
+      local_sum += raw_dosage;
+      local_square_sum += raw_dosage * raw_dosage;
+      local_zero_count += raw_dosage == 0;
+      local_homozygous_alternate_count += raw_dosage >= 383;
     }
-    probability_row[selected_index * 2] = (unsigned char)first_probability;
-    probability_row[selected_index * 2 + 1] = (unsigned char)second_probability;
-    const unsigned long long raw_dosage = 510 - 2 * first_probability - second_probability;
-    local_sum += raw_dosage;
-    local_square_sum += raw_dosage * raw_dosage;
-    local_zero_count += raw_dosage == 0;
-    local_homozygous_alternate_count += raw_dosage >= 383;
   }
 
-  const unsigned long long segment_start = output_stride * thread_index / blockDim.x;
-  const unsigned long long segment_end = output_stride * (thread_index + 1) / blockDim.x;
-  unsigned long long segment_sum = 0;
-  unsigned long long segment_weighted_sum = 0;
-  for (unsigned long long byte_index = segment_start; byte_index < segment_end; ++byte_index) {
-    segment_sum += row[byte_index];
-    segment_weighted_sum += segment_sum;
+  if (!identity_selection) {
+    for (unsigned long long selected_index = thread_index;
+         selected_index < selected_sample_count;
+         selected_index += kernel_block_size) {
+      const unsigned long long source_index = selection_start >= 0
+          ? (unsigned long long)selection_start + selected_index
+          : selected_sample_indices[selected_index];
+      unsigned int first_probability = 255;
+      unsigned int second_probability = 0;
+      if (source_index < source_sample_count) {
+        first_probability =
+            row[probability_offset + source_index * 2];
+        second_probability =
+            row[probability_offset + source_index * 2 + 1];
+      } else {
+        local_status |= STATUS_SAMPLE_INDEX;
+      }
+      probability_row[selected_index * 2] =
+          (unsigned char)first_probability;
+      probability_row[selected_index * 2 + 1] =
+          (unsigned char)second_probability;
+      const unsigned long long raw_dosage =
+          510 - 2 * first_probability - second_probability;
+      local_sum += raw_dosage;
+      local_square_sum += raw_dosage * raw_dosage;
+      local_zero_count += raw_dosage == 0;
+      local_homozygous_alternate_count += raw_dosage >= 383;
+    }
   }
 
-  // The host ABI launches exactly 256 threads; every shared reduction array
-  // therefore has one element per participating thread.
-  __shared__ unsigned long long reduction_sums[256];
-  __shared__ unsigned long long reduction_square_sums[256];
-  __shared__ unsigned int reduction_zero_counts[256];
-  __shared__ unsigned int reduction_homozygous_alternate_counts[256];
-  __shared__ unsigned int reduction_statuses[256];
-  __shared__ unsigned int adler_sums[256];
-  __shared__ unsigned int adler_weighted_sums[256];
-  __shared__ unsigned long long adler_lengths[256];
+  for (unsigned int offset = warp_size / 2; offset != 0; offset /= 2) {
+    local_sum +=
+        __shfl_down_sync(full_warp_mask, local_sum, offset);
+    local_square_sum +=
+        __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    local_adler_sum +=
+        __shfl_down_sync(full_warp_mask, local_adler_sum, offset);
+    local_adler_weighted_sum += __shfl_down_sync(
+        full_warp_mask, local_adler_weighted_sum, offset);
+    local_zero_count +=
+        __shfl_down_sync(full_warp_mask, local_zero_count, offset);
+    local_homozygous_alternate_count += __shfl_down_sync(
+        full_warp_mask, local_homozygous_alternate_count, offset);
+    local_status |=
+        __shfl_down_sync(full_warp_mask, local_status, offset);
+  }
 
-  reduction_sums[thread_index] = local_sum;
-  reduction_square_sums[thread_index] = local_square_sum;
-  reduction_zero_counts[thread_index] = local_zero_count;
-  reduction_homozygous_alternate_counts[thread_index] = local_homozygous_alternate_count;
-  reduction_statuses[thread_index] = local_status;
-  adler_sums[thread_index] = segment_sum % 65521;
-  adler_weighted_sums[thread_index] = segment_weighted_sum % 65521;
-  adler_lengths[thread_index] = segment_end - segment_start;
+  __shared__ unsigned long long warp_sums[warp_count];
+  __shared__ unsigned long long warp_square_sums[warp_count];
+  __shared__ unsigned long long warp_adler_sums[warp_count];
+  __shared__ unsigned long long warp_adler_weighted_sums[warp_count];
+  __shared__ unsigned int warp_zero_counts[warp_count];
+  __shared__ unsigned int warp_homozygous_alternate_counts[warp_count];
+  __shared__ unsigned int warp_statuses[warp_count];
+  if (lane_index == 0) {
+    warp_sums[warp_index] = local_sum;
+    warp_square_sums[warp_index] = local_square_sum;
+    warp_adler_sums[warp_index] = local_adler_sum;
+    warp_adler_weighted_sums[warp_index] = local_adler_weighted_sum;
+    warp_zero_counts[warp_index] = local_zero_count;
+    warp_homozygous_alternate_counts[warp_index] =
+        local_homozygous_alternate_count;
+    warp_statuses[warp_index] = local_status;
+  }
   __syncthreads();
 
-  if (thread_index == 0) {
-    unsigned long long first_sum = 1;
-    unsigned long long second_sum = 0;
-    for (unsigned int segment_index = 0; segment_index < blockDim.x; ++segment_index) {
-      second_sum = (second_sum + adler_weighted_sums[segment_index] +
-                    (unsigned long long)adler_lengths[segment_index] * first_sum) % 65521;
-      first_sum = (first_sum + adler_sums[segment_index]) % 65521;
-    }
-    const unsigned int observed_adler32 =
-        ((unsigned int)second_sum << 16) | (unsigned int)first_sum;
-    if (observed_adler32 != compressed_metadata[variant_index * 3 + 2]) {
-      reduction_statuses[0] |= STATUS_ADLER32;
-    }
+  if (warp_index != 0) {
+    return;
   }
-  __syncthreads();
+  local_sum = lane_index < warp_count ? warp_sums[lane_index] : 0;
+  local_square_sum =
+      lane_index < warp_count ? warp_square_sums[lane_index] : 0;
+  local_adler_sum =
+      lane_index < warp_count ? warp_adler_sums[lane_index] : 0;
+  local_adler_weighted_sum = lane_index < warp_count
+      ? warp_adler_weighted_sums[lane_index]
+      : 0;
+  local_zero_count =
+      lane_index < warp_count ? warp_zero_counts[lane_index] : 0;
+  local_homozygous_alternate_count = lane_index < warp_count
+      ? warp_homozygous_alternate_counts[lane_index]
+      : 0;
+  local_status =
+      lane_index < warp_count ? warp_statuses[lane_index] : 0;
+  for (unsigned int offset = warp_size / 2; offset != 0; offset /= 2) {
+    local_sum +=
+        __shfl_down_sync(full_warp_mask, local_sum, offset);
+    local_square_sum +=
+        __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    local_adler_sum +=
+        __shfl_down_sync(full_warp_mask, local_adler_sum, offset);
+    local_adler_weighted_sum += __shfl_down_sync(
+        full_warp_mask, local_adler_weighted_sum, offset);
+    local_zero_count +=
+        __shfl_down_sync(full_warp_mask, local_zero_count, offset);
+    local_homozygous_alternate_count += __shfl_down_sync(
+        full_warp_mask, local_homozygous_alternate_count, offset);
+    local_status |=
+        __shfl_down_sync(full_warp_mask, local_status, offset);
+  }
+  if (lane_index != 0) {
+    return;
+  }
 
-  for (unsigned int offset = blockDim.x / 2; offset != 0; offset /= 2) {
-    if (thread_index < offset) {
-      reduction_sums[thread_index] += reduction_sums[thread_index + offset];
-      reduction_square_sums[thread_index] += reduction_square_sums[thread_index + offset];
-      reduction_zero_counts[thread_index] += reduction_zero_counts[thread_index + offset];
-      reduction_homozygous_alternate_counts[thread_index] +=
-          reduction_homozygous_alternate_counts[thread_index + offset];
-      reduction_statuses[thread_index] |= reduction_statuses[thread_index + offset];
-    }
-    __syncthreads();
+  const unsigned long long first_adler_sum =
+      (1 + local_adler_sum) % adler_modulus;
+  const unsigned long long second_adler_sum =
+      (output_stride + local_adler_weighted_sum) % adler_modulus;
+  const unsigned int observed_adler32 =
+      ((unsigned int)second_adler_sum << 16) |
+      (unsigned int)first_adler_sum;
+  if (observed_adler32 !=
+      compressed_metadata[variant_index * 3 + 2]) {
+    local_status |= STATUS_ADLER32;
   }
-
-  if (thread_index == 0) {
-    raw_dosage_sums[variant_index] = reduction_sums[0];
-    raw_dosage_square_sums[variant_index] = reduction_square_sums[0];
-    zero_counts[variant_index] = reduction_zero_counts[0];
-    homozygous_alternate_counts[variant_index] = reduction_homozygous_alternate_counts[0];
-    statuses[variant_index] = reduction_statuses[0];
-    genotype_means[variant_index] = packed8_genotype_mean(
-        reduction_sums[0], selected_sample_count);
-  }
+  raw_dosage_sums[variant_index] = local_sum;
+  raw_dosage_square_sums[variant_index] = local_square_sum;
+  zero_counts[variant_index] = local_zero_count;
+  homozygous_alternate_counts[variant_index] =
+      local_homozygous_alternate_count;
+  statuses[variant_index] = local_status;
+  genotype_means[variant_index] =
+      packed8_genotype_mean(local_sum, selected_sample_count);
 }
