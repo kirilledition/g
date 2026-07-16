@@ -999,6 +999,44 @@ Rejected:
   (`p=0.9025`). Per the fixed gate, the source patch is not retained despite
   the isolated index-stage win.
 
+## 2026-07-17 Compact Firth Outer-Unroll Wave
+
+Rejected:
+
+- Grouping four pseudo-Firth outer iterations only for compact batches keeps
+  the dense factor-one StableHLO byte-identical and preserves exact dense and
+  compact result digests. Across five position-balanced focused blocks, compact
+  solver reductions are 1.8321%, 2.8190%, 0.5410%, 0.6076%, and -0.1942%.
+  The 0.6076% median does not clear zero under bootstrap resampling.
+- The candidate enlarges compact compiled HLO from 98,453 to 308,917 bytes
+  (+213.8%), cold compact compilation from 1.060 to 1.842 seconds (+73.9%),
+  and the measured cache from 260,311 to 332,411 bytes (+27.7%). The small,
+  uncertain hot benefit does not justify that executable bloat, so no full
+  application gate was run and the source patch was removed. Artifacts are
+  under `data/profiles/firth_compact_outer_unroll_focused_45491_*` and
+  `data/profiles/firth_compact_outer_unroll_static_20260717`.
+
+## 2026-07-17 Tiny-DEFLATE CUDA Spike
+
+Rejected:
+
+- The full chromosome-22 corpus contains 418,943 zlib members whose raw
+  DEFLATE payloads are single final dynamic-Huffman blocks with 7,522-byte
+  outputs. A bounded custom CUDA decoder prototype preserved exact probability
+  pairs, dosage sums, status masking, long-code behavior, and corruption,
+  truncation, Adler-32, and short-output contracts.
+- Warp-local synchronization and literal-run copying removed the prototype's
+  block barriers, but did not remove its serial lane-zero Huffman and token
+  decoder. Across 20 position-balanced direct-FFI processes, nvCOMP has a
+  6.223-millisecond median and the custom kernel 7.496 milliseconds. The custom
+  path is 20.46% slower, and all five balanced quartet ratios regress by
+  19.8--21.0%.
+- The experiment fails both the 10% direct-performance floor and the stronger
+  20% threshold required to justify a second format-restricted decoder. The
+  roughly 500-line CUDA implementation, generated PTX, and integration changes
+  were deleted without a full application gate. The retained characterization
+  is `data/profiles/tiny_deflate_characterization_45493.json`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
