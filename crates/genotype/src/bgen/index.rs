@@ -17,23 +17,45 @@ pub(super) struct ParsedVariantIndex {
     pub(super) chromosome_boundary_indices: Vec<usize>,
 }
 
-#[derive(Default)]
 struct StringDictionaryBuilder {
     values: Vec<Arc<str>>,
     codes_by_value: HashMap<Arc<str>, u32>,
+    ascii_codes_by_byte: [Option<u32>; 128],
+}
+
+impl Default for StringDictionaryBuilder {
+    fn default() -> Self {
+        Self { values: Vec::new(), codes_by_value: HashMap::new(), ascii_codes_by_byte: [None; 128] }
+    }
 }
 
 impl StringDictionaryBuilder {
     fn intern(&mut self, bytes: &[u8]) -> Result<u32, BgenError> {
-        let text = String::from_utf8_lossy(bytes);
-        if let Some(code) = self.codes_by_value.get(text.as_ref()) {
-            return Ok(*code);
+        let ascii_byte_index = match bytes {
+            [byte] if byte.is_ascii() => Some(usize::from(*byte)),
+            _ => None,
+        };
+        if let Some(ascii_byte_index) = ascii_byte_index
+            && let Some(code) = self.ascii_codes_by_byte[ascii_byte_index]
+        {
+            return Ok(code);
         }
-        let code = u32::try_from(self.values.len())
-            .map_err(|_| BgenError::Range("BGEN metadata dictionary exceeds the uint32 index domain.".to_string()))?;
-        let value = Arc::<str>::from(text.into_owned());
-        self.codes_by_value.insert(Arc::clone(&value), code);
-        self.values.push(value);
+
+        let text = String::from_utf8_lossy(bytes);
+        let code = if let Some(code) = self.codes_by_value.get(text.as_ref()) {
+            *code
+        } else {
+            let code = u32::try_from(self.values.len()).map_err(|_| {
+                BgenError::Range("BGEN metadata dictionary exceeds the uint32 index domain.".to_string())
+            })?;
+            let value = Arc::<str>::from(text.into_owned());
+            self.codes_by_value.insert(Arc::clone(&value), code);
+            self.values.push(value);
+            code
+        };
+        if let Some(ascii_byte_index) = ascii_byte_index {
+            self.ascii_codes_by_byte[ascii_byte_index] = Some(code);
+        }
         Ok(code)
     }
 }

@@ -733,6 +733,29 @@ Next:
   The current trace contains 26 such copies and about 35.8 milliseconds of
   following launch gaps; never silently truncate a trait exceeding capacity.
 
+## 2026-07-16 BGEN Allele Interning Wave
+
+The full chromosome-22 index performs 837,886 allele interning calls. Of
+these, 803,358 (95.88%) are exact one-byte ASCII alleles, predominantly
+`A`, `C`, `G`, and `T`; the previous path repeated lossy UTF-8 conversion and
+hash-table lookup for every call.
+
+Accepted:
+
+- `StringDictionaryBuilder` keeps a fixed 128-entry optional-code cache. A
+  first encounter still follows the existing conversion, lookup, insertion,
+  and dictionary-order path before filling the cache. Empty, multibyte, and
+  non-ASCII inputs retain the old path and error behavior. The cache allocates
+  nothing and adds about one KiB to the transient index builder.
+- Sixteen order-alternated Criterion processes on an exclusive `godel` core
+  reduce median full chr22 open/index time from 87.018 to 66.876 milliseconds.
+  The paired geometric reduction is 23.52%, all eight pairs win, and the
+  bootstrap 95% interval is 23.11--23.99%.
+- The production extension emits byte-identical chr22 Parquet partitions. In
+  ten order-alternated `landau` processes with five hot trials each, median hot
+  time improves 1.66% and the paired geometric reduction is 1.23%; the
+  bootstrap 95% interval is 0.22--1.99%, with four of five process-pair wins.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
