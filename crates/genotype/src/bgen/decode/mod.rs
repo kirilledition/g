@@ -6,7 +6,7 @@ mod variant_major;
 
 pub(super) use matrix::{
     ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileStatsMut, read_eight_bit_probability_pair,
-    selected_sample_count_to_i32,
+    selected_sample_count_to_i32, with_worker_thread_scratch,
 };
 #[cfg(test)]
 pub(super) use matrix::{packed_eight_bit_probability_index, unphased_eight_bit_dosage_lookup};

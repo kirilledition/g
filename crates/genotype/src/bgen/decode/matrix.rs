@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 
@@ -90,4 +91,23 @@ impl Drop for ThreadScratch {
         // this destructor runs exactly once.
         unsafe { libdeflate_sys::libdeflate_free_decompressor(self.zlib_decompressor.as_ptr()) };
     }
+}
+
+thread_local! {
+    static WORKER_THREAD_SCRATCH: RefCell<ThreadScratch> = RefCell::new(ThreadScratch::default());
+}
+
+pub(in crate::bgen) fn with_worker_thread_scratch<Output>(
+    operation: impl FnOnce(&mut ThreadScratch) -> Output,
+) -> Output {
+    WORKER_THREAD_SCRATCH.with(|worker_thread_scratch| {
+        if let Ok(mut scratch) = worker_thread_scratch.try_borrow_mut() {
+            operation(&mut scratch)
+        } else {
+            // Nested decoding on one Rayon worker must not alias the active
+            // decompressor. A temporary scratch preserves reentrant safety.
+            let mut reentrant_scratch = ThreadScratch::default();
+            operation(&mut reentrant_scratch)
+        }
+    })
 }

@@ -4,6 +4,7 @@ use rayon::prelude::*;
 
 use crate::bgen::decode::{
     ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileStatsMut, decode_variant_major_dosage_tile,
+    with_worker_thread_scratch,
 };
 use crate::bgen::error::BgenError;
 use crate::bgen::packed8;
@@ -405,10 +406,8 @@ where
             .zip(zero_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .zip(homozygous_alternate_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .enumerate()
-            .try_for_each_init(
-                ThreadScratch::default,
-                |thread_scratch,
-                 (
+            .try_for_each(
+                |(
                     tile_index,
                     (
                         (
@@ -424,7 +423,9 @@ where
                         observation_count,
                         Some((zero_count, homozygous_alternate_count)),
                     );
-                    decode_tile(thread_scratch, tile_index, variant_records, output_tile, &mut tile_stats)
+                    with_worker_thread_scratch(|thread_scratch| {
+                        decode_tile(thread_scratch, tile_index, variant_records, output_tile, &mut tile_stats)
+                    })
                 },
             ),
         (None, None) => selected_variant_records
@@ -434,16 +435,16 @@ where
             .zip(dosage_square_sum.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .zip(observation_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .enumerate()
-            .try_for_each_init(
-                ThreadScratch::default,
-                |thread_scratch,
-                 (
+            .try_for_each(
+                |(
                     tile_index,
                     ((((variant_records, output_tile), dosage_sum), dosage_square_sum), observation_count),
                 )| {
                     let mut tile_stats =
                         variant_major_tile_stats_mut(dosage_sum, dosage_square_sum, observation_count, None);
-                    decode_tile(thread_scratch, tile_index, variant_records, output_tile, &mut tile_stats)
+                    with_worker_thread_scratch(|thread_scratch| {
+                        decode_tile(thread_scratch, tile_index, variant_records, output_tile, &mut tile_stats)
+                    })
                 },
             ),
         _ => unreachable!("sparse statistic buffers are allocated together"),
