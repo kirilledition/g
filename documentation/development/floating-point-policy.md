@@ -13,12 +13,17 @@ stability.
 1. Phenotypes, covariates, LOCO predictions, dosages, and genotype summary
    buffers are stored as `f32` on the Rust host.
 2. JAX score-test arithmetic and public result statistics use `float32`.
-3. Null Firth, approximate Firth, fallback Newton-Raphson, likelihood,
-   information-matrix, and corrected-statistic calculations use JAX `float64`.
-4. Corrected Firth values are narrowed once when merged into float32 score results.
-5. `firth_dtype` does not exist. Firth width is an algorithm invariant, not a
+3. Null Firth, approximate-Firth outer components, convergence checks,
+   likelihood, information, corrected statistics, and fallback Newton-Raphson
+   use JAX `float64`.
+4. The approximate-Firth inner pseudo-logistic proposal evaluates sigmoid,
+   score products, and information products in `float32`, widens products
+   before `float64` reductions, and only proposes coefficients for subsequent
+   `float64` validation.
+5. Corrected Firth values are narrowed once when merged into float32 score results.
+6. `firth_dtype` does not exist. Firth width is an algorithm invariant, not a
    user option.
-6. Epsilon is derived from the active array dtype with `jnp.finfo(dtype).eps`.
+7. Epsilon is derived from the active array dtype with `jnp.finfo(dtype).eps`.
    A float64 epsilon must never be cast down and used as a float32 tolerance.
 
 ## Configuration Values
@@ -38,9 +43,10 @@ array dtype at the point of use.
 
 - New host arrays remain `f32` unless a measured host-side algorithm requires
   wider storage.
-- New Firth operands are explicitly converted to `jnp.float64` before solver
-  work begins.
+- New Firth state and objective operands are explicitly converted to
+  `jnp.float64`; the documented inner proposal is the only elementwise
+  `float32` exception.
 - New convergence constants derive from the operand dtype.
 - No configuration or manifest field reintroduces `firth_dtype`.
-- Narrowing output conversions occur once during materialization, not inside
-  iterative kernels.
+- Output narrowing occurs once during materialization. Inner-proposal products
+  widen before every `float64` reduction.
