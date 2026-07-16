@@ -38,7 +38,7 @@ optional TOML file, and explicit CLI overrides.
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
 
-Manifest schema version `16` stores immutable compatibility state once under
+Manifest schema version `17` stores immutable compatibility state once under
 `execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
 fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
@@ -92,7 +92,7 @@ chunk plan.
 
 ## Compatibility Checks
 
-Resume first requires an existing schema-v14 `run_manifest.json`. It then
+Resume first requires an existing schema-v17 `run_manifest.json`. It then
 compares the current requested run against the canonical `execution_plan` and
 its hash. A mismatch fails with a message naming the first incompatible
 manifest field. Earlier manifest layouts are not adapted because the
@@ -118,6 +118,11 @@ Common mismatch causes:
   policy recorded in the execution plan.
 
 Resume is not a way to combine different analyses into one output directory.
+Approximate-Firth manifests fingerprint the fixed inner proposal policy as
+`float32_elementwise_float64_reduction`. Pre-v17 runs used the prior
+all-`float64` inner policy and cannot be resumed into or mixed with current
+output parts.
+
 In particular, runs whose execution plan still contains the removed
 `firth_newton_raphson_zero_start_iterations` field have a different plan schema
 and hash. Start a new output directory instead of resuming those pre-release
@@ -128,7 +133,7 @@ Pre-release configurations and manifests must remove the experimental
 `use_block_firth_math` option and its block-only coefficient, likelihood,
 step-halving, and initial-response settings. Effective configuration metadata
 uses option schema version `6`, and these fields are not accepted by manifest
-schema version `16`; start a new output directory instead of resuming an older
+schema version `17`; start a new output directory instead of resuming an older
 block-Firth-compatible run.
 
 ## Graceful Interruption

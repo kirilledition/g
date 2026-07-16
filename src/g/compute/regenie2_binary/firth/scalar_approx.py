@@ -102,7 +102,7 @@ def fit_scalar_pseudo_logistic_step(
     maximum_iterations: int | jax.Array,
     maximum_step_size: jax.Array,
 ) -> regenie2_binary_firth_types.ScalarPseudoLogisticState:
-    """Run REGENIE's inner pseudo-response scalar logistic update."""
+    """Run the inner pseudo-logistic update with float32 elementwise math and float64 reductions."""
     maximum_iteration_count = jnp.asarray(maximum_iterations, dtype=jnp.int32)
 
     def should_continue(state: regenie2_binary_firth_types.ScalarPseudoLogisticState) -> jax.Array:
@@ -116,22 +116,27 @@ def fit_scalar_pseudo_logistic_step(
         step_increased = absolute_step_size > state.previous_step_size
         step_scale = jnp.maximum(absolute_step_size / maximum_step_size, 1.0)
         updated_beta = state.beta + step_size / step_scale
-        probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
-            offset_vector + genotype_vector * updated_beta
+        genotype_vector_compute = jnp.asarray(genotype_vector, dtype=jnp.float32)
+        phenotype_vector_compute = jnp.asarray(phenotype_vector, dtype=jnp.float32)
+        probability_vector_compute = jax.nn.sigmoid(
+            jnp.asarray(offset_vector, dtype=jnp.float32)
+            + genotype_vector_compute * jnp.asarray(updated_beta, dtype=jnp.float32)
         )
         updated_score = (
             jnp.sum(
                 jnp.where(
                     active_sample_mask,
-                    genotype_vector * (phenotype_vector - probability_vector),
+                    genotype_vector_compute * (phenotype_vector_compute - probability_vector_compute),
                     0.0,
-                )
+                ).astype(jnp.float64)
             )
             + score_adjustment
         )
-        weight_vector = probability_vector * (1.0 - probability_vector)
-        active_weight_vector = jnp.where(active_sample_mask, weight_vector, 0.0)
-        updated_genotype_information = jnp.sum(genotype_vector * genotype_vector * active_weight_vector)
+        weight_vector_compute = probability_vector_compute * (1.0 - probability_vector_compute)
+        active_weight_vector_compute = jnp.where(active_sample_mask, weight_vector_compute, 0.0)
+        updated_genotype_information = jnp.sum(
+            (genotype_vector_compute * genotype_vector_compute * active_weight_vector_compute).astype(jnp.float64)
+        )
         numerical_failed = (
             (~jnp.isfinite(updated_beta))
             | (~jnp.isfinite(updated_score))

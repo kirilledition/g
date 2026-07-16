@@ -219,6 +219,13 @@ The determinant term is the Jeffreys-prior penalty used by Firth’s bias-reduct
 4. fall back through configured Newton, warm-start, line-search, and step-halving attempts;
 5. report the penalized likelihood-ratio statistic for successful corrected rows.
 
+Approximate-Firth outer components, convergence checks, likelihood,
+information, corrected statistics, and Newton fallback use `float64`. The
+inner pseudo-logistic proposal evaluates its sigmoid, score products, and
+information products in `float32`, widens products before `float64`
+reductions, and only proposes coefficients for subsequent `float64`
+validation.
+
 For corrected rows:
 
 ```text
@@ -296,8 +303,9 @@ Multiple phenotypes are requested with repeated `--phenoCol` options.
 | `--firth-se` | Changes reported `SE` for successful Firth rows only. |
 
 Association scores and persisted public statistics use fixed `float32`
-precision. Approximate-Firth iterations use `float64` internally before results
-are converted to the public output precision.
+precision. Approximate-Firth follows the mixed inner-proposal and `float64`
+validation policy above before corrected results are converted to public output
+precision.
 
 Runtime options such as `--bsize`, `[compute] cpu_threads`, `[compute] device`,
 resume, and `[diagnostics] telemetry` should not intentionally change scientific

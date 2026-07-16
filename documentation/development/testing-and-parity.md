@@ -63,9 +63,11 @@ bugs until input alignment has been verified.
 
 ## Numerical Expectations
 
-Result statistics and score-test kernels use `float32`. Firth solver internals
-use `float64`, then narrow corrected values once during result materialization.
-When validating a numerical change, record:
+Result statistics and score-test kernels use `float32`. Approximate-Firth outer
+components, reductions, solver state, validation, and fallback use `float64`.
+Its inner pseudo-logistic elementwise proposal uses `float32` and widens before
+`float64` reductions; corrected values narrow once during result
+materialization. When validating a numerical change, record:
 
 - command and commit;
 - input paths and phenotype/covariate columns;

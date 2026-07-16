@@ -132,7 +132,9 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
   operating system default action.
 - Unsupported REGENIE options are rejected, not silently adapted.
 - Rust host scientific buffers, association scores, and persisted public
-  statistics are `f32`. Firth arithmetic is always `f64`.
+  statistics are `f32`. Approximate-Firth state, reductions, objective
+  components, and validation are `f64`; its inner pseudo-logistic elementwise
+  proposal is `f32`.
 - Production exports are limited to `g._core.cli`.
 
 Detailed contracts:

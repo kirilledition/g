@@ -75,11 +75,14 @@ Examples:
 - null logistic nonconvergence policy;
 - Firth iteration, tolerance, and line-search limits.
 
-Score arithmetic uses `float32`, Firth arithmetic uses `float64`, JAX x64 is
-enabled, and JAX matmul precision is `float32`. These are fixed implementation
-policies, not configuration fields. Do not add module-level runtime constants
-for configurable numerical behavior or expose fixed width/runtime policy as
-configuration.
+Score arithmetic uses `float32`. Approximate-Firth outer components, reductions,
+solver state, convergence, likelihood, corrected statistics, and Newton
+fallback use `float64`; only the inner pseudo-logistic elementwise proposal
+uses `float32` before widening its products for `float64` reductions. JAX x64
+is enabled, and JAX matmul precision is `float32`. These are fixed
+implementation policies, not configuration fields. Do not add module-level
+runtime constants for configurable numerical behavior or expose fixed
+width/runtime policy as configuration.
 
 ## JAX Runtime
 

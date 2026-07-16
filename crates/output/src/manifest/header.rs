@@ -87,10 +87,14 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "kind": association_backend_kind,
         "genotype_format": input.resolved_gpu_genotype_format.as_str(),
     });
+    let approximate_firth_pseudo_inner_policy = (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate)
+        .then_some("float32_elementwise_float64_reduction");
     let jax_policy = json!({
         "device": run_plan.compute.device.as_str(),
         "enable_x64": true,
         "matmul_precision": "float32",
+        "approximate_firth_pseudo_inner_policy": approximate_firth_pseudo_inner_policy,
     });
     let output_writer = json!({
         "writer_thread_count": run_plan.output.writer_thread_count,
