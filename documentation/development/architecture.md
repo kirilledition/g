@@ -42,14 +42,14 @@ typed arrays to Rust.
 | CLI parsing, TOML, defaults, validation | `g-interface` |
 | Immutable run contracts and host policy | `g-plan` |
 | Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
-| BGEN mmap/index, immutable read sessions, decode/preprocessing, and owned decoded batches/buffers | `g-genotype` |
+| BGEN mmap/index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
 | BGEN delivery orchestration, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
 | Logging/telemetry transport, timing, Rayon state, SIGTERM | `g-runtime` |
 | CLI lifecycle, process/JAX policy, crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
 | PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation, JAX process calls | root Rust extension under `src/binding` |
-| Device state and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
+| Device state, compressed-device decode invocation, and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
 
 `g-runner` is the root dependency through which the binding reaches CLI,
 planning, runtime, and execution services. It owns CLI dispatch, resolves the
@@ -78,6 +78,15 @@ Genotype, engine, and output import one canonical set of data-plane column
 contracts from `g-genotype-contracts`. Genotype retains dictionary-coded
 metadata through a shared store and output builds Arrow metadata lazily, so the
 crate boundary adds no row copies, eager arrays, or adapter DTOs.
+
+The backend advertises a genotype-delivery capability to `g-engine`.
+`g-genotype` chooses either an owned host-decoded batch or a canonical
+compressed packed8 batch; `g-engine` schedules that typed payload without
+knowing Python or CUDA details. The root backend only lends the crate-owned
+slab and metadata to NumPy and calls the private JAX transfer method. The CUDA
+FFI handler and all raw-DEFLATE validation/finalization live in
+`g-genotype-cuda`; binding code performs only lazy library loading and target
+registration required by PyO3/JAX.
 
 Runner holds process runtime state across logging-compatibility validation,
 native session construction, subscriber installation, and topology recording.

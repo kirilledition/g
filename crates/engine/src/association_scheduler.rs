@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::backend::{AssociationBackend, GenotypeBatchInput};
+use crate::backend::{AssociationBackend, MaterializedAssociationBatch, MaterializedGenotypeStatistics};
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError};
-use g_genotype::{ChunkStats, DecodedGenotypeBatch, OwnedGenotypeBuffer};
+use g_genotype::{GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
 use g_genotype_contracts::ChunkOutputStatistics;
 use g_output::NativeVariantMetadataHandle;
 
@@ -28,91 +28,50 @@ const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// One owned association batch ready for device compute.
 #[derive(Debug)]
 pub(crate) struct ScheduledAssociationBatch {
-    pub(crate) decoded: DecodedGenotypeBatch,
+    pub(crate) genotypes: GenotypeBatch,
     pub(crate) metadata: NativeVariantMetadataHandle,
     pub(crate) active_trait_selection: ActiveTraitSelection,
 }
 
 impl ScheduledAssociationBatch {
     fn validate<BackendError>(&self) -> SchedulerResult<(), BackendError> {
-        let decoded = &self.decoded;
-        if self.metadata.row_count() != decoded.logical_variant_count {
+        let genotypes = &self.genotypes;
+        if self.metadata.row_count() != genotypes.logical_variant_count {
             return Err(SchedulerError::InvalidBatch {
                 message: format!(
-                    "metadata contains {} variants, decoded batch contains {}",
+                    "metadata contains {} variants, genotype batch contains {}",
                     self.metadata.row_count(),
-                    decoded.logical_variant_count
+                    genotypes.logical_variant_count
                 ),
             });
         }
-        if decoded.compute_variant_count < decoded.logical_variant_count {
+        if genotypes.compute_variant_count < genotypes.logical_variant_count {
             return Err(SchedulerError::InvalidBatch {
                 message: format!(
                     "compute variant count {} is smaller than logical variant count {}",
-                    decoded.compute_variant_count, decoded.logical_variant_count
+                    genotypes.compute_variant_count, genotypes.logical_variant_count
                 ),
             });
         }
-        let genotype_value_count =
-            decoded.compute_variant_count.checked_mul(decoded.sample_count).ok_or_else(|| {
-                SchedulerError::InvalidBatch {
-                    message: "variant and sample counts overflow the host index width".to_string(),
-                }
-            })?;
-        let expected_genotype_value_count = match &decoded.genotypes {
-            OwnedGenotypeBuffer::Dosage(_) => genotype_value_count,
-            OwnedGenotypeBuffer::Packed8(_) => {
-                genotype_value_count.checked_mul(2).ok_or_else(|| SchedulerError::InvalidBatch {
-                    message: "packed8 genotype dimensions overflow the host index width".to_string(),
-                })?
-            }
-        };
-        let observed_genotype_value_count = match &decoded.genotypes {
-            OwnedGenotypeBuffer::Dosage(values) => values.len(),
-            OwnedGenotypeBuffer::Packed8(values) => values.len(),
-        };
-        if observed_genotype_value_count != expected_genotype_value_count {
-            return Err(SchedulerError::InvalidBatch {
-                message: format!(
-                    "genotype buffer contains {observed_genotype_value_count} values, expected {expected_genotype_value_count}"
-                ),
-            });
-        }
-        validate_variant_column_length(
-            "genotype mean",
-            decoded.statistics.compute.genotype_mean.len(),
-            decoded.compute_variant_count,
-        )?;
-        if let Some(imputed_dosage_square_sum) = decoded.statistics.compute.imputed_dosage_square_sum.as_ref() {
-            validate_variant_column_length(
-                "imputed dosage square sum",
-                imputed_dosage_square_sum.len(),
-                decoded.compute_variant_count,
-            )?;
-        }
-        if let Some(sparse_candidate_mask) = decoded.statistics.compute.sparse_candidate_mask.as_ref() {
-            validate_variant_column_length(
-                "rare sparse Firth candidate mask",
-                sparse_candidate_mask.len(),
-                decoded.compute_variant_count,
-            )?;
+        if let GenotypeBatchPayload::Decoded { genotypes: values, statistics } = &genotypes.payload {
+            validate_decoded_batch::<BackendError>(genotypes, values, statistics)?;
         }
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct AssociationBatchOutput {
-    pub variant_start_index: usize,
-    pub metadata: NativeVariantMetadataHandle,
-    pub statistics: ChunkOutputStatistics,
-    pub active_trait_selection: ActiveTraitSelection,
+pub(crate) struct AssociationBatchContext {
+    pub(crate) variant_start_index: usize,
+    pub(crate) metadata: NativeVariantMetadataHandle,
+    pub(crate) active_trait_selection: ActiveTraitSelection,
 }
 
 /// One completed host result and the resources that produced it.
 #[derive(Debug)]
 pub(crate) struct CompletedAssociationBatch {
-    pub(crate) output: AssociationBatchOutput,
+    pub(crate) context: AssociationBatchContext,
+    pub(crate) statistics: ChunkOutputStatistics,
     pub(crate) result: g_output::Regenie2StatisticBatch,
 }
 
@@ -135,6 +94,8 @@ pub(crate) enum SchedulerError<BackendError> {
         #[source]
         source: BackendError,
     },
+    #[error(transparent)]
+    Genotype(#[from] g_genotype::GenotypeError),
     #[error("association scheduler {worker} worker could not start: {message}")]
     WorkerSpawn { worker: &'static str, message: String },
     #[error("association scheduler {worker} worker panicked: {message}")]
@@ -170,12 +131,12 @@ pub(crate) enum SchedulerError<BackendError> {
 type SchedulerResult<Value, BackendError> = Result<Value, SchedulerError<BackendError>>;
 
 struct DeviceAssociationBatch<DeviceResult> {
-    output: AssociationBatchOutput,
+    context: AssociationBatchContext,
     device_result: DeviceResult,
 }
 
 struct TransferredAssociationBatch<TransferredInput> {
-    output: AssociationBatchOutput,
+    context: AssociationBatchContext,
     input: TransferredInput,
 }
 
@@ -231,11 +192,12 @@ impl<BackendError> SchedulerControl<BackendError> {
 }
 
 /// One bounded decoded-to-device-to-host delivery pipeline.
-pub(crate) struct AssociationBatchPipeline<Backend>
+pub(crate) struct AssociationBatchPipeline<'group, Backend>
 where
     Backend: AssociationBackend + 'static,
 {
     backend: Arc<Backend>,
+    group: &'group Backend::GroupState,
     compute_sender: Option<Sender<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>>,
     event_receiver: Receiver<AssociationSchedulerEvent>,
     compute_worker: Option<thread::JoinHandle<()>>,
@@ -244,7 +206,7 @@ where
     state: PipelineSchedulerState,
 }
 
-impl<Backend> AssociationBatchPipeline<Backend>
+impl<'group, Backend> AssociationBatchPipeline<'group, Backend>
 where
     Backend: AssociationBackend + 'static,
 {
@@ -253,7 +215,10 @@ where
     /// # Errors
     ///
     /// Returns an error when a worker thread cannot be started.
-    pub(crate) fn new(backend: Arc<Backend>) -> SchedulerResult<Self, Backend::Error> {
+    pub(crate) fn new(
+        backend: Arc<Backend>,
+        group: &'group Backend::GroupState,
+    ) -> SchedulerResult<Self, Backend::Error> {
         let (compute_sender, compute_receiver) = crossbeam_channel::bounded(TRANSFERRED_BATCH_CAPACITY);
         let (device_sender, device_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let (event_sender, event_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
@@ -317,6 +282,7 @@ where
 
         Ok(Self {
             backend: pipeline_backend,
+            group,
             compute_sender: Some(compute_sender),
             event_receiver,
             compute_worker: Some(compute_worker),
@@ -415,33 +381,15 @@ where
         if !self.is_drained() && sender.is_full() {
             return Ok(Some(batch));
         }
-        let ScheduledAssociationBatch { decoded, metadata, active_trait_selection } = batch;
-        let DecodedGenotypeBatch {
-            variant_start_index,
-            logical_variant_count: _,
-            compute_variant_count,
-            sample_count,
-            genotypes,
-            statistics,
-        } = decoded;
-        let ChunkStats { output: output_statistics, compute: compute_statistics } = statistics;
+        let ScheduledAssociationBatch { genotypes, metadata, active_trait_selection } = batch;
+        let variant_start_index = genotypes.variant_start_index;
         let input = self
             .backend
-            .transfer_batch(GenotypeBatchInput {
-                variant_count: compute_variant_count,
-                sample_count,
-                genotypes,
-                statistics: compute_statistics,
-            })
+            .transfer_batch(self.group, genotypes)
             .map_err(|source| SchedulerError::Backend { stage: TRANSFER_STAGE, source })?;
-        let output = AssociationBatchOutput {
-            variant_start_index,
-            metadata,
-            statistics: output_statistics,
-            active_trait_selection,
-        };
+        let context = AssociationBatchContext { variant_start_index, metadata, active_trait_selection };
         sender
-            .send(ComputeCommand::ComputeBatch { batch: TransferredAssociationBatch { output, input } })
+            .send(ComputeCommand::ComputeBatch { batch: TransferredAssociationBatch { context, input } })
             .map_err(|_| self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE))?;
         self.state.submitted_batch_count = next_submitted_batch_count;
         Ok(None)
@@ -629,7 +577,7 @@ where
     }
 }
 
-impl<Backend> Drop for AssociationBatchPipeline<Backend>
+impl<Backend> Drop for AssociationBatchPipeline<'_, Backend>
 where
     Backend: AssociationBackend + 'static,
 {
@@ -682,7 +630,7 @@ fn run_compute_worker<Backend>(
             control.record_error(SchedulerError::ChromosomeNotPrepared);
             break;
         };
-        let TransferredAssociationBatch { output, input } = transferred_batch;
+        let TransferredAssociationBatch { context, input } = transferred_batch;
         let device_result = match backend.compute_batch(active_chromosome_state, input) {
             Ok(result) => result,
             Err(source) => {
@@ -693,7 +641,7 @@ fn run_compute_worker<Backend>(
         if control.is_aborted() {
             break;
         }
-        if device_sender.send(DeviceAssociationBatch { output, device_result }).is_err() {
+        if device_sender.send(DeviceAssociationBatch { context, device_result }).is_err() {
             if !control.is_aborted() {
                 control.record_error(SchedulerError::ChannelDisconnected { queue: DEVICE_RESULT_QUEUE });
             }
@@ -716,12 +664,12 @@ fn run_materialization_worker<Backend>(
         if control.is_aborted() {
             break;
         }
-        let active_trait_indices = match &device_batch.output.active_trait_selection {
+        let active_trait_indices = match &device_batch.context.active_trait_selection {
             ActiveTraitSelection::All => None,
             ActiveTraitSelection::Indices(indices) => Some(indices.as_slice()),
         };
-        let logical_variant_count = device_batch.output.metadata.row_count();
-        let result =
+        let logical_variant_count = device_batch.context.metadata.row_count();
+        let materialized =
             match backend.materialize_batch(device_batch.device_result, active_trait_indices, logical_variant_count) {
                 Ok(result) => result,
                 Err(source) => {
@@ -729,8 +677,24 @@ fn run_materialization_worker<Backend>(
                     break;
                 }
             };
-        let event =
-            AssociationSchedulerEvent::Completed(CompletedAssociationBatch { output: device_batch.output, result });
+        let MaterializedAssociationBatch { association, genotype_statistics } = materialized;
+        let statistics = match genotype_statistics {
+            MaterializedGenotypeStatistics::Ready(statistics) => statistics,
+            MaterializedGenotypeStatistics::Packed8Raw(raw_statistics) => {
+                match raw_statistics.into_output_statistics() {
+                    Ok(statistics) => statistics,
+                    Err(source) => {
+                        control.record_error(SchedulerError::Genotype(source));
+                        break;
+                    }
+                }
+            }
+        };
+        let event = AssociationSchedulerEvent::Completed(CompletedAssociationBatch {
+            context: device_batch.context,
+            statistics,
+            result: association,
+        });
         if !send_scheduler_event(event_sender, event, control) {
             return;
         }
@@ -810,6 +774,75 @@ fn validate_variant_column_length<BackendError>(
         return Err(SchedulerError::InvalidBatch {
             message: format!("{name} contains {observed} values, expected {expected}"),
         });
+    }
+    Ok(())
+}
+
+fn validate_decoded_batch<BackendError>(
+    batch: &GenotypeBatch,
+    genotypes: &OwnedGenotypeBuffer,
+    statistics: &g_genotype::ChunkStats,
+) -> SchedulerResult<(), BackendError> {
+    let genotype_value_count = batch.compute_variant_count.checked_mul(batch.sample_count).ok_or_else(|| {
+        SchedulerError::InvalidBatch { message: "variant and sample counts overflow the host index width".to_string() }
+    })?;
+    let expected_genotype_value_count = match genotypes {
+        OwnedGenotypeBuffer::Dosage(_) => genotype_value_count,
+        OwnedGenotypeBuffer::Packed8(_) => {
+            genotype_value_count.checked_mul(2).ok_or_else(|| SchedulerError::InvalidBatch {
+                message: "packed8 genotype dimensions overflow the host index width".to_string(),
+            })?
+        }
+    };
+    let observed_genotype_value_count = match genotypes {
+        OwnedGenotypeBuffer::Dosage(values) => values.len(),
+        OwnedGenotypeBuffer::Packed8(values) => values.len(),
+    };
+    if observed_genotype_value_count != expected_genotype_value_count {
+        return Err(SchedulerError::InvalidBatch {
+            message: format!(
+                "genotype buffer contains {observed_genotype_value_count} values, expected {expected_genotype_value_count}"
+            ),
+        });
+    }
+    validate_variant_column_length(
+        "allele-one frequency",
+        statistics.output.allele_one_frequency.len(),
+        batch.logical_variant_count,
+    )?;
+    validate_variant_column_length(
+        "observation count",
+        statistics.output.observation_count.len(),
+        batch.logical_variant_count,
+    )?;
+    validate_variant_column_length(
+        "INFO score",
+        statistics.output.info_score.values.len(),
+        batch.logical_variant_count,
+    )?;
+    validate_variant_column_length(
+        "INFO validity bitmap",
+        statistics.output.info_score.validity_bytes.len(),
+        batch.logical_variant_count.div_ceil(8),
+    )?;
+    validate_variant_column_length(
+        "genotype mean",
+        statistics.compute.genotype_mean.len(),
+        batch.compute_variant_count,
+    )?;
+    if let Some(imputed_dosage_square_sum) = statistics.compute.imputed_dosage_square_sum.as_ref() {
+        validate_variant_column_length(
+            "imputed dosage square sum",
+            imputed_dosage_square_sum.len(),
+            batch.compute_variant_count,
+        )?;
+    }
+    if let Some(sparse_candidate_mask) = statistics.compute.sparse_candidate_mask.as_ref() {
+        validate_variant_column_length(
+            "rare sparse Firth candidate mask",
+            sparse_candidate_mask.len(),
+            batch.compute_variant_count,
+        )?;
     }
     Ok(())
 }

@@ -36,8 +36,12 @@ impl native_runner::NativeRunHost for PythonRunHost {
         Python::attach(jax_runtime::observe_jax_devices)
     }
 
-    fn create_backend(&mut self, plan: native_runner::JaxAssociationBackendPlan<'_>) -> PyResult<Arc<Self::Backend>> {
-        Python::attach(|py| create_jax_backend(py, plan).map(Arc::new))
+    fn create_backend(
+        &mut self,
+        device: g_plan::Device,
+        plan: native_runner::JaxAssociationBackendPlan<'_>,
+    ) -> PyResult<Arc<Self::Backend>> {
+        Python::attach(|py| create_jax_backend(py, device, plan).map(Arc::new))
     }
 
     #[allow(clippy::redundant_closure_for_method_calls)]

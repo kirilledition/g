@@ -16,11 +16,30 @@ pub struct SampleMajorCovariateMatrix {
     pub covariate_count: usize,
 }
 
+/// Genotype transfer support advertised by an association backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GenotypeDeliveryCapability {
+    /// Accept only dosage or packed8 values decoded on the host.
+    HostOnly,
+    /// Accept host-decoded values and zlib members stripped to raw DEFLATE.
+    RawDeflatePacked8,
+}
+
+/// Per-group genotype transfer state prepared before chromosome execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GenotypeTransferPreparation {
+    /// No compressed-transfer state is required.
+    Host,
+    /// Upload and retain sample selection for raw-DEFLATE packed8 batches.
+    CompressedPacked8(g_genotype::CompressedPacked8Transfer),
+}
+
 /// Backend inputs shared by every chromosome in one phenotype group.
 #[derive(Debug, PartialEq)]
 pub struct GroupPreparationInput {
     pub phenotypes: TraitMajorMatrix,
     pub covariates: SampleMajorCovariateMatrix,
+    pub genotype_transfer: GenotypeTransferPreparation,
 }
 
 /// Prepared chromosome state and null-logistic convergence policy input.
@@ -30,13 +49,20 @@ pub struct PreparedChromosome<State> {
     pub null_logistic_converged: Option<Vec<bool>>,
 }
 
-/// One genotype batch submitted to the device backend.
+/// Association values and optional device-produced packed8 summaries.
 #[derive(Debug, PartialEq)]
-pub struct GenotypeBatchInput {
-    pub variant_count: usize,
-    pub sample_count: usize,
-    pub genotypes: g_genotype::OwnedGenotypeBuffer,
-    pub statistics: g_genotype::ChunkComputeStatistics,
+pub struct MaterializedAssociationBatch {
+    pub association: g_output::Regenie2StatisticBatch,
+    pub genotype_statistics: MaterializedGenotypeStatistics,
+}
+
+/// Exactly one source of output-facing genotype statistics.
+#[derive(Debug, PartialEq)]
+pub enum MaterializedGenotypeStatistics {
+    /// Statistics computed while decoding genotypes on the host.
+    Ready(g_genotype_contracts::ChunkOutputStatistics),
+    /// Exact packed8 integer summaries computed on the device.
+    Packed8Raw(g_genotype::Packed8RawStatistics),
 }
 
 /// Chunk-oriented association compute implemented by the device runtime.
@@ -46,6 +72,9 @@ pub trait AssociationBackend: Send + Sync {
     type TransferredInput: Send + 'static;
     type DeviceResult: Send + 'static;
     type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Return the genotype delivery modes supported by this backend instance.
+    fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability;
 
     /// Prepare reusable device state for one phenotype group.
     ///
@@ -87,7 +116,11 @@ pub trait AssociationBackend: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when the genotype batch cannot be transferred.
-    fn transfer_batch(&self, input: GenotypeBatchInput) -> Result<Self::TransferredInput, Self::Error>;
+    fn transfer_batch(
+        &self,
+        group: &Self::GroupState,
+        input: g_genotype::GenotypeBatch,
+    ) -> Result<Self::TransferredInput, Self::Error>;
 
     /// Submit one transferred genotype batch and return an opaque device result.
     ///
@@ -113,5 +146,5 @@ pub trait AssociationBackend: Send + Sync {
         result: Self::DeviceResult,
         active_trait_indices: Option<&[usize]>,
         logical_variant_count: usize,
-    ) -> Result<g_output::Regenie2StatisticBatch, Self::Error>;
+    ) -> Result<MaterializedAssociationBatch, Self::Error>;
 }

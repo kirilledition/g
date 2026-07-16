@@ -8,13 +8,24 @@
 
 use g_genotype_contracts::{ChunkOutputStatistics, NullableFloat32Column};
 
-use crate::common::{ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats};
+use crate::common::{
+    ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL,
+    EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL, Packed8RawStatistics,
+};
 use crate::error::{GenotypeError, GenotypeResult};
 
 const ZERO_DOSAGE_UPPER_BOUND: f32 = 1.0e-4;
 const HOMOZYGOUS_ALTERNATE_DOSAGE_THRESHOLD: f32 = 1.5;
 const SPARSE_ZERO_DENSITY_THRESHOLD: f32 = 0.5;
 const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: f32 = 50.0;
+const MAXIMUM_PACKED8_RAW_DOSAGE: u64 = 510;
+const MAXIMUM_PACKED8_RAW_DOSAGE_SQUARE: u64 = MAXIMUM_PACKED8_RAW_DOSAGE * MAXIMUM_PACKED8_RAW_DOSAGE;
+
+struct OutputVariantStatistics {
+    allele_one_frequency: f32,
+    info_score: f32,
+    info_score_is_valid: bool,
+}
 
 #[cfg(test)]
 pub(crate) fn preprocess_row_major_dosage_matrix(
@@ -128,11 +139,9 @@ pub(crate) fn build_chunk_stats_from_summaries(
     statistics_policy: ChunkStatisticsPolicy,
 ) -> GenotypeResult<ChunkStats> {
     let selected_variant_count = observation_count.len();
-    let selected_sample_count_i32 = i32::try_from(selected_sample_count).map_err(|_| {
-        GenotypeError::InvalidInput(format!(
-            "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range.",
-        ))
-    })?;
+    validate_summary_length("dosage sum", dosage_sum.len(), selected_variant_count)?;
+    validate_summary_length("dosage square sum", dosage_square_sum.len(), selected_variant_count)?;
+    let selected_sample_count_i32 = checked_selected_sample_count(selected_sample_count)?;
     let mut allele_one_frequency = Vec::with_capacity(selected_variant_count);
     let mut info_score = NullableFloat32Column {
         values: Vec::with_capacity(selected_variant_count),
@@ -145,6 +154,14 @@ pub(crate) fn build_chunk_stats_from_summaries(
         return Err(GenotypeError::InvalidInput(
             "Sparse candidate count buffers do not match the requested statistics policy.".to_string(),
         ));
+    }
+    if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts {
+        validate_summary_length("zero count", zero_count.len(), selected_variant_count)?;
+        validate_summary_length(
+            "homozygous alternate count",
+            homozygous_alternate_count.len(),
+            selected_variant_count,
+        )?;
     }
 
     for variant_index in 0..selected_variant_count {
@@ -174,18 +191,14 @@ pub(crate) fn build_chunk_stats_from_summaries(
             dosage_square_sum[variant_index] =
                 observed_dosage_square_sum + (missing_count as f32 * dosage_mean * dosage_mean);
         }
-        let allele_frequency = dosage_mean / 2.0;
-        let variance_numerator = (observed_dosage_square_sum - (dosage_sum[variant_index] * dosage_mean)).max(0.0);
-        // INFO is currently defined on observed genotype calls. Missing calls are
-        // mean-imputed for downstream dosage sums, but not for the expected
-        // Hardy-Weinberg variance denominator.
-        let expected_variance_numerator = count_float * 2.0 * allele_frequency * (1.0 - allele_frequency);
-        if expected_variance_numerator > 0.0 {
-            info_score.push((variance_numerator / expected_variance_numerator).clamp(0.0, 1.0), true);
-        } else {
-            info_score.push(0.0, false);
-        }
-        allele_one_frequency.push(allele_frequency);
+        let output_statistics = calculate_output_variant_statistics(
+            dosage_sum[variant_index],
+            observed_dosage_square_sum,
+            count_float,
+            dosage_mean,
+        );
+        allele_one_frequency.push(output_statistics.allele_one_frequency);
+        info_score.push(output_statistics.info_score, output_statistics.info_score_is_valid);
         if let (Some(sparse_candidate_mask), Some((zero_count, homozygous_alternate_count))) =
             (sparse_candidate_mask.as_mut(), sparse_candidate_counts)
         {
@@ -214,6 +227,104 @@ pub(crate) fn build_chunk_stats_from_summaries(
             sparse_candidate_mask,
         },
     })
+}
+
+impl Packed8RawStatistics {
+    /// Validate device status and build exact output-facing packed8 statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a device row failed, column lengths differ, the
+    /// selected sample count exceeds the output domain, or integer summaries
+    /// exceed the bounds implied by the selected sample count.
+    pub fn into_output_statistics(self) -> GenotypeResult<ChunkOutputStatistics> {
+        let Self { dosage_sums, dosage_square_sums, statuses, selected_sample_count } = self;
+        let variant_count = statuses.len();
+        validate_summary_length("packed8 dosage sum", dosage_sums.len(), variant_count)?;
+        validate_summary_length("packed8 dosage square sum", dosage_square_sums.len(), variant_count)?;
+        if let Some((variant_index, status)) = statuses.iter().copied().enumerate().find(|(_, status)| *status != 0) {
+            return Err(GenotypeError::InvalidInput(format!(
+                "Compressed packed8 device row {variant_index} failed with status 0x{status:08x}."
+            )));
+        }
+        let output_observation_count = checked_selected_sample_count(selected_sample_count)?;
+        let bound_sample_count = u64::try_from(selected_sample_count).map_err(|_| {
+            GenotypeError::InvalidInput(format!(
+                "Selected sample count {selected_sample_count} exceeds the supported u64 statistics range."
+            ))
+        })?;
+        let maximum_dosage_sum = bound_sample_count
+            .checked_mul(MAXIMUM_PACKED8_RAW_DOSAGE)
+            .ok_or_else(|| GenotypeError::InvalidInput("Packed8 dosage-sum bound overflowed u64.".to_string()))?;
+        let maximum_dosage_square_sum =
+            bound_sample_count.checked_mul(MAXIMUM_PACKED8_RAW_DOSAGE_SQUARE).ok_or_else(|| {
+                GenotypeError::InvalidInput("Packed8 dosage-square-sum bound overflowed u64.".to_string())
+            })?;
+        let mut allele_one_frequency = Vec::with_capacity(variant_count);
+        let observation_count = vec![output_observation_count; variant_count];
+        let mut info_score = NullableFloat32Column {
+            values: Vec::with_capacity(variant_count),
+            validity_bytes: Vec::with_capacity(variant_count.div_ceil(8)),
+        };
+        for (variant_index, (raw_dosage_sum, raw_dosage_square_sum)) in
+            dosage_sums.into_iter().zip(dosage_square_sums).enumerate()
+        {
+            if raw_dosage_sum > maximum_dosage_sum || raw_dosage_square_sum > maximum_dosage_square_sum {
+                return Err(GenotypeError::InvalidInput(format!(
+                    "Compressed packed8 device row {variant_index} returned summaries outside the selected-sample bounds."
+                )));
+            }
+            if output_observation_count == 0 {
+                allele_one_frequency.push(0.0);
+                info_score.push(0.0, false);
+                continue;
+            }
+            let dosage_sum = raw_dosage_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL;
+            let dosage_square_sum = raw_dosage_square_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL;
+            let count_float = output_observation_count as f32;
+            let dosage_mean = dosage_sum / count_float;
+            let output_statistics =
+                calculate_output_variant_statistics(dosage_sum, dosage_square_sum, count_float, dosage_mean);
+            allele_one_frequency.push(output_statistics.allele_one_frequency);
+            info_score.push(output_statistics.info_score, output_statistics.info_score_is_valid);
+        }
+        Ok(ChunkOutputStatistics { allele_one_frequency, observation_count, info_score })
+    }
+}
+
+#[inline]
+fn calculate_output_variant_statistics(
+    dosage_sum: f32,
+    observed_dosage_square_sum: f32,
+    count_float: f32,
+    dosage_mean: f32,
+) -> OutputVariantStatistics {
+    let allele_one_frequency = dosage_mean / 2.0;
+    let variance_numerator = (observed_dosage_square_sum - (dosage_sum * dosage_mean)).max(0.0);
+    // INFO is defined on observed genotype calls. Missing calls are mean
+    // imputed for association input, not the Hardy-Weinberg denominator.
+    let expected_variance_numerator = count_float * 2.0 * allele_one_frequency * (1.0 - allele_one_frequency);
+    let (info_score, info_score_is_valid) = if expected_variance_numerator > 0.0 {
+        ((variance_numerator / expected_variance_numerator).clamp(0.0, 1.0), true)
+    } else {
+        (0.0, false)
+    };
+    OutputVariantStatistics { allele_one_frequency, info_score, info_score_is_valid }
+}
+
+fn checked_selected_sample_count(selected_sample_count: usize) -> GenotypeResult<i32> {
+    i32::try_from(selected_sample_count).map_err(|_| {
+        GenotypeError::InvalidInput(format!(
+            "Selected sample count {selected_sample_count} exceeds the supported i32 statistics range."
+        ))
+    })
+}
+
+fn validate_summary_length(name: &str, observed: usize, expected: usize) -> GenotypeResult<()> {
+    if observed != expected {
+        return Err(GenotypeError::InvalidInput(format!("{name} contains {observed} values, expected {expected}.")));
+    }
+    Ok(())
 }
 
 pub(crate) fn increment_sparse_candidate_counts(

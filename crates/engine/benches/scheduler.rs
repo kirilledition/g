@@ -15,8 +15,11 @@ pub mod backend;
 mod output_schedule;
 
 use association_scheduler::{AssociationBatchPipeline, ScheduledAssociationBatch};
-use backend::{AssociationBackend, GenotypeBatchInput, GroupPreparationInput, PreparedChromosome};
-use g_genotype::{ChunkComputeStatistics, ChunkStats, DecodedGenotypeBatch, OwnedGenotypeBuffer};
+use backend::{
+    AssociationBackend, GenotypeDeliveryCapability, GroupPreparationInput, MaterializedAssociationBatch,
+    MaterializedGenotypeStatistics, PreparedChromosome,
+};
+use g_genotype::{ChunkComputeStatistics, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
 use g_genotype_contracts::{
     ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
 };
@@ -32,9 +35,13 @@ struct MockBackend;
 impl AssociationBackend for MockBackend {
     type GroupState = ();
     type ChromosomeState = ();
-    type TransferredInput = GenotypeBatchInput;
-    type DeviceResult = usize;
+    type TransferredInput = GenotypeBatch;
+    type DeviceResult = ChunkOutputStatistics;
     type Error = Infallible;
+
+    fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability {
+        GenotypeDeliveryCapability::HostOnly
+    }
 
     fn prepare_group(&self, _input: GroupPreparationInput) -> Result<Self::GroupState, Self::Error> {
         Ok(())
@@ -48,7 +55,11 @@ impl AssociationBackend for MockBackend {
         Ok(PreparedChromosome { state: (), null_logistic_converged: None })
     }
 
-    fn transfer_batch(&self, input: GenotypeBatchInput) -> Result<Self::TransferredInput, Self::Error> {
+    fn transfer_batch(
+        &self,
+        _group: &Self::GroupState,
+        input: GenotypeBatch,
+    ) -> Result<Self::TransferredInput, Self::Error> {
         Ok(input)
     }
 
@@ -57,8 +68,12 @@ impl AssociationBackend for MockBackend {
         _chromosome: &Self::ChromosomeState,
         input: Self::TransferredInput,
     ) -> Result<Self::DeviceResult, Self::Error> {
-        std::hint::black_box(input);
-        Ok(VARIANT_COUNT)
+        let GenotypeBatchPayload::Decoded { genotypes, statistics } = input.payload else {
+            unreachable!("scheduler benchmark submits decoded packed8 batches")
+        };
+        std::hint::black_box(genotypes);
+        std::hint::black_box(statistics.compute);
+        Ok(statistics.output)
     }
 
     fn materialize_batch(
@@ -66,16 +81,19 @@ impl AssociationBackend for MockBackend {
         result: Self::DeviceResult,
         _active_trait_indices: Option<&[usize]>,
         logical_variant_count: usize,
-    ) -> Result<Regenie2StatisticBatch, Self::Error> {
-        std::hint::black_box(result);
-        Ok(Regenie2StatisticBatch {
-            trait_count: 1,
-            variant_count: logical_variant_count,
-            beta: Vec::new(),
-            standard_error: Vec::new(),
-            chi_squared: Vec::new(),
-            log10_p_value: Vec::new(),
-            correction_code: None,
+    ) -> Result<MaterializedAssociationBatch, Self::Error> {
+        std::hint::black_box(&result);
+        Ok(MaterializedAssociationBatch {
+            association: Regenie2StatisticBatch {
+                trait_count: 1,
+                variant_count: logical_variant_count,
+                beta: Vec::new(),
+                standard_error: Vec::new(),
+                chi_squared: Vec::new(),
+                log10_p_value: Vec::new(),
+                correction_code: None,
+            },
+            genotype_statistics: MaterializedGenotypeStatistics::Ready(result),
         })
     }
 }
@@ -109,25 +127,27 @@ fn build_metadata() -> VariantMetadataColumns {
 fn build_batch(metadata: &VariantMetadataColumns, batch_index: usize) -> ScheduledAssociationBatch {
     let genotype_value_count = VARIANT_COUNT * SAMPLE_COUNT * 2;
     ScheduledAssociationBatch {
-        decoded: DecodedGenotypeBatch {
+        genotypes: GenotypeBatch {
             variant_start_index: batch_index * VARIANT_COUNT,
             logical_variant_count: VARIANT_COUNT,
             compute_variant_count: VARIANT_COUNT,
             sample_count: SAMPLE_COUNT,
-            genotypes: OwnedGenotypeBuffer::Packed8(vec![0_u8; genotype_value_count].into()),
-            statistics: ChunkStats {
-                output: ChunkOutputStatistics {
-                    allele_one_frequency: vec![0.0; VARIANT_COUNT],
-                    observation_count: vec![0; VARIANT_COUNT],
-                    info_score: NullableFloat32Column {
-                        values: vec![0.0; VARIANT_COUNT],
-                        validity_bytes: vec![0; VARIANT_COUNT.div_ceil(8)],
+            payload: GenotypeBatchPayload::Decoded {
+                genotypes: OwnedGenotypeBuffer::Packed8(vec![0_u8; genotype_value_count].into()),
+                statistics: ChunkStats {
+                    output: ChunkOutputStatistics {
+                        allele_one_frequency: vec![0.0; VARIANT_COUNT],
+                        observation_count: vec![0; VARIANT_COUNT],
+                        info_score: NullableFloat32Column {
+                            values: vec![0.0; VARIANT_COUNT],
+                            validity_bytes: vec![0; VARIANT_COUNT.div_ceil(8)],
+                        },
                     },
-                },
-                compute: ChunkComputeStatistics {
-                    genotype_mean: vec![0.0; VARIANT_COUNT],
-                    imputed_dosage_square_sum: None,
-                    sparse_candidate_mask: Some(vec![false; VARIANT_COUNT]),
+                    compute: ChunkComputeStatistics {
+                        genotype_mean: vec![0.0; VARIANT_COUNT],
+                        imputed_dosage_square_sum: None,
+                        sparse_candidate_mask: Some(vec![false; VARIANT_COUNT]),
+                    },
                 },
             },
         },
@@ -141,7 +161,8 @@ fn build_batches(metadata: &VariantMetadataColumns) -> Vec<ScheduledAssociationB
 }
 
 fn run_pipeline(batches: Vec<ScheduledAssociationBatch>) -> usize {
-    let mut pipeline = AssociationBatchPipeline::new(Arc::new(MockBackend)).expect("benchmark pipeline starts");
+    let group = ();
+    let mut pipeline = AssociationBatchPipeline::new(Arc::new(MockBackend), &group).expect("benchmark pipeline starts");
     pipeline.prepare_chromosome(()).expect("benchmark chromosome is prepared");
     let mut completed_batch_count = 0_usize;
     for batch in batches {

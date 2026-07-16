@@ -717,6 +717,7 @@ version = "0.1.0"
 dependencies = [
  "g-engine",
  "g-genotype",
+ "g-genotype-contracts",
  "g-genotype-cuda",
  "g-input",
  "g-output",

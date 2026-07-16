@@ -1,6 +1,8 @@
 use std::mem::MaybeUninit;
 
-use crate::common::DosageSummary;
+use crate::common::{
+    DosageSummary, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL, EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL,
+};
 #[cfg(test)]
 use crate::preprocess;
 
@@ -12,8 +14,6 @@ const AVX2_PACKED8_SAMPLE_COUNT: usize = 16;
 const AVX2_ACCUMULATION_VECTOR_LIMIT: usize = 4096;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_PLOIDY_BYTE_COUNT: usize = 32;
-const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
-const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
 const PRESENT_DIPLOID_BYTE_GROUP: [u8; 16] = [2_u8; 16];
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

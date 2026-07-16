@@ -3,21 +3,24 @@
 ## This crate owns
 
 BGEN mmap/index/decode for uncompressed, zlib, and Zstandard Layout 2 files,
-immutable per-delivery read sessions,
-chromosome-homogeneous chunk planning, owned decoded genotype batches, and
-genotype preprocessing summaries. It also owns validated zlib-to-raw-DEFLATE
-host packing for the compressed GPU delivery path.
+immutable per-delivery read sessions, chromosome-homogeneous chunk planning,
+owned decoded genotype batches, and genotype preprocessing summaries. It also
+owns validated zlib-to-raw-DEFLATE host packing, compressed transfer
+descriptors, and exact device-summary conversion for the compressed GPU
+delivery path.
 
 ## Public types
 
 `BgenReaderCore`, `BgenReadSession`, `BgenError`,
-`GenotypeError`/`GenotypeResult`, chunk and statistics contracts,
-`DecodedGenotypeBatch`, `OwnedGenotypeBuffer`, `PooledPacked8Buffer`, and the typed
-`Packed8Compatibility` negotiation result. Compressed delivery exposes
-`CompressedPacked8Batch`, its opaque run-planned layout, and one immutable
-session transfer descriptor with contiguous or indexed sample selection. Shared output-facing
-metadata and columns are owned by `g-genotype-contracts` and are not
-re-exported here.
+`GenotypeError`/`GenotypeResult`, chunk and statistics contracts, the canonical
+`GenotypeBatch`/`GenotypeBatchPayload`, `OwnedGenotypeBuffer`,
+`PooledPacked8Buffer`, and the typed `Packed8Compatibility` negotiation result.
+Compressed delivery exposes `CompressedPacked8Batch`, its opaque run-planned
+layout, one immutable session transfer descriptor with contiguous or indexed
+sample selection, and the canonical exact-integer device statistics payload.
+Backend capability and group preparation belong to `g-engine`. Shared
+output-facing metadata and columns are owned by `g-genotype-contracts` and are
+not re-exported here.
 
 ## Public functions
 
@@ -36,10 +39,14 @@ stores typed compatible and dosage-required outcomes so an incompatible source
 is not rescanned on every run.
 
 For compatible zlib sources, `BgenReaderCore` derives one opaque compressed slab
-layout from the actual pending chunk plan. `BgenReadSession` exposes invariant
+layout from the actual pending chunk plan; non-zlib sources return no compressed
+layout so callers can retain host delivery. `BgenReadSession` exposes invariant
 sample-transfer geometry once and packs each logical chunk as aligned raw-DEFLATE
 members plus interleaved offset, size, and Adler-32 metadata. Compute-only tails
-remain scalar geometry and are not fabricated as compressed members.
+remain in the canonical batch geometry and are not fabricated as compressed
+members. Device raw sums, square sums, and status codes are validated and
+converted to output allele frequency, observation count, and INFO through the
+same per-variant formula used by host preprocessing.
 
 ## This crate must not expose
 
@@ -69,6 +76,8 @@ storage initialized at full length across drops; each pack overwrites only real
 member bytes and logical metadata, without clearing alignment gaps or the unused
 suffix. Indexed sample conversion is allocated once per session, while identity
 selection is represented as a zero-start contiguous range.
+Batch geometry exists only on `GenotypeBatch`; compressed storage contains only
+the slab and member metadata it owns.
 
 ## Allowed downstream users
 

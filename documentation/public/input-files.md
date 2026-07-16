@@ -62,6 +62,12 @@ non-diploid or otherwise unsupported input fails instead
 of falling back. Compatibility validation and packed8 selection are internal
 policies rather than configuration keys.
 
+When that validated representation is stored in zlib-compressed Layout-2
+blocks, the GPU path transfers the raw DEFLATE members and decodes them with
+nvCOMP on the active device. Uncompressed and Zstandard blocks remain fully
+supported through host packed8 decoding; this difference is an internal
+delivery policy and does not change accepted BGEN input or output semantics.
+
 ## Sample Identity
 
 Sample alignment always uses the `(FID, IID)` pair. Both values must be

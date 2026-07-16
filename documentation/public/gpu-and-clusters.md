@@ -165,6 +165,16 @@ Scheduler queue depths, packed8 BGEN compatibility validation, decode tiling,
 packed8 selection, and Parquet grouping/compression are internal
 genotype/engine/output policies.
 
+Compatible zlib-compressed packed8 BGEN groups use the installed nvCOMP runtime
+path automatically. The runtime is loaded only for a group that can use this
+path; CPU runs and GPU groups using host dosage or a non-zlib encoding do not
+initialize it. A source installation must therefore preserve the locked
+`nvidia-libnvcomp-cu12` dependency for Linux x86-64 GPU execution. This path
+requires an NVIDIA driver exposing CUDA driver API 12.2 or newer and a device
+with compute capability 7.0 or newer. An eligible zlib packed8 run fails with a
+specific initialization error when those requirements or nvCOMP are missing;
+it does not silently replace the requested device decode with host decode.
+
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback
 threshold.

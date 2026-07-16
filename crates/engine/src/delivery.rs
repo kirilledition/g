@@ -5,7 +5,7 @@ use std::sync::Arc;
 use g_genotype::ChunkStatisticsPolicy;
 use g_input::AlignedPhenotypeGroup;
 use g_output::OutputWriterSession;
-use g_plan::NullLogisticNonconvergencePolicy;
+use g_plan::{GpuGenotypeFormat, NullLogisticNonconvergencePolicy};
 
 use crate::progress::DeliveryProgress;
 
@@ -21,7 +21,7 @@ pub(crate) struct AssociationDeliverySettings {
     pub committed_chunk_identifier_sets: Vec<Arc<std::collections::BTreeSet<usize>>>,
     pub null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicy,
     pub progress: Option<DeliveryProgress>,
-    pub use_packed8: bool,
+    pub gpu_genotype_format: GpuGenotypeFormat,
     pub statistics_policy: ChunkStatisticsPolicy,
 }
 

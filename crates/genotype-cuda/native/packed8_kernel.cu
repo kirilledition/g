@@ -66,6 +66,17 @@ __device__ __forceinline__ unsigned int load_u32_little_endian(
       ((unsigned int)bytes[3] << 24);
 }
 
+__device__ __forceinline__ float packed8_genotype_mean(
+    unsigned long long raw_dosage_sum,
+    unsigned long long selected_sample_count) {
+  // Match the host's two explicitly rounded f32 operations. The exact
+  // reciprocal is f32(1 / 255); rounded intrinsics prevent reassociation.
+  const float packed8_probability_scale = 0x1.010102p-8f;
+  const float dosage_sum = __fmul_rn(
+      __ull2float_rn(raw_dosage_sum), packed8_probability_scale);
+  return __fdiv_rn(dosage_sum, __ull2float_rn(selected_sample_count));
+}
+
 extern "C" __global__ void finalize_packed8(
     const unsigned char* decompressed_slab,
     const unsigned long long* actual_sizes,
@@ -84,7 +95,8 @@ extern "C" __global__ void finalize_packed8(
     unsigned long long* raw_dosage_square_sums,
     unsigned int* zero_counts,
     unsigned int* homozygous_alternate_counts,
-    unsigned int* statuses) {
+    unsigned int* statuses,
+    float* genotype_means) {
   const unsigned long long variant_index = blockIdx.x;
   const unsigned int thread_index = threadIdx.x;
   if (variant_index >= compute_variant_count) {
@@ -106,6 +118,7 @@ extern "C" __global__ void finalize_packed8(
       zero_counts[variant_index] = 0;
       homozygous_alternate_counts[variant_index] = 0;
       statuses[variant_index] = 0;
+      genotype_means[variant_index] = 0.0f;
     }
     return;
   }
@@ -135,6 +148,7 @@ extern "C" __global__ void finalize_packed8(
       zero_counts[variant_index] = 0;
       homozygous_alternate_counts[variant_index] = 0;
       statuses[variant_index] = row_gate_status;
+      genotype_means[variant_index] = 0.0f;
     }
     return;
   }
@@ -264,5 +278,7 @@ extern "C" __global__ void finalize_packed8(
     zero_counts[variant_index] = reduction_zero_counts[0];
     homozygous_alternate_counts[variant_index] = reduction_homozygous_alternate_counts[0];
     statuses[variant_index] = reduction_statuses[0];
+    genotype_means[variant_index] = packed8_genotype_mean(
+        reduction_sums[0], selected_sample_count);
   }
 }

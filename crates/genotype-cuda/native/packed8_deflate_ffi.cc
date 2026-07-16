@@ -502,6 +502,7 @@ class Packed8Kernels {
       std::uint32_t* zero_counts,
       std::uint32_t* homozygous_alternate_counts,
       std::uint32_t* statuses,
+      float* genotype_means,
       CudaStream stream) const {
     if (compute_variant_count > std::numeric_limits<unsigned int>::max()) {
       fail_runtime("packed8 finalize kernel grid exceeds uint32");
@@ -530,6 +531,7 @@ class Packed8Kernels {
         &zero_counts,
         &homozygous_alternate_counts,
         &statuses,
+        &genotype_means,
     };
     driver_.launch(
         finalize_function_,
@@ -701,6 +703,7 @@ Error decode_packed8(
     ResultBufferR1<DataType::U32> zero_counts,
     ResultBufferR1<DataType::U32> homozygous_alternate_counts,
     ResultBufferR1<DataType::U32> statuses,
+    ResultBufferR1<DataType::F32> genotype_means,
     std::int64_t source_sample_count_attribute,
     std::int64_t selection_start,
     CudaStream stream,
@@ -754,7 +757,8 @@ Error decode_packed8(
         !is_result_vector(raw_dosage_square_sums, compute_variant_count) ||
         !is_result_vector(zero_counts, compute_variant_count) ||
         !is_result_vector(homozygous_alternate_counts, compute_variant_count) ||
-        !is_result_vector(statuses, compute_variant_count)) {
+        !is_result_vector(statuses, compute_variant_count) ||
+        !is_result_vector(genotype_means, compute_variant_count)) {
       return Error::InvalidArgument("packed8 summary outputs must match the compute variant count");
     }
     if (logical_variant_count > std::numeric_limits<std::size_t>::max() / output_stride) {
@@ -859,6 +863,7 @@ Error decode_packed8(
         zero_counts->typed_data(),
         homozygous_alternate_counts->typed_data(),
         statuses->typed_data(),
+        genotype_means->typed_data(),
         stream);
     return Error::Success();
   } catch (const HandlerFailure& failure) {
@@ -916,6 +921,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Ret<xla::ffi::BufferR1<DataType::U32>>()
         .Ret<xla::ffi::BufferR1<DataType::U32>>()
         .Ret<xla::ffi::BufferR1<DataType::U32>>()
+        .Ret<xla::ffi::BufferR1<DataType::F32>>()
         .Attr<std::int64_t>("source_sample_count")
         .Attr<std::int64_t>("selection_start")
         .Ctx<xla::ffi::PlatformStream<CudaStream>>()

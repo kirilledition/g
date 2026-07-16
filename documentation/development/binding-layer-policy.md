@@ -23,10 +23,13 @@ src/g       console bootstrap, JAX backend, JAX kernels
 - The registered CLI entrypoint and its typed terminal result.
 - Lazy construction of the Python JAX backend after `g-runner` completed
   native validation and runtime setup.
-- The four backend method invocations with direct typed NumPy arguments.
+- The five backend lifecycle stages with direct typed NumPy arguments,
+  including exactly one of the decoded or compressed transfer methods.
 - Retention of opaque Python JAX group, chromosome, and device-result handles.
 - Python signal checks, JAX configuration/device observation, and conversion
   of a concrete `PyErr` into runner-host callbacks.
+- GPU-only loading of the official nvCOMP Python wheel and private typed-XLA
+  FFI target registration around the capability-checked crate handler.
 - Supplying the current Python thread name to `g-runner` for telemetry labels.
 - Checked conversion between Python/NumPy values and crate-owned types.
 
@@ -55,9 +58,15 @@ supplies one `AssociationBackend` implementation that calls:
 ```text
 prepare_group
 prepare_chromosome
+transfer_batch | transfer_compressed_batch
 compute_batch
 materialize_batch
 ```
+
+Backend construction receives the canonical `g-plan::Device` separately from
+the mode-specific kernel plan. CPU and host-delivered GPU runs never import or
+initialize nvCOMP. The first compressed packed8 group registers the
+process-global private target once.
 
 ## Namespace Policy
 

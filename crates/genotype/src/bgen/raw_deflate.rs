@@ -33,7 +33,7 @@ pub(super) struct CompressedPacked8SessionState {
 }
 
 /// Sample selection applied after GPU decompression of packed8 BGEN rows.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompressedPacked8SampleSelection {
     /// Preserve one contiguous range, including identity selection at index zero.
     Contiguous { file_index_start: u32 },
@@ -42,7 +42,7 @@ pub enum CompressedPacked8SampleSelection {
 }
 
 /// Immutable sample-transfer geometry shared by every compressed session batch.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedPacked8Transfer {
     /// Sample selection applied after decompression.
     pub sample_selection: CompressedPacked8SampleSelection,
@@ -56,10 +56,6 @@ pub struct CompressedPacked8Transfer {
 pub struct CompressedPacked8Batch {
     storage: CompressedPacked8Storage,
     pool: Arc<CompressedPacked8BufferPool>,
-    /// Number of real compressed variant members.
-    pub logical_variant_count: usize,
-    /// Fixed compute row count requested by the scheduler.
-    pub compute_variant_count: usize,
 }
 
 /// Fixed raw-DEFLATE slab shape derived from an actual run chunk plan.
@@ -90,8 +86,7 @@ impl fmt::Debug for CompressedPacked8Batch {
         formatter
             .debug_struct("CompressedPacked8Batch")
             .field("raw_deflate_byte_count", &self.raw_deflate_slab().len())
-            .field("logical_variant_count", &self.logical_variant_count)
-            .field("compute_variant_count", &self.compute_variant_count)
+            .field("member_count", &(self.storage.member_metadata.len() / MEMBER_METADATA_VALUE_COUNT))
             .finish_non_exhaustive()
     }
 }
@@ -161,15 +156,9 @@ impl BgenReadSession<'_> {
         layout: &CompressedPacked8BatchLayout,
         variant_start: usize,
         variant_stop: usize,
-        compute_variant_count: usize,
     ) -> Result<CompressedPacked8Batch, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.reader.variant_count())?;
         let logical_variant_count = variant_stop - variant_start;
-        if compute_variant_count < logical_variant_count {
-            return Err(BgenError::Range(format!(
-                "Compute variant count {compute_variant_count} is smaller than logical variant count {logical_variant_count}.",
-            )));
-        }
         if self.reader.compression_type != CompressionType::Zlib {
             return Err(BgenError::UnsupportedFormat(
                 "Compressed packed8 delivery requires a zlib-compressed BGEN source.".to_string(),
@@ -237,12 +226,7 @@ impl BgenReadSession<'_> {
         // layout length; only the real compressed prefix is overwritten.
         unsafe { storage.member_metadata.set_len(metadata_value_count) };
 
-        Ok(CompressedPacked8Batch {
-            storage,
-            pool: Arc::clone(&compressed_state.pool),
-            logical_variant_count,
-            compute_variant_count,
-        })
+        Ok(CompressedPacked8Batch { storage, pool: Arc::clone(&compressed_state.pool) })
     }
 }
 
@@ -251,16 +235,15 @@ impl super::reader::BgenReaderCore {
     ///
     /// # Errors
     ///
-    /// Returns an error for non-zlib sources, incomplete packed8 validation,
-    /// invalid chunk bounds, malformed compressed lengths, or uint32 overflow.
+    /// Returns an error for incomplete packed8 validation, invalid chunk
+    /// bounds, malformed compressed lengths, or uint32 overflow. Non-zlib
+    /// sources return `None` so callers can retain host delivery.
     pub fn plan_compressed_packed8_batch_layout(
         &self,
         chunk_specs: &[ChunkSpec],
-    ) -> Result<CompressedPacked8BatchLayout, BgenError> {
+    ) -> Result<Option<CompressedPacked8BatchLayout>, BgenError> {
         if self.compression_type != CompressionType::Zlib {
-            return Err(BgenError::UnsupportedFormat(
-                "Compressed packed8 delivery requires a zlib-compressed BGEN source.".to_string(),
-            ));
+            return Ok(None);
         }
         self.validate_packed8_probability_pair_preconditions()?;
 
@@ -283,7 +266,7 @@ impl super::reader::BgenReaderCore {
                 "Raw-DEFLATE batch layout exceeds the four-gibibyte uint32 offset domain.".to_string(),
             ));
         }
-        Ok(CompressedPacked8BatchLayout { slab_byte_count: maximum_slab_byte_count })
+        Ok(Some(CompressedPacked8BatchLayout { slab_byte_count: maximum_slab_byte_count }))
     }
 
     fn zlib_member<'reader>(

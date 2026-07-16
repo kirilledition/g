@@ -9,7 +9,7 @@ use crate::bgen::decode::{
 use crate::bgen::error::BgenError;
 use crate::bgen::packed8;
 use crate::bgen::sample_selection::SampleSelection;
-use crate::common::{ChunkStatisticsPolicy, ChunkStats, DecodedGenotypeBatch, OwnedGenotypeBuffer};
+use crate::common::{ChunkStatisticsPolicy, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
 use crate::preprocess;
 
 use super::{BgenReadSession, BgenReaderCore, validate_variant_bounds};
@@ -141,7 +141,7 @@ impl BgenReadSession<'_> {
         compute_variant_count: usize,
         use_packed8: bool,
         statistics_policy: ChunkStatisticsPolicy,
-    ) -> Result<DecodedGenotypeBatch, BgenError> {
+    ) -> Result<GenotypeBatch, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.reader.variant_count)?;
         let read_shape = VariantMajorReadShape::from_selection(&self.sample_selection, variant_start, variant_stop);
         if compute_variant_count < read_shape.selected_variant_count {
@@ -157,13 +157,12 @@ impl BgenReadSession<'_> {
         };
         pad_compute_statistics(&mut decoded.statistics, compute_variant_count);
 
-        Ok(DecodedGenotypeBatch {
+        Ok(GenotypeBatch {
             variant_start_index: variant_start,
             logical_variant_count: read_shape.selected_variant_count,
             compute_variant_count,
             sample_count: read_shape.selected_sample_count,
-            genotypes: decoded.genotypes,
-            statistics: decoded.statistics,
+            payload: GenotypeBatchPayload::Decoded { genotypes: decoded.genotypes, statistics: decoded.statistics },
         })
     }
 

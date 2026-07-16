@@ -91,12 +91,17 @@ pub trait NativeRunHost: Send {
     /// Returns the host error when JAX device discovery fails.
     fn observe_jax_devices(&mut self) -> Result<Vec<JaxDevice>, Self::Error>;
 
-    /// Construct the opaque JAX association backend from canonical mode-specific policy.
+    /// Construct the opaque JAX association backend from canonical device and
+    /// mode-specific policy.
     ///
     /// # Errors
     ///
     /// Returns the host error when backend construction fails.
-    fn create_backend(&mut self, plan: JaxAssociationBackendPlan<'_>) -> Result<Arc<Self::Backend>, Self::Error>;
+    fn create_backend(
+        &mut self,
+        device: g_plan::Device,
+        plan: JaxAssociationBackendPlan<'_>,
+    ) -> Result<Arc<Self::Backend>, Self::Error>;
 
     /// Check Python signals.
     ///
@@ -293,7 +298,8 @@ where
         native_session.record_stage_duration("jax_runtime_configuration", runtime_start_time);
 
         let backend_start_time = Instant::now();
-        let backend = host.create_backend(JaxAssociationBackendPlan::from_run_plan(&run_plan))?;
+        let backend =
+            host.create_backend(run_plan.compute.device, JaxAssociationBackendPlan::from_run_plan(&run_plan))?;
         native_session.record_stage_duration("jax_backend_initialization", backend_start_time);
 
         let telemetry_session = native_session.telemetry_session().clone();

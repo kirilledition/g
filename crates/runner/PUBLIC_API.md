@@ -9,9 +9,10 @@ engine crates, including JAX process policy and terminal rendering.
 
 `NativeRunHost`, `NativeRunInterruption`, `NativeRunFailure`, `CliRunResult`,
 runner-owned JAX runtime observations, and the mode-specialized
-`JaxAssociationBackendPlan`. The backend plan borrows canonical `g-plan`
-kernel policy rather than redefining scalar settings. The Python host names no
-`g-runtime` type.
+`JaxAssociationBackendPlan`. Backend construction receives the canonical
+`g-plan::Device` separately from this mode-specialized plan. The backend plan
+borrows canonical `g-plan` kernel policy rather than redefining scalar
+settings. The Python host names no `g-runtime` type.
 
 ## Public functions
 

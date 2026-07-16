@@ -8,10 +8,15 @@ use std::sync::{Arc, Mutex};
 
 use g_genotype_contracts::ChunkOutputStatistics;
 
+use crate::bgen::CompressedPacked8Batch;
+
 // One decoded batch, one active compute batch, and one pending submission can
 // retain host input concurrently. Excess outstanding buffers drop instead of
 // blocking the bounded scheduler.
 const SESSION_BUFFER_POOL_CAPACITY: usize = 3;
+
+pub(crate) const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
+pub(crate) const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
 
 pub(crate) struct SessionBufferPool<Buffer> {
     available_buffers: Mutex<Vec<Buffer>>,
@@ -144,15 +149,32 @@ pub enum OwnedGenotypeBuffer {
     Packed8(PooledPacked8Buffer),
 }
 
-/// Fully decoded host batch ready for association scheduling.
-#[derive(Debug, PartialEq)]
-pub struct DecodedGenotypeBatch {
+/// One genotype batch ready for association scheduling.
+#[derive(Debug)]
+pub struct GenotypeBatch {
     pub variant_start_index: usize,
     pub logical_variant_count: usize,
     pub compute_variant_count: usize,
     pub sample_count: usize,
-    pub genotypes: OwnedGenotypeBuffer,
-    pub statistics: ChunkStats,
+    pub payload: GenotypeBatchPayload,
+}
+
+/// Mutually exclusive host-decoded and compressed genotype batch storage.
+#[derive(Debug)]
+pub enum GenotypeBatchPayload {
+    /// Host-decoded values and their output and compute summaries.
+    Decoded { genotypes: OwnedGenotypeBuffer, statistics: ChunkStats },
+    /// Raw-DEFLATE members to decode directly on the device.
+    CompressedPacked8(CompressedPacked8Batch),
+}
+
+/// Exact integer packed8 summaries materialized after device computation.
+#[derive(Debug, Eq, PartialEq)]
+pub struct Packed8RawStatistics {
+    pub dosage_sums: Vec<u64>,
+    pub dosage_square_sums: Vec<u64>,
+    pub statuses: Vec<u32>,
+    pub selected_sample_count: usize,
 }
 
 /// Per-run policy for statistics retained after genotype decoding.

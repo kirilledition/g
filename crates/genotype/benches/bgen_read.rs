@@ -95,7 +95,7 @@ fn benchmark_gpu_host_delivery(criterion: &mut Criterion, reader: &BgenReaderCor
             delivery_group.finish();
             return;
         };
-        let Ok(compressed_layout) = reader.plan_compressed_packed8_batch_layout(&chunk_specs) else {
+        let Ok(Some(compressed_layout)) = reader.plan_compressed_packed8_batch_layout(&chunk_specs) else {
             delivery_group.finish();
             return;
         };
@@ -127,16 +127,11 @@ fn benchmark_gpu_host_delivery(criterion: &mut Criterion, reader: &BgenReaderCor
         delivery_group.bench_with_input(
             BenchmarkId::new("raw_deflate_pack", chunk_size),
             &selected_variant_count,
-            |benchmark, selected_variant_count| {
+            |benchmark, _selected_variant_count| {
                 benchmark.iter(|| {
                     std::hint::black_box(
                         read_session
-                            .pack_compressed_packed8_batch(
-                                &compressed_layout,
-                                variant_start,
-                                variant_stop,
-                                *selected_variant_count,
-                            )
+                            .pack_compressed_packed8_batch(&compressed_layout, variant_start, variant_stop)
                             .expect("raw-DEFLATE BGEN packing should succeed"),
                     );
                 });

@@ -575,6 +575,66 @@ Final deep-profile evidence:
   selection fusions and host delivery, each requiring a numerically bounded
   implementation and the same paired GPU gate before acceptance.
 
+## 2026-07-16 Native GPU BGEN Delivery Wave
+
+The target remains one binary trait with approximate Firth, full 1KG
+chromosome 22, 512-row Firth batches, 16,384-variant chunks, eight host
+threads, and a V100 on `landau`. The comparison used fresh shared JAX caches,
+warmed each process once, and alternated main and candidate order across seven
+pairs in one allocation.
+
+Accepted:
+
+- Zlib-compressed packed8 BGEN groups remain compressed on the host and are
+  decompressed directly into device buffers with the official nvCOMP raw
+  DEFLATE API. Rust prepares immutable borrowed slab, metadata, selection, and
+  raw-statistic arrays once per transfer group; the Python binding only
+  registers the FFI target and manages the lifetime of those arrays.
+- The CUDA finalizer validates the decoded row structure, gathers selected
+  samples, and emits exact integer raw statistics plus the rounded `Float32`
+  genotype mean expected by the existing JAX path. Full and tail-batch FFI
+  probes match canonical host decoding for every probability byte, raw sum,
+  raw squared sum, zero count, homozygous-alternate count, status, padding
+  byte, and genotype mean. An independent 16,384-by-2,504 dosage probe has no
+  mismatches.
+- The order-alternated hot gate improves the median from 1.178368 to 0.958154
+  seconds, an 18.69% reduction. The paired geometric speedup is 1.2202x, or an
+  18.04% paired-time reduction. Candidate wins all seven pairs; the two-sided
+  all-wins sign test is p=0.015625. Candidate output is stable across all seven
+  runs.
+- A controlled same-state GPU diagnostic proves producer equivalence. Canonical
+  host decoding, nvCOMP FFI output, and a distinct-pointer device copy have
+  bitwise-identical compute inputs and identical StableHLO. Decoded dosage,
+  every score field and correction code, and full score-plus-Firth beta,
+  standard error, chi square, log10 p-value, and correction code are bitwise
+  identical. The compressed producer and its device layout therefore introduce
+  no numerical change.
+- Cross-process current-main and candidate output have identical schema, row
+  order, non-floating columns, allele frequency, information score, and
+  correction status. Of 418,943 variants, all floating results are bitwise
+  equal except two approximate-Firth rows. Their maximum absolute differences
+  are 0.00376 for beta, 0.00269 for standard error, 0.16172 for chi square, and
+  0.03918 for log10 p-value. Independent candidate processes also produce
+  widespread but much smaller floating-point bit differences despite exact
+  warm-versus-hot output within a process. Cross-process output is therefore
+  a bounded numerical check, not a bitwise causal oracle; the controlled
+  same-state result is the delivery-path acceptance proof.
+- Exact integer sparse classification corrects one threshold-boundary variant,
+  `rs552477617`: its exact minor count is 50 alleles, whereas the historical
+  `Float32` calculation rounds just below 50. It remains on the score path, so
+  this semantic correction does not alter its output.
+
+Next:
+
+- Profile the integrated commit with Nsight Systems and the standard deep
+  campaign. Attribute time among host-to-device delivery, nvCOMP kernels, the
+  packed8 finalizer, association/Firth kernels, device-to-host transfer, and
+  output before changing the next hot path.
+- If finalization remains material, merge its structural and checksum scans,
+  parallelize the Adler combination, and reduce per-variant status output to a
+  first-failure result. Each change must pass the same exact decode probes and
+  paired hot GPU gate.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

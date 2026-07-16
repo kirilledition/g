@@ -246,7 +246,7 @@ impl PreparedRun {
                                 .binary_null
                                 .nonconvergence_policy,
                             progress,
-                            use_packed8: resolved_gpu_genotype_format == GpuGenotypeFormat::Packed8,
+                            gpu_genotype_format: resolved_gpu_genotype_format,
                             statistics_policy,
                         },
                     };

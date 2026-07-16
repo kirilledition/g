@@ -126,6 +126,15 @@ otherwise-supported biallelic diploid Layout-2 inputs that are not
 packed8-compatible use dosage delivery. Multiallelic, non-diploid,
 or otherwise unsupported input fails instead.
 
+For compatible zlib-compressed packed8 input, GPU runs transfer aligned raw
+DEFLATE members and decode them on the active device with nvCOMP. Selection,
+exact integer summaries, and packed probability-pair construction stay on the
+device; association kernels consume that representation without first
+materializing a host dosage matrix. CPU runs, non-zlib BGEN encodings, and
+inputs requiring dosage retain the native host decoder. The nvCOMP library and
+private JAX FFI target are initialized lazily only when a compressed packed8
+group is prepared, so those fallback paths do not pay its initialization cost.
+
 Current default values are in `crates/interface/src/config.default.toml`.
 Older pre-release configurations may contain
 `firth_newton_raphson_zero_start_iterations`. Remove that key when upgrading;

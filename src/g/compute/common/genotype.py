@@ -8,8 +8,8 @@ import jax
 import jax.numpy as jnp
 
 ALLELE_COUNT_MULTIPLIER = 2.0
-EIGHT_BIT_PROBABILITY_DENOMINATOR = 255.0
-PACKED8_DIPLOID_NUMERATOR = 510.0
+EIGHT_BIT_PROBABILITY_DENOMINATOR = 255
+PACKED8_DIPLOID_NUMERATOR = 510
 
 
 @jax.tree_util.register_dataclass
@@ -43,10 +43,10 @@ def decode_packed8_probability_pairs_to_variant_major_dosage(
     homozygous_reference_probability_byte = probability_values[:, :, 0]
     heterozygous_probability_byte = probability_values[:, :, 1]
     return (
-        PACKED8_DIPLOID_NUMERATOR
+        float(PACKED8_DIPLOID_NUMERATOR)
         - (ALLELE_COUNT_MULTIPLIER * homozygous_reference_probability_byte)
         - heterozygous_probability_byte
-    ) / EIGHT_BIT_PROBABILITY_DENOMINATOR
+    ) / float(EIGHT_BIT_PROBABILITY_DENOMINATOR)
 
 
 def compute_diploid_genotype_mean(

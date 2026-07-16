@@ -1,7 +1,8 @@
 //! Public engine crate facade.
 
 pub use crate::backend::{
-    AssociationBackend, GenotypeBatchInput, GroupPreparationInput, PreparedChromosome, SampleMajorCovariateMatrix,
+    AssociationBackend, GenotypeDeliveryCapability, GenotypeTransferPreparation, GroupPreparationInput,
+    MaterializedAssociationBatch, MaterializedGenotypeStatistics, PreparedChromosome, SampleMajorCovariateMatrix,
     TraitMajorMatrix,
 };
 pub use crate::run::RunHooks;

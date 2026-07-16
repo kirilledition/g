@@ -90,6 +90,7 @@ numpy = { workspace = true }
 g-engine = { workspace = true }
 g-genotype = { workspace = true }
 g-genotype-cuda = { workspace = true }
+g-genotype-contracts = { workspace = true }
 g-input = { workspace = true }
 g-output = { workspace = true }
 g-plan = { workspace = true }

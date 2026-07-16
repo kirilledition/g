@@ -2,15 +2,17 @@
 
 use std::sync::Arc;
 
-use g_genotype::{BgenError, GenotypeError};
+use g_genotype::{BgenError, GenotypeBatch, GenotypeBatchPayload, GenotypeError};
 use g_input::PredictionError;
 use g_output::{NativeVariantMetadataHandle, OutputError};
 
 use crate::association_scheduler::{
-    AssociationBatchOutput, AssociationBatchPipeline, CompletedAssociationBatch, ScheduledAssociationBatch,
-    SchedulerError,
+    AssociationBatchPipeline, CompletedAssociationBatch, ScheduledAssociationBatch, SchedulerError,
 };
-use crate::backend::{AssociationBackend, GroupPreparationInput, SampleMajorCovariateMatrix, TraitMajorMatrix};
+use crate::backend::{
+    AssociationBackend, GenotypeDeliveryCapability, GenotypeTransferPreparation, GroupPreparationInput,
+    SampleMajorCovariateMatrix, TraitMajorMatrix,
+};
 use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
 use crate::genotype_buffer::homogeneous_chunk_chromosome;
 use crate::null_logistic_policy::{
@@ -34,6 +36,11 @@ pub(crate) struct DeliveryWarning {
 pub(crate) struct AssociationDeliveryReport {
     pub(crate) processed_chunk_count: usize,
     pub(crate) warnings: Vec<DeliveryWarning>,
+}
+
+enum PlannedGenotypeDelivery {
+    Host,
+    CompressedPacked8(g_genotype::CompressedPacked8BatchLayout),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -119,11 +126,18 @@ where
     Backend: AssociationBackend + 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
+    let genotype_delivery = plan_genotype_delivery(genotype_input, backend.as_ref(), &request.settings, &chunk_specs)?;
+    let genotype_transfer = match &genotype_delivery {
+        PlannedGenotypeDelivery::Host => GenotypeTransferPreparation::Host,
+        PlannedGenotypeDelivery::CompressedPacked8(_) => {
+            GenotypeTransferPreparation::CompressedPacked8(read_session.compressed_packed8_transfer().clone())
+        }
+    };
     let group_state = backend
-        .prepare_group(group_preparation_input(&mut request.group))
+        .prepare_group(group_preparation_input(&mut request.group, genotype_transfer))
         .map_err(|source| DeliveryError::Backend { stage: "prepare_group", source })?;
     let delivery_result: DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError> = (|| {
-        let mut pipeline = AssociationBatchPipeline::new(Arc::clone(backend))?;
+        let mut pipeline = AssociationBatchPipeline::new(Arc::clone(backend), &group_state)?;
         let mut current_chromosome = None;
         let mut processed_chunk_count = 0_usize;
         let mut warnings = Vec::new();
@@ -166,16 +180,32 @@ where
                 ));
             }
             let sample_count = request.group.sample_indices.len();
-            let decoded = read_session.decode_variant_major_batch(
-                chunk_spec.variant_start_index,
-                chunk_spec.variant_stop_index,
-                compute_variant_count,
-                request.settings.use_packed8,
-                request.settings.statistics_policy,
-            )?;
-            debug_assert_eq!(decoded.sample_count, sample_count);
+            let genotypes = match &genotype_delivery {
+                PlannedGenotypeDelivery::Host => read_session.decode_variant_major_batch(
+                    chunk_spec.variant_start_index,
+                    chunk_spec.variant_stop_index,
+                    compute_variant_count,
+                    request.settings.gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8,
+                    request.settings.statistics_policy,
+                )?,
+                PlannedGenotypeDelivery::CompressedPacked8(layout) => {
+                    let logical_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+                    GenotypeBatch {
+                        variant_start_index: chunk_spec.variant_start_index,
+                        logical_variant_count,
+                        compute_variant_count,
+                        sample_count,
+                        payload: GenotypeBatchPayload::CompressedPacked8(read_session.pack_compressed_packed8_batch(
+                            layout,
+                            chunk_spec.variant_start_index,
+                            chunk_spec.variant_stop_index,
+                        )?),
+                    }
+                }
+            };
+            debug_assert_eq!(genotypes.sample_count, sample_count);
             let scheduled_batch = ScheduledAssociationBatch {
-                decoded,
+                genotypes,
                 metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
                 active_trait_selection,
             };
@@ -190,6 +220,27 @@ where
     })();
     backend.release_group(group_state);
     delivery_result
+}
+
+fn plan_genotype_delivery<Backend, InterruptionError>(
+    genotype_input: &PreparedGenotypeInput,
+    backend: &Backend,
+    settings: &AssociationDeliverySettings,
+    chunk_specs: &[g_genotype::ChunkSpec],
+) -> DeliveryResult<PlannedGenotypeDelivery, Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+{
+    if chunk_specs.is_empty()
+        || settings.gpu_genotype_format != g_plan::GpuGenotypeFormat::Packed8
+        || backend.genotype_delivery_capability() != GenotypeDeliveryCapability::RawDeflatePacked8
+    {
+        return Ok(PlannedGenotypeDelivery::Host);
+    }
+    Ok(match genotype_input.reader.plan_compressed_packed8_batch_layout(chunk_specs)? {
+        Some(layout) => PlannedGenotypeDelivery::CompressedPacked8(layout),
+        None => PlannedGenotypeDelivery::Host,
+    })
 }
 
 fn plan_association_delivery<BackendError, InterruptionError>(
@@ -209,7 +260,10 @@ fn plan_association_delivery<BackendError, InterruptionError>(
     Ok(chunk_specs)
 }
 
-fn group_preparation_input(group: &mut g_input::AlignedPhenotypeGroup) -> GroupPreparationInput {
+fn group_preparation_input(
+    group: &mut g_input::AlignedPhenotypeGroup,
+    genotype_transfer: GenotypeTransferPreparation,
+) -> GroupPreparationInput {
     let sample_count = group.sample_indices.len();
     GroupPreparationInput {
         phenotypes: TraitMajorMatrix {
@@ -222,6 +276,7 @@ fn group_preparation_input(group: &mut g_input::AlignedPhenotypeGroup) -> GroupP
             sample_count,
             covariate_count: group.covariate_names.len(),
         },
+        genotype_transfer,
     }
 }
 
@@ -336,7 +391,7 @@ fn validate_delivery_request<BackendError, InterruptionError>(
 }
 
 fn drain_available_batches<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<Backend>,
+    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -349,7 +404,7 @@ where
 }
 
 fn submit_batch<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<Backend>,
+    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     scheduled_batch: ScheduledAssociationBatch,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
@@ -369,7 +424,7 @@ where
 }
 
 fn drain_pending_batches<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<Backend>,
+    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -382,7 +437,7 @@ where
 }
 
 fn finish_and_drain_pipeline<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<Backend>,
+    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -399,8 +454,9 @@ fn write_completed_batch<BackendError, InterruptionError>(
     completed_batch: CompletedAssociationBatch,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), BackendError, InterruptionError> {
-    let CompletedAssociationBatch { output, result } = completed_batch;
-    let AssociationBatchOutput { variant_start_index, metadata, statistics, active_trait_selection } = output;
+    let CompletedAssociationBatch { context, statistics, result } = completed_batch;
+    let crate::association_scheduler::AssociationBatchContext { variant_start_index, metadata, active_trait_selection } =
+        context;
     let active_trait_indices = match &active_trait_selection {
         ActiveTraitSelection::All => None,
         ActiveTraitSelection::Indices(indices) => Some(indices.as_slice()),
