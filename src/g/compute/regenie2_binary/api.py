@@ -55,7 +55,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+) -> regenie2_binary_result.CorrectedMultiBinaryScoreChunkResult:
     """Compute score statistics and approximate-Firth corrections from dosages."""
     score_test_result = regenie2_binary_score.compute_multi_binary_score_test_variant_major(
         chromosome_state=chromosome_state.score_state,
@@ -65,7 +65,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
         relative_variance_tolerance=kernel_config.numerical.relative_variance_tolerance,
         native_genotype_mean=native_genotype_mean,
     )
-    return variant_major_dispatch.apply_host_selected_corrections_multi_firth_variant_major(
+    return variant_major_dispatch.apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=genotype_matrix_by_variant,
         result=score_test_result,
@@ -83,7 +83,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
-) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
+) -> regenie2_binary_result.CorrectedMultiBinaryScoreChunkResult:
     """Compute score statistics and approximate-Firth corrections from packed8 data."""
     decoded_score_result = (
         compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8_retaining_dosage(
@@ -95,7 +95,7 @@ def compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
             native_genotype_mean=native_genotype_mean,
         )
     )
-    return variant_major_dispatch.apply_host_selected_corrections_multi_firth_variant_major(
+    return variant_major_dispatch.apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
         chromosome_state=chromosome_state,
         genotype_matrix_by_variant=decoded_score_result.genotype_matrix_by_variant,
         result=decoded_score_result.score_result,

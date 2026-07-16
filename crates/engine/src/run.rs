@@ -73,7 +73,7 @@ pub(crate) struct RunExecution {
 /// Failure while executing a fully prepared run.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunExecutionError<BackendError, HookError> {
-    #[error("Association delivery failed.")]
+    #[error("Association delivery failed: {0}")]
     Delivery(#[source] DeliveryError<BackendError, HookError>),
     #[error("Association delivery was interrupted.")]
     Interrupted(#[source] HookError),
@@ -83,13 +83,13 @@ pub(crate) enum RunExecutionError<BackendError, HookError> {
         #[source]
         output: g_output::OutputError,
     },
-    #[error("Association delivery failed and output abort also failed.")]
+    #[error("Association delivery failed: {delivery}; output abort also failed: {output}")]
     DeliveryAbort {
         delivery: Box<DeliveryError<BackendError, HookError>>,
         #[source]
         output: g_output::OutputError,
     },
-    #[error("Output completion failed.")]
+    #[error("Output completion failed: {0}")]
     OutputFinish(#[source] g_output::OutputError),
 }
 

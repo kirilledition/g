@@ -221,6 +221,13 @@ Important keys include:
 | Resume | `[output] resume` |
 | Diagnostics | `[diagnostics] telemetry` (`off`, `progress`, or `profile`) |
 
+`[compute] firth_candidate_capacity` is the per-trait scaling value for an
+aggregate hard static capacity, with a packaged default of `1024`. The runtime
+caps that value by the static compute chunk width and multiplies it by the
+trait count. Larger values enlarge the compiled approximate-Firth executable.
+If a batch exceeds the aggregate capacity, the run fails after normal batch
+synchronization instead of truncating candidates; increase the value and rerun.
+
 Decode tiling, scheduler queue depths, Parquet grouping/compression, packed8
 BGEN compatibility validation, and packed8-versus-dosage delivery are internal
 implementation policies owned by the genotype, engine, and output crates. They

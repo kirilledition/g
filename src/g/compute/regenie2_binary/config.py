@@ -46,7 +46,7 @@ class FirthCandidateConfig:
 
     Attributes:
         batch_size: Fixed batch size for device-resident Firth fallback lanes.
-        candidate_capacity: Preferred fixed candidate capacity before falling back to full chunk capacity.
+        candidate_capacity: Per-trait scaling value for the aggregate hard fixed capacity.
 
     """
 

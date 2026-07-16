@@ -733,6 +733,56 @@ Next:
   The current trace contains 26 such copies and about 35.8 milliseconds of
   following launch gaps; never silently truncate a trait exceeding capacity.
 
+## 2026-07-16 Static Firth Capacity Wave
+
+The target remains one binary trait with approximate Firth on full 1KG
+chromosome 22. A focused current-main trace contains 26 four-byte candidate
+count transfers followed by 43.917 milliseconds of aggregate launch gaps. The
+count was materialized midway through every chunk to select a correction
+executable.
+
+Accepted:
+
+- Candidate count remains on the device until ordinary whole-batch result
+  materialization. One donating JIT now runs the established masked correction
+  at an aggregate static capacity of
+  `min(firth_candidate_capacity, static_compute_variant_count) * trait_count`.
+  The packaged per-trait scaling value is 1,024, which covers this workload's
+  observed maximum of 959 candidates.
+- The materializer compares the device count with the static capacity before
+  parsing or writing results. A forced one-lane overflow reports the observed
+  count, capacity, and configuration key, and produces no Parquet output.
+  Candidate rows are never silently truncated.
+- Full production chr22 output remains bitwise identical across all 418,943
+  rows, including every score field, corrected field, correction label, and
+  status.
+- Across ten paired hot trials in forward and reverse order, the candidate wins
+  eight pairs. The conservative median paired reduction is 5.18%; the paired
+  geometric reduction is 11.81%, with a deterministic bootstrap 95% interval
+  of 3.45--21.11%. The upper tail reflects main's host-barrier sensitivity
+  during node-latency spikes rather than additional GPU arithmetic savings.
+- A final focused Nsight trace reduces the gaps following the relevant
+  four-byte transfers from 43.917 to 16.695 milliseconds, a 62.0% reduction.
+  The remaining count metadata transfers occur with final result
+  materialization rather than between score and correction launches.
+- The change deletes the dynamic capacity selector and is net 21 lines smaller
+  while retaining one correction implementation and one overflow contract.
+
+Rejected:
+
+- A device `lax.cond` around correction is end-to-end neutral and causes
+  last-bit differences by changing compilation and reduction scheduling. The
+  unconditional masked correction preserves the command-buffer-friendly path
+  and full-run bitwise output while retaining identity semantics for
+  zero-candidate batches.
+
+Next:
+
+- Reduce redundant pseudo-Firth scalar score, information, adjustment, and
+  deviance evaluation. Carry already-computed terminal scalars, calculate
+  penalized deviance only where convergence or the final likelihood-ratio test
+  needs it, and retain the exact full-output and paired hot gates.
+
 ## 2026-07-16 BGEN Allele Interning Wave
 
 The full chromosome-22 index performs 837,886 allele interning calls. Of

@@ -114,7 +114,7 @@ Use the current packaged defaults first. Override only with measurements.
 | `[compute] multi_phenotype_sample_mode` | Per-phenotype or shared complete-case sample alignment. |
 | `[output] writer_threads` | Output writer worker count. |
 | `[compute] firth_batch_size` | Approximate-Firth candidate batch size. |
-| `[compute] firth_candidate_capacity` | Candidate capacity for binary fallback staging. |
+| `[compute] firth_candidate_capacity` | Per-trait scaling value for the aggregate hard approximate-Firth capacity; larger values increase the static executable shape. |
 | `[compute] jax_cache_dir` | Optional location override for the always-enabled persistent JAX compilation cache. |
 | `[diagnostics] telemetry` | `off`, `progress`, or `profile`; profile mode can perturb timing. |
 
@@ -125,6 +125,13 @@ compatibility validation passes, including multi-phenotype groups. CPU and
 otherwise-supported biallelic diploid Layout-2 inputs that are not
 packed8-compatible use dosage delivery. Multiallelic, non-diploid,
 or otherwise unsupported input fails instead.
+
+Approximate Firth uses an aggregate hard static JAX capacity of the configured
+value, capped by the static compute chunk width, multiplied by the trait count.
+The packaged per-trait scaling value is 1,024. A batch with more aggregate
+candidates is not truncated: it finishes the normal device-to-host result
+synchronization and then fails with an instruction to increase
+`[compute] firth_candidate_capacity`.
 
 For compatible zlib-compressed packed8 input, GPU runs transfer aligned raw
 DEFLATE members and decode them on the active device with nvCOMP. Selection,

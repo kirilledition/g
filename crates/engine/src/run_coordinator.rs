@@ -73,15 +73,15 @@ struct ArtifactsCompletedDiagnosticFields<'fields> {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CoordinatedRunDetailError<BackendError, HookError> {
-    #[error("Native run preparation failed.")]
+    #[error("Native run preparation failed: {0}")]
     Preparation(#[from] RunPreparationError),
-    #[error("Native run execution failed.")]
+    #[error("Native run execution failed: {0}")]
     Execution(#[from] RunExecutionError<BackendError, HookError>),
-    #[error("Native run telemetry failed.")]
+    #[error("Native run telemetry failed: {0}")]
     Telemetry(#[from] TelemetryRunError),
-    #[error("Native run progress reporting failed.")]
+    #[error("Native run progress reporting failed: {0}")]
     Progress(#[from] RunProgressError),
-    #[error("Native run diagnostic serialization failed.")]
+    #[error("Native run diagnostic serialization failed: {0}")]
     Diagnostic(#[from] serde_json::Error),
     #[error("Phenotype count exceeds native int64 telemetry capacity.")]
     PhenotypeCountOutOfRange,
@@ -142,7 +142,11 @@ where
 
 fn engine_run_error_from_detail<BackendError, HookError>(
     error: CoordinatedRunDetailError<BackendError, HookError>,
-) -> EngineRunError<HookError> {
+) -> EngineRunError<HookError>
+where
+    BackendError: std::error::Error,
+    HookError: std::error::Error,
+{
     match error {
         CoordinatedRunDetailError::Execution(RunExecutionError::Interrupted(error)) => {
             EngineRunError::Interrupted(error)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import typing
 from dataclasses import dataclass
 
@@ -61,7 +62,11 @@ class DeviceGroupState[AssociationState]:
     compressed_transfer_selection: DeviceCompressedTransferSelection | None
 
 
-@jax.tree_util.register_dataclass
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=("association", "raw_packed8_statistics", "firth_candidate_count"),
+    meta_fields=("firth_candidate_capacity",),
+)
 @dataclass(frozen=True, slots=True)
 class AssociationBatch[AssociationValue, RawStatistics]:
     """Association values and optional packed8 summaries at one residency.
@@ -69,15 +74,25 @@ class AssociationBatch[AssociationValue, RawStatistics]:
     Attributes:
         association: Device or host association statistics.
         raw_packed8_statistics: Exact compressed-input summaries when applicable.
+        firth_candidate_count: Device count used to detect hard-capacity overflow after materialization.
+        firth_candidate_capacity: Static capacity matching the device count.
 
     """
 
     association: AssociationValue
     raw_packed8_statistics: RawStatistics | None
+    firth_candidate_count: jax.Array | npt.NDArray[np.int32] | None
+    firth_candidate_capacity: int | None
 
 
-type DeviceAssociationBatch = AssociationBatch[DeviceAssociationResult, DevicePacked8RawStatistics]
-type HostMaterializedAssociationBatch = AssociationBatch[HostAssociationResult, HostPacked8RawStatistics]
+type DeviceAssociationBatch = AssociationBatch[
+    DeviceAssociationResult,
+    DevicePacked8RawStatistics,
+]
+type HostMaterializedAssociationBatch = AssociationBatch[
+    HostAssociationResult,
+    HostPacked8RawStatistics,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,12 +268,28 @@ class JaxBackendBase:
                 selected_sample_count=raw_packed8_statistics.selected_sample_count,
             )
         )
-        return jax.device_get(
+        materialized_batch = jax.device_get(
             AssociationBatch(
                 association=selected_association,
                 raw_packed8_statistics=materializable_raw_statistics,
+                firth_candidate_count=device_result.firth_candidate_count,
+                firth_candidate_capacity=device_result.firth_candidate_capacity,
             )
         )
+        materialized_firth_candidate_count = materialized_batch.firth_candidate_count
+        materialized_firth_candidate_capacity = materialized_batch.firth_candidate_capacity
+        if (materialized_firth_candidate_count is None) != (materialized_firth_candidate_capacity is None):
+            raise ValueError("Firth candidate count and capacity must be materialized together.")
+        if materialized_firth_candidate_count is not None and materialized_firth_candidate_capacity is not None:
+            host_firth_candidate_count = int(materialized_firth_candidate_count)
+            if host_firth_candidate_count > materialized_firth_candidate_capacity:
+                message = (
+                    f"Aggregate Firth candidate count {host_firth_candidate_count} exceeded the static aggregate "
+                    f"capacity of {materialized_firth_candidate_capacity}. Increase [compute] firth_candidate_capacity "
+                    "(the per-trait capacity scaling value) and rerun."
+                )
+                raise ValueError(message)
+        return materialized_batch
 
 
 class LinearJaxBackend(JaxBackendBase):
@@ -350,6 +381,8 @@ class LinearJaxBackend(JaxBackendBase):
         return AssociationBatch(
             association=association,
             raw_packed8_statistics=batch.raw_packed8_statistics,
+            firth_candidate_count=None,
+            firth_candidate_capacity=None,
         )
 
 
@@ -454,6 +487,8 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
         return AssociationBatch(
             association=association,
             raw_packed8_statistics=batch.raw_packed8_statistics,
+            firth_candidate_count=None,
+            firth_candidate_capacity=None,
         )
 
 
@@ -554,7 +589,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         if batch.sparse_candidate_mask is None:
             raise ValueError("Binary Firth association requires a sparse candidate mask.")
         if batch.packed8:
-            association = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+            corrected_result = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
                 chromosome_state=chromosome_state,
                 packed_probability_pairs_by_variant=batch.genotype_values,
                 correction_plan=self.correction_plan,
@@ -563,7 +598,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
                 native_genotype_mean=batch.genotype_mean,
             )
         else:
-            association = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+            corrected_result = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
                 chromosome_state=chromosome_state,
                 genotype_matrix_by_variant=batch.genotype_values,
                 correction_plan=self.correction_plan,
@@ -572,6 +607,8 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
                 native_genotype_mean=batch.genotype_mean,
             )
         return AssociationBatch(
-            association=association,
+            association=corrected_result.association,
             raw_packed8_statistics=batch.raw_packed8_statistics,
+            firth_candidate_count=corrected_result.firth_candidate_count,
+            firth_candidate_capacity=corrected_result.firth_candidate_capacity,
         )
