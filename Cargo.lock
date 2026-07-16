@@ -717,6 +717,7 @@ version = "0.1.0"
 dependencies = [
  "g-engine",
  "g-genotype",
+ "g-genotype-cuda",
  "g-input",
  "g-output",
  "g-plan",
@@ -763,6 +764,14 @@ dependencies = [
 [[package]]
 name = "g-genotype-contracts"
 version = "0.1.0"
+
+[[package]]
+name = "g-genotype-cuda"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "g-genotype-contracts",
+]
 
 [[package]]
 name = "g-input"

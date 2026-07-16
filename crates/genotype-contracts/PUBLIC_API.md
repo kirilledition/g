@@ -5,10 +5,11 @@
 Canonical, allocation-preserving data-plane contracts shared between native
 genotype producers, the engine, and output consumers.
 
-## Public types
+## Public contracts
 
 The exact opened BGEN source identity, compact shared variant metadata storage
-and slices, output-facing chunk statistics, and packed nullable `f32` columns.
+and slices, output-facing chunk statistics, packed nullable `f32` columns, and
+the canonical raw-DEFLATE member alignment used by slab producers and consumers.
 
 ## This crate must not expose
 
@@ -24,4 +25,4 @@ must not introduce row-wise mirrors or crate-boundary copies.
 
 ## Allowed downstream users
 
-`g-genotype`, `g-engine`, and `g-output`.
+`g-genotype`, `g-genotype-cuda`, `g-engine`, and `g-output`.

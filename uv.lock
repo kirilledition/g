@@ -308,6 +308,7 @@ source = { editable = "." }
 dependencies = [
     { name = "jax", extra = ["cuda12"] },
     { name = "numpy" },
+    { name = "nvidia-libnvcomp-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 
 [package.dev-dependencies]
@@ -343,8 +344,9 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jax", extras = ["cuda12"], specifier = ">=0.10.1" },
+    { name = "jax", extras = ["cuda12"], specifier = ">=0.10.2,<0.11" },
     { name = "numpy", specifier = ">=2.4.6" },
+    { name = "nvidia-libnvcomp-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=5.2.0.13,<6" },
 ]
 
 [package.metadata.requires-dev]
@@ -1149,6 +1151,14 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/6f/8710fbd17cdd1d0fc3fea7d36d5b65ce1933611c31e1861da330206b253a/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83", size = 366359408, upload-time = "2025-06-05T20:07:42.501Z" },
     { url = "https://files.pythonhosted.org/packages/12/46/b0fd4b04f86577921feb97d8e2cf028afe04f614d17fb5013de9282c9216/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:73060ce019ac064a057267c585bf1fd5a353734151f87472ff02b2c5c9984e78", size = 366465088, upload-time = "2025-06-05T20:08:20.413Z" },
+]
+
+[[package]]
+name = "nvidia-libnvcomp-cu12"
+version = "5.3.0.16"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/20/e025aa3fa2ee33ee6a4871aa5a9e10b05472913adaff649ba21f2c98291d/nvidia_libnvcomp_cu12-5.3.0.16-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:535944be2e37ead56ad1ef80e9dd58a3126fc2ccf238ddffc9d1cb7a48f5300a", size = 41460080, upload-time = "2026-07-14T21:01:14.445Z" },
 ]
 
 [[package]]

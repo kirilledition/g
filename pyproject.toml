@@ -7,7 +7,8 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "jax[cuda12]>=0.10.1",
+    "jax[cuda12]>=0.10.2,<0.11",
+    "nvidia-libnvcomp-cu12>=5.2.0.13,<6; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "numpy>=2.4.6",
 ]
 
@@ -59,6 +60,11 @@ cache-keys = [
     { file = "pyproject.toml" },
     { file = "src/**/*.rs" },
     { file = "crates/**/*.rs" },
+    { file = "crates/**/build.rs" },
+    { file = "crates/**/*.cc" },
+    { file = "crates/**/*.cu" },
+    { file = "crates/**/*.h" },
+    { file = "crates/**/*.ptx" },
     { file = "crates/**/Cargo.toml" },
     { file = "crates/**/*.toml" },
     { file = "crates/interface/src/config.default.toml" },
