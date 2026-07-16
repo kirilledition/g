@@ -104,6 +104,17 @@ class FirthVariantResult:
     valid_mask: jax.Array
 
 
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class ScalarFirthTerminalResult:
+    """Terminal scalar solver quantities awaiting shared finalization."""
+
+    beta: jax.Array
+    standard_error: jax.Array
+    chi_squared: jax.Array
+    valid_mask: jax.Array
+
+
 def build_empty_firth_variant_result(batch_size: int) -> FirthVariantResult:
     """Build a placeholder Firth result for skipped padded batches."""
     return FirthVariantResult(
@@ -219,13 +230,15 @@ class ScalarApproximateFirthSolverParameters:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
-class ScalarApproximateFirthDispatchOperands:
-    """Operands for scalar approximate-Firth active/inactive dispatch."""
+class ScalarApproximateFirthInitialState:
+    """Shared initial state for pseudo-Firth and Newton-Raphson fits."""
 
     phenotype_vector: jax.Array
     genotype_vector: jax.Array
     offset_vector: jax.Array
     active_sample_mask: jax.Array
-    full_null_deviance: jax.Array
     non_active_deviance: jax.Array
     solver_parameters: ScalarApproximateFirthSolverParameters
+    beta: jax.Array
+    components: ScalarFirthComponents
+    deviance_null: jax.Array

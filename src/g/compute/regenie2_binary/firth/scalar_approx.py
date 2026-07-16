@@ -179,7 +179,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
     inner_maximum_iterations: int | jax.Array,
     maximum_step_size: jax.Array,
     minimum_variance: jax.Array,
-) -> regenie2_binary_firth_types.FirthVariantResult:
+) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
     """Run scalar pseudo-Firth with explicit numeric policy operands."""
     maximum_iteration_count = jnp.asarray(maximum_iterations, dtype=jnp.int32)
     inner_maximum_iteration_count = jnp.asarray(inner_maximum_iterations, dtype=jnp.int32)
@@ -267,16 +267,11 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
     negative_lrt_failure = final_state.converged & (chi_squared < 0.0)
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure | (~final_components.valid)
     standard_error = jnp.sqrt(jnp.reciprocal(final_components.genotype_information))
-    log10_p_value = jnp.asarray(
-        pvalue.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
-        dtype=initial_beta.dtype,
-    )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_binary_firth_types.FirthVariantResult(
+    return regenie2_binary_firth_types.ScalarFirthTerminalResult(
         beta=final_state.beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
         valid_mask=valid,
     )
 
@@ -368,7 +363,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
     maximum_step_size: jax.Array,
     line_search_maximum_attempts: int | jax.Array,
     minimum_variance: jax.Array,
-) -> regenie2_binary_firth_types.FirthVariantResult:
+) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
     """Run scalar Newton-Raphson approximate Firth with explicit policy."""
     maximum_iteration_count = jnp.asarray(maximum_iterations, dtype=jnp.int32)
     line_search_maximum_attempt_count = jnp.asarray(line_search_maximum_attempts, dtype=jnp.int32)
@@ -443,60 +438,46 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
     negative_lrt_failure = final_state.converged & (chi_squared < 0.0)
     failed = final_state.failed | maximum_iteration_failure | negative_lrt_failure
     standard_error = jnp.sqrt(jnp.reciprocal(final_state.genotype_information))
-    log10_p_value = jnp.asarray(
-        pvalue.chi_squared_to_log10_p_value(jnp.maximum(chi_squared, 0.0)),
-        dtype=initial_beta.dtype,
-    )
     valid = final_state.converged & (~failed) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return regenie2_binary_firth_types.FirthVariantResult(
+    return regenie2_binary_firth_types.ScalarFirthTerminalResult(
         beta=final_state.beta,
         standard_error=standard_error,
         chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
         valid_mask=valid,
     )
 
 
-def build_scalar_inactive_solver_result(
-    operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
+def finalize_scalar_firth_terminal_result(
+    terminal_result: regenie2_binary_firth_types.ScalarFirthTerminalResult,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Build the scalar result for inactive or null-failed lanes."""
-    scalar_dtype = operands.offset_vector.dtype
-    missing_value = jnp.asarray(jnp.nan, dtype=scalar_dtype)
+    """Compute p-values once after solver selection."""
+    log10_p_value = jnp.asarray(
+        pvalue.chi_squared_to_log10_p_value(jnp.maximum(terminal_result.chi_squared, 0.0)),
+        dtype=terminal_result.beta.dtype,
+    )
     return regenie2_binary_firth_types.FirthVariantResult(
-        beta=missing_value,
-        standard_error=missing_value,
-        chi_squared=missing_value,
-        log10_p_value=missing_value,
-        valid_mask=jnp.asarray(0, dtype=jnp.bool_),
+        beta=terminal_result.beta,
+        standard_error=terminal_result.standard_error,
+        chi_squared=terminal_result.chi_squared,
+        log10_p_value=log10_p_value,
+        valid_mask=terminal_result.valid_mask,
     )
 
 
-def run_scalar_active_solver(
-    operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Run pseudo-Firth and a lazy Newton-Raphson fallback for an active lane."""
-    parameters = operands.solver_parameters
-    initial_beta = jnp.asarray(0.0, dtype=operands.offset_vector.dtype)
-    initial_components = compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=operands.phenotype_vector,
-        genotype_vector=operands.genotype_vector,
-        offset_vector=operands.offset_vector,
-        active_sample_mask=operands.active_sample_mask,
-        non_active_deviance=operands.non_active_deviance,
-        beta=initial_beta,
-        minimum_variance=parameters.minimum_variance,
-    )
-    deviance_null = operands.full_null_deviance - jnp.log(initial_components.genotype_information)
-    pseudo_result = fit_scalar_pseudo_firth_with_minimum_variance(
-        deviance_null=deviance_null,
-        phenotype_vector=operands.phenotype_vector,
-        genotype_vector=operands.genotype_vector,
-        offset_vector=operands.offset_vector,
-        active_sample_mask=operands.active_sample_mask,
-        non_active_deviance=operands.non_active_deviance,
-        initial_beta=initial_beta,
-        initial_components=initial_components,
+def run_initialized_scalar_pseudo_firth_solver(
+    initial_state: regenie2_binary_firth_types.ScalarApproximateFirthInitialState,
+) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
+    """Run pseudo-Firth from a shared scalar initialization."""
+    parameters = initial_state.solver_parameters
+    return fit_scalar_pseudo_firth_with_minimum_variance(
+        deviance_null=initial_state.deviance_null,
+        phenotype_vector=initial_state.phenotype_vector,
+        genotype_vector=initial_state.genotype_vector,
+        offset_vector=initial_state.offset_vector,
+        active_sample_mask=initial_state.active_sample_mask,
+        non_active_deviance=initial_state.non_active_deviance,
+        initial_beta=initial_state.beta,
+        initial_components=initial_state.components,
         maximum_iterations=parameters.pseudo_maximum_iterations,
         tolerance=parameters.tolerance,
         inner_maximum_iterations=parameters.pseudo_inner_maximum_iterations,
@@ -504,32 +485,30 @@ def run_scalar_active_solver(
         minimum_variance=parameters.minimum_variance,
     )
 
-    def run_newton_raphson_fallback(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-        return fit_scalar_newton_raphson_firth_with_minimum_variance(
-            deviance_null=deviance_null,
-            phenotype_vector=operands.phenotype_vector,
-            genotype_vector=operands.genotype_vector,
-            offset_vector=operands.offset_vector,
-            active_sample_mask=operands.active_sample_mask,
-            non_active_deviance=operands.non_active_deviance,
-            initial_beta=initial_beta,
-            initial_components=initial_components,
-            maximum_iterations=parameters.newton_raphson_maximum_iterations,
-            tolerance=parameters.tolerance,
-            maximum_step_size=parameters.maximum_step_size,
-            line_search_maximum_attempts=parameters.line_search_maximum_attempts,
-            minimum_variance=parameters.minimum_variance,
-        )
 
-    return jax.lax.cond(
-        pseudo_result.valid_mask,
-        lambda _: pseudo_result,
-        run_newton_raphson_fallback,
-        None,
+def run_initialized_scalar_newton_raphson_firth_solver(
+    initial_state: regenie2_binary_firth_types.ScalarApproximateFirthInitialState,
+) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
+    """Run Newton-Raphson Firth from a shared scalar initialization."""
+    parameters = initial_state.solver_parameters
+    return fit_scalar_newton_raphson_firth_with_minimum_variance(
+        deviance_null=initial_state.deviance_null,
+        phenotype_vector=initial_state.phenotype_vector,
+        genotype_vector=initial_state.genotype_vector,
+        offset_vector=initial_state.offset_vector,
+        active_sample_mask=initial_state.active_sample_mask,
+        non_active_deviance=initial_state.non_active_deviance,
+        initial_beta=initial_state.beta,
+        initial_components=initial_state.components,
+        maximum_iterations=parameters.newton_raphson_maximum_iterations,
+        tolerance=parameters.tolerance,
+        maximum_step_size=parameters.maximum_step_size,
+        line_search_maximum_attempts=parameters.line_search_maximum_attempts,
+        minimum_variance=parameters.minimum_variance,
     )
 
 
-def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
+def initialize_single_variant_regenie_approximate_firth(
     *,
     phenotype_vector: jax.Array,
     genotype_vector: jax.Array,
@@ -537,11 +516,9 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
     carrier_sample_mask: jax.Array,
     full_null_deviance: jax.Array,
     sparse_correction: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one scalar approximate-Firth candidate with explicit solver policy."""
+) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+    """Initialize one dense or carrier-masked approximate-Firth lane."""
     phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
     offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
@@ -553,31 +530,27 @@ def fit_single_variant_regenie_approximate_firth_with_solver_parameters(
         phenotype_vector, null_probability_vector, active_sample_mask
     )
     non_active_deviance = jnp.where(sparse_correction, full_null_deviance - active_null_deviance, 0.0)
-    return fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_parameters(
+    return initialize_scalar_approximate_firth_with_active_samples(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
         active_sample_mask=active_sample_mask,
         full_null_deviance=full_null_deviance,
         non_active_deviance=non_active_deviance,
-        skip_firth=skip_firth,
-        null_failed=null_failed,
         solver_parameters=solver_parameters,
     )
 
 
-def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
+def initialize_compact_carrier_regenie_approximate_firth(
     *,
     phenotype_vector: jax.Array,
     genotype_vector: jax.Array,
     offset_vector: jax.Array,
     active_carrier_slot_mask: jax.Array,
     full_null_deviance: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one compact sparse lane with explicit solver policy."""
+) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+    """Initialize one compact carrier-only approximate-Firth lane."""
     phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
     offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
@@ -587,21 +560,19 @@ def fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
         null_probability_vector,
         active_carrier_slot_mask,
     )
-    return fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_parameters(
+    return initialize_scalar_approximate_firth_with_active_samples(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
         active_sample_mask=active_carrier_slot_mask,
         full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
         non_active_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64) - active_null_deviance,
-        skip_firth=skip_firth,
-        null_failed=null_failed,
         solver_parameters=solver_parameters,
     )
 
 
 @jax.jit(inline=True)
-def fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_parameters(
+def initialize_scalar_approximate_firth_with_active_samples(
     *,
     phenotype_vector: jax.Array,
     genotype_vector: jax.Array,
@@ -609,30 +580,33 @@ def fit_single_variant_regenie_approximate_firth_with_active_samples_and_solver_
     active_sample_mask: jax.Array,
     full_null_deviance: jax.Array,
     non_active_deviance: jax.Array,
-    skip_firth: jax.Array,
-    null_failed: jax.Array,
     solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
-) -> regenie2_binary_firth_types.FirthVariantResult:
-    """Fit one approximate-Firth candidate with explicit solver parameters."""
+) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+    """Initialize one approximate-Firth lane with an explicit sample mask."""
     phenotype_vector = jnp.asarray(phenotype_vector, dtype=jnp.float64)
     genotype_vector = jnp.asarray(genotype_vector, dtype=jnp.float64)
     offset_vector = jnp.asarray(offset_vector, dtype=jnp.float64)
     active_sample_mask = jnp.asarray(active_sample_mask, dtype=jnp.bool_)
     full_null_deviance = jnp.asarray(full_null_deviance, dtype=jnp.float64)
     non_active_deviance = jnp.asarray(non_active_deviance, dtype=jnp.float64)
-    solver_active = (~skip_firth) & (~null_failed)
-    dispatch_operands = regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands(
+    initial_beta = jnp.asarray(0.0, dtype=offset_vector.dtype)
+    initial_components = compute_scalar_firth_components_with_minimum_variance(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
         offset_vector=offset_vector,
         active_sample_mask=active_sample_mask,
-        full_null_deviance=full_null_deviance,
+        non_active_deviance=non_active_deviance,
+        beta=initial_beta,
+        minimum_variance=solver_parameters.minimum_variance,
+    )
+    return regenie2_binary_firth_types.ScalarApproximateFirthInitialState(
+        phenotype_vector=phenotype_vector,
+        genotype_vector=genotype_vector,
+        offset_vector=offset_vector,
+        active_sample_mask=active_sample_mask,
         non_active_deviance=non_active_deviance,
         solver_parameters=solver_parameters,
-    )
-    return jax.lax.cond(
-        solver_active,
-        run_scalar_active_solver,
-        build_scalar_inactive_solver_result,
-        dispatch_operands,
+        beta=initial_beta,
+        components=initial_components,
+        deviance_null=full_null_deviance - jnp.log(initial_components.genotype_information),
     )

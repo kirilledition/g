@@ -30,6 +30,71 @@ class FirthLaneStreamPlan:
     active_count: jax.Array
 
 
+def resolve_initialized_scalar_firth_batch(
+    *,
+    initial_states: regenie2_binary_firth_types.ScalarApproximateFirthInitialState,
+    solver_active_mask: jax.Array,
+) -> regenie2_binary_firth_types.FirthVariantResult:
+    """Run one pseudo batch and only enter Newton when a lane needs fallback."""
+    pseudo_terminal_result = jax.vmap(regenie2_binary_firth_scalar_approx.run_initialized_scalar_pseudo_firth_solver)(
+        initial_states
+    )
+    fallback_mask = solver_active_mask & (~pseudo_terminal_result.valid_mask)
+
+    def run_newton_raphson_fallback(
+        states: regenie2_binary_firth_types.ScalarApproximateFirthInitialState,
+    ) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
+        newton_raphson_terminal_result = jax.vmap(
+            regenie2_binary_firth_scalar_approx.run_initialized_scalar_newton_raphson_firth_solver
+        )(states)
+        return regenie2_binary_firth_types.ScalarFirthTerminalResult(
+            beta=jnp.where(
+                fallback_mask,
+                newton_raphson_terminal_result.beta,
+                pseudo_terminal_result.beta,
+            ),
+            standard_error=jnp.where(
+                fallback_mask,
+                newton_raphson_terminal_result.standard_error,
+                pseudo_terminal_result.standard_error,
+            ),
+            chi_squared=jnp.where(
+                fallback_mask,
+                newton_raphson_terminal_result.chi_squared,
+                pseudo_terminal_result.chi_squared,
+            ),
+            valid_mask=jnp.where(
+                fallback_mask,
+                newton_raphson_terminal_result.valid_mask,
+                pseudo_terminal_result.valid_mask,
+            ),
+        )
+
+    terminal_result = jax.lax.cond(
+        jnp.any(fallback_mask),
+        run_newton_raphson_fallback,
+        lambda _: pseudo_terminal_result,
+        initial_states,
+    )
+    active_result = regenie2_binary_firth_scalar_approx.finalize_scalar_firth_terminal_result(terminal_result)
+    empty_result = regenie2_binary_firth_types.build_empty_firth_variant_result(solver_active_mask.shape[0])
+    return regenie2_binary_firth_types.FirthVariantResult(
+        beta=jnp.where(solver_active_mask, active_result.beta, empty_result.beta),
+        standard_error=jnp.where(
+            solver_active_mask,
+            active_result.standard_error,
+            empty_result.standard_error,
+        ),
+        chi_squared=jnp.where(solver_active_mask, active_result.chi_squared, empty_result.chi_squared),
+        log10_p_value=jnp.where(
+            solver_active_mask,
+            active_result.log10_p_value,
+            empty_result.log10_p_value,
+        ),
+        valid_mask=jnp.where(solver_active_mask, active_result.valid_mask, empty_result.valid_mask),
+    )
+
+
 def compute_scalar_firth_multi_variantwise(
     null_firth_offset_matrix: jax.Array,
     phenotype_matrix: jax.Array,
@@ -47,35 +112,33 @@ def compute_scalar_firth_multi_variantwise(
         kernel_config
     )
 
-    def fit_variant(
+    def initialize_variant(
         trait_index: jax.Array,
         genotype_vector: jax.Array,
         lane_carrier_sample_mask: jax.Array,
         lane_full_null_deviance: jax.Array,
-        skip_firth: jax.Array,
         sparse_correction: jax.Array,
-        null_failed: jax.Array,
-    ) -> regenie2_binary_firth_types.FirthVariantResult:
-        return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth_with_solver_parameters(
-            phenotype_vector=jnp.asarray(jnp.take(phenotype_matrix, trait_index, axis=0), dtype=jnp.float64),
-            genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
-            offset_vector=jnp.asarray(jnp.take(null_firth_offset_matrix, trait_index, axis=0), dtype=jnp.float64),
+    ) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+        return regenie2_binary_firth_scalar_approx.initialize_single_variant_regenie_approximate_firth(
+            phenotype_vector=jnp.take(phenotype_matrix, trait_index, axis=0),
+            genotype_vector=genotype_vector,
+            offset_vector=jnp.take(null_firth_offset_matrix, trait_index, axis=0),
             carrier_sample_mask=lane_carrier_sample_mask,
-            full_null_deviance=jnp.asarray(lane_full_null_deviance, dtype=jnp.float64),
+            full_null_deviance=lane_full_null_deviance,
             sparse_correction=sparse_correction,
-            skip_firth=skip_firth,
-            null_failed=null_failed,
             solver_parameters=solver_parameters,
         )
 
-    return jax.vmap(fit_variant)(
+    initial_states = jax.vmap(initialize_variant)(
         flat_trait_indices,
         genotype_matrix_by_variant,
         carrier_sample_mask,
         full_null_deviance,
-        skip_firth_mask,
         sparse_correction_mask,
-        null_failed_mask,
+    )
+    return resolve_initialized_scalar_firth_batch(
+        initial_states=initial_states,
+        solver_active_mask=(~skip_firth_mask) & (~null_failed_mask),
     )
 
 
@@ -163,27 +226,23 @@ def compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameter
     null_failed_mask_batches = null_failed_mask.reshape((batch_count, firth_batch_size))
     empty_firth_variant_result = regenie2_binary_firth_types.build_empty_firth_variant_result(firth_batch_size)
 
-    def fit_compact_lane(
+    def initialize_compact_lane(
         phenotype_vector: jax.Array,
         genotype_vector: jax.Array,
         offset_vector: jax.Array,
         carrier_slot_mask: jax.Array,
         lane_full_null_deviance: jax.Array,
-        skip_firth: jax.Array,
-        null_failed: jax.Array,
-    ) -> regenie2_binary_firth_types.FirthVariantResult:
-        return regenie2_binary_firth_scalar_approx.fit_compact_carrier_regenie_approximate_firth_with_solver_parameters(
+    ) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+        return regenie2_binary_firth_scalar_approx.initialize_compact_carrier_regenie_approximate_firth(
             phenotype_vector=phenotype_vector,
             genotype_vector=genotype_vector,
             offset_vector=offset_vector,
             active_carrier_slot_mask=carrier_slot_mask,
             full_null_deviance=lane_full_null_deviance,
-            skip_firth=skip_firth,
-            null_failed=null_failed,
             solver_parameters=solver_parameters,
         )
 
-    fit_compact_batch = jax.vmap(fit_compact_lane)
+    initialize_compact_batch = jax.vmap(initialize_compact_lane)
 
     def compute_firth_batch(
         carry: None,
@@ -192,14 +251,16 @@ def compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameter
         del carry
 
         def compute_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
-            return fit_compact_batch(
+            initial_states = initialize_compact_batch(
                 phenotype_batches[batch_index],
                 genotype_batches[batch_index],
                 offset_batches[batch_index],
                 active_carrier_slot_mask_batches[batch_index],
                 full_null_deviance_batches[batch_index],
-                ~active_mask_batches[batch_index],
-                null_failed_mask_batches[batch_index],
+            )
+            return resolve_initialized_scalar_firth_batch(
+                initial_states=initial_states,
+                solver_active_mask=active_mask_batches[batch_index] & (~null_failed_mask_batches[batch_index]),
             )
 
         batch_result = jax.lax.cond(

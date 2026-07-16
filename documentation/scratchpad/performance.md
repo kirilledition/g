@@ -783,6 +783,61 @@ Next:
   penalized deviance only where convergence or the final likelihood-ratio test
   needs it, and retain the exact full-output and paired hot gates.
 
+## 2026-07-17 Batched Lazy Firth Fallback Wave
+
+The target remains one binary trait with approximate Firth on full 1KG
+chromosome 22. The scalar solver appeared to select Newton-Raphson lazily with
+a lane-level `lax.cond`, but that condition was inside `jax.vmap`. JAX's batching
+rule lowered the condition to a select and executed both pseudo-Firth and
+Newton-Raphson for every active batch before discarding one result per lane.
+
+Accepted:
+
+- Scalar initialization and pseudo-Firth remain lane-vectorized. The fallback
+  mask is now reduced to one scalar outside every lane `vmap`; a batch enters
+  vectorized Newton-Raphson only when at least one active pseudo-Firth lane
+  fails. A compact terminal result selects the winning solver quantities, then
+  computes the p-value once. Padded and null-failed lanes retain the existing
+  empty-result semantics.
+- The refactor removes the obsolete lane-dispatch container and wrappers. The
+  shared initial state retains only values needed by both solvers, and the
+  implementation is net 48 source lines larger while replacing an ineffective
+  control-flow architecture.
+- Normal production output is bitwise identical to current main across all
+  418,943 rows and every field. A second full-chromosome run with
+  `firth_pseudo_maximum_iterations = 1` forces Newton-Raphson and is also
+  bitwise identical, proving that the retained fallback path selects and
+  finalizes correctly.
+- Across ten paired hot processes in forward and reverse order, with five hot
+  trials per process, the candidate wins every pair. Median paired time falls
+  26.66%; the paired geometric reduction is 26.99%, with a deterministic
+  bootstrap 95% interval of 26.18--27.80%.
+- Focused Nsight confirms that production pseudo-Firth succeeds without
+  entering a Newton batch. The 1,752-launch, 160-register Newton reduction is
+  absent, and the corresponding full-sample probability loop falls from 2,075
+  launches to 323. The four-kernel Firth pool falls from 237.904 to 38.663
+  milliseconds, an 83.75% reduction. Across the complete trace, kernel calls
+  fall from 19,231 to 8,176 and aggregate kernel time from 448.125 to 227.976
+  milliseconds. Nsight reports the known non-fatal `NumTpcs` importer error,
+  but the CUDA activity tables are complete.
+
+Rejected:
+
+- Reusing terminal pseudo-logistic information and score reductions removed
+  10.503 milliseconds from the affected profiled kernels, but did not clear the
+  full-run gate. Across twenty paired processes it wins twelve, with a 0.07%
+  median reduction and a -0.14% geometric change; the bootstrap 95% interval is
+  -0.78--0.48%. The patch is not integrated.
+
+Next:
+
+- Specialize ordinary dense Firth batches for an all-sample mask without
+  duplicating the solver. Keep the existing mixed path for sparse lanes above
+  compact-carrier capacity, and require the same exact-output and paired hot
+  gates.
+- Preserve dictionary-coded BGEN metadata through Arrow/Parquet before
+  expanding strings, then benchmark direct-Parquet codecs against Zstd level 1.
+
 ## 2026-07-16 BGEN Allele Interning Wave
 
 The full chromosome-22 index performs 837,886 allele interning calls. Of
