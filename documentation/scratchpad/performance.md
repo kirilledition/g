@@ -820,6 +820,23 @@ Accepted:
   fall from 19,231 to 8,176 and aggregate kernel time from 448.125 to 227.976
   milliseconds. Nsight reports the known non-fatal `NumTpcs` importer error,
   but the CUDA activity tables are complete.
+- The inner pseudo-logistic proposal now evaluates only its transient
+  predictor, sigmoid, and per-sample score and information products in
+  `float32`. Products widen before `float64` reductions; scalar state, outer
+  objective components, convergence, corrected statistics, and lazy Newton
+  fallback remain `float64`. Manifest schema 17 fingerprints this fixed policy
+  so resume cannot mix it with prior all-`float64` inner chunks.
+- The focused 512-by-2,504 pseudo-solver median falls from 1.5472 to 1.1118
+  milliseconds, a 28.14% reduction. Across ten position-balanced full hot
+  process pairs, the candidate wins nine. Median paired time falls 3.82%, with
+  a deterministic bootstrap 95% interval of 2.49--4.72%; the paired geometric
+  reduction is 2.62%.
+- All 418,943 correction methods and statuses remain identical. On 17,938
+  corrected rows, maximum public-result changes are 4.77e-7 beta, 2.38e-7
+  standard error, 1.91e-6 chi square, and 4.77e-7 log10 p-value. Synthetic
+  separated, sparse, one-to-128-carrier, and eta-to-44 lanes preserve every
+  validity and fallback decision. Actual chromosome-22 terminal eta stays
+  between -6.356 and 3.546.
 
 Rejected:
 
@@ -828,15 +845,109 @@ Rejected:
   full-run gate. Across twenty paired processes it wins twelve, with a 0.07%
   median reduction and a -0.14% geometric change; the bootstrap 95% interval is
   -0.78--0.48%. The patch is not integrated.
+- Raising the Firth batch size from 512 to 1,024 preserves bitwise output but
+  loses all five paired processes. Median hot time regresses 10.29%, and the
+  paired geometric regression is 7.92%. Keep the 512-lane batch.
+- Representing an ordinary dense Firth batch with a static all-sample mask
+  removes the carrier and sparse-mask operands from the specialized StableHLO,
+  along with 16 selects, one reduction, and two logarithms. Production output
+  remains bitwise identical across all 418,943 rows and every field. Focused
+  Nsight confirms that the two dominant Firth reductions fall from 22.901 to
+  16.522 milliseconds, saving 6.379 milliseconds, while their register counts
+  fall from 40 and 160 to 32 and 84.
+- The kernel saving does not clear the full-application hot gate. In the
+  predeclared 30 paired processes, the candidate wins 20, with a 1.129839%
+  median reduction (95% bootstrap interval -0.343213--2.253859%) and a
+  1.473956% geometric reduction (-0.828735--3.913967%). Including all five
+  unplanned intermediate pairs prevents cherry-picking but remains ambiguous:
+  22 of 35 wins, 0.675660% median reduction
+  (-0.688781--2.233241%), and 1.205939% geometric reduction
+  (-0.789758--3.348061%). The final 30-process sequence ran in one allocation
+  reserving the sole GPU, eight CPUs, and 64 GiB; a 35-day resident non-GPU
+  allocation made Slurm node exclusivity impossible. The source patch is not
+  integrated.
+- Arrow dictionary inputs do not preserve a cheaper metadata path through the
+  current Parquet writer. Parquet resolves the keys back to strings, then
+  hashes and interns them into its own dictionary. Six full-output processes
+  regress score-only writing 7.89% and Firth-success writing 14.68%, with no
+  file-size change. Keep the existing `Utf8View` columns.
+- Zstd level 1 remains both the fastest and smallest tested direct-Parquet
+  codec. Across six position-balanced full-output processes per codec, Snappy
+  is 8.57% slower and 19.94% larger; raw LZ4 is 8.40% slower and 21.65% larger.
+  The temporary codec dependencies and source changes are not retained.
+- Padding each 7,522-byte decompressed row to a 128-byte pitch does not improve
+  nvCOMP delivery. The 7,552-byte candidate wins only three of eight direct-FFI
+  pairs; its median and geometric time changes are regressions of 0.176% and
+  0.094%, with both confidence intervals crossing zero. Smaller 32- and
+  64-byte pitches have the same 7,552-byte geometry, while 256 bytes would add
+  still more transfer. Keep the logical row stride.
+- Custom host pinning cannot remove the measured transfer path. Nsight labels
+  all 68 host-to-device copies as pinned-to-device transfers already: 118.58
+  MiB takes 14.511 milliseconds. PJRT stages the current Rust owners through
+  its own pinned buffers, and bypassing that lifecycle would complicate buffer
+  reuse for an absolute CUDA-activity ceiling of 3.55%. Keep the pooled host
+  buffers and PJRT-owned staging.
+- Score-test beta is not a valid approximate-Firth warm start. It is in output
+  allele orientation and comes from the ordinary-logistic null, whereas the
+  correction solves the Firth-null objective in minor-allele orientation.
+  REGENIE's normal approximate-Firth path starts at zero, and this repository
+  already observed convergence failures from score-beta initialization. A
+  correct nonzero start would also require a second component evaluation and
+  could change convergence and fallback labels, so no source experiment is
+  retained.
+- Borrowing one contiguous mmap span per chunk and scattering raw members on
+  the GPU loses the cost model before implementation. The existing host pack
+  takes about 0.447 milliseconds per full chunk, while shape-stable borrowed
+  spans would increase chromosome transfer from 119.261 to 139.297 MB and add
+  a new scatter kernel plus 4.587 MB of device staging per resident batch.
+  Seventy-five percent of source members are unaligned and cannot be passed to
+  nvCOMP directly. Keep the pooled host pack.
+- Parallel raw-DEFLATE packing does not improve the source-neutral production
+  path. Caching all member descriptors cuts a 16,384-variant pack about 66.7%
+  and improves open plus layout plus all packs about 2.05%, but retains 12
+  bytes per variant, binds the layout to one source, and moves validation ahead
+  of the producer/GPU pipeline. Descriptor-free variants that parallelize copy
+  alone or validation plus copy are flat to 13% slower on the full production
+  chunk and regress smaller chunks. Keep the one-pass pooled packer.
+- Increasing the transferred-batch queue from one to two preserves byte-exact
+  Parquet output but does not convert the profiled 6.8-millisecond stall ceiling
+  into a stable full-run win. The five position-balanced process pairs change
+  by +0.821%, +2.500%, -2.922%, -7.987%, and +4.813%; the paired geometric
+  result is a 0.456% regression. Keep one queued successor instead of retaining
+  another 78.641 MiB device genotype batch.
+- Aligned 16-bit probability-pair I/O is slower than the finalizer's two byte
+  operations. The candidate keeps 40 registers, has no spills, and exactly
+  preserves full, tail, selection, invalid-index, descriptor, Adler, statistic,
+  status, and mean outputs. Nevertheless it loses all five direct-FFI process
+  pairs: median and geometric time regress 0.727% and 0.759%, with both
+  bootstrap intervals wholly negative. Uniform mode branches inside the sample
+  loop outweigh the reduced load/store instruction count, so keep byte I/O.
+- Further Firth lane bucketing has too little divergence to recover its own
+  routing cost. The production trace contains 17,938 active lanes, with no
+  null-fit failures or Newton fallbacks. The current dense and compact streams
+  consume 299 batch-maximum pseudo-Firth outer iterations; even perfect oracle
+  ordering saves only four, a 1.338% solver-loop ceiling. The best cheap
+  carrier- or minor-allele-count split saves three, while score statistics have
+  only about 0.02 correlation with iteration count. The opportunity is confined
+  to two tail batches, so no sorting or scatter path is retained.
+- A fused native pseudo-Firth solver does not have a credible implementation
+  gate on the V100. The dense path's entire ceiling is 38.663 milliseconds, but
+  the previously removed bare CUDA reducer took 0.38--0.44 milliseconds where
+  XLA took 0.11. Applying the measured lane divergence puts that primitive at
+  a 34--48-millisecond lower bound before adding solver control flow, exponent,
+  and logarithm work. A faithful 600--900-line second solver would need to beat
+  the old reducer by at least 34% while doing more work merely to reach a useful
+  application gate, so no CUDA prototype is added.
+- Hoisting the three invariant `float64`-to-`float32` conversions out of the
+  inner loop materializes and carries three 512-by-2,504 arrays. The focused
+  solver gain falls from 28.14% to 10.3%, so conversions remain fusion-local
+  inside the loop body.
 
 Next:
 
-- Specialize ordinary dense Firth batches for an all-sample mask without
-  duplicating the solver. Keep the existing mixed path for sparse lanes above
-  compact-carrier capacity, and require the same exact-output and paired hot
-  gates.
-- Preserve dictionary-coded BGEN metadata through Arrow/Parquet before
-  expanding strings, then benchmark direct-Parquet codecs against Zstd level 1.
+- Re-profile the accepted mixed-precision path before further Firth expression
+  tuning. Rank the remaining nvCOMP delivery, Rust index/open, output tail, and
+  association kernels from the refreshed trace.
 
 ## 2026-07-16 BGEN Allele Interning Wave
 
@@ -860,6 +971,33 @@ Accepted:
   ten order-alternated `landau` processes with five hot trials each, median hot
   time improves 1.66% and the paired geometric reduction is 1.23%; the
   bootstrap 95% interval is 0.22--1.99%, with four of five process-pair wins.
+
+## 2026-07-17 BGEN Index Traversal Wave
+
+Rejected:
+
+- All 418,943 resolved chromosome-22 identifiers are ASCII. Bypassing lossy
+  UTF-8 conversion for that strict subset wins all eight exclusive-core pairs,
+  reducing median open/index time from 66.193 to 65.521 milliseconds. The
+  paired geometric reduction is 1.102%, with a 0.279--2.124% bootstrap
+  interval.
+- Prefetching the next record header after its checked offset wins a separate
+  eight of eight pairs, reducing median open/index time from 65.435 to 63.011
+  milliseconds. Its paired geometric reduction is 3.782%, with a
+  2.892--4.544% interval. The two local changes combine to about a 4.8% index
+  stage improvement without allocating or retaining more metadata.
+- A full structural audit remains exact across every variant: metadata digest
+  `14b55b774ec075c971a081f0adfdbede0790490c0ffd5e92066ca7d2a1f14dd0`,
+  packed-record digest
+  `2a752984ea66d9f83b624c9876aa50b414ef855a0945340ae6cb4159e9f3d038`,
+  one chromosome boundary, and 26 production chunks. All 60 application-gate
+  Parquet outputs are byte-identical.
+- The predeclared application endpoint does not clear zero after 30
+  position-balanced pairs. The candidate wins 19 pairs and reduces the median
+  paired time 1.391%, but severe bidirectional node outliers leave the
+  geometric reduction at 0.0606% with a -4.203--3.416% bootstrap interval
+  (`p=0.9025`). Per the fixed gate, the source patch is not retained despite
+  the isolated index-stage win.
 
 ## Output Performance
 
