@@ -135,6 +135,26 @@ markers = [
     "cli_smoke: runs the installed CLI against a committed tiny end-to-end fixture.",
 ]
 
+# Local-first static analysis (skylos). Default excludes already cover
+# .venv/node_modules/__pycache__; this list drops dependency caches and
+# non-product trees so full-repo scans stay focused on src/ + crates/.
+[tool.skylos]
+exclude = [
+    ".tools",
+    "target",
+    "tests",
+    "tooling",
+    "scripts",
+    "data",
+    "reference",
+    "documentation",
+    "documentation_rendered_website",
+    "outputs",
+    "results",
+    ".ruff_cache",
+    ".skylos",
+]
+
 [tool.coverage.run]
 branch = true
 source = ["src/g"]
