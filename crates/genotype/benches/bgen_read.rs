@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -5,6 +6,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use g_genotype::{BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8Compatibility};
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
+const GPU_HOST_DELIVERY_CHUNK_SIZES: [usize; 2] = [8192, 16384];
 const DOSAGE_STATISTICS_POLICY: ChunkStatisticsPolicy =
     ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: false };
 const PACKED8_STATISTICS_POLICY: ChunkStatisticsPolicy =
@@ -82,6 +84,68 @@ fn benchmark_bgen_open(criterion: &mut Criterion) {
     });
 }
 
+fn benchmark_gpu_host_delivery(criterion: &mut Criterion, reader: &BgenReaderCore, read_session: &BgenReadSession<'_>) {
+    std::hint::black_box(read_session.compressed_packed8_transfer());
+    let mut delivery_group = criterion.benchmark_group("bgen_gpu_host_delivery_full_samples");
+    for chunk_size in GPU_HOST_DELIVERY_CHUNK_SIZES {
+        let chunk_specs = reader
+            .plan_chromosome_homogeneous_chunks(chunk_size, &BTreeSet::new())
+            .expect("benchmark chunk plan should build");
+        let Some(first_chunk_spec) = chunk_specs.first() else {
+            delivery_group.finish();
+            return;
+        };
+        let Ok(compressed_layout) = reader.plan_compressed_packed8_batch_layout(&chunk_specs) else {
+            delivery_group.finish();
+            return;
+        };
+        let variant_start = first_chunk_spec.variant_start_index;
+        let variant_stop = first_chunk_spec.variant_stop_index;
+        let selected_variant_count = variant_stop - variant_start;
+        delivery_group.throughput(Throughput::Elements(
+            u64::try_from(selected_variant_count).expect("variant count should fit u64"),
+        ));
+        delivery_group.bench_with_input(
+            BenchmarkId::new("decoded_packed8", chunk_size),
+            &selected_variant_count,
+            |benchmark, selected_variant_count| {
+                benchmark.iter(|| {
+                    std::hint::black_box(
+                        read_session
+                            .decode_variant_major_batch(
+                                variant_start,
+                                variant_stop,
+                                *selected_variant_count,
+                                true,
+                                PACKED8_STATISTICS_POLICY,
+                            )
+                            .expect("native packed8 BGEN read should succeed"),
+                    );
+                });
+            },
+        );
+        delivery_group.bench_with_input(
+            BenchmarkId::new("raw_deflate_pack", chunk_size),
+            &selected_variant_count,
+            |benchmark, selected_variant_count| {
+                benchmark.iter(|| {
+                    std::hint::black_box(
+                        read_session
+                            .pack_compressed_packed8_batch(
+                                &compressed_layout,
+                                variant_start,
+                                variant_stop,
+                                *selected_variant_count,
+                            )
+                            .expect("raw-DEFLATE BGEN packing should succeed"),
+                    );
+                });
+            },
+        );
+    }
+    delivery_group.finish();
+}
+
 #[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
@@ -126,6 +190,7 @@ fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     if reader.packed8_compatibility_with_cache().expect("packed8 compatibility scan should succeed")
         == Packed8Compatibility::Compatible
     {
+        benchmark_gpu_host_delivery(criterion, &reader, &full_sample_session);
         benchmark_variant_major_read(
             criterion,
             &reader,

@@ -11,47 +11,58 @@ use g_genotype_contracts::ChunkOutputStatistics;
 // One decoded batch, one active compute batch, and one pending submission can
 // retain host input concurrently. Excess outstanding buffers drop instead of
 // blocking the bounded scheduler.
-const PACKED8_BUFFER_POOL_CAPACITY: usize = 3;
+const SESSION_BUFFER_POOL_CAPACITY: usize = 3;
 
-#[derive(Default)]
-pub(crate) struct Packed8BufferPool {
-    available_buffers: Mutex<Vec<Vec<u8>>>,
+pub(crate) struct SessionBufferPool<Buffer> {
+    available_buffers: Mutex<Vec<Buffer>>,
 }
 
-impl Packed8BufferPool {
-    pub(crate) fn acquire(self: &Arc<Self>, required_capacity: usize) -> PooledPacked8Buffer {
-        let mut available_buffers = self.available_buffers.lock().unwrap_or_else(|error| error.into_inner());
-        let matching_buffer_index = available_buffers.iter().position(|buffer| buffer.capacity() == required_capacity);
-        let reused_values = matching_buffer_index.map(|buffer_index| available_buffers.swap_remove(buffer_index));
-        drop(available_buffers);
-        let mut values = reused_values.unwrap_or_else(|| Vec::with_capacity(required_capacity));
-        values.clear();
-        PooledPacked8Buffer { values, pool: Some(Arc::clone(self)) }
+impl<Buffer> Default for SessionBufferPool<Buffer> {
+    fn default() -> Self {
+        Self { available_buffers: Mutex::new(Vec::new()) }
+    }
+}
+
+impl<Buffer> SessionBufferPool<Buffer> {
+    pub(crate) fn take_matching(&self, matches: impl Fn(&Buffer) -> bool) -> Option<Buffer> {
+        let mut available_buffers = self.available_buffers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let matching_buffer_index = available_buffers.iter().position(matches)?;
+        Some(available_buffers.swap_remove(matching_buffer_index))
     }
 
-    fn release(&self, mut values: Vec<u8>) {
-        values.clear();
-        let mut available_buffers = self.available_buffers.lock().unwrap_or_else(|error| error.into_inner());
-        if available_buffers.len() < PACKED8_BUFFER_POOL_CAPACITY {
-            available_buffers.push(values);
+    pub(crate) fn release(&self, buffer: Buffer) {
+        let mut available_buffers = self.available_buffers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if available_buffers.len() < SESSION_BUFFER_POOL_CAPACITY {
+            available_buffers.push(buffer);
         }
     }
 }
 
-impl fmt::Debug for Packed8BufferPool {
+impl<Buffer> fmt::Debug for SessionBufferPool<Buffer> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let available_buffers = self.available_buffers.lock().unwrap_or_else(|error| error.into_inner());
+        let available_buffers = self.available_buffers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         formatter
-            .debug_struct("Packed8BufferPool")
+            .debug_struct("SessionBufferPool")
             .field("available_buffer_count", &available_buffers.len())
             .finish_non_exhaustive()
     }
 }
 
+pub(crate) type Packed8BufferPool = SessionBufferPool<Vec<u8>>;
+
 /// Immutable packed probability bytes that return session-managed allocations to their pool on drop.
 pub struct PooledPacked8Buffer {
     pub(crate) values: Vec<u8>,
     pool: Option<Arc<Packed8BufferPool>>,
+}
+
+impl PooledPacked8Buffer {
+    pub(crate) fn acquire(pool: &Arc<Packed8BufferPool>, required_capacity: usize) -> Self {
+        let values = pool
+            .take_matching(|buffer| buffer.capacity() == required_capacity)
+            .unwrap_or_else(|| Vec::with_capacity(required_capacity));
+        Self { values, pool: Some(Arc::clone(pool)) }
+    }
 }
 
 impl fmt::Debug for PooledPacked8Buffer {
@@ -60,7 +71,7 @@ impl fmt::Debug for PooledPacked8Buffer {
             .debug_struct("PooledPacked8Buffer")
             .field("value_count", &self.values.len())
             .field("capacity", &self.values.capacity())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -89,7 +100,9 @@ impl From<Vec<u8>> for PooledPacked8Buffer {
 impl Drop for PooledPacked8Buffer {
     fn drop(&mut self) {
         if let Some(pool) = self.pool.as_ref() {
-            pool.release(std::mem::take(&mut self.values));
+            let mut values = std::mem::take(&mut self.values);
+            values.clear();
+            pool.release(values);
         }
     }
 }

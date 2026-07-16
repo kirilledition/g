@@ -216,7 +216,8 @@ impl BgenReadSession<'_> {
             .ok_or_else(|| {
                 BgenError::Range("Integer overflow while sizing compute packed8 BGEN output.".to_string())
             })?;
-        let mut output_values = self.packed8_buffer_pool.acquire(compute_output_value_count);
+        let mut output_values =
+            crate::common::PooledPacked8Buffer::acquire(&self.packed8_buffer_pool, compute_output_value_count);
         let statistics = {
             let uninitialized_output = &mut output_values.values.spare_capacity_mut()[..compute_output_value_count];
             let (logical_output, compute_tail) = uninitialized_output.split_at_mut(logical_output_value_count);

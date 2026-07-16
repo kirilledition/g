@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use memmap2::{Mmap, MmapOptions};
 use rayon::prelude::*;
@@ -22,13 +22,13 @@ mod variant_major;
 
 #[derive(Debug)]
 pub struct BgenReaderCore {
-    mmap: Mmap,
+    pub(super) mmap: Mmap,
     source: super::packed8_cache::ValidationCacheSource,
     sample_count: usize,
     variant_count: usize,
-    compression_type: CompressionType,
+    pub(super) compression_type: CompressionType,
     packed8_validation_complete: AtomicBool,
-    variant_records: Vec<VariantRecord>,
+    pub(super) variant_records: Vec<VariantRecord>,
     variant_metadata: Arc<VariantMetadataStore>,
     chromosome_boundary_indices: Vec<usize>,
 }
@@ -36,9 +36,10 @@ pub struct BgenReaderCore {
 /// Immutable per-delivery BGEN decoding context.
 #[derive(Debug)]
 pub struct BgenReadSession<'reader> {
-    reader: &'reader BgenReaderCore,
-    sample_selection: SampleSelection,
-    packed8_buffer_pool: Arc<Packed8BufferPool>,
+    pub(super) reader: &'reader BgenReaderCore,
+    pub(super) sample_selection: SampleSelection,
+    pub(super) packed8_buffer_pool: Arc<Packed8BufferPool>,
+    pub(super) compressed_packed8_state: OnceLock<super::raw_deflate::CompressedPacked8SessionState>,
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -135,10 +136,12 @@ impl BgenReaderCore {
     /// Returns an error when the sample selection is invalid.
     pub fn read_session(&self, sample_indices: &[usize]) -> Result<BgenReadSession<'_>, BgenError> {
         self.ensure_source_unchanged("BGEN source changed before genotype delivery began.")?;
+        let sample_selection = build_sample_selection(self.sample_count, sample_indices)?;
         Ok(BgenReadSession {
             reader: self,
-            sample_selection: build_sample_selection(self.sample_count, sample_indices)?,
+            sample_selection,
             packed8_buffer_pool: Arc::new(Packed8BufferPool::default()),
+            compressed_packed8_state: OnceLock::new(),
         })
     }
 
@@ -218,7 +221,7 @@ impl BgenReaderCore {
         Ok(VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop))
     }
 
-    fn validate_packed8_probability_pair_preconditions(&self) -> Result<(), BgenError> {
+    pub(super) fn validate_packed8_probability_pair_preconditions(&self) -> Result<(), BgenError> {
         if self.packed8_validation_complete.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -227,7 +230,7 @@ impl BgenReaderCore {
         ))
     }
 
-    fn contextualize_variant_error(&self, variant_index: usize, error: BgenError) -> BgenError {
+    pub(super) fn contextualize_variant_error(&self, variant_index: usize, error: BgenError) -> BgenError {
         let variant_identifier = self.variant_metadata.variant_identifier(variant_index);
         match error {
             BgenError::InvalidFormat(message) => {
@@ -267,7 +270,11 @@ impl BgenReadSession<'_> {
     }
 }
 
-fn validate_variant_bounds(variant_start: usize, variant_stop: usize, variant_count: usize) -> Result<(), BgenError> {
+pub(super) fn validate_variant_bounds(
+    variant_start: usize,
+    variant_stop: usize,
+    variant_count: usize,
+) -> Result<(), BgenError> {
     if variant_start > variant_stop || variant_stop > variant_count {
         return Err(BgenError::Range(format!(
             "Variant bounds must satisfy 0 <= start <= stop <= {variant_count}. Received start={variant_start}, stop={variant_stop}.",

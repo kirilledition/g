@@ -5,14 +5,17 @@
 BGEN mmap/index/decode for uncompressed, zlib, and Zstandard Layout 2 files,
 immutable per-delivery read sessions,
 chromosome-homogeneous chunk planning, owned decoded genotype batches, and
-genotype preprocessing summaries.
+genotype preprocessing summaries. It also owns validated zlib-to-raw-DEFLATE
+host packing for the compressed GPU delivery path.
 
 ## Public types
 
 `BgenReaderCore`, `BgenReadSession`, `BgenError`,
 `GenotypeError`/`GenotypeResult`, chunk and statistics contracts,
 `DecodedGenotypeBatch`, `OwnedGenotypeBuffer`, `PooledPacked8Buffer`, and the typed
-`Packed8Compatibility` negotiation result. Shared output-facing
+`Packed8Compatibility` negotiation result. Compressed delivery exposes
+`CompressedPacked8Batch`, its opaque run-planned layout, and one immutable
+session transfer descriptor with contiguous or indexed sample selection. Shared output-facing
 metadata and columns are owned by `g-genotype-contracts` and are not
 re-exported here.
 
@@ -31,6 +34,12 @@ opened-file identity is also exposed to the engine for strict output-manifest
 compatibility; callers do not restat it from the configured path. The cache
 stores typed compatible and dosage-required outcomes so an incompatible source
 is not rescanned on every run.
+
+For compatible zlib sources, `BgenReaderCore` derives one opaque compressed slab
+layout from the actual pending chunk plan. `BgenReadSession` exposes invariant
+sample-transfer geometry once and packs each logical chunk as aligned raw-DEFLATE
+members plus interleaved offset, size, and Adler-32 metadata. Compute-only tails
+remain scalar geometry and are not fabricated as compressed members.
 
 ## This crate must not expose
 
@@ -54,6 +63,12 @@ vector after INFO and sparse-candidate calculations; output observation counts
 remain output-only and are not cloned or transferred to JAX. Nullable INFO
 statistics use a contiguous `f32` value column and an Arrow-compatible packed
 validity bitmap instead of per-value `Option` storage.
+Compressed batches use the run-planned maximum actual slab length so every hot
+JAX submission retains one input shape. The bounded session pool keeps that
+storage initialized at full length across drops; each pack overwrites only real
+member bytes and logical metadata, without clearing alignment gaps or the unused
+suffix. Indexed sample conversion is allocated once per session, while identity
+selection is represented as a zero-start contiguous range.
 
 ## Allowed downstream users
 
