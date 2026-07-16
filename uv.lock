@@ -343,7 +343,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jax", extras = ["cuda12"], specifier = ">=0.10.1" },
+    { name = "jax", extras = ["cuda12"], specifier = ">=0.10.2" },
     { name = "numpy", specifier = ">=2.4.6" },
 ]
 
