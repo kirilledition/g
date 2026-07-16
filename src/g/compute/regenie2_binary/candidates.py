@@ -38,7 +38,7 @@ class FirthCandidateLaneInputs:
         flat_trait_indices: Trait indices matching each flattened candidate lane.
         flat_variant_indices: Variant indices matching each flattened candidate lane.
         flat_active_mask: Active-lane mask in flattened batch order.
-        phenotype_matrix: Lane-specific phenotype vectors.
+        phenotype_matrix: Trait-major phenotype vectors shared by candidate lanes.
 
     """
 
@@ -59,7 +59,7 @@ class ScalarFirthCandidateBatchInputs:
         carrier_sample_mask: Carrier samples in the solver's allele orientation.
         genotype_flip_mask: Whether corrected beta signs need restoration.
         sparse_correction_mask: Whether lanes use carrier-only correction.
-        null_firth_offset_matrix: Lane-specific null Firth offsets.
+        null_firth_offset_matrix: Trait-major null Firth offsets shared by candidate lanes.
         full_null_deviance: Lane-specific full-sample null deviances.
         null_failed_mask: Whether lane-specific null Firth fitting failed.
 
@@ -171,17 +171,18 @@ def compute_firth_pre_dispatch_mask_without_mask(
 
 def compute_multi_firth_pre_dispatch_mask_without_mask(
     genotype_matrix_by_lane: jax.Array,
-    phenotype_matrix_by_lane: jax.Array,
+    phenotype_matrix: jax.Array,
+    flat_trait_indices: jax.Array,
 ) -> jax.Array:
     """Identify lane-specific separation candidates for multi-trait Firth correction."""
 
-    def compute_one_lane(genotype_vector: jax.Array, phenotype_vector: jax.Array) -> jax.Array:
+    def compute_one_lane(genotype_vector: jax.Array, trait_index: jax.Array) -> jax.Array:
         return compute_firth_pre_dispatch_mask_without_mask(
             genotype_matrix_by_variant=genotype_vector[None, :],
-            phenotype_vector=phenotype_vector,
+            phenotype_vector=jnp.take(phenotype_matrix, trait_index, axis=0),
         )[0]
 
-    return jax.vmap(compute_one_lane)(genotype_matrix_by_lane, phenotype_matrix_by_lane)
+    return jax.vmap(compute_one_lane)(genotype_matrix_by_lane, flat_trait_indices)
 
 
 def build_device_firth_batch_plan(
@@ -259,7 +260,7 @@ def reorder_firth_candidate_lane_inputs(
         flat_trait_indices=jnp.take(lanes.flat_trait_indices, sort_order, axis=0),
         flat_variant_indices=jnp.take(lanes.flat_variant_indices, sort_order, axis=0),
         flat_active_mask=jnp.take(lanes.flat_active_mask, sort_order, axis=0),
-        phenotype_matrix=jnp.take(lanes.phenotype_matrix, sort_order, axis=0),
+        phenotype_matrix=lanes.phenotype_matrix,
     )
 
 
@@ -279,7 +280,7 @@ def group_scalar_firth_candidate_batch_inputs(
         carrier_sample_mask=jnp.take(candidate_inputs.carrier_sample_mask, sort_order, axis=0),
         genotype_flip_mask=jnp.take(candidate_inputs.genotype_flip_mask, sort_order, axis=0),
         sparse_correction_mask=jnp.take(candidate_inputs.sparse_correction_mask, sort_order, axis=0),
-        null_firth_offset_matrix=jnp.take(candidate_inputs.null_firth_offset_matrix, sort_order, axis=0),
+        null_firth_offset_matrix=candidate_inputs.null_firth_offset_matrix,
         full_null_deviance=jnp.take(candidate_inputs.full_null_deviance, sort_order, axis=0),
         null_failed_mask=jnp.take(candidate_inputs.null_failed_mask, sort_order, axis=0),
     )

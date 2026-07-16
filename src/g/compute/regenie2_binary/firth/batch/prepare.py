@@ -102,16 +102,12 @@ def build_firth_candidate_lane_inputs(
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
     selected_rows: SelectedMultiFirthCandidateRows,
 ) -> regenie2_binary_candidate_planning.FirthCandidateLaneInputs:
-    """Gather common per-lane indices, activity, and phenotypes."""
+    """Build per-lane indices and activity with shared trait phenotypes."""
     return regenie2_binary_candidate_planning.FirthCandidateLaneInputs(
         flat_trait_indices=selected_rows.flat_trait_indices,
         flat_variant_indices=selected_rows.flat_variant_indices,
         flat_active_mask=selected_rows.flat_active_mask,
-        phenotype_matrix=jnp.take(
-            chromosome_state.phenotype_matrix,
-            selected_rows.flat_trait_indices,
-            axis=0,
-        ),
+        phenotype_matrix=chromosome_state.phenotype_matrix,
     )
 
 
@@ -167,11 +163,7 @@ def prepare_scalar_firth_candidate_batch(
         carrier_sample_mask=carrier_sample_mask,
         genotype_flip_mask=genotype_flip_result.flip_mask,
         sparse_correction_mask=flat_sparse_candidate_mask,
-        null_firth_offset_matrix=jnp.take(
-            chromosome_state.null_firth_offset_matrix,
-            selected_rows.flat_trait_indices,
-            axis=0,
-        ),
+        null_firth_offset_matrix=chromosome_state.null_firth_offset_matrix,
         full_null_deviance=jnp.take(
             chromosome_state.full_null_deviance,
             selected_rows.flat_trait_indices,
@@ -184,7 +176,8 @@ def prepare_scalar_firth_candidate_batch(
     heuristic_firth_mask = (
         regenie2_binary_candidate_planning.compute_multi_firth_pre_dispatch_mask_without_mask(
             genotype_matrix_by_lane=raw_genotype_matrix_by_variant,
-            phenotype_matrix_by_lane=lanes.phenotype_matrix,
+            phenotype_matrix=lanes.phenotype_matrix,
+            flat_trait_indices=lanes.flat_trait_indices,
         )
         | flat_sparse_candidate_mask
     ) & selected_rows.flat_active_mask

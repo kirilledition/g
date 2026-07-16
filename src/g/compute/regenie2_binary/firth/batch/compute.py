@@ -33,6 +33,7 @@ class FirthLaneStreamPlan:
 def compute_scalar_firth_multi_variantwise(
     null_firth_offset_matrix: jax.Array,
     phenotype_matrix: jax.Array,
+    flat_trait_indices: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     carrier_sample_mask: jax.Array,
     full_null_deviance: jax.Array,
@@ -47,8 +48,7 @@ def compute_scalar_firth_multi_variantwise(
     )
 
     def fit_variant(
-        phenotype_vector: jax.Array,
-        null_firth_offset: jax.Array,
+        trait_index: jax.Array,
         genotype_vector: jax.Array,
         lane_carrier_sample_mask: jax.Array,
         lane_full_null_deviance: jax.Array,
@@ -57,9 +57,9 @@ def compute_scalar_firth_multi_variantwise(
         null_failed: jax.Array,
     ) -> regenie2_binary_firth_types.FirthVariantResult:
         return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth_with_solver_parameters(
-            phenotype_vector=jnp.asarray(phenotype_vector, dtype=jnp.float64),
+            phenotype_vector=jnp.asarray(jnp.take(phenotype_matrix, trait_index, axis=0), dtype=jnp.float64),
             genotype_vector=jnp.asarray(genotype_vector, dtype=jnp.float64),
-            offset_vector=jnp.asarray(null_firth_offset, dtype=jnp.float64),
+            offset_vector=jnp.asarray(jnp.take(null_firth_offset_matrix, trait_index, axis=0), dtype=jnp.float64),
             carrier_sample_mask=lane_carrier_sample_mask,
             full_null_deviance=jnp.asarray(lane_full_null_deviance, dtype=jnp.float64),
             sparse_correction=sparse_correction,
@@ -69,8 +69,7 @@ def compute_scalar_firth_multi_variantwise(
         )
 
     return jax.vmap(fit_variant)(
-        phenotype_matrix,
-        null_firth_offset_matrix,
+        flat_trait_indices,
         genotype_matrix_by_variant,
         carrier_sample_mask,
         full_null_deviance,
@@ -227,6 +226,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
     *,
     null_firth_offset_matrix: jax.Array,
     phenotype_matrix: jax.Array,
+    flat_trait_indices: jax.Array,
     genotype_matrix_by_variant: jax.Array,
     carrier_sample_mask: jax.Array,
     full_null_deviance: jax.Array,
@@ -240,8 +240,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
     """Compute scalar Firth fits for flattened candidate lanes using fixed-size batches."""
     batch_count = active_mask.shape[0] // firth_batch_size
     active_batch_count = (fallback_count + firth_batch_size - 1) // firth_batch_size
-    null_firth_offset_batches = null_firth_offset_matrix.reshape((batch_count, firth_batch_size, -1))
-    phenotype_batches = phenotype_matrix.reshape((batch_count, firth_batch_size, -1))
+    trait_index_batches = flat_trait_indices.reshape((batch_count, firth_batch_size))
     genotype_batches = genotype_matrix_by_variant.reshape((batch_count, firth_batch_size, -1))
     carrier_sample_mask_batches = carrier_sample_mask.reshape((batch_count, firth_batch_size, -1))
     full_null_deviance_batches = full_null_deviance.reshape((batch_count, firth_batch_size))
@@ -258,8 +257,9 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
 
         def run_active_batch(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
             return compute_scalar_firth_multi_variantwise(
-                null_firth_offset_matrix=null_firth_offset_batches[batch_index],
-                phenotype_matrix=phenotype_batches[batch_index],
+                null_firth_offset_matrix=null_firth_offset_matrix,
+                phenotype_matrix=phenotype_matrix,
+                flat_trait_indices=trait_index_batches[batch_index],
                 genotype_matrix_by_variant=genotype_batches[batch_index],
                 carrier_sample_mask=carrier_sample_mask_batches[batch_index],
                 full_null_deviance=full_null_deviance_batches[batch_index],
@@ -299,6 +299,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
         return compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
             null_firth_offset_matrix=candidate_inputs.null_firth_offset_matrix,
             phenotype_matrix=candidate_inputs.lanes.phenotype_matrix,
+            flat_trait_indices=candidate_inputs.lanes.flat_trait_indices,
             genotype_matrix_by_variant=candidate_inputs.genotype_matrix_by_variant,
             carrier_sample_mask=candidate_inputs.carrier_sample_mask,
             full_null_deviance=candidate_inputs.full_null_deviance,
@@ -329,13 +330,10 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
 
             def compute_dense_stream(_: None) -> regenie2_binary_firth_types.FirthVariantResult:
                 return compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compaction(
-                    null_firth_offset_matrix=jnp.take(
-                        candidate_inputs.null_firth_offset_matrix,
-                        dense_stream_plan.lane_indices,
-                        axis=0,
-                    ),
-                    phenotype_matrix=jnp.take(
-                        candidate_inputs.lanes.phenotype_matrix,
+                    null_firth_offset_matrix=candidate_inputs.null_firth_offset_matrix,
+                    phenotype_matrix=candidate_inputs.lanes.phenotype_matrix,
+                    flat_trait_indices=jnp.take(
+                        candidate_inputs.lanes.flat_trait_indices,
                         dense_stream_plan.lane_indices,
                         axis=0,
                     ),
@@ -391,16 +389,21 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
                     jnp.arange(SPARSE_FIRTH_CARRIER_CAPACITY, dtype=jnp.int32)[None, :] < compact_carrier_count[:, None]
                 ) & compact_stream_plan.active_mask[:, None]
                 compact_lane_indices = compact_stream_plan.lane_indices[:, None]
+                compact_trait_indices = jnp.take(
+                    candidate_inputs.lanes.flat_trait_indices,
+                    compact_stream_plan.lane_indices,
+                    axis=0,
+                )[:, None]
                 compact_genotype_matrix = candidate_inputs.genotype_matrix_by_variant[
                     compact_lane_indices,
                     compact_carrier_indices,
                 ]
                 compact_phenotype_matrix = candidate_inputs.lanes.phenotype_matrix[
-                    compact_lane_indices,
+                    compact_trait_indices,
                     compact_carrier_indices,
                 ]
                 compact_offset_matrix = candidate_inputs.null_firth_offset_matrix[
-                    compact_lane_indices,
+                    compact_trait_indices,
                     compact_carrier_indices,
                 ]
                 return compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameters(

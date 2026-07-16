@@ -702,6 +702,37 @@ Deferred:
   the dominant Firth `input_reduce_fusion_27` and `loop_select_fusion_20`
   kernels with exact numerical and paired hot gates.
 
+## 2026-07-16 Trait-Shared Firth Inputs Wave
+
+The target remains one binary trait with approximate Firth on full 1KG
+chromosome 22. The latest Nsight trace shows 1,720 dominant sigmoid/reduction
+pairs consuming separately materialized 512-by-2,504 phenotype and null-offset
+operands. Those duplicated lane inputs account for about 32.8 GiB of logical
+reads across the hot run.
+
+Accepted:
+
+- Candidate preparation now retains phenotype and null-Firth-offset arrays in
+  trait-major form. Lane ordering moves only lane indices and lane-specific
+  payload; dense batches select the trait row inside the lane map, and compact
+  sparse batches gather only their existing 64 carrier slots.
+- Scalar Firth arithmetic and reduction order are unchanged. Both production
+  chr22 Parquet partitions are byte-identical to the baseline, including all
+  418,943 rows and every approximate-Firth result.
+- An exact-shape affected-kernel probe is bitwise identical and 11.5--12.5%
+  faster. In ten order-alternated production processes with five hot trials per
+  process, the paired geometric hot-time reduction is 3.53%; the bootstrap 95%
+  interval is 1.06--6.74%, and the candidate wins four of five process pairs.
+- The refactor removes three more lines than it adds, does not change the public
+  Python or Rust API, and leaves the scalar solver implementation untouched.
+
+Next:
+
+- Remove the per-chunk four-byte Firth candidate-count device-to-host
+  synchronization with a configurable hard capacity and explicit overflow.
+  The current trace contains 26 such copies and about 35.8 milliseconds of
+  following launch gaps; never silently truncate a trait exceeding capacity.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
