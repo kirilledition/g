@@ -21,6 +21,7 @@ const BENCHMARK_TOTAL_ROW_COUNT: usize =
 const BENCHMARK_FIRTH_SUCCESS_COUNT: usize = 17_938;
 const BENCHMARK_PHENOTYPE_NAME: &str = "binary_trait";
 const BENCHMARK_WRITER_THREAD_COUNT: u32 = 4;
+const BENCHMARK_PACED_CHUNK_INTERVAL: Duration = Duration::from_millis(12);
 
 #[derive(Clone, Copy)]
 enum CorrectionPattern {
@@ -52,6 +53,12 @@ struct PreparedBenchmarkRun {
 
 struct CompletedBenchmarkRun {
     completed_outputs: Vec<g_output::CompletedOutputRun>,
+    benchmark_root: BenchmarkRoot,
+}
+
+struct SubmittedBenchmarkRun {
+    output_manager: OutputManager,
+    writer_sessions: Vec<Arc<OutputWriterSession>>,
     benchmark_root: BenchmarkRoot,
 }
 
@@ -384,9 +391,10 @@ fn prepare_benchmark_run(benchmark_name: &str, correction_pattern: CorrectionPat
     PreparedBenchmarkRun { output_manager, writer_sessions, chunks, benchmark_root }
 }
 
-fn write_and_finish_benchmark_run(prepared_run: PreparedBenchmarkRun) -> CompletedBenchmarkRun {
+fn submit_benchmark_run(prepared_run: PreparedBenchmarkRun, chunk_interval: Option<Duration>) -> SubmittedBenchmarkRun {
     let PreparedBenchmarkRun { output_manager, writer_sessions, chunks, benchmark_root } = prepared_run;
-    for benchmark_chunk in chunks {
+    let chunk_count = chunks.len();
+    for (chunk_index, benchmark_chunk) in chunks.into_iter().enumerate() {
         write_regenie2_multi_trait_chunk_f32(
             &writer_sessions,
             None,
@@ -394,14 +402,25 @@ fn write_and_finish_benchmark_run(prepared_run: PreparedBenchmarkRun) -> Complet
             benchmark_chunk.statistic_batch,
         )
         .expect("benchmark chunk should enqueue");
+        if chunk_index + 1 < chunk_count
+            && let Some(interval) = chunk_interval
+        {
+            std::thread::sleep(interval);
+        }
     }
+    SubmittedBenchmarkRun { output_manager, writer_sessions, benchmark_root }
+}
+
+fn finish_benchmark_run(submitted_run: SubmittedBenchmarkRun) -> CompletedBenchmarkRun {
+    let SubmittedBenchmarkRun { output_manager, writer_sessions, benchmark_root } = submitted_run;
     drop(writer_sessions);
     let completed_outputs = output_manager.finish().expect("benchmark output manager should finish");
     CompletedBenchmarkRun { completed_outputs, benchmark_root }
 }
 
 fn measure_parquet_file_bytes(benchmark_name: &str, correction_pattern: CorrectionPattern) -> u64 {
-    let completed_run = write_and_finish_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern));
+    let completed_run =
+        finish_benchmark_run(submit_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern), None));
     completed_run
         .completed_outputs
         .iter()
@@ -432,7 +451,7 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
         bencher.iter_batched(
             || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly),
             |prepared_run| {
-                let completed_run = write_and_finish_benchmark_run(prepared_run);
+                let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
                 std::hint::black_box(&completed_run.completed_outputs);
                 std::hint::black_box(&completed_run.benchmark_root);
                 completed_run
@@ -444,7 +463,24 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
         bencher.iter_batched(
             || prepare_benchmark_run("firth_success", CorrectionPattern::FirthSuccesses),
             |prepared_run| {
-                let completed_run = write_and_finish_benchmark_run(prepared_run);
+                let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
+                std::hint::black_box(&completed_run.completed_outputs);
+                std::hint::black_box(&completed_run.benchmark_root);
+                completed_run
+            },
+            BatchSize::PerIteration,
+        );
+    });
+    benchmark_group.bench_function("firth_success_chr22_paced_finish", |bencher| {
+        bencher.iter_batched(
+            || {
+                submit_benchmark_run(
+                    prepare_benchmark_run("firth_success_paced", CorrectionPattern::FirthSuccesses),
+                    Some(BENCHMARK_PACED_CHUNK_INTERVAL),
+                )
+            },
+            |submitted_run| {
+                let completed_run = finish_benchmark_run(submitted_run);
                 std::hint::black_box(&completed_run.completed_outputs);
                 std::hint::black_box(&completed_run.benchmark_root);
                 completed_run
