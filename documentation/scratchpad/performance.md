@@ -1037,6 +1037,159 @@ Rejected:
   were deleted without a full application gate. The retained characterization
   is `data/profiles/tiny_deflate_characterization_45493.json`.
 
+## 2026-07-17 Current-Main Deep Profile
+
+Commit `ca25b20b` was profiled on the full chromosome-22, one-trait binary
+approximate-Firth GPU path. The uninstrumented headline run spent 3.493 seconds
+in native execution. Rust output work accounted for 329.5 milliseconds,
+including 243.4 milliseconds writing Parquet batches and 120.9 milliseconds in
+terminal output completion. The complete retained bundle is
+`data/profiles/main_ca25b20b_chr22_binary_gpu_full_20260717`.
+
+The cProfile, py-spy, JAX, Memray, and Scalene captures completed. Linux
+`perf` was blocked by the node's `perf_event_paranoid=4` policy, and Nsight
+Compute was skipped. Nsight Systems 2026.1.3 deadlocked while finalizing both
+the full-process capture and a CUDA capture-range retry; the latter left an
+incomplete `qdstrm` that cannot be imported. Do not treat the absence of a
+current Nsight timeline as evidence that GPU overlap or kernels are optimal.
+
+### pprof-rs CPU sampling
+
+`pprof-rs` was added temporarily behind a feature gate and then removed. The
+first 1 kHz capture using its default libgcc/backtrace unwinder segfaulted on
+`landau` despite the recommended blocklist. The successful configuration used
+the framehop unwinder at 199 Hz and primed framehop's lazy loaded-object map in
+the discarded warm lifecycle.
+
+Five fully compiled, same-process hot captures lasted 0.653, 0.632, 0.629,
+0.626, and 0.640 seconds and produced 326 product CPU samples after excluding
+the fixed framehop warm-up samples. The mutually exclusive sample attribution
+was:
+
+- output and Parquet: 141 samples (43.25%);
+- BGEN index parsing and raw-DEFLATE packing: 67 (20.55%);
+- JAX/CUDA host dispatch: 55 (16.87%);
+- result materialization: 34 (10.43%);
+- other Rust orchestration and input: 19 (5.83%); and
+- other Python/native work: 10 (3.07%).
+
+Output was the largest category in every capture. Its samples split into 63 in
+string dictionary/min-max work, 43 in Zstd, 18 in numeric pages, 13 in record
+batch construction, and four elsewhere. BGEN split into 51 index-parser, 14
+raw-DEFLATE pack/validation, and two other samples. The most useful inclusive
+frames were the output chunk writer (138), Parquet byte-array encoder (78),
+BGEN index parser (51), JAX `PjitFunction::Call` (43), Zstd block compression
+(41), PJRT execute (39), GPU thunk host setup (36), and Parquet float encoder
+(27). Full stacks and per-capture artifacts are under
+`data/profiles/pprof_main_ca25b20b_20260717`; its `analysis.md` is the canonical
+breakdown.
+
+These are active process-CPU samples, not wall-time percentages. `ITIMER_PROF`
+omits blocked waits and syscalls, output workers overlap the reader and GPU,
+and CUDA kernels are invisible. The process-global `SIGPROF` handler, observed
+unwinder crash, framehop priming requirement, and large optional dependency
+graph make pprof-rs unsuitable as a shipped runtime dependency. Keep it as an
+isolated diagnostic only.
+
+### Profile-directed rejected changes
+
+- Replacing the complete-part output jobs with long-lived streaming file
+  actors regresses the writer benchmark by 129.3% when all chunks are ready and
+  the paced terminal finish by 45.2%. File-level parallelism is more valuable
+  than avoiding the existing per-part setup, so the rewrite is discarded.
+- Aligning each packed raw-DEFLATE member to 32 bytes is neutral in 40 direct
+  FFI pairs: the geometric change is +0.024%, with a -0.95% to +6.21%
+  interval. It increases the transfer slab by 5.46%, so the compact pooled pack
+  remains.
+- The broad product Skylos scan is contaminated by ignored tool environments,
+  build outputs, reference data, and an incomplete Cargo workspace graph. All
+  32 high-confidence production dead-code findings and all 122 Rust unused
+  imports are false positives after manual call-graph review. Three fields in
+  the JAX Firth chromosome state are genuinely unused; they are gated
+  separately because changing a pytree can alter JIT boundaries even when the
+  downstream executable prunes the leaves.
+- Replacing the checked fixed-size slice conversion in BGEN scalar reads with
+  checked unaligned loads wins seven of eight exclusive-core blocks and shrinks
+  the index parser machine code 11.1%. One sustained candidate excursion leaves
+  the all-block geometric reduction at 0.286%, however, with a -4.43% to +4.79%
+  paired interval. The predeclared gate does not clear zero, so the localized
+  unsafe implementation is not retained.
+- Of 43 pprof Zstd samples, 41 are inside the bundled Zstd 1.5.7 compressor and
+  runtime BMI2 dispatch is active. Contexts are already reused per Parquet
+  column, level 1 is the measured optimum, and adding Zstd worker threads would
+  oversubscribe the parallel output pool. Parquet 59.1 still allocates and
+  copies a temporary compression buffer per page and eagerly constructs an
+  unused decoder; fixing that could remove about 10.75 MB of copies and 300
+  allocations per chromosome-22 output. Carrying a complete Parquet fork for
+  this likely sub-percent ceiling would be application bloat, so defer it until
+  an upstream direct-buffer/lazy-decoder fix is released.
+- Disabling Parquet statistics for all six string columns demonstrates a
+  positive but spike-sensitive full-application ceiling. It is not a valid
+  production policy because chromosome statistics support dataset pruning and
+  correction method/status statistics support audit queries. The query-safe
+  subset disables only `ID`, `ALLELE0`, and `ALLELE1` statistics. It wins all
+  three direct-writer blocks, with a 2.711% geometric reduction and a
+  2.427--3.187% block-bootstrap interval, while reducing output by only 754
+  bytes. Exact schema, values, encodings, custom metadata, offset indexes, and
+  the retained chromosome/correction statistics remain equal.
+- The subset does not clear the whole-application gate. After the fixed
+  extension to 30 adjacent process pairs, the candidate wins 18 pairs and has
+  a 0.244% median reduction, but its 2.053% geometric direction has a
+  -2.312--7.213% bootstrap interval. Six pairs move by at least 10%, and the
+  leave-one-pair-out range reaches -0.011%. The production diff is therefore
+  rejected despite the robust writer-only result. Evidence is in
+  `data/profiles/parquet_string_stats_subset_gpu_abba_45556_analysis.json`.
+
+### Accepted dead-state cleanup
+
+- `Regenie2MultiBinaryFirthChromosomeState` no longer exports the unused
+  covariate matrix, null-logistic coefficients, or LOCO offset. Its pytree has
+  11 rather than 14 leaves, the state-builder HLO is 153 bytes smaller, and the
+  downstream correction executable HLO is byte-identical.
+- Across 20 adjacent process pairs and 240 successful trials, the hot geometric
+  change is +0.278%, with a -5.26% to +4.61% bootstrap interval. This is a
+  structural cleanup, not a claimed performance win.
+- Narrowing the state-builder output changes its deterministic floating-point
+  code generation. The 99th-percentile absolute changes are at most
+  `3.576e-7` for `BETA`, `1.192e-7` for `SE`, `8.345e-6` for `CHISQ`, and
+  `2.444e-6` for `LOG10P`; the respective maxima are `5.206e-4`, `1.836e-4`,
+  `7.951e-4`, and `2.218e-4`. No correction choice, `p < 0.05`
+  classification, or `p < 5e-8` classification changes. This is within the
+  accepted bounded numerical tolerance. Evidence is in
+  `data/profiles/firth_state_dead_leaves_hot_abba_45528_analysis.json`.
+
+### Accepted full-batch materialization fast path
+
+- The pprof captures place 34 of 326 product CPU samples in result
+  materialization. Twenty-five of the 26 chromosome-22 chunks already have the
+  requested trait set and full logical variant width. For those chunks,
+  `materialize_batch` now passes the existing, correctly typed association and
+  packed8-statistics pytrees directly to `jax.device_get` instead of creating
+  eight full-width JAX slices and replacement containers. The partial tail and
+  active-trait selection retain the existing slicing and dtype-normalization
+  path.
+- The focused full-batch path falls from 194.4 microseconds to 0.900
+  microseconds, a 216-fold reduction. The sole partial tail remains neutral.
+  A 24-case semantic matrix covers full and partial widths, all/subset/empty
+  traits, correction codes present and absent, packed8 statistics present and
+  absent, and Firth count/capacity errors; baseline and candidate artifacts are
+  byte-identical.
+- A first full-application gate used separate JAX persistent caches. Although
+  it showed a 3.120% reduction with 20 of 20 pair wins, independently compiled
+  artifacts under the same nine cache keys differed and caused tightly bounded
+  numerical drift. That gate is diagnostic only, not acceptance evidence.
+- The causal gate prepopulates one cache from baseline, proves nine of nine
+  candidate cache hits with zero misses, and preserves the exact 1,097,162-byte
+  cache tree before and after all timings. Across 20 adjacent pairs and ten
+  ABBA blocks, median hot time falls from 0.656299 to 0.634945 seconds. The
+  geometric reduction is 3.2438%; all 20 pairs win, with pair-bootstrap and
+  block-bootstrap 95% intervals of 2.7689--3.7379% and 2.7490--3.8012%.
+  Pair and block leave-one-out ranges remain strictly positive.
+- Both Parquet parts are byte-identical across all 200 hot outputs; normalized
+  manifests are equal. Evidence is in
+  `data/profiles/materialization_fastpath_shared_cache_gpu_abba_45562_analysis.json`
+  and the adjacent `cache_final_proof.json`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
