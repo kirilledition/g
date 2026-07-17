@@ -222,6 +222,7 @@ class JaxBackendBase:
     ) -> HostMaterializedAssociationBatch:
         """Materialize selected association and packed8 arrays in one transfer."""
         association = device_result.association
+        reuse_full_batch_arrays = active_trait_indices is None and logical_variant_count == association.beta.shape[1]
         if active_trait_indices is None:
             beta = association.beta
             standard_error = association.standard_error
@@ -240,7 +241,9 @@ class JaxBackendBase:
                 else jnp.take(association.correction_code, active_trait_index_array, axis=0)
             )
 
-        if correction_code is None:
+        if reuse_full_batch_arrays:
+            selected_association = association
+        elif correction_code is None:
             selected_association = association_result.AssociationResult(
                 beta=jnp.asarray(beta[:, :logical_variant_count], dtype=jnp.float32),
                 standard_error=jnp.asarray(standard_error[:, :logical_variant_count], dtype=jnp.float32),
@@ -258,16 +261,15 @@ class JaxBackendBase:
             )
 
         raw_packed8_statistics = device_result.raw_packed8_statistics
-        materializable_raw_statistics = (
-            None
-            if raw_packed8_statistics is None
-            else compressed_genotype.Packed8RawStatistics(
+        if raw_packed8_statistics is None or reuse_full_batch_arrays:
+            materializable_raw_statistics = raw_packed8_statistics
+        else:
+            materializable_raw_statistics = compressed_genotype.Packed8RawStatistics(
                 dosage_sums=raw_packed8_statistics.dosage_sums[:logical_variant_count],
                 dosage_square_sums=raw_packed8_statistics.dosage_square_sums[:logical_variant_count],
                 statuses=raw_packed8_statistics.statuses[:logical_variant_count],
                 selected_sample_count=raw_packed8_statistics.selected_sample_count,
             )
-        )
         materialized_batch = jax.device_get(
             AssociationBatch(
                 association=selected_association,
