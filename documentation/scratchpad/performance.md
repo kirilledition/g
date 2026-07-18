@@ -1393,6 +1393,22 @@ calls. Evidence is under
 `data/profiles/firth_compute_baseline_4e5d73f4`. This establishes a causal
 comparison gate and does not itself support a speed claim.
 
+The first rank-one experiment attempted to bypass per-lane null-probability
+and active-null-deviance initialization when an entire Firth batch was dense.
+The predicted ceiling was part of the 1.46 milliseconds attributed to the
+three largest input-reduction groups in the 900-candidate trace; the complexity
+budget was one batch-level conditional and no new algorithm. A
+baseline/candidate/candidate/baseline block measured 60 synchronized calls per
+implementation and active-count shape. At 400 candidates the paired geometric
+direction is -0.049% with a -1.517% to +1.497% interval. At 900 it is -2.261%
+(-3.414% to -1.059%), and at 1,024 it is -1.304% (-3.027% to -0.039%). All
+result hashes and valid masks are exact, but StableHLO grows from 108,600 to
+120,032 bytes (+10.5%), executable text grows from 711,148 to 785,475 bytes
+(+10.5%), temporary device memory grows from 42,419,576 to 52,620,712 bytes
+(+24.0%), and the trace grows from 187 to 201 device events. The experiment is
+rejected and its production change was removed. Evidence is under
+`data/profiles/firth_dense_init_focused_{b1,c1,c2,b2}`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
