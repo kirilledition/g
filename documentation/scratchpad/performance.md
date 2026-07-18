@@ -1378,6 +1378,21 @@ were confirmed and is not evidence.
 The first benchmark-foundation increment adds the rank-two and rank-three
 boundary shapes. It does not itself support a speed claim.
 
+The second foundation increment adds the rank-one compiled-executable gate.
+On native baseline `891b0a82` from foundation parent `4e5d73f4`, 30 synchronized
+Landau calls have medians of 1.701 milliseconds at 400 active candidates,
+2.898 milliseconds at 900, and 2.792 milliseconds at the 1,024-candidate
+capacity edge. Every case reports the expected number of valid lanes and a
+stable full-result digest. The 900-candidate trace contains 187 device events
+with 2.301 milliseconds of aggregate event duration; the largest groups are
+the input reductions and loop-select fusions. StableHLO is 108,600 bytes, the
+compiled executable text is 711,322 bytes, and compiled temporary memory is
+42,419,576 bytes. The warmed 42-file, 284,872-byte persistent-cache tree is
+byte-identical before compilation, after compilation, and after all measured
+calls. Evidence is under
+`data/profiles/firth_compute_baseline_4e5d73f4`. This establishes a causal
+comparison gate and does not itself support a speed claim.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

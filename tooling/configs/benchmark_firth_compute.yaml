@@ -1,0 +1,25 @@
+defaults:
+  - machine: landau_gpu
+  - _self_
+
+tool:
+  device: ${machine.device}
+  sample_count: 2504
+  candidate_capacity: 1024
+  firth_batch_size: 512
+  active_candidate_counts:
+    - 400
+    - 900
+    - 1024
+  warmup_trial_count: 5
+  measured_trial_count: 30
+  trace_active_candidate_count: 900
+  output_dir: null
+  jax_cache_dir: data/profiles/jax-firth-compute-cache
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false
+  run:
+    dir: /tmp/g-hydra-runs

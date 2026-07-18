@@ -34,6 +34,11 @@ to explain a whole-application result:
 - `g-output/writer` covers score-only and approximate-Firth chromosome-22
   shapes with one, four, and eight writers. Each writer geometry includes the
   ready-all workload, and the Firth shape also includes paced terminal finish.
+- `tooling.cli.benchmark_firth_compute` lowers and compiles one fixed-capacity
+  dense approximate-Firth executable, then measures synchronized hot calls at
+  400, 900, and 1,024 active candidates. It records StableHLO and executable
+  hashes/sizes, compiled-memory statistics, persistent-cache stability, exact
+  result hashes, and one post-timing device trace with Python tracing disabled.
 
 Run the crate targets explicitly so unrelated benches do not dilute or block a
 focused comparison:
@@ -41,6 +46,7 @@ focused comparison:
 ```bash
 cargo bench --package g-genotype --bench bgen_read
 cargo bench --package g-output --bench writer
+just slurm-gpu-bench-firth-compute
 ```
 
 ## Evidence Requirements

@@ -38,6 +38,7 @@ tooling/
     benchmark.py
     benchmark_bgen_reader.py
     benchmark_callback_overhead.py
+    benchmark_firth_compute.py
     benchmark_output_stages.py
     benchmark_regenie2_binary_hot.py
     data.py

@@ -569,6 +569,10 @@ bench-callback-overhead *overrides:
 bench-callback-overhead-gpu *overrides: dev-install-gpu-dependencies
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead --config-name bench_callback_overhead_gpu {{ overrides }}
 
+# Benchmark the already-compiled approximate-Firth executable
+bench-firth-compute-gpu *overrides:
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_firth_compute --config-name benchmark_firth_compute {{ overrides }}
+
 # Benchmark REGENIE step 2 in fresh Python processes
 bench-linear-startup-gpu: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name bench_linear_startup_gpu
@@ -616,6 +620,10 @@ slurm-cpu-bench-callback-overhead *overrides:
 # Submit callback overhead microbenchmark to the configured GPU node
 slurm-gpu-bench-callback-overhead *overrides:
     {{ server_env }} && just slurm-gpu-just bench-callback-overhead-gpu {{ overrides }}
+
+# Submit the focused approximate-Firth executable benchmark to the configured GPU node
+slurm-gpu-bench-firth-compute *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-firth-compute-gpu {{ overrides }}
 
 # --- performance ---
 
