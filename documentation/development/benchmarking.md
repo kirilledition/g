@@ -24,6 +24,25 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 See [Tooling](tooling.md) and [Justfile Command Reference](justfile.md) for
 the current command surface.
 
+The production-boundary Criterion targets preserve the workload shapes needed
+to explain a whole-application result:
+
+- `g-genotype/bgen_read` separates BGEN open/index construction, decoded
+  delivery, and raw-DEFLATE packing. Packing includes full and tail batches,
+  fresh and pooled storage, and sequential versus deterministic random file
+  offsets. Transfer cases report byte throughput for the fixed GPU slab.
+- `g-output/writer` covers score-only and approximate-Firth chromosome-22
+  shapes with one, four, and eight writers. Each writer geometry includes the
+  ready-all workload, and the Firth shape also includes paced terminal finish.
+
+Run the crate targets explicitly so unrelated benches do not dilute or block a
+focused comparison:
+
+```bash
+cargo bench --package g-genotype --bench bgen_read
+cargo bench --package g-output --bench writer
+```
+
 ## Evidence Requirements
 
 Every benchmark result should record:

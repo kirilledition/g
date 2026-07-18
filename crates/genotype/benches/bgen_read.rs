@@ -7,10 +7,18 @@ use g_genotype::{BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 const GPU_HOST_DELIVERY_CHUNK_SIZES: [usize; 2] = [8192, 16384];
+const ACCESS_ORDER_BATCH_COUNT: usize = 16;
 const DOSAGE_STATISTICS_POLICY: ChunkStatisticsPolicy =
     ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: false };
 const PACKED8_STATISTICS_POLICY: ChunkStatisticsPolicy =
     ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true };
+
+struct PackedBatchBenchmarkCase {
+    benchmark_name: String,
+    variant_start: usize,
+    variant_stop: usize,
+    fresh_storage: bool,
+}
 
 fn benchmark_bgen_path() -> PathBuf {
     std::env::var_os("GWAS_ENGINE_BGEN_BENCHMARK_PATH").map_or_else(
@@ -74,7 +82,10 @@ fn benchmark_variant_major_read(
 
 fn benchmark_bgen_open(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
-    criterion.bench_function("bgen_open_and_index", |benchmark| {
+    let source_byte_count = std::fs::metadata(&bgen_path).expect("benchmark BGEN metadata should be available").len();
+    let mut open_group = criterion.benchmark_group("bgen_open_and_index");
+    open_group.throughput(Throughput::Bytes(source_byte_count));
+    open_group.bench_function("sequential_index", |benchmark| {
         benchmark.iter(|| {
             std::hint::black_box(
                 BgenReaderCore::open(std::hint::black_box(&bgen_path))
@@ -82,6 +93,102 @@ fn benchmark_bgen_open(criterion: &mut Criterion) {
             );
         });
     });
+    open_group.finish();
+}
+
+fn benchmark_packed_batch(
+    delivery_group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    read_session: &BgenReadSession<'_>,
+    compressed_layout: &g_genotype::CompressedPacked8BatchLayout,
+    reader: &BgenReaderCore,
+    full_sample_indices: &[usize],
+    benchmark_case: &PackedBatchBenchmarkCase,
+) {
+    let transfer_byte_count = read_session
+        .pack_compressed_packed8_batch(compressed_layout, benchmark_case.variant_start, benchmark_case.variant_stop)
+        .expect("raw-DEFLATE BGEN packing should succeed")
+        .raw_deflate_slab()
+        .len();
+    delivery_group
+        .throughput(Throughput::Bytes(u64::try_from(transfer_byte_count).expect("transfer byte count should fit u64")));
+    if benchmark_case.fresh_storage {
+        delivery_group.bench_function(&benchmark_case.benchmark_name, |benchmark| {
+            benchmark.iter_batched(
+                || reader.read_session(full_sample_indices).expect("fresh full-sample BGEN read session should build"),
+                |fresh_read_session| {
+                    std::hint::black_box(
+                        fresh_read_session
+                            .pack_compressed_packed8_batch(
+                                compressed_layout,
+                                benchmark_case.variant_start,
+                                benchmark_case.variant_stop,
+                            )
+                            .expect("fresh-storage raw-DEFLATE BGEN packing should succeed"),
+                    );
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    } else {
+        delivery_group.bench_function(&benchmark_case.benchmark_name, |benchmark| {
+            benchmark.iter(|| {
+                std::hint::black_box(
+                    read_session
+                        .pack_compressed_packed8_batch(
+                            compressed_layout,
+                            benchmark_case.variant_start,
+                            benchmark_case.variant_stop,
+                        )
+                        .expect("pooled raw-DEFLATE BGEN packing should succeed"),
+                );
+            });
+        });
+    }
+}
+
+fn permuted_chunk_indices(chunk_count: usize) -> Vec<usize> {
+    let selected_chunk_count = chunk_count.min(ACCESS_ORDER_BATCH_COUNT);
+    (0..selected_chunk_count).map(|index| (index * 17 + 7) % chunk_count).collect()
+}
+
+fn benchmark_packed_access_order(
+    delivery_group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    read_session: &BgenReadSession<'_>,
+    compressed_layout: &g_genotype::CompressedPacked8BatchLayout,
+    chunk_specs: &[g_genotype::ChunkSpec],
+) {
+    let selected_chunk_count = chunk_specs.len().min(ACCESS_ORDER_BATCH_COUNT);
+    let sequential_indices = (0..selected_chunk_count).collect::<Vec<_>>();
+    let random_indices = permuted_chunk_indices(chunk_specs.len());
+    let variant_count = sequential_indices
+        .iter()
+        .map(|chunk_index| {
+            let chunk_spec = &chunk_specs[*chunk_index];
+            chunk_spec.variant_stop_index - chunk_spec.variant_start_index
+        })
+        .sum::<usize>();
+    delivery_group
+        .throughput(Throughput::Elements(u64::try_from(variant_count).expect("variant count should fit u64")));
+    for (benchmark_name, chunk_indices) in
+        [("sequential_offsets", sequential_indices), ("random_offsets", random_indices)]
+    {
+        delivery_group.bench_function(benchmark_name, |benchmark| {
+            benchmark.iter(|| {
+                for chunk_index in &chunk_indices {
+                    let chunk_spec = &chunk_specs[*chunk_index];
+                    std::hint::black_box(
+                        read_session
+                            .pack_compressed_packed8_batch(
+                                compressed_layout,
+                                chunk_spec.variant_start_index,
+                                chunk_spec.variant_stop_index,
+                            )
+                            .expect("raw-DEFLATE BGEN access-order packing should succeed"),
+                    );
+                }
+            });
+        });
+    }
 }
 
 fn benchmark_gpu_host_delivery(
@@ -129,40 +236,65 @@ fn benchmark_gpu_host_delivery(
                 });
             },
         );
-        delivery_group.bench_with_input(
-            BenchmarkId::new("raw_deflate_pack", chunk_size),
-            &selected_variant_count,
-            |benchmark, _selected_variant_count| {
-                benchmark.iter(|| {
-                    std::hint::black_box(
-                        read_session
-                            .pack_compressed_packed8_batch(&compressed_layout, variant_start, variant_stop)
-                            .expect("raw-DEFLATE BGEN packing should succeed"),
-                    );
-                });
+        benchmark_packed_batch(
+            &mut delivery_group,
+            read_session,
+            &compressed_layout,
+            reader,
+            full_sample_indices,
+            &PackedBatchBenchmarkCase {
+                benchmark_name: format!("raw_deflate_pack/{chunk_size}"),
+                variant_start,
+                variant_stop,
+                fresh_storage: false,
             },
         );
-        delivery_group.bench_with_input(
-            BenchmarkId::new("raw_deflate_pack_fresh_storage", chunk_size),
-            &selected_variant_count,
-            |benchmark, _selected_variant_count| {
-                benchmark.iter_batched(
-                    || {
-                        reader
-                            .read_session(full_sample_indices)
-                            .expect("fresh full-sample BGEN read session should build")
-                    },
-                    |fresh_read_session| {
-                        std::hint::black_box(
-                            fresh_read_session
-                                .pack_compressed_packed8_batch(&compressed_layout, variant_start, variant_stop)
-                                .expect("fresh-storage raw-DEFLATE BGEN packing should succeed"),
-                        );
-                    },
-                    BatchSize::SmallInput,
-                );
+        benchmark_packed_batch(
+            &mut delivery_group,
+            read_session,
+            &compressed_layout,
+            reader,
+            full_sample_indices,
+            &PackedBatchBenchmarkCase {
+                benchmark_name: format!("raw_deflate_pack_fresh_storage/{chunk_size}"),
+                variant_start,
+                variant_stop,
+                fresh_storage: true,
             },
         );
+        if let Some(tail_chunk_spec) = chunk_specs.last()
+            && tail_chunk_spec.variant_stop_index - tail_chunk_spec.variant_start_index < chunk_size
+        {
+            benchmark_packed_batch(
+                &mut delivery_group,
+                read_session,
+                &compressed_layout,
+                reader,
+                full_sample_indices,
+                &PackedBatchBenchmarkCase {
+                    benchmark_name: format!("raw_deflate_pack_tail/{chunk_size}"),
+                    variant_start: tail_chunk_spec.variant_start_index,
+                    variant_stop: tail_chunk_spec.variant_stop_index,
+                    fresh_storage: false,
+                },
+            );
+            benchmark_packed_batch(
+                &mut delivery_group,
+                read_session,
+                &compressed_layout,
+                reader,
+                full_sample_indices,
+                &PackedBatchBenchmarkCase {
+                    benchmark_name: format!("raw_deflate_pack_tail_fresh_storage/{chunk_size}"),
+                    variant_start: tail_chunk_spec.variant_start_index,
+                    variant_stop: tail_chunk_spec.variant_stop_index,
+                    fresh_storage: true,
+                },
+            );
+        }
+        if chunk_size == 16_384 {
+            benchmark_packed_access_order(&mut delivery_group, read_session, &compressed_layout, &chunk_specs);
+        }
     }
     delivery_group.finish();
 }

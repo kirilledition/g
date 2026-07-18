@@ -20,7 +20,7 @@ const BENCHMARK_TOTAL_ROW_COUNT: usize =
     BENCHMARK_CHUNK_ROW_COUNT * (BENCHMARK_CHUNK_COUNT - 1) + BENCHMARK_TAIL_ROW_COUNT;
 const BENCHMARK_FIRTH_SUCCESS_COUNT: usize = 17_938;
 const BENCHMARK_PHENOTYPE_NAME: &str = "binary_trait";
-const BENCHMARK_WRITER_THREAD_COUNT: u32 = 4;
+const BENCHMARK_WRITER_THREAD_COUNTS: [u32; 3] = [1, 4, 8];
 const BENCHMARK_PACED_CHUNK_INTERVAL: Duration = Duration::from_millis(12);
 
 #[derive(Clone, Copy)]
@@ -83,6 +83,7 @@ fn benchmark_run_plan(
     sample_path: &Path,
     phenotype_path: &Path,
     prediction_list_path: &Path,
+    writer_thread_count: u32,
 ) -> g_plan::RunPlan {
     g_plan::RunPlan {
         association_mode: g_plan::AssociationMode::Regenie2Binary,
@@ -110,7 +111,7 @@ fn benchmark_run_plan(
         output: g_plan::OutputPlan {
             output_run_root: output_root.display().to_string(),
             resume: false,
-            writer_thread_count: BENCHMARK_WRITER_THREAD_COUNT,
+            writer_thread_count,
         },
         telemetry: g_plan::TelemetryMode::Off,
         phenotype_runs: vec![g_plan::PhenotypeRunPlan {
@@ -140,7 +141,7 @@ fn benchmark_kernel_plan() -> g_plan::KernelPlan {
         },
         firth: g_plan::FirthKernelPlan {
             batch_size: 512,
-            candidate_capacity: 16_384,
+            candidate_capacity: 1_024,
             maximum_iterations: 250,
             gradient_tolerance: g_plan::PositiveF64::try_from(2.5e-4)
                 .expect("benchmark gradient tolerance should be valid"),
@@ -358,7 +359,11 @@ fn benchmark_unit_interval_value(variant_index: usize, salt: u64) -> f32 {
     f32::from(high_fraction_bits) * (1.0 / 65_536.0) + f32::from(low_fraction_bits) * (1.0 / 16_777_216.0)
 }
 
-fn prepare_benchmark_run(benchmark_name: &str, correction_pattern: CorrectionPattern) -> PreparedBenchmarkRun {
+fn prepare_benchmark_run(
+    benchmark_name: &str,
+    correction_pattern: CorrectionPattern,
+    writer_thread_count: u32,
+) -> PreparedBenchmarkRun {
     let benchmark_root = unique_benchmark_root(benchmark_name);
     std::fs::create_dir_all(&benchmark_root.root_path).expect("benchmark root should be created");
     let bgen_path = write_benchmark_file(&benchmark_root.root_path, "input.bgen", b"benchmark bgen");
@@ -368,8 +373,14 @@ fn prepare_benchmark_run(benchmark_name: &str, correction_pattern: CorrectionPat
     let prediction_list_path =
         write_benchmark_file(&benchmark_root.root_path, "predictions.list", b"22 predictions.loco\n");
     let output_root = benchmark_root.root_path.join("output");
-    let run_plan =
-        Arc::new(benchmark_run_plan(&output_root, &bgen_path, &sample_path, &phenotype_path, &prediction_list_path));
+    let run_plan = Arc::new(benchmark_run_plan(
+        &output_root,
+        &bgen_path,
+        &sample_path,
+        &phenotype_path,
+        &prediction_list_path,
+        writer_thread_count,
+    ));
     let mut output_manager = OutputManager::open(run_plan, "# benchmark configuration\n".to_string())
         .expect("benchmark output manager should open");
     let planned_chunk_ranges = (0..BENCHMARK_CHUNK_COUNT).map(benchmark_chunk_range).collect::<Vec<Range<usize>>>();
@@ -420,7 +431,7 @@ fn finish_benchmark_run(submitted_run: SubmittedBenchmarkRun) -> CompletedBenchm
 
 fn measure_parquet_file_bytes(benchmark_name: &str, correction_pattern: CorrectionPattern) -> u64 {
     let completed_run =
-        finish_benchmark_run(submit_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern), None));
+        finish_benchmark_run(submit_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern, 8), None));
     completed_run
         .completed_outputs
         .iter()
@@ -447,47 +458,56 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
     benchmark_group.throughput(Throughput::Elements(
         u64::try_from(BENCHMARK_TOTAL_ROW_COUNT).expect("benchmark row count should fit uint64"),
     ));
-    benchmark_group.bench_function("score_only_chr22", |bencher| {
-        bencher.iter_batched(
-            || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly),
-            |prepared_run| {
-                let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
-                std::hint::black_box(&completed_run.completed_outputs);
-                std::hint::black_box(&completed_run.benchmark_root);
-                completed_run
+    for writer_thread_count in BENCHMARK_WRITER_THREAD_COUNTS {
+        benchmark_group.bench_function(format!("score_only_chr22/writers_{writer_thread_count}"), |bencher| {
+            bencher.iter_batched(
+                || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly, writer_thread_count),
+                |prepared_run| {
+                    let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
+                    std::hint::black_box(&completed_run.completed_outputs);
+                    std::hint::black_box(&completed_run.benchmark_root);
+                    completed_run
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        benchmark_group.bench_function(format!("firth_success_chr22/writers_{writer_thread_count}"), |bencher| {
+            bencher.iter_batched(
+                || prepare_benchmark_run("firth_success", CorrectionPattern::FirthSuccesses, writer_thread_count),
+                |prepared_run| {
+                    let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
+                    std::hint::black_box(&completed_run.completed_outputs);
+                    std::hint::black_box(&completed_run.benchmark_root);
+                    completed_run
+                },
+                BatchSize::PerIteration,
+            );
+        });
+        benchmark_group.bench_function(
+            format!("firth_success_chr22_paced_finish/writers_{writer_thread_count}"),
+            |bencher| {
+                bencher.iter_batched(
+                    || {
+                        submit_benchmark_run(
+                            prepare_benchmark_run(
+                                "firth_success_paced",
+                                CorrectionPattern::FirthSuccesses,
+                                writer_thread_count,
+                            ),
+                            Some(BENCHMARK_PACED_CHUNK_INTERVAL),
+                        )
+                    },
+                    |submitted_run| {
+                        let completed_run = finish_benchmark_run(submitted_run);
+                        std::hint::black_box(&completed_run.completed_outputs);
+                        std::hint::black_box(&completed_run.benchmark_root);
+                        completed_run
+                    },
+                    BatchSize::PerIteration,
+                );
             },
-            BatchSize::PerIteration,
         );
-    });
-    benchmark_group.bench_function("firth_success_chr22", |bencher| {
-        bencher.iter_batched(
-            || prepare_benchmark_run("firth_success", CorrectionPattern::FirthSuccesses),
-            |prepared_run| {
-                let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
-                std::hint::black_box(&completed_run.completed_outputs);
-                std::hint::black_box(&completed_run.benchmark_root);
-                completed_run
-            },
-            BatchSize::PerIteration,
-        );
-    });
-    benchmark_group.bench_function("firth_success_chr22_paced_finish", |bencher| {
-        bencher.iter_batched(
-            || {
-                submit_benchmark_run(
-                    prepare_benchmark_run("firth_success_paced", CorrectionPattern::FirthSuccesses),
-                    Some(BENCHMARK_PACED_CHUNK_INTERVAL),
-                )
-            },
-            |submitted_run| {
-                let completed_run = finish_benchmark_run(submitted_run);
-                std::hint::black_box(&completed_run.completed_outputs);
-                std::hint::black_box(&completed_run.benchmark_root);
-                completed_run
-            },
-            BatchSize::PerIteration,
-        );
-    });
+    }
     benchmark_group.finish();
 }
 

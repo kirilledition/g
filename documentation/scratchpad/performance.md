@@ -1309,6 +1309,75 @@ focused measurements with no measured aggregate regression. Evidence is
 `data/profiles/profile_wave_lean_abba_45635_analysis.json`; fresh-build
 provenance is under `data/profiles/profile_wave_lean_build_20260718`.
 
+## 2026-07-18 Frozen-Baseline Measurement Reset
+
+The optimization baseline is native commit `891b0a82`, with measurement-only
+tooling at `97568f31`. The release extension hash is
+`0401514dc83d2c84caddfb8ed368599ade2b94eee1cadc57385e742e36c2b899`.
+Ten independent Landau processes each discarded one same-process warm
+lifecycle and measured five telemetry-off hot lifecycles. All 50 measurements
+produced 418,943 rows, the same two Parquet parts, output hash
+`c475ff0e698ffb3d72c6478214b984d696dc71a7beacc56553578cefe4742daf`,
+and a byte-identical JAX cache tree. Median hot time is 0.644293 seconds, mean
+is 0.647941 seconds, and the population standard deviation is 0.016487
+seconds. Position medians range from 0.635637 to 0.650670 seconds without a
+monotonic lifecycle trend. Evidence is under
+`data/profiles/baseline_891b0a82`.
+
+The focused deep campaign is retained at
+`data/profiles/profile_chr22_baseline_97568f31`. Its exact Rust timing reports
+326.923 milliseconds of aggregate writer work, including 301.556 milliseconds
+inside Parquet file writing, and 126.682 milliseconds in terminal output
+completion. The instrumented Memray lifecycle attributes 600.6 MiB to the
+compute worker stack, 532.0 MiB to compressed transfer, 264.0 MiB to native
+packed8 decode buffers, 117.8 MiB to BGEN open/index state, 29.3 MiB to output
+workers, and 9.1 MiB to one packed raw-DEFLATE slab. These figures are
+instrumented allocation attribution, not hot-path peak-memory claims.
+
+Profiler limits are explicit. The JAX trace reached its one-million-event cap
+during Python/JAX tracing and retained only 21 device events. Nsight Systems
+completed the application but hung during capture finalization, Nsight Compute
+was denied GPU counters, and Linux `perf` was denied by
+`perf_event_paranoid=4`. Py-spy and Scalene primarily sampled startup and cache
+deserialization. They cannot override the uninstrumented headline. The prior
+serial Nsight capture remains applicable to the unchanged CUDA decoder and
+finalizer binaries, while changed JAX control flow requires a new bounded
+device capture before another compute optimization is accepted.
+
+A fresh local Skylos 4.29 scan is retained at
+`data/profiles/skylos_97568f31/skylos.json`. In this release, `--all` changed
+meaning and enables networked security, dependency, secret, and AI checks; the
+local whole-product dead-code equivalent is `skylos .`. All 156 reported
+production findings were manually adjudicated:
+
+- all 27 functions have direct Rust/Python call sites, trait-dispatch call
+  sites, or PyO3 registration; `prepare_compressed_transfer_selection` alone
+  has two direct JAX backend calls;
+- all three backend classes are constructed dynamically by exact-name
+  `getattr` calls in `src/binding/engine.rs`;
+- both reported `carry` parameters are required callback positions for JAX
+  control flow and are explicitly discarded inside the callback;
+- the 124 imports comprise 53 crate/module facade re-exports, 42 direct
+  type/value consumers, 19 traits required for method or macro resolution,
+  nine generated/cfg/submodule consumers, and one benchmark consumer.
+
+No Skylos finding is dead production code, so this scan causes no product
+change. The earlier `--all` attempt was stopped after its changed semantics
+were confirmed and is not evidence.
+
+### Ranked opportunities
+
+| Rank | Lane and evidence | Recoverable ceiling | Risk | Cost constraints | Next causal gate |
+| ---: | --- | --- | --- | --- | --- |
+| 1 | JAX/Firth critical stream: the prior serial device trace has 216.309 ms of kernels; after 142.258 ms of nvCOMP inflate and 11.819 ms of finalization, at most 62.232 ms remains in association/correction kernels. Pprof has 1,118 inclusive `SynchronizeStream` samples. | At most 62.2 ms per chromosome before overlap; actual exposed wall time is lower. | High numerical and control-flow risk. | HLO/cache growth is a veto without a positive application gate; no new dependency or parallel solver. | Already-compiled synchronized executables near 400 and 900 active candidates, plus capacity edges; record HLO, kernels, and cache bytes. |
+| 2 | Output terminal drain: 126.682 ms is directly exposed at finish; 326.923 ms of writer work overlaps compute. Pprof assigns 43.29% of non-sync active CPU to output, and Memray attributes 29.3 MiB to its workers. | At most 126.7 ms exposed; ready-all gains are not a wall-time prediction. | Medium schema and ownership risk. | Preserve Zstd level 1, statistics, schema, metadata, and direct Parquet parts. Avoid a Parquet fork for a sub-percent ceiling. | Score/Firth ready-all and paced-finish at 1/4/8 writers, with file bytes and exact Parquet oracle. |
+| 3 | BGEN index and packing: pprof assigns 18.60% of non-sync active CPU, split 233 index and 136 packing samples. Memray attributes 117.8 MiB to open/index state and 9.1 MiB to a packed slab. | Wall ceiling is unknown because reading overlaps device/output work; focused CPU throughput is the causal metric. | Low to medium corruption and unsafe-tail risk. | Keep reader-owned pooling and localized initialized-length invariants; no allocator replacement. | Open/index byte throughput; full/tail fresh/pooled pack; sequential/random offsets; corruption and truncation oracle. |
+| 4 | CUDA delivery: the unchanged serial trace has 142.258 ms of nvCOMP inflate, 13.777 ms of H2D copies, and 11.819 ms of finalization. Prior readiness analysis found no immediate overlap window. | The measured device work is large, but the tested custom decoder and immediate auxiliary stream both regress; no credible untried ceiling is assigned. | High CUDA ABI, synchronization, and memory risk. | No second decoder, larger chunk, or auxiliary stream until a new timeline disproves earlier results. | Persisted-slab CUDA-event boundary benchmark separating registration, transfer, inflate, finalization, and synchronization. |
+| 5 | Remaining materialization: pprof assigns 171 samples and Memray 2.77 MiB after the accepted full-batch fast path. | Small; the common 25-of-26 full batches already avoid JAX slicing. | Low if the partial-tail oracle is exact. | No alternate container representation without measured allocation evidence. | Full and tail materialization replay with all/subset traits and correction/status capacity errors. |
+
+The first benchmark-foundation increment adds the rank-two and rank-three
+boundary shapes. It does not itself support a speed claim.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
