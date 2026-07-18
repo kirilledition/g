@@ -6,7 +6,6 @@ tool:
   include_fresh_process: false
   hot_run_count: 1
   diagnostic_run_count: 0
-  expected_variant_count: null
 
 hydra:
   output_subdir: null
