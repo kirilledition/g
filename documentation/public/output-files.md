@@ -42,8 +42,10 @@ results/example.g/
     events.jsonl
   trait_0001_phenotype_continuous.regenie2_linear.run/
     parts/
-      part_000000000_000000015.parquet
-      part_000000016_000000031.parquet
+      part_000000000_000000007.parquet
+      part_000000008_000000015.parquet
+      part_000000016_000000023.parquet
+      part_000000024_000000031.parquet
     effective_config.toml
     run_manifest.json
 ```

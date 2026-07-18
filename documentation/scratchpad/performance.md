@@ -50,7 +50,8 @@ Rejected:
 - AVX-512 packed8 copy/statistics is 1.20% slower than AVX2 on the Xeon Gold
   5220, despite halving loop iterations.
 - Eight chunks per Parquet file reduces terminal flush time but raises total
-  Parquet work 12.8%; paired full-run wall time is unchanged. Keep 16.
+  Parquet work 12.8%; paired full-run wall time is unchanged. This result was
+  superseded by the 2026-07-18 direct-Parquet gate below.
 - Skipping validated packed8 header parsing changes decode by only -0.24%
   (p=0.70), so retain the defensive checks.
 
@@ -1422,6 +1423,34 @@ aggregate 900-candidate trace duration rises from 2.296 to 3.531 milliseconds.
 The experiment was stopped without selective extension and its production
 change was removed. Evidence is under
 `data/profiles/firth_fused_reductions_{b1,c1}`.
+
+The rank-two part-geometry experiment reduces the internal grouping from 16 to
+eight chunks per direct Parquet part. This exposes four chromosome-22 write
+tasks to the production eight-writer pool instead of two. In two repeated
+30-sample focused campaigns, the eight-writer ready-all median improves from
+193.477 to 164.027 milliseconds for score-only output (+15.23%) and from
+196.173 to 166.397 milliseconds for Firth output (+15.02%). The GPU-paced
+finish median improves from 130.650 to 89.126 milliseconds (+31.51%). All 60
+pairs favor the candidate in every focused case. The synthetic benchmark file
+size rises 0.061%, below the one-percent veto.
+
+Fresh baseline and candidate wheels have native hashes `dd584a3b` and
+`8e5e4aa0`. The complete Landau gate contains ten ABBA blocks, 40 processes,
+and five hot lifecycles per process. Median hot
+time falls from 0.646805 to 0.609182 seconds. The 20-process-pair geometric
+reduction is 5.606%; all 20 pairs favor the candidate, the pair-bootstrap
+interval is 4.888% to 6.234%, and the block-bootstrap interval is 4.833% to
+6.241%. Pair leave-one-out reductions range from 5.502% to 5.841%, and block
+leave-one-out reductions range from 5.435% to 5.900%. The lifecycle-paired
+direction is +5.840%, with 98 of 100 lifecycle pairs favoring the candidate.
+Every process retains a byte-identical JAX cache tree.
+
+All 418,943 production rows, schema metadata, and all 14 columns are bit-for-bit
+equal. Production output changes from two parts to four while total Parquet
+bytes fall 0.012%. This fresh direct-Parquet and whole-application evidence
+supersedes the July 14 rejection, so eight chunks per part is accepted.
+Artifacts, wheels, raw Criterion samples, and statistics are under
+`data/profiles/output_part_geometry_3535f2be`.
 
 ## Output Performance
 
