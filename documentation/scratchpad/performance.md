@@ -1409,6 +1409,20 @@ result hashes and valid masks are exact, but StableHLO grows from 108,600 to
 rejected and its production change was removed. Evidence is under
 `data/profiles/firth_dense_init_focused_{b1,c1,c2,b2}`.
 
+The second rank-one experiment stacked the information, score-adjustment, and
+score vectors into one same-axis reduction, with a predicted ceiling in the
+three dominant input-reduction groups and a one-expression complexity budget.
+One adjacent 30-call baseline/candidate campaign was sufficient for rejection:
+the candidate lost every pair. Paired geometric directions are -46.558% at
+400 candidates (-48.773% to -44.705%), -45.803% at 900 (-47.601% to
+-44.195%), and -48.667% at 1,024 (-50.166% to -47.222%). Result hashes and
+valid masks remain exact, but XLA materializes the stack: StableHLO grows 2.4%,
+executable text grows 1.4%, device events increase from 187 to 189, and
+aggregate 900-candidate trace duration rises from 2.296 to 3.531 milliseconds.
+The experiment was stopped without selective extension and its production
+change was removed. Evidence is under
+`data/profiles/firth_fused_reductions_{b1,c1}`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
