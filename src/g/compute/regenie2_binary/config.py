@@ -66,6 +66,7 @@ class ApproximateFirthConfig:
         pseudo_inner_maximum_iterations: Maximum pseudo-response logistic inner iterations.
         line_search_maximum_attempts: Maximum scalar Firth line-search attempts.
         sparse_carrier_dosage_threshold: Raw dosage threshold for sparse carrier-only Firth samples.
+        use_cuda_components: Whether to use the registered raw CUDA component reduction.
 
     """
 
@@ -76,6 +77,7 @@ class ApproximateFirthConfig:
     pseudo_inner_maximum_iterations: int
     line_search_maximum_attempts: int
     sparse_carrier_dosage_threshold: float
+    use_cuda_components: bool
 
 
 @dataclass(frozen=True)

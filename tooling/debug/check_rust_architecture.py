@@ -318,6 +318,7 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
 )
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
+    "g-compute-cuda": set(),
     "g-plan": set(),
     "g-interface": {"g-plan"},
     "g-genotype": set(),
@@ -327,6 +328,7 @@ ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-engine": {"g-genotype", "g-input", "g-output", "g-plan", "g-runtime"},
 }
 CRATE_ROOT_BY_PACKAGE: dict[str, Path] = {
+    "g-compute-cuda": Path("crates/compute-cuda"),
     "g-engine": Path("crates/engine"),
     "g-genotype": Path("crates/genotype"),
     "g-input": Path("crates/input"),
@@ -822,9 +824,7 @@ def rust_integer_cast_source_paths(repository_root: Path) -> tuple[Path, ...]:
         if not absolute_scan_root.exists():
             continue
         source_paths.extend(
-            source_path
-            for source_path in absolute_scan_root.rglob("*.rs")
-            if source_path.name != "tests.rs"
+            source_path for source_path in absolute_scan_root.rglob("*.rs") if source_path.name != "tests.rs"
         )
     return tuple(sorted(source_paths))
 

@@ -1452,6 +1452,118 @@ supersedes the July 14 rejection, so eight chunks per part is accepted.
 Artifacts, wheels, raw Criterion samples, and statistics are under
 `data/profiles/output_part_geometry_3535f2be`.
 
+## 2026-07-18 Raw CUDA Firth Component Experiment
+
+The experiment tested whether a private raw CUDA/XLA FFI kernel could improve
+the approximate-Firth compute path without replacing its established pseudo-
+Firth and Newton control flow. The kernel fuses probability clipping,
+information, score-adjustment numerator, score, and active deviance into one
+256-thread block per candidate lane with `f64` accumulation. The predicted
+ceiling was the dominant Firth input-reduction work identified by the focused
+JAX trace. The complexity budget was one kernel and one internal FFI target;
+no dependency, alternate solver, or public API was added.
+
+The synchronized focused gate used five ABBA blocks and 140 paired calls per
+shape. Paired geometric reductions are 20.47% at 400 active candidates, 20.44%
+at 900, and 20.15% at the 1,024-candidate capacity edge. Pair-bootstrap
+intervals are 19.11% to 21.82%, 19.68% to 21.17%, and 19.49% to 20.78%; all
+three block-bootstrap intervals and leave-one-block-out ranges are positive.
+The candidate StableHLO is 87,142 bytes versus 108,600 (-19.8%), executable
+text is approximately 594,157 versus 711,398 bytes (-16.5%), and temporary
+device memory is 32,167,800 versus 42,419,576 bytes (-24.2%). The compiled
+`sm_70` kernel uses 37 registers, no stack or spills, one barrier, and 256 bytes
+of shared memory. The 900-candidate trace attributes 0.535 milliseconds to its
+eight raw-kernel launches within 1.648 milliseconds of aggregate device events,
+versus 2.301 milliseconds for the baseline executable.
+
+The complete Landau gate used ten ABBA blocks, 40 processes, and five hot
+lifecycles per process against one populated persistent cache. Median hot time
+falls from 0.606564 to 0.600297 seconds. The 20-process-pair geometric reduction
+is 1.043%; 13 of 20 process pairs favor the candidate, the pair-bootstrap
+interval is 0.190% to 1.924%, and the block-bootstrap interval is 0.242% to
+1.978%. Pair leave-one-out reductions range from 0.793% to 1.211%, and block
+leave-one-out reductions range from 0.669% to 1.266%. The lifecycle-paired
+direction is +1.043%, with 59 of 100 lifecycle pairs favoring the candidate.
+Every measured cache tree remains byte-identical.
+
+All focused valid masks, correction decisions, and `p < 0.05`/`p < 5e-8`
+classifications are identical. Maximum absolute differences are `3.33e-16`
+for beta, `2.78e-17` for standard error, `9.09e-13` for chi-square, and
+`2.97e-11` for log10p. Under the shared production cache, all four Parquet
+parts and all 418,943 rows are byte-for-byte equal across every baseline and
+candidate lifecycle; their aggregate hash is
+`a2912b8a260f572d4355d50d151e28c55bc3152bbb63c8b1cda88e23adf159b1`.
+
+One baseline process in block seven stopped on hot lifecycle three with a
+transient packed8 descriptor status `0x00000800`. Its incomplete directory is
+retained, and the same prespecified baseline position succeeded when rerun;
+no completed process was removed. This failure occurred without the Firth FFI
+registration or use flags and is not attributed to the candidate.
+
+The speed hypothesis is accepted, but the diagnostic implementation is not a
+merge candidate. It embeds a 40,800-byte V100 `sm_70` cubin in
+`g-genotype-cuda`, couples association compute to the genotype-delivery crate,
+and lacks a multi-architecture artifact policy. Productionization should put
+the kernel under compute ownership, provide an explicit architecture-compatible
+module and pure-JAX fallback, restore the packed8 source/artifact provenance,
+and rerun this complete gate before enabling it. Focused evidence is under
+`data/profiles/raw_cuda_firth_focus_analysis.json`; whole-application evidence
+is under `data/profiles/raw_cuda_firth_app_abba_analysis.json` and
+`data/profiles/raw_cuda_firth_app_abba`.
+
+## 2026-07-19 Raw CUDA Firth Productionization
+
+The accepted production implementation moves the component kernel and typed-
+XLA FFI handler into the independent `g-compute-cuda` crate. It embeds
+reproducible compute-70 PTX instead of a V100 cubin, checks the maintained CUDA
+source and PTX SHA-256 values during every Linux build, loads the module lazily
+per XLA context, and unloads partial module construction through RAII. Binary
+Firth GPU backend construction selects it only after an independent Linux,
+CUDA-driver-12.2, and compute-capability-7.0 check. CPU, unsupported-device,
+and registration-failure paths retain the JAX reduction without an environment
+or public configuration switch. Packed8/nvCOMP initialization remains
+independent, and the unchanged OpenXLA FFI headers now have one repository-
+root vendor owner.
+
+The final release artifacts are frozen at native SHA-256
+`bdcdeaf59f72833aea0e5afba74597068b417497043734d4a7ef14d0629fafec`
+for baseline commit `ed921664` and
+`4c236ca1d455f731090dc5b22e067303c5d2ae7674e645e7ff6478c95f4526e9`
+for the candidate. The maintained CUDA source hash is
+`4a823918e8b198ef8079cf54e159467c0942ee3d59c99924558d413f7c43585c`;
+the NVRTC 12.2.140 PTX hash is
+`a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f`.
+CUDA 12.9 `ptxas` reports 38 registers, one barrier, 256 bytes of shared
+memory, and no stack or spills for `sm_70`.
+
+The final Landau gate used ten ABBA blocks, 40 processes, and five hot
+lifecycles per process against the shared populated cache. Median hot time
+falls from 0.607211 to 0.597798 seconds. The 20-process-pair geometric
+reduction is 2.641%; 18 of 20 process pairs favor the candidate, the pair-
+bootstrap interval is 0.866% to 5.470%, and the block-bootstrap interval is
+1.017% to 5.225%. Pair leave-one-out reductions range from 1.344% to 2.875%,
+and block leave-one-out reductions range from 1.415% to 2.934%. The lifecycle-
+paired direction is +2.641%, with 67 of 100 lifecycle pairs favoring the
+candidate. Every headline and discarded-warm cache tree remains byte-
+identical.
+
+All 418,943 rows, four Parquet parts, schema, metadata, correction decisions,
+and output bytes are identical in every completed baseline and candidate
+lifecycle. The aggregate Parquet hash is
+`fc38c0661b496bf81db9186f10f4b293a61012242f21942248dab532dba4233c`.
+A candidate discarded-warm run at block four, position three stopped before
+headline measurement with the known packed8 descriptor status `0x00000800`.
+Its incomplete directory is retained, and the exact prespecified position
+succeeded on retry; no completed measurement was removed or repeated.
+
+The release ELF text grows from 7,717,944 to 7,812,876 bytes (+1.230%), and
+the debuginfo-bearing extension file grows 3.837%. The independently positive
+pair and block intervals and robust leave-one-out direction clear the code-
+growth whole-application veto. The production candidate is accepted. Final
+evidence is under
+`data/profiles/raw_cuda_firth_production_final_abba_analysis.json` and
+`data/profiles/raw_cuda_firth_production_final_abba`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

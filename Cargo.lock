@@ -715,6 +715,7 @@ dependencies = [
 name = "g"
 version = "0.1.0"
 dependencies = [
+ "g-compute-cuda",
  "g-engine",
  "g-genotype",
  "g-genotype-contracts",
@@ -726,6 +727,14 @@ dependencies = [
  "numpy",
  "pyo3",
  "pyo3-pylogger",
+]
+
+[[package]]
+name = "g-compute-cuda"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "sha2",
 ]
 
 [[package]]

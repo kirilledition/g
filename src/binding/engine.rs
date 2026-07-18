@@ -28,6 +28,7 @@ pub(crate) struct PyJaxBackend {
 }
 
 static NVCOMP_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
+static FIRTH_COMPONENTS_FFI_REGISTRATION: OnceLock<bool> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 enum BackendKind {
@@ -103,7 +104,9 @@ pub(crate) fn create_jax_backend(
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryScore })
         }
         g_runner::JaxAssociationBackendPlan::BinaryFirth { correction, kernels } => {
-            let keyword_arguments = binary_firth_backend_keyword_arguments(py, kernels, *correction)?;
+            let use_cuda_firth_components = device == g_plan::Device::Gpu && register_firth_components_ffi_target(py);
+            let keyword_arguments =
+                binary_firth_backend_keyword_arguments(py, kernels, *correction, use_cuda_firth_components)?;
             let backend = backend_module.getattr("BinaryFirthJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryFirth })
         }
@@ -157,6 +160,35 @@ fn register_nvcomp_ffi_target_once(_py: Python<'_>) -> PyResult<()> {
     Err(PyRuntimeError::new_err("GPU packed8 delivery through nvCOMP is supported only on Linux."))
 }
 
+fn register_firth_components_ffi_target(py: Python<'_>) -> bool {
+    *FIRTH_COMPONENTS_FFI_REGISTRATION.get_or_init(|| register_firth_components_ffi_target_once(py).unwrap_or(false))
+}
+
+#[cfg(target_os = "linux")]
+fn register_firth_components_ffi_target_once(py: Python<'_>) -> PyResult<bool> {
+    let Ok(capability) = g_compute_cuda::initialize_firth_components_runtime(0) else {
+        return Ok(false);
+    };
+    let handler = g_compute_cuda::firth_components_ffi_handler(&capability);
+    // SAFETY: The linked typed-XLA FFI handler has process lifetime, and the
+    // capsule has no destructor or borrowed storage.
+    let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
+    let keyword_arguments = PyDict::new(py);
+    keyword_arguments.set_item("platform", "CUDA")?;
+    keyword_arguments.set_item("api_version", 1)?;
+    PyModule::import(py, "jax")?.getattr("ffi")?.call_method(
+        "register_ffi_target",
+        (g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET, capsule),
+        Some(&keyword_arguments),
+    )?;
+    Ok(true)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn register_firth_components_ffi_target_once(_py: Python<'_>) -> PyResult<bool> {
+    Ok(false)
+}
+
 fn binary_score_backend_keyword_arguments<'py>(
     py: Python<'py>,
     kernels: &g_plan::KernelPlan,
@@ -175,6 +207,7 @@ fn binary_firth_backend_keyword_arguments<'py>(
     py: Python<'py>,
     kernels: &g_plan::KernelPlan,
     correction: g_plan::CorrectionPlan,
+    use_cuda_firth_components: bool,
 ) -> PyResult<Bound<'py, PyDict>> {
     let keyword_arguments = binary_score_backend_keyword_arguments(py, kernels)?;
     keyword_arguments.set_item("p_threshold", correction.p_threshold.get())?;
@@ -190,6 +223,7 @@ fn binary_firth_backend_keyword_arguments<'py>(
     keyword_arguments.set_item("firth_line_search_maximum_attempts", kernels.firth.line_search_maximum_attempts)?;
     keyword_arguments
         .set_item("firth_sparse_carrier_dosage_threshold", kernels.firth.sparse_carrier_dosage_threshold.get())?;
+    keyword_arguments.set_item("use_cuda_firth_components", use_cuda_firth_components)?;
     keyword_arguments.set_item("null_firth_maximum_iterations", kernels.null_firth.maximum_iterations)?;
     keyword_arguments.set_item("null_firth_gradient_tolerance", kernels.null_firth.gradient_tolerance.get())?;
     keyword_arguments.set_item("null_firth_maximum_step_size", kernels.null_firth.maximum_step_size.get())?;

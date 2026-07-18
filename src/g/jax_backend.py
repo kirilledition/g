@@ -519,6 +519,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         firth_pseudo_inner_maximum_iterations: int,
         firth_line_search_maximum_attempts: int,
         firth_sparse_carrier_dosage_threshold: float,
+        use_cuda_firth_components: bool,
         null_firth_maximum_iterations: int,
         null_firth_gradient_tolerance: float,
         null_firth_maximum_step_size: float,
@@ -558,6 +559,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
                 pseudo_inner_maximum_iterations=firth_pseudo_inner_maximum_iterations,
                 line_search_maximum_attempts=firth_line_search_maximum_attempts,
                 sparse_carrier_dosage_threshold=firth_sparse_carrier_dosage_threshold,
+                use_cuda_components=use_cuda_firth_components,
             ),
             null_firth=regenie2_binary_config.NullFirthConfig(
                 maximum_iterations=null_firth_maximum_iterations,

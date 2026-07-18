@@ -224,6 +224,7 @@ def build_kernel_config(arguments: BenchmarkArguments) -> regenie2_binary_config
             pseudo_inner_maximum_iterations=25,
             line_search_maximum_attempts=25,
             sparse_carrier_dosage_threshold=1.0e-4,
+            use_cuda_components=False,
         ),
         null_firth=regenie2_binary_config.NullFirthConfig(
             maximum_iterations=1_000,

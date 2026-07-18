@@ -17,6 +17,7 @@ decoded genotype chunks. Public mathematical behavior is documented in
 | `src/g/compute/regenie2_binary/` | Binary null model, score test, candidate selection, correction, diagnostics, and Firth paths. |
 | `src/g/jax_backend.py` | Coarse group/chromosome/compute/materialize adapter called by Rust. |
 | `crates/engine/src/` | Rust owner of aligned inputs, batching, scheduling, and host-result writing. |
+| `crates/compute-cuda/` | Optional typed-XLA FFI CUDA reductions used by compatible GPU kernels. |
 
 ## Kernel Boundary
 
@@ -89,6 +90,17 @@ width/runtime policy as configuration.
 JAX runtime policy is configured before backend initialization. Code that imports
 JAX-heavy modules should stay behind explicit runtime boundaries when needed to
 preserve device/cache setup order.
+
+GPU approximate Firth uses a private CUDA component reduction when the Linux
+CUDA driver reports API 12.2 or newer and the selected device has compute
+capability 7.0 or newer. The checked-in compute-70 PTX is loaded lazily into
+the XLA execution context. It preserves the established `float64` reductions,
+probability clipping, validity rules, and solver control flow; only component
+evaluation is fused. CPU runs and unsupported GPU environments retain the pure
+JAX implementation automatically.
+Failure after a successful capability proof, such as a driver rejecting the
+validated PTX during execution, is a runtime error rather than an in-flight
+solver switch; falling back after an executable starts would mix implementations.
 
 Profile mode may intentionally synchronize device work for timing. Production
 progress logging must not add synchronization only for observability.

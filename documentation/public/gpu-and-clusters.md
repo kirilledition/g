@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 GPU and cluster operation | Public user docs |
+| Pre-release draft | main branch as of 2026-07-19 GPU and cluster operation | Public user docs |
 
 `g` executes statistical kernels through JAX. Choose the target device in TOML:
 
@@ -174,6 +174,16 @@ requires an NVIDIA driver exposing CUDA driver API 12.2 or newer and a device
 with compute capability 7.0 or newer. An eligible zlib packed8 run fails with a
 specific initialization error when those requirements or nvCOMP are missing;
 it does not silently replace the requested device decode with host decode.
+
+Binary approximate-Firth GPU runs also use a private raw-CUDA component kernel
+when the CUDA driver exposes API 12.2 or newer and the device has compute
+capability 7.0 or newer. This compute path is independent from nvCOMP and does
+not add a user-facing switch. If its capability check or private target
+registration fails, `g` transparently retains the numerically equivalent JAX
+component reduction; the requested GPU association run continues.
+An unexpected CUDA module or launch failure after that selection is reported
+as an execution error; `g` does not change implementations inside a compiled
+solver lifecycle.
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

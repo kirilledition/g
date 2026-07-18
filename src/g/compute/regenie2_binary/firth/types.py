@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import jax
@@ -214,7 +215,19 @@ class ScalarLineSearchState:
     valid: jax.Array
 
 
-@jax.tree_util.register_dataclass
+@functools.partial(
+    jax.tree_util.register_dataclass,
+    data_fields=(
+        "minimum_variance",
+        "tolerance",
+        "maximum_step_size",
+        "pseudo_maximum_iterations",
+        "pseudo_inner_maximum_iterations",
+        "newton_raphson_maximum_iterations",
+        "line_search_maximum_attempts",
+    ),
+    meta_fields=("use_cuda_components",),
+)
 @dataclass(frozen=True)
 class ScalarApproximateFirthSolverParameters:
     """Scalar approximate-Firth policy values carried through JAX branches."""
@@ -226,6 +239,7 @@ class ScalarApproximateFirthSolverParameters:
     pseudo_inner_maximum_iterations: jax.Array
     newton_raphson_maximum_iterations: jax.Array
     line_search_maximum_attempts: jax.Array
+    use_cuda_components: bool
 
 
 @jax.tree_util.register_dataclass

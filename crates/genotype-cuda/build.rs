@@ -8,9 +8,9 @@ fn main() {
     println!("cargo:rerun-if-changed=native/nvcomp_abi.h");
     println!("cargo:rerun-if-changed=native/packed8_kernel.cu");
     println!("cargo:rerun-if-changed=native/packed8_kernel.compute_70.ptx");
-    println!("cargo:rerun-if-changed=vendor/xla/ffi/api/api.h");
-    println!("cargo:rerun-if-changed=vendor/xla/ffi/api/c_api.h");
-    println!("cargo:rerun-if-changed=vendor/xla/ffi/api/ffi.h");
+    println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/api.h");
+    println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/c_api.h");
+    println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/ffi.h");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
         return;
@@ -26,12 +26,11 @@ fn main() {
         .define("NDEBUG", None)
         .include("native")
         .include(&output_directory)
+        .include("../../vendor/openxla")
         .file("native/packed8_deflate_ffi.cc")
         .flag_if_supported("-O3")
         .flag_if_supported("-fPIC")
-        // GCC and Clang accept this joined spelling of `-isystem vendor`; probing it
-        // atomically keeps warnings enabled for our translation unit but not vendored headers.
-        .flag_if_supported("-isystemvendor")
+        .flag_if_supported("-isystem../../vendor/openxla")
         .warnings(true)
         .extra_warnings(true)
         .compile("g_genotype_cuda_native");

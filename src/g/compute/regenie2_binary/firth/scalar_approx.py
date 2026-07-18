@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from g.compute.common import pvalue
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
+from g.compute.regenie2_binary.firth import cuda_components as regenie2_binary_firth_cuda_components
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
@@ -34,6 +35,7 @@ def build_scalar_approximate_firth_solver_parameters(
             kernel_config.approximate_firth.line_search_maximum_attempts,
             dtype=jnp.int32,
         ),
+        use_cuda_components=kernel_config.approximate_firth.use_cuda_components,
     )
 
 
@@ -46,8 +48,19 @@ def compute_scalar_firth_components_with_minimum_variance(
     non_active_deviance: jax.Array,
     beta: jax.Array,
     minimum_variance: jax.Array,
+    use_cuda_components: bool,
 ) -> regenie2_binary_firth_types.ScalarFirthComponents:
     """Compute scalar approximate-Firth quantities with explicit numeric policy."""
+    if use_cuda_components:
+        return regenie2_binary_firth_cuda_components.compute_scalar_firth_components(
+            phenotype_vector=phenotype_vector,
+            genotype_vector=genotype_vector,
+            offset_vector=offset_vector,
+            active_sample_mask=active_sample_mask,
+            non_active_deviance=non_active_deviance,
+            beta=beta,
+            minimum_variance=minimum_variance,
+        )
     linear_predictor = offset_vector + genotype_vector * beta
     probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(linear_predictor)
     weight_vector = probability_vector * (1.0 - probability_vector)
@@ -184,6 +197,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
     inner_maximum_iterations: int | jax.Array,
     maximum_step_size: jax.Array,
     minimum_variance: jax.Array,
+    use_cuda_components: bool,
 ) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
     """Run scalar pseudo-Firth with explicit numeric policy operands."""
     maximum_iteration_count = jnp.asarray(maximum_iterations, dtype=jnp.int32)
@@ -242,6 +256,7 @@ def fit_scalar_pseudo_firth_with_minimum_variance(
                 non_active_deviance=non_active_deviance,
                 beta=updated_beta,
                 minimum_variance=minimum_variance,
+                use_cuda_components=use_cuda_components,
             )
             return regenie2_binary_firth_types.ScalarPseudoFirthState(
                 beta=updated_beta,
@@ -296,6 +311,7 @@ def run_scalar_line_search_with_minimum_variance(
     initial_step_size: jax.Array,
     maximum_attempts: int | jax.Array,
     minimum_variance: jax.Array,
+    use_cuda_components: bool,
 ) -> regenie2_binary_firth_types.ScalarLineSearchState:
     """Run scalar NR step-halving with explicit numeric policy operands."""
     maximum_attempt_count = jnp.asarray(maximum_attempts, dtype=jnp.int32)
@@ -316,6 +332,7 @@ def run_scalar_line_search_with_minimum_variance(
             non_active_deviance=non_active_deviance,
             beta=candidate_beta,
             minimum_variance=minimum_variance,
+            use_cuda_components=use_cuda_components,
         )
         accepted = components.valid & (components.penalized_deviance < current_penalized_deviance)
         return regenie2_binary_firth_types.ScalarLineSearchState(
@@ -368,6 +385,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
     maximum_step_size: jax.Array,
     line_search_maximum_attempts: int | jax.Array,
     minimum_variance: jax.Array,
+    use_cuda_components: bool,
 ) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
     """Run scalar Newton-Raphson approximate Firth with explicit policy."""
     maximum_iteration_count = jnp.asarray(maximum_iterations, dtype=jnp.int32)
@@ -410,6 +428,7 @@ def fit_scalar_newton_raphson_firth_with_minimum_variance(
                 initial_step_size=raw_step_size / step_scale,
                 maximum_attempts=line_search_maximum_attempt_count,
                 minimum_variance=minimum_variance,
+                use_cuda_components=use_cuda_components,
             )
             line_search_failed = ~line_search_state.accepted
             failed = (~state.failed) & (line_search_failed | (~line_search_state.valid))
@@ -488,6 +507,7 @@ def run_initialized_scalar_pseudo_firth_solver(
         inner_maximum_iterations=parameters.pseudo_inner_maximum_iterations,
         maximum_step_size=parameters.maximum_step_size,
         minimum_variance=parameters.minimum_variance,
+        use_cuda_components=parameters.use_cuda_components,
     )
 
 
@@ -510,6 +530,7 @@ def run_initialized_scalar_newton_raphson_firth_solver(
         maximum_step_size=parameters.maximum_step_size,
         line_search_maximum_attempts=parameters.line_search_maximum_attempts,
         minimum_variance=parameters.minimum_variance,
+        use_cuda_components=parameters.use_cuda_components,
     )
 
 
@@ -603,6 +624,7 @@ def initialize_scalar_approximate_firth_with_active_samples(
         non_active_deviance=non_active_deviance,
         beta=initial_beta,
         minimum_variance=solver_parameters.minimum_variance,
+        use_cuda_components=solver_parameters.use_cuda_components,
     )
     return regenie2_binary_firth_types.ScalarApproximateFirthInitialState(
         phenotype_vector=phenotype_vector,

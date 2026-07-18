@@ -30,6 +30,8 @@ src/g       console bootstrap, JAX backend, JAX kernels
   of a concrete `PyErr` into runner-host callbacks.
 - GPU-only loading of the official nvCOMP Python wheel and private typed-XLA
   FFI target registration around the capability-checked crate handler.
+- GPU binary-Firth registration of the private `g-compute-cuda` typed-XLA FFI
+  target after its independent driver and device capability check.
 - Supplying the current Python thread name to `g-runner` for telemetry labels.
 - Checked conversion between Python/NumPy values and crate-owned types.
 
@@ -67,6 +69,12 @@ Backend construction receives the canonical `g-plan::Device` separately from
 the mode-specific kernel plan. CPU and host-delivered GPU runs never import or
 initialize nvCOMP. The first compressed packed8 group registers the
 process-global private target once.
+
+Only GPU binary-Firth backend construction probes the optional CUDA component
+target. The binding passes the resulting static capability into the typed JAX
+configuration; it does not expose an environment or user configuration knob.
+Capability or registration failure selects the JAX implementation and does
+not affect packed8 target registration.
 
 ## Namespace Policy
 

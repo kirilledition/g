@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active production architecture | Production code as of 2026-07-10 | Development maintainers |
+| Active production architecture | Production code as of 2026-07-19 | Development maintainers |
 
 `g` is a Rust host application with a Python/JAX numerical backend. Rust owns
 configuration, planning, input, scheduling, lifecycle, telemetry, shutdown,
@@ -43,13 +43,14 @@ typed arrays to Rust.
 | Immutable run contracts and host policy | `g-plan` |
 | Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
 | BGEN mmap/index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
+| Optional capability-gated CUDA association kernels and typed-XLA FFI handlers | `g-compute-cuda` |
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
 | BGEN delivery orchestration, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
 | Logging/telemetry transport, timing, Rayon state, SIGTERM | `g-runtime` |
 | CLI lifecycle, process/JAX policy, crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
 | PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation, JAX process calls | root Rust extension under `src/binding` |
-| Device state, compressed-device decode invocation, and association mathematics | `src/g/jax_backend.py`, `src/g/compute/` |
+| Device state, compressed-device decode invocation, and association mathematics | `src/g/jax_backend.py`, `src/g/compute/`, and capability-gated kernels in `g-compute-cuda` |
 
 `g-runner` is the root dependency through which the binding reaches CLI,
 planning, runtime, and execution services. It owns CLI dispatch, resolves the
@@ -87,6 +88,12 @@ slab and metadata to NumPy and calls the private JAX transfer method. The CUDA
 FFI handler and all raw-DEFLATE validation/finalization live in
 `g-genotype-cuda`; binding code performs only lazy library loading and target
 registration required by PyO3/JAX.
+
+Binary approximate-Firth GPU runs independently probe `g-compute-cuda` and
+register its private component-reduction target once. Compatible runs use the
+embedded PTX through typed XLA FFI; an unavailable driver, unsupported device,
+or registration failure selects the mathematically equivalent JAX reduction.
+This optional compute capability is not coupled to packed8 delivery or nvCOMP.
 
 Runner holds process runtime state across logging-compatibility validation,
 native session construction, subscriber installation, and topology recording.

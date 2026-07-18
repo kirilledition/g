@@ -21,6 +21,7 @@ Upstream does not publish a repository-level `NOTICE` file. The jaxlib wheel's
 aggregate dependency license is intentionally not vendored because this crate
 does not copy those dependencies.
 
-No NVIDIA header or binary is vendored in this crate. Runtime architecture and
-deployment behavior are documented with the integration that consumes this
-private native capability; this file records only third-party provenance.
+No NVIDIA header or binary is vendored with these repository-owned headers.
+Runtime architecture and deployment behavior are documented with each crate
+that consumes this private native capability; this file records only
+third-party provenance.

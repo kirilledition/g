@@ -7,6 +7,7 @@ rust-version = "1.96.0"
 [workspace]
 members = [
     ".",
+    "crates/compute-cuda",
     "crates/engine",
     "crates/genotype",
     "crates/genotype-cuda",
@@ -42,6 +43,7 @@ crossbeam-channel = "0.5.15"
 cc = "1.2.66"
 csv = "1.4.0"
 hex = "0.4.3"
+g-compute-cuda = { path = "crates/compute-cuda" }
 g-engine = { path = "crates/engine" }
 g-genotype = { path = "crates/genotype" }
 g-genotype-cuda = { path = "crates/genotype-cuda" }
@@ -87,6 +89,7 @@ unreachable_pub = "deny"
 # "abi3-py314" tells pyo3 (and maturin) to build using the stable ABI with minimum Python version 3.14.
 pyo3 = { workspace = true }
 numpy = { workspace = true }
+g-compute-cuda = { workspace = true }
 g-engine = { workspace = true }
 g-genotype = { workspace = true }
 g-genotype-cuda = { workspace = true }
