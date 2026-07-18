@@ -652,7 +652,7 @@ bench-rust-build-profiles *overrides:
 
 # Run native Criterion profiles on the configured CPU compute node
 profile-rust-criterion:
-    {{ server_env }} && GWAS_ENGINE_DATA_DIR="${GWAS_ENGINE_DATA_DIR:-{{ justfile_directory() }}/data}" just slurm-cpu-run 'cargo bench -p g-genotype --bench bgen_read && cargo bench -p g-genotype --bench preprocess'
+    {{ server_env }} && GWAS_ENGINE_DATA_DIR="${GWAS_ENGINE_DATA_DIR:-{{ justfile_directory() }}/data}" just slurm-cpu-run 'cargo bench -p g-genotype --bench bgen_read'
 
 # Run the deep REGENIE step 2 profiling harness on the current host
 profile-deep *overrides: dev-install-release

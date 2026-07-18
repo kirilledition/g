@@ -55,7 +55,6 @@ tool:
   enable_logging_perturbation: false
   rust_benchmarks:
     - bgen_read
-    - preprocess
   chunk_sizes:
     - 16384
   output_writer_thread_counts:

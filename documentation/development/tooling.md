@@ -100,7 +100,7 @@ execution and pass Hydra overrides:
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_bgen_reader
 uv run --no-sync python -m tooling.cli.benchmark_callback_overhead tool.chunk_count=1000
-uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=1000
+uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name bench_binary_hot_gpu_smoke
 uv run --no-sync python -m tooling.cli.data tool.name=fetch
 uv run --no-sync python -m tooling.cli.benchmark tool.name=regenie_comparison tool.cpu_only=true
 ```
@@ -126,7 +126,7 @@ Hydra override rules are the public parameter interface:
 
 - Group override: `machine=landau_gpu`
 - Scalar override: `tool.variant_limit=1000`
-- Boolean override: `tool.include_cold_process=false`
+- Boolean override: `tool.include_fresh_process=false`
 - List override: `sweep.chunk_sizes=[1024,2048,4096]`
 - Path override: `telemetry.json_summary_path=data/profiles/run.json`
 
@@ -159,19 +159,20 @@ sweeps, JSON summaries, and Markdown summaries.
 
 `tooling.cli.benchmark_regenie2_binary_hot`
 
-Benchmarks binary REGENIE step 2 while separating cold process, same-process
-hot, no-final output, and finalized Parquet timings. It supports storage mode
-sweeps, fallback-density scenarios, binary trait-count sweeps, Firth batch-size
-sweeps, Firth candidate-capacity sweeps, stage timing mode, and explicit JAX
-cache paths.
+Benchmarks one supported binary REGENIE production geometry through
+`g._core.cli.run`: approximate Firth, direct Parquet parts, an explicit JAX
+cache, and telemetry off. It may run one fresh-process diagnostic, always
+discards one same-process compile/warm lifecycle, and then records the requested
+number of same-process hot lifecycles with distinct output roots. Optional
+stage-timing lifecycles use `telemetry="profile"` and are kept out of the
+headline.
 
-The JSON summary includes `binary_diagnostics_by_case`, keyed by benchmark case
-and mode. Exact stage-timing runs persist candidate counts, Firth outcome
-counts, failure-code counts, correction branch and attempt counts, sparse/dense
-correction counts, Firth iteration summaries, code label values, and the
-available stage timing metadata used to interpret them. Throughput runs with
-`telemetry.stage_timing_mode=off` still emit the same diagnostic object, but
-mark it unavailable and set diagnostic counts to `null`.
+The JSON evidence records elapsed times, row counts, Arrow schema and metadata,
+Parquet metadata and hashes, run manifests, native-library and dependency-lock
+hashes, input hashes, runtime versions, CPU/GPU placement, and before/after JAX
+cache-tree hashes. Headline runs fail if the cache changes or output contracts
+differ. The concrete packed8 delivery selection is recorded by the native run
+manifest rather than selected through a removed Python orchestration API.
 
 `tooling.cli.benchmark_output_stages`
 
@@ -233,9 +234,9 @@ Prefer Justfile recipes for common workflows:
 
 ```bash
 just bench-bgen-reader
-just bench-binary-hot-gpu tool.variant_limit=1000
+just bench-binary-hot-gpu tool.hot_run_count=5
 just bench-output-stages-gpu tool.trials=1
-just bench-binary-hot-gpu-smoke telemetry.stage_timing_mode=exact
+just bench-binary-hot-gpu-smoke
 just perf-smoke
 just perf-cpu sweep.chunk_sizes=[4096,8192]
 just perf-gpu tool.variant_limit=1000
@@ -1028,29 +1029,26 @@ packed8 cases are filtered when trusted mode is disabled.
 
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot \
-  machine=landau_gpu \
-  tool.variant_limit=1000 \
-  tool.include_cold_process=false \
-  tool.include_finalized_hot=false
+  --config-name bench_binary_hot_gpu_smoke
 ```
 
 The Justfile recipe is:
 
 ```bash
-just bench-binary-hot-gpu-smoke tool.variant_limit=1000
+just bench-binary-hot-gpu-smoke
 ```
 
-### Binary-Hot Packed8 Workload
+The production CLI has no variant-limit option. For a bounded smoke, select a
+dataset config that points to a prepared bounded BGEN and matching prediction
+inputs; do not silently reinterpret `expected_variant_count` as an input limit.
+
+### Binary-Hot Production Workload
 
 ```bash
 uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot \
-  machine=landau_gpu \
-  sweep.storage_modes=[packed8] \
-  sweep.fallback_density_scenarios=[default] \
-  telemetry.stage_timing_mode=exact \
-  tool.variant_limit=50000 \
-  tool.include_cold_process=false \
-  tool.include_finalized_hot=false
+  --config-name bench_binary_hot_gpu \
+  tool.hot_run_count=5 \
+  tool.diagnostic_run_count=1
 ```
 
 ### Output-Stage Profiling
@@ -1172,8 +1170,9 @@ Default BGEN reader benchmark. Uses `dataset=local_1kg`, `machine=local`,
 `benchmark_regenie2_binary_hot.yaml`
 
 Default binary-hot GPU benchmark. Uses `dataset=local_1kg`,
-`machine=landau_gpu`, `workload=regenie2_binary_hot`, `telemetry=local`, and
-`sweep=regenie2_binary_hot_default`.
+`machine=landau_gpu`, the fixed chr22 production geometry, one fresh-process
+diagnostic, one discarded warm lifecycle, five headline hot lifecycles, and no
+instrumented diagnostic lifecycle by default.
 
 `benchmark_output_stages.yaml`
 
@@ -1186,7 +1185,7 @@ Default full app profile campaign. Uses `dataset=local_1kg`,
 `machine=landau_gpu`, chr22 inputs, public application candidate tuning,
 headline trials, JAX trace capture, JAX memory profiling, Python cProfile,
 py-spy, and Linux perf. Run `just profile-rust-criterion` separately for the
-`bgen_read` and `preprocess` Criterion benches. Set `tool.dry_run=true` to write
+crate-owned `g-genotype` `bgen_read` Criterion bench. Set `tool.dry_run=true` to write
 only `profile_plan.json` and `profile_plan.md`. Set `tool.smoke=true` for the
 small smoke campaign. The config default includes original REGENIE headline
 trials; the `profile-app-full-*` Justfile recipes override
@@ -1333,9 +1332,8 @@ names.
 - <code>storage_modes: [variant_major]</code>
 - <code>fallback_density_scenarios: [default]</code>
 
-The binary-hot tool uses `sweep.storage_modes` and
-`sweep.fallback_density_scenarios`. The other fields are kept available for
-shared campaign composition.
+The fixed binary-hot production tool does not consume sweep groups. Reader and
+deep-profile campaigns continue to own their respective sweep configuration.
 
 ## Python Composition
 
@@ -1348,8 +1346,8 @@ config = tooling.configuration.compose_config(
     config_name="benchmark_regenie2_binary_hot",
     overrides=[
         "machine=landau_gpu",
-        "tool.variant_limit=1000",
-        "tool.include_cold_process=false",
+        "tool.hot_run_count=1",
+        "tool.include_fresh_process=false",
     ],
 )
 ```

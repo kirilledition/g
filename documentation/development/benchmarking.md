@@ -15,7 +15,7 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 | BGEN reader | Isolate native decode, sample selection, trusted paths, and Rayon effects. | `tooling.cli.benchmark_bgen_reader`, `just benchmark-bgen-reader`. |
 | Callback overhead | Isolate Python callback queue handoff and optional host-to-device transfer without BGEN decode. | `tooling.cli.benchmark_callback_overhead`, `just benchmark-callback-overhead`. |
 | Output stages | Isolate writer threads, queue depth, compression, grouping, and finalization. | `tooling.cli.benchmark_output_stages`, `just benchmark-output-stages-*`. |
-| Binary hot path | Measure binary Step 2 score/Firth runtime without full campaign overhead. | `tooling.cli.benchmark_regenie2_binary_hot`. |
+| Binary hot path | Measure already-compiled binary Step 2 score/Firth production lifecycles with direct Parquet output. | `tooling.cli.benchmark_regenie2_binary_hot`. |
 | Matrix comparisons | Compare CPU/GPU/cache combinations for standard workloads. | `tooling.cli.run_regenie2_matrix`. |
 | Deep profiling | Run multi-tool profiling campaigns with JAX and native evidence. | `tooling.cli.profile_regenie2_deep`. |
 | External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `-m tooling.cli.benchmark tool.name=regenie_comparison`. |
@@ -38,6 +38,12 @@ Every benchmark result should record:
 - device, dtype, cache, and output settings;
 - artifact directory;
 - summary metric and confidence signal.
+
+The binary-hot harness additionally records hashes for the native extension,
+dependency locks, inputs, JAX cache tree, manifests, and Parquet parts. Its
+headline contains only telemetry-off same-process hot lifecycles after one
+discarded warm lifecycle. Fresh-process and `telemetry="profile"` stage-timing
+runs are diagnostics and are never mixed into the headline.
 
 Do not report a speedup without naming the baseline command.
 

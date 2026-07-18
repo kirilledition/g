@@ -66,5 +66,5 @@ choices remain environment-specific.
 Optional GPU smoke validation should run through SLURM rather than on the head node:
 
 ```bash
-just slurm-gpu-run 'uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot machine=landau_gpu tool.variant_limit=1000 tool.include_cold_process=false tool.include_finalized_hot=false'
+just slurm-gpu-just bench-binary-hot-gpu-smoke
 ```

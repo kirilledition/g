@@ -58,7 +58,6 @@ tool:
   enable_logging_perturbation: true
   rust_benchmarks:
     - bgen_read
-    - preprocess
   chunk_sizes:
     - 2048
     - 4096
