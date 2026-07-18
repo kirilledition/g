@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use g_genotype::{BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8Compatibility};
 
@@ -84,7 +84,12 @@ fn benchmark_bgen_open(criterion: &mut Criterion) {
     });
 }
 
-fn benchmark_gpu_host_delivery(criterion: &mut Criterion, reader: &BgenReaderCore, read_session: &BgenReadSession<'_>) {
+fn benchmark_gpu_host_delivery(
+    criterion: &mut Criterion,
+    reader: &BgenReaderCore,
+    read_session: &BgenReadSession<'_>,
+    full_sample_indices: &[usize],
+) {
     std::hint::black_box(read_session.compressed_packed8_transfer());
     let mut delivery_group = criterion.benchmark_group("bgen_gpu_host_delivery_full_samples");
     for chunk_size in GPU_HOST_DELIVERY_CHUNK_SIZES {
@@ -137,6 +142,27 @@ fn benchmark_gpu_host_delivery(criterion: &mut Criterion, reader: &BgenReaderCor
                 });
             },
         );
+        delivery_group.bench_with_input(
+            BenchmarkId::new("raw_deflate_pack_fresh_storage", chunk_size),
+            &selected_variant_count,
+            |benchmark, _selected_variant_count| {
+                benchmark.iter_batched(
+                    || {
+                        reader
+                            .read_session(full_sample_indices)
+                            .expect("fresh full-sample BGEN read session should build")
+                    },
+                    |fresh_read_session| {
+                        std::hint::black_box(
+                            fresh_read_session
+                                .pack_compressed_packed8_batch(&compressed_layout, variant_start, variant_stop)
+                                .expect("fresh-storage raw-DEFLATE BGEN packing should succeed"),
+                        );
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
     }
     delivery_group.finish();
 }
@@ -185,7 +211,7 @@ fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     if reader.packed8_compatibility_with_cache().expect("packed8 compatibility scan should succeed")
         == Packed8Compatibility::Compatible
     {
-        benchmark_gpu_host_delivery(criterion, &reader, &full_sample_session);
+        benchmark_gpu_host_delivery(criterion, &reader, &full_sample_session, &full_sample_indices);
         benchmark_variant_major_read(
             criterion,
             &reader,

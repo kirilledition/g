@@ -102,6 +102,7 @@ impl Drop for CompressedPacked8Batch {
 struct ParsedZlibMember<'member> {
     raw_deflate_bytes: &'member [u8],
     expected_adler32: u32,
+    zlib_header: u16,
 }
 
 fn build_compressed_sample_selection(sample_selection: &SampleSelection) -> CompressedPacked8SampleSelection {
@@ -179,15 +180,27 @@ impl BgenReadSession<'_> {
                     && candidate.member_metadata.capacity() >= metadata_value_count
             })
             .unwrap_or_default();
+        let slab_is_initialized = storage.raw_deflate_words.len() == layout_slab_word_count;
         prepare_storage(&mut storage, layout_slab_word_count, metadata_value_count)?;
 
         let slab_pointer = storage.raw_deflate_words.as_mut_ptr().cast::<u8>();
         let metadata_pointer = storage.member_metadata.spare_capacity_mut().as_mut_ptr().cast::<u32>();
         let mut member_offset = 0_usize;
+        // Zero cannot be a valid DEFLATE zlib header, so it marks the cache as
+        // uninitialized without adding an Option or borrowed cache to the hot
+        // loop. The explicit zero check still sends a malformed zero header
+        // through full validation.
+        let mut last_validated_zlib_header = 0_u16;
         for (relative_variant_index, variant_record) in variant_records.iter().enumerate() {
             let member = self.reader.zlib_member(variant_record).map_err(|error| {
                 self.reader.contextualize_variant_error(variant_start + relative_variant_index, error)
             })?;
+            if member.zlib_header != last_validated_zlib_header || last_validated_zlib_header == 0 {
+                validate_zlib_header(member.zlib_header.to_ne_bytes()).map_err(|error| {
+                    self.reader.contextualize_variant_error(variant_start + relative_variant_index, error)
+                })?;
+                last_validated_zlib_header = member.zlib_header;
+            }
             let member_length = member.raw_deflate_bytes.len();
             let aligned_member_length = align_member_length(member_length)?;
             let next_member_offset = member_offset
@@ -203,28 +216,44 @@ impl BgenReadSession<'_> {
             let member_length_u32 = u32::try_from(member_length)
                 .map_err(|_| BgenError::Range("Raw-DEFLATE member length exceeds uint32.".to_string()))?;
             let metadata_offset = relative_variant_index * MEMBER_METADATA_VALUE_COUNT;
-            // SAFETY: prepare_storage initializes the full fixed slab and
-            // reserves three metadata values per member. The checked next
-            // offset proves this member fits before its disjoint copy. Three
-            // scalar writes initialize every published metadata value;
-            // alignment gaps remain initialized session storage and are not
-            // referenced by the member metadata.
+            // SAFETY: prepare_storage reserves the fixed slab and three
+            // metadata values per member. The checked next offset proves this
+            // member and its alignment gap fit before the disjoint writes. A
+            // fresh slab initializes its gap explicitly; a pooled slab retains
+            // initialized bytes from its previous fixed-shape packing. Three
+            // scalar writes initialize every published metadata value.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     member.raw_deflate_bytes.as_ptr(),
                     slab_pointer.add(member_offset),
                     member_length,
                 );
+                if !slab_is_initialized {
+                    std::ptr::write_bytes(
+                        slab_pointer.add(member_offset + member_length),
+                        0,
+                        aligned_member_length - member_length,
+                    );
+                }
                 std::ptr::write(metadata_pointer.add(metadata_offset), member_offset_u32);
                 std::ptr::write(metadata_pointer.add(metadata_offset + 1), member_length_u32);
                 std::ptr::write(metadata_pointer.add(metadata_offset + 2), member.expected_adler32);
             }
             member_offset = next_member_offset;
         }
-        // SAFETY: every metadata value was initialized by the three writes per
-        // member above. Raw storage already retains its fully initialized fixed
-        // layout length; only the real compressed prefix is overwritten.
-        unsafe { storage.member_metadata.set_len(metadata_value_count) };
+        // SAFETY: member copies and alignment-gap writes initialize the real
+        // prefix of a fresh slab. The checked layout bound proves the remaining
+        // tail fits its allocation. Publishing the fixed word length happens
+        // only after every byte is initialized. A pooled slab already has that
+        // initialized length. Every metadata value was initialized by the
+        // three writes per member above.
+        unsafe {
+            if !slab_is_initialized {
+                std::ptr::write_bytes(slab_pointer.add(member_offset), 0, layout.slab_byte_count - member_offset);
+                storage.raw_deflate_words.set_len(layout_slab_word_count);
+            }
+            storage.member_metadata.set_len(metadata_value_count);
+        }
 
         Ok(CompressedPacked8Batch { storage, pool: Arc::clone(&compressed_state.pool) })
     }
@@ -295,7 +324,6 @@ fn prepare_storage(
                 BgenError::Range(format!("Could not reserve {layout_slab_word_count} raw-DEFLATE words: {source}."))
             })?;
         }
-        storage.raw_deflate_words.resize(layout_slab_word_count, 0);
     }
     if storage.member_metadata.capacity() < metadata_value_count {
         storage.member_metadata.try_reserve_exact(metadata_value_count).map_err(|source| {
@@ -337,8 +365,20 @@ fn parse_zlib_member(payload: &[u8]) -> Result<ParsedZlibMember<'_>, BgenError> 
             payload.len(),
         )));
     }
-    let compression_method_and_window = payload[0];
-    let flags = payload[1];
+    let zlib_header = u16::from_ne_bytes([payload[0], payload[1]]);
+    let raw_deflate_stop = payload.len() - ZLIB_ADLER32_LENGTH;
+    let expected_adler32 = u32::from_be_bytes(
+        payload[raw_deflate_stop..].try_into().expect("validated zlib Adler-32 trailer must contain four bytes"),
+    );
+    Ok(ParsedZlibMember {
+        raw_deflate_bytes: &payload[ZLIB_HEADER_LENGTH..raw_deflate_stop],
+        expected_adler32,
+        zlib_header,
+    })
+}
+
+fn validate_zlib_header(zlib_header: [u8; ZLIB_HEADER_LENGTH]) -> Result<(), BgenError> {
+    let [compression_method_and_window, flags] = zlib_header;
     if compression_method_and_window & 0x0F != ZLIB_COMPRESSION_METHOD_DEFLATE {
         return Err(BgenError::InvalidFormat(format!(
             "Zlib payload uses compression method {}, but BGEN zlib delivery requires DEFLATE.",
@@ -362,10 +402,5 @@ fn parse_zlib_member(payload: &[u8]) -> Result<ParsedZlibMember<'_>, BgenError> 
             "Zlib preset dictionaries are not supported for raw-DEFLATE GPU delivery.".to_string(),
         ));
     }
-
-    let raw_deflate_stop = payload.len() - ZLIB_ADLER32_LENGTH;
-    let expected_adler32 = u32::from_be_bytes(
-        payload[raw_deflate_stop..].try_into().expect("validated zlib Adler-32 trailer must contain four bytes"),
-    );
-    Ok(ParsedZlibMember { raw_deflate_bytes: &payload[ZLIB_HEADER_LENGTH..raw_deflate_stop], expected_adler32 })
+    Ok(())
 }

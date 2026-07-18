@@ -275,6 +275,7 @@ def compute_compact_sparse_firth_variantwise_fixed_batches_with_solver_parameter
         compute_firth_batch,
         None,
         jnp.arange(batch_count, dtype=jnp.int32),
+        unroll=2 if batch_count == 2 else 1,
     )
     return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
 
@@ -342,6 +343,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
         compute_firth_batch,
         None,
         jnp.arange(batch_count, dtype=jnp.int32),
+        unroll=2 if batch_count == 2 else 1,
     )
     return regenie2_binary_firth_types.flatten_batched_firth_variant_result(batched_firth_result)
 

@@ -1190,6 +1190,125 @@ isolated diagnostic only.
   `data/profiles/materialization_fastpath_shared_cache_gpu_abba_45562_analysis.json`
   and the adjacent `cache_final_proof.json`.
 
+## 2026-07-18 Profile-Led Current-Main Wave
+
+Commit `94ec9ea9` was re-profiled on Landau with the one-trait, full
+chromosome-22 binary approximate-Firth GPU workload, 16,384-variant
+application batches, Firth batch size 512, candidate capacity 1,024, and eight
+output writers. The current-main pprof-rs campaign attributes 49.44% of 3,317
+unblocked active-CPU samples to JAX/CUDA host work, 28.70% to output, and
+12.33% to BGEN indexing and packing. `SynchronizeStream` accounts for 1,118
+inclusive samples. This is active CPU attribution rather than wall time, but it
+makes the device timeline the primary compute lead. Evidence is in
+`data/profiles/pprof_main_94ec9ea9_20260717/analysis.md`.
+
+The successful serial Nsight Systems capture contains 7,104 kernels totaling
+216.309 milliseconds on one CUDA stream. nvCOMP inflate accounts for 142.258
+milliseconds across 26 launches and `finalize_packed8` for 11.819 milliseconds.
+Host-to-device copies total 118.579 MiB and 13.777 milliseconds; device-to-host
+copies total 14.785 MiB and 5.209 milliseconds. The trace confirms serialized
+delivery, but not a useful immediate overlap window: steady-state compressed
+inputs usually become ready only 0.011--0.063 milliseconds before the preceding
+compute ends, or after it has ended. An auxiliary CUDA stream would therefore
+add ownership and synchronization machinery without enough work to hide.
+Meaningful overlap first requires earlier compressed-input lookahead; the
+existing two-batch queue experiment already regressed. Artifacts are under
+`data/profiles/current_main_94ec9ea9_targeted_nsys_serial_20260718`.
+
+### Chunk geometry
+
+The serial current-main sweep retains 16,384 variants and capacity 1,024. Five
+hot-run medians were 0.671510 seconds for 16,384/1,024, 0.800758 seconds for
+32,768/2,048 (+19.25%), and 0.816802 seconds for 65,536/4,096 (+21.64%). The
+attempted 8,192/512 configuration is not a timing result: warm execution
+correctly rejected it because 531 aggregate Firth candidates exceeded capacity
+512. Capacity 640 still pads the fixed correction shape to 1,024, so it does
+not reduce correction work. Evidence is in
+`data/profiles/chunk_geometry_current_serial_20260717` and
+`data/profiles/chunk_geometry_small_current_20260718`.
+
+### Retained isolated candidates
+
+- The Firth dispatcher unrolls the outer `lax.scan` only when its fixed batch
+  count is exactly two. Dense and compact StableHLO shrink by 1.11% and 1.36%,
+  respectively. Synchronized GPU calls improve by 0.835% for 400 active
+  candidates and 0.422% for 900. In the isolated 20-pair application ABBA gate,
+  median hot time falls from 0.647222 to 0.643793 seconds and the paired
+  geometric reduction is 1.2814%. The pair-bootstrap interval narrowly crosses
+  zero (-0.0337% to 3.1354%), while the ten-block interval is 0.0011% to
+  3.0500%. All 418,943 rows and every output value are bit-for-bit equal.
+  Evidence is `data/profiles/profile_wave_firth_only_abba_45609_analysis.json`.
+- Fresh raw-DEFLATE storage remains length zero while real members are copied,
+  initializes only alignment gaps and the unused tail, and publishes its fixed
+  length after every byte is initialized. Pooled fixed-shape storage retains
+  its already initialized bytes. The isolated 16,384-variant fresh-storage
+  midpoint falls from 781.74 to 653.82 microseconds, a significant 16.36%
+  reduction; the pooled path is neutral. An adversarial review found no
+  uninitialized read or error-path `Vec` invariant violation. The retained
+  Criterion case is
+  `bgen_gpu_host_delivery_full_samples/raw_deflate_pack_fresh_storage`.
+- All 418,943 members in the chromosome-22 fixture use zlib header `0x789c`.
+  Packing now fully validates the first header and every changed header while
+  caching repeated valid headers in batch-local register state. The focused
+  pooled 16,384-member pack improves by 2.691%, with a 2.303--3.195% interval.
+  The first-header and every changed-header path retains all RFC 1950 checks
+  and per-variant error context. Full and tail GPU probability, statistic,
+  status, and genotype mean outputs are exact. Evidence is under
+  `data/profiles/nvcomp_framing_candidate_20260718`.
+
+The raw fresh-storage whole-application gate is deliberately inconclusive, not
+positive evidence. A transient slowdown affected neighboring implementations;
+the candidate wins 9 of 20 pairs, its pair-bootstrap interval spans -11.8604%
+to +2.1902%, and its block leave-one-out range spans -4.5382% to +0.9002%.
+Outputs remain exact. The focused allocation benchmark supplies the causal
+evidence, while the final combined gate retains veto power. Evidence is
+`data/profiles/profile_wave_raw_only_abba_45612_analysis.json`.
+
+### Rejected candidates
+
+- Correction-column-only dictionary disabling is order-sensitive and adds
+  23,486 bytes (+0.224%) to the chromosome output. Disabling every string
+  dictionary is neutral after its first noisy block and adds 21,451 bytes
+  (+0.205%). Both policies were removed.
+- Owner-backed ID and position Arrow buffers would avoid 8,378,860 copied bytes
+  per chromosome-22 output, but the direct confirmation loses both
+  position-balanced pairs for an approximately 0.46% geometric regression.
+  The safe and unchecked candidates were removed despite a favorable paced
+  direction.
+- Retaining Adler-32 trailers in wire order improves focused CPU packing by
+  0.839%, but requires one byte permutation in the serialized GPU finalizer.
+  The fresh-build whole-application gate is neutral with a -0.0586% geometric
+  direction, a -1.0416% to +0.9287% pair-bootstrap interval, and a -0.3962% to
+  +0.2952% block-bootstrap interval. Moving overlapped host work onto the
+  critical CUDA stream is not justified; the CUDA, PTX, and checksum-contract
+  changes were removed. Job 45633 nevertheless confirmed exact selection,
+  injected-checksum-corruption, and descriptor-gate behavior for the discarded
+  artifact.
+- Larger chunks, an immediate auxiliary CUDA stream, custom raw-DEFLATE CUDA
+  decoding, output dictionary changes, and owner-backed metadata therefore do
+  not remain in the production diff.
+
+Output experiments are retained under
+`data/profiles/output_dictionary_wave_20260718`. The final combined controlled
+gate is recorded below after its fresh native build and exact-output comparison.
+
+### Final lean gate
+
+The accepted candidate contains only the two-trip Firth unroll, fresh-slab
+initialization, and repeated-zlib-header validation cache. It restores the
+existing CUDA source and embedded PTX byte-for-byte. In Slurm job 45635, median
+hot time moves from 0.646895 to 0.646747 seconds and the paired geometric
+direction is +0.1120%; 9 of 20 pairs favor the candidate. Symmetric early
+latency spikes make this a non-inferiority result rather than an application
+speedup claim: the pair-bootstrap interval is -2.6839% to +2.6749%, the
+block-bootstrap interval is -2.6786% to +2.6503%, and pair/block leave-one-out
+ranges are -0.7909% to +1.1224% and -0.8065% to +1.2022%. All 418,943 rows,
+all categorical and metadata columns, and every floating-point result are
+bit-for-bit equal. The retained components are accepted from their causal
+focused measurements with no measured aggregate regression. Evidence is
+`data/profiles/profile_wave_lean_abba_45635_analysis.json`; fresh-build
+provenance is under `data/profiles/profile_wave_lean_build_20260718`.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
