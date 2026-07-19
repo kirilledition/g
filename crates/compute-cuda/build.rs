@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-const KERNEL_SOURCE_SHA256: &str = "4a823918e8b198ef8079cf54e159467c0942ee3d59c99924558d413f7c43585c";
+const KERNEL_SOURCE_SHA256: &str = "1d15fd1aad609023c849942478764c8d2c67a74ff5acd0909652f2dfa180fce0";
 const KERNEL_PTX_SHA256: &str = "a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f";
 
 fn main() {

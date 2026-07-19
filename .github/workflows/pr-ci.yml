@@ -38,6 +38,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - uses: extractions/setup-just@v3
+
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -47,13 +49,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install format dependencies without the project package
-        run: uv sync --group dev --frozen --no-install-project
+        run: uv sync --group dev --group cuda-format --frozen --no-install-project
 
       - name: Check Python formatting
         run: uv run --no-sync ruff format --check .
 
       - name: Check Rust formatting
         run: cargo fmt --check
+
+      - name: Check CUDA and native C++ formatting
+        run: just cuda-format-check
 
   python-lint:
     name: python-lint
@@ -85,6 +90,37 @@ jobs:
 
       - name: Run Ruff lint
         run: uv run --no-sync ruff check .
+
+  cuda-lint:
+    name: cuda-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Rust toolchain for source-built Python dependencies
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install CUDA lint dependencies without the project package
+        run: uv sync --group dev --group cuda-lint --frozen --no-install-project
+
+      - name: Run CUDA and native C++ lint
+        run: PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_cuda_native
 
   typecheck:
     name: typecheck
@@ -637,6 +673,7 @@ jobs:
       - format
       - package-install
       - cli-smoke
+      - cuda-lint
       - python-lint
       - typecheck
       - python-tests
@@ -654,6 +691,7 @@ jobs:
           echo "format: ${{ needs.format.result }}"
           echo "package-install: ${{ needs['package-install'].result }}"
           echo "cli-smoke: ${{ needs['cli-smoke'].result }}"
+          echo "cuda-lint: ${{ needs['cuda-lint'].result }}"
           echo "python-lint: ${{ needs['python-lint'].result }}"
           echo "typecheck: ${{ needs.typecheck.result }}"
           echo "python-tests: ${{ needs['python-tests'].result }}"
@@ -664,6 +702,7 @@ jobs:
           test "${{ needs.format.result }}" = "success"
           test "${{ needs['package-install'].result }}" = "success"
           test "${{ needs['cli-smoke'].result }}" = "success"
+          test "${{ needs['cuda-lint'].result }}" = "success"
           test "${{ needs['python-lint'].result }}" = "success"
           test "${{ needs.typecheck.result }}" = "success"
           test "${{ needs['python-tests'].result }}" = "success"

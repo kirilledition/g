@@ -4,7 +4,7 @@
 `firth_components_kernel.compute_70.ptx` artifact. The frozen files have these
 hashes:
 
-- source: `sha256:4a823918e8b198ef8079cf54e159467c0942ee3d59c99924558d413f7c43585c`
+- source: `sha256:1d15fd1aad609023c849942478764c8d2c67a74ff5acd0909652f2dfa180fce0`
 - PTX: `sha256:a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f`
 
 The PTX was generated twice reproducibly with the official

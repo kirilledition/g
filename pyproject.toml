@@ -35,6 +35,16 @@ dev = [
     "vulture>=2.16",
     "skylos>=4.28.0",
 ]
+cuda-format = [
+    "clang-format==22.1.8",
+]
+cuda-lint = [
+    "clang-tidy==22.1.8; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-cccl-cu12==12.9.27; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-nvcc-cu12==12.9.86; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-runtime-cu12==12.9.79; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-curand-cu12==10.3.10.19; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 docs = [
     "mkdocstrings-python>=2.0.4",
     "zensical>=0.0.44,<0.0.45",

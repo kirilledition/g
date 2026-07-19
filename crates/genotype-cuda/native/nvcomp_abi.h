@@ -1,11 +1,11 @@
 #ifndef G_GENOTYPE_CUDA_NVCOMP_ABI_H_
 #define G_GENOTYPE_CUDA_NVCOMP_ABI_H_
 
-#include "cuda_driver_abi.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+
+#include "cuda_driver_abi.h"
 
 namespace g::genotype_cuda::abi {
 
@@ -38,27 +38,24 @@ inline constexpr std::uint32_t kMaximumNvcompVersion = 6000;
 
 using NvcompGetProperties = NvcompStatus (*)(NvcompProperties* properties);
 using NvcompGetStatusString = const char* (*)(NvcompStatus status);
-using NvcompDeflateGetRequiredAlignments = NvcompStatus (*)(
-    NvcompDeflateDecompressOptions options,
-    NvcompAlignmentRequirements* requirements);
-using NvcompDeflateGetTemporarySize = NvcompStatus (*)(
-    std::size_t chunk_count,
-    std::size_t maximum_uncompressed_chunk_bytes,
-    NvcompDeflateDecompressOptions options,
-    std::size_t* temporary_bytes,
-    std::size_t maximum_total_uncompressed_bytes);
-using NvcompDeflateDecompress = NvcompStatus (*)(
-    const void* const* device_compressed_chunk_pointers,
-    const std::size_t* device_compressed_chunk_bytes,
-    const std::size_t* device_uncompressed_buffer_bytes,
-    std::size_t* device_uncompressed_chunk_bytes,
-    std::size_t chunk_count,
-    void* device_temporary,
-    std::size_t temporary_bytes,
-    void* const* device_uncompressed_chunk_pointers,
-    NvcompDeflateDecompressOptions options,
-    NvcompStatus* device_statuses,
-    CudaStream stream);
+using NvcompDeflateGetRequiredAlignments = NvcompStatus (*)(NvcompDeflateDecompressOptions options,
+                                                            NvcompAlignmentRequirements* requirements);
+using NvcompDeflateGetTemporarySize = NvcompStatus (*)(std::size_t chunk_count,
+                                                       std::size_t maximum_uncompressed_chunk_bytes,
+                                                       NvcompDeflateDecompressOptions options,
+                                                       std::size_t* temporary_bytes,
+                                                       std::size_t maximum_total_uncompressed_bytes);
+using NvcompDeflateDecompress = NvcompStatus (*)(const void* const* device_compressed_chunk_pointers,
+                                                 const std::size_t* device_compressed_chunk_bytes,
+                                                 const std::size_t* device_uncompressed_buffer_bytes,
+                                                 std::size_t* device_uncompressed_chunk_bytes,
+                                                 std::size_t chunk_count,
+                                                 void* device_temporary,
+                                                 std::size_t temporary_bytes,
+                                                 void* const* device_uncompressed_chunk_pointers,
+                                                 NvcompDeflateDecompressOptions options,
+                                                 NvcompStatus* device_statuses,
+                                                 CudaStream stream);
 
 static_assert(sizeof(NvcompStatus) == 4);
 static_assert(sizeof(NvcompProperties) == 8);

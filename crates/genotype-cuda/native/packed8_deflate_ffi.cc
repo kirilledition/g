@@ -1,13 +1,10 @@
-#include "cuda_driver_abi.h"
-#include "nvcomp_abi.h"
-
+#include <dlfcn.h>
 #include <xla/ffi/api/ffi.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <dlfcn.h>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -17,7 +14,9 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
-#include <utility>
+
+#include "cuda_driver_abi.h"
+#include "nvcomp_abi.h"
 
 static_assert(XLA_FFI_API_MAJOR == 0);
 static_assert(XLA_FFI_API_MINOR == 3);
@@ -72,8 +71,8 @@ using xla::ffi::ResultBufferR1;
 using xla::ffi::ResultBufferR3;
 using xla::ffi::ScratchAllocator;
 
-constexpr std::string_view kDescriptorKernelName = "build_nvcomp_descriptors";
-constexpr std::string_view kFinalizeKernelName = "finalize_packed8";
+constexpr char kDescriptorKernelName[] = "build_nvcomp_descriptors";
+constexpr char kFinalizeKernelName[] = "finalize_packed8";
 constexpr std::int32_t kMinimumCudaDriverVersion = 12020;
 constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;
 constexpr unsigned int kKernelBlockSize = 256;
@@ -103,8 +102,8 @@ enum class InitializationStatus : std::int32_t {
 
 class InitializationFailure final : public std::runtime_error {
  public:
-  InitializationFailure(InitializationStatus status, std::string detail)
-      : std::runtime_error(std::move(detail)), status_(status) {}
+  InitializationFailure(InitializationStatus status, const std::string& detail)
+      : std::runtime_error(detail), status_(status) {}
 
   [[nodiscard]] InitializationStatus status() const noexcept { return status_; }
 
@@ -114,8 +113,7 @@ class InitializationFailure final : public std::runtime_error {
 
 class HandlerFailure final : public std::runtime_error {
  public:
-  HandlerFailure(ErrorCode code, std::string detail)
-      : std::runtime_error(std::move(detail)), code_(code) {}
+  HandlerFailure(ErrorCode code, const std::string& detail) : std::runtime_error(detail), code_(code) {}
 
   [[nodiscard]] ErrorCode code() const noexcept { return code_; }
 
@@ -123,17 +121,13 @@ class HandlerFailure final : public std::runtime_error {
   ErrorCode code_;
 };
 
-[[noreturn]] void fail_initialization(InitializationStatus status, std::string detail) {
-  throw InitializationFailure(status, std::move(detail));
+[[noreturn]] void fail_initialization(InitializationStatus status, const std::string& detail) {
+  throw InitializationFailure(status, detail);
 }
 
-[[noreturn]] void fail_handler(ErrorCode code, std::string detail) {
-  throw HandlerFailure(code, std::move(detail));
-}
+[[noreturn]] void fail_handler(ErrorCode code, const std::string& detail) { throw HandlerFailure(code, detail); }
 
-[[noreturn]] void fail_runtime(std::string detail) {
-  fail_handler(ErrorCode::kInternal, std::move(detail));
-}
+[[noreturn]] void fail_runtime(const std::string& detail) { fail_handler(ErrorCode::kInternal, detail); }
 
 std::string dynamic_loader_error(std::string_view operation) {
   const char* detail = ::dlerror();
@@ -170,9 +164,8 @@ Function load_symbol(void* library, const char* library_name, const char* symbol
   ::dlerror();
   void* symbol = ::dlsym(library, symbol_name);
   if (const char* detail = ::dlerror(); detail != nullptr) {
-    fail_initialization(
-        InitializationStatus::kRequiredSymbolUnavailable,
-        std::string("load ") + library_name + " symbol " + symbol_name + ": " + detail);
+    fail_initialization(InitializationStatus::kRequiredSymbolUnavailable,
+                        std::string("load ") + library_name + " symbol " + symbol_name + ": " + detail);
   }
   Function function = nullptr;
   std::memcpy(&function, &symbol, sizeof(function));
@@ -181,9 +174,8 @@ Function load_symbol(void* library, const char* library_name, const char* symbol
 
 void check_cuda_initialization(CudaResult status, std::string_view operation) {
   if (status != g::genotype_cuda::abi::kCudaSuccess) {
-    fail_initialization(
-        InitializationStatus::kCudaDriverFailure,
-        std::string(operation) + " failed with CUDA driver status " + std::to_string(status));
+    fail_initialization(InitializationStatus::kCudaDriverFailure,
+                        std::string(operation) + " failed with CUDA driver status " + std::to_string(status));
   }
 }
 
@@ -202,19 +194,14 @@ class CudaDriverApi {
   CudaDriverApi()
       : library_(open_library("libcuda.so.1", InitializationStatus::kCudaDriverUnavailable)),
         initialize_(load_symbol<CudaInit>(library_.get(), "CUDA driver", "cuInit")),
-        driver_get_version_(
-            load_symbol<CudaDriverGetVersion>(library_.get(), "CUDA driver", "cuDriverGetVersion")),
+        driver_get_version_(load_symbol<CudaDriverGetVersion>(library_.get(), "CUDA driver", "cuDriverGetVersion")),
         device_get_(load_symbol<CudaDeviceGet>(library_.get(), "CUDA driver", "cuDeviceGet")),
         device_get_attribute_(
             load_symbol<CudaDeviceGetAttribute>(library_.get(), "CUDA driver", "cuDeviceGetAttribute")),
-        context_get_current_(
-            load_symbol<CudaContextGetCurrent>(library_.get(), "CUDA driver", "cuCtxGetCurrent")),
-        context_get_device_(
-            load_symbol<CudaContextGetDevice>(library_.get(), "CUDA driver", "cuCtxGetDevice")),
-        module_load_data_(
-            load_symbol<CudaModuleLoadDataEx>(library_.get(), "CUDA driver", "cuModuleLoadDataEx")),
-        module_get_function_(
-            load_symbol<CudaModuleGetFunction>(library_.get(), "CUDA driver", "cuModuleGetFunction")),
+        context_get_current_(load_symbol<CudaContextGetCurrent>(library_.get(), "CUDA driver", "cuCtxGetCurrent")),
+        context_get_device_(load_symbol<CudaContextGetDevice>(library_.get(), "CUDA driver", "cuCtxGetDevice")),
+        module_load_data_(load_symbol<CudaModuleLoadDataEx>(library_.get(), "CUDA driver", "cuModuleLoadDataEx")),
+        module_get_function_(load_symbol<CudaModuleGetFunction>(library_.get(), "CUDA driver", "cuModuleGetFunction")),
         launch_kernel_(load_symbol<CudaLaunchKernel>(library_.get(), "CUDA driver", "cuLaunchKernel")) {
     check_cuda_initialization(initialize_(0), "initialize CUDA driver");
     check_cuda_initialization(driver_get_version_(&driver_version_), "query CUDA driver version");
@@ -230,32 +217,25 @@ class CudaDriverApi {
     CudaDevice device = 0;
     const CudaResult device_status = device_get_(&device, device_ordinal);
     if (device_status != g::genotype_cuda::abi::kCudaSuccess) {
-      fail_initialization(
-          InitializationStatus::kCudaDeviceUnavailable,
-          "query CUDA device ordinal " + std::to_string(device_ordinal) + " failed with status " +
-              std::to_string(device_status));
+      fail_initialization(InitializationStatus::kCudaDeviceUnavailable,
+                          "query CUDA device ordinal " + std::to_string(device_ordinal) + " failed with status " +
+                              std::to_string(device_status));
     }
-    check_cuda_initialization(
-        device_get_attribute_(
-            &capability.compute_capability_major,
-            g::genotype_cuda::abi::kComputeCapabilityMajor,
-            device),
-        "query CUDA compute-capability major version");
-    check_cuda_initialization(
-        device_get_attribute_(
-            &capability.compute_capability_minor,
-            g::genotype_cuda::abi::kComputeCapabilityMinor,
-            device),
-        "query CUDA compute-capability minor version");
+    check_cuda_initialization(device_get_attribute_(&capability.compute_capability_major,
+                                                    g::genotype_cuda::abi::kComputeCapabilityMajor,
+                                                    device),
+                              "query CUDA compute-capability major version");
+    check_cuda_initialization(device_get_attribute_(&capability.compute_capability_minor,
+                                                    g::genotype_cuda::abi::kComputeCapabilityMinor,
+                                                    device),
+                              "query CUDA compute-capability minor version");
   }
 
   [[nodiscard]] CudaContext current_context() const {
     CudaContext context = nullptr;
     check_cuda_runtime(context_get_current_(&context), "query current CUDA context");
     if (context == nullptr) {
-      fail_handler(
-          ErrorCode::kFailedPrecondition,
-          "the XLA FFI execution thread has no current CUDA context");
+      fail_handler(ErrorCode::kFailedPrecondition, "the XLA FFI execution thread has no current CUDA context");
     }
     return context;
   }
@@ -266,23 +246,16 @@ class CudaDriverApi {
     std::int32_t compute_capability_major = 0;
     std::int32_t compute_capability_minor = 0;
     check_cuda_runtime(
-        device_get_attribute_(
-            &compute_capability_major,
-            g::genotype_cuda::abi::kComputeCapabilityMajor,
-            device),
+        device_get_attribute_(&compute_capability_major, g::genotype_cuda::abi::kComputeCapabilityMajor, device),
         "query current XLA CUDA context compute-capability major version");
     check_cuda_runtime(
-        device_get_attribute_(
-            &compute_capability_minor,
-            g::genotype_cuda::abi::kComputeCapabilityMinor,
-            device),
+        device_get_attribute_(&compute_capability_minor, g::genotype_cuda::abi::kComputeCapabilityMinor, device),
         "query current XLA CUDA context compute-capability minor version");
     if (compute_capability_major < kMinimumComputeCapabilityMajor) {
-      fail_handler(
-          ErrorCode::kFailedPrecondition,
-          "current XLA CUDA context uses device " + std::to_string(device) +
-              " with unsupported compute capability " + std::to_string(compute_capability_major) + "." +
-              std::to_string(compute_capability_minor) + "; packed8 nvCOMP FFI requires 7.0 or newer");
+      fail_handler(ErrorCode::kFailedPrecondition,
+                   "current XLA CUDA context uses device " + std::to_string(device) +
+                       " with unsupported compute capability " + std::to_string(compute_capability_major) + "." +
+                       std::to_string(compute_capability_minor) + "; packed8 nvCOMP FFI requires 7.0 or newer");
     }
   }
 
@@ -298,16 +271,14 @@ class CudaDriverApi {
     return function;
   }
 
-  void launch(
-      CudaFunction function,
-      unsigned int grid_width,
-      unsigned int block_width,
-      CudaStream stream,
-      void** arguments,
-      std::string_view operation) const {
-    check_cuda_runtime(
-        launch_kernel_(function, grid_width, 1, 1, block_width, 1, 1, 0, stream, arguments, nullptr),
-        operation);
+  void launch(CudaFunction function,
+              unsigned int grid_width,
+              unsigned int block_width,
+              CudaStream stream,
+              void** arguments,
+              std::string_view operation) const {
+    check_cuda_runtime(launch_kernel_(function, grid_width, 1, 1, block_width, 1, 1, 0, stream, arguments, nullptr),
+                       operation);
   }
 
  private:
@@ -329,38 +300,32 @@ class NvcompApi {
   NvcompApi()
       : library_(open_library("libnvcomp.so.5", InitializationStatus::kNvcompLibraryUnavailable)),
         get_properties_(load_symbol<NvcompGetProperties>(library_.get(), "nvCOMP", "nvcompGetProperties")),
-        get_status_string_(
-            load_symbol<NvcompGetStatusString>(library_.get(), "nvCOMP", "nvcompGetStatusString")),
-        get_required_alignments_(load_symbol<NvcompDeflateGetRequiredAlignments>(
-            library_.get(),
-            "nvCOMP",
-            "nvcompBatchedDeflateDecompressGetRequiredAlignments")),
-        get_temporary_size_(load_symbol<NvcompDeflateGetTemporarySize>(
-            library_.get(),
-            "nvCOMP",
-            "nvcompBatchedDeflateDecompressGetTempSizeAsync")),
-        decompress_(load_symbol<NvcompDeflateDecompress>(
-            library_.get(),
-            "nvCOMP",
-            "nvcompBatchedDeflateDecompressAsync")) {
+        get_status_string_(load_symbol<NvcompGetStatusString>(library_.get(), "nvCOMP", "nvcompGetStatusString")),
+        get_required_alignments_(
+            load_symbol<NvcompDeflateGetRequiredAlignments>(library_.get(),
+                                                            "nvCOMP",
+                                                            "nvcompBatchedDeflateDecompressGetRequiredAlignments")),
+        get_temporary_size_(
+            load_symbol<NvcompDeflateGetTemporarySize>(library_.get(),
+                                                       "nvCOMP",
+                                                       "nvcompBatchedDeflateDecompressGetTempSizeAsync")),
+        decompress_(
+            load_symbol<NvcompDeflateDecompress>(library_.get(), "nvCOMP", "nvcompBatchedDeflateDecompressAsync")) {
     const NvcompStatus properties_status = get_properties_(&properties_);
     if (properties_status != g::genotype_cuda::abi::kNvcompSuccess) {
-      fail_initialization(
-          InitializationStatus::kInternal,
-          "query nvCOMP properties failed with status " + std::to_string(properties_status));
+      fail_initialization(InitializationStatus::kInternal,
+                          "query nvCOMP properties failed with status " + std::to_string(properties_status));
     }
     options_.backend = g::genotype_cuda::abi::kNvcompCudaBackend;
     const NvcompStatus alignment_status = get_required_alignments_(options_, &alignments_);
     if (alignment_status != g::genotype_cuda::abi::kNvcompSuccess) {
-      fail_initialization(
-          InitializationStatus::kInternal,
-          "query nvCOMP DEFLATE alignments failed with status " + std::to_string(alignment_status));
+      fail_initialization(InitializationStatus::kInternal,
+                          "query nvCOMP DEFLATE alignments failed with status " + std::to_string(alignment_status));
     }
     if (!is_power_of_two(alignments_.input) || !is_power_of_two(alignments_.output) ||
         !is_power_of_two(alignments_.temporary)) {
-      fail_initialization(
-          InitializationStatus::kInternal,
-          "nvCOMP returned a buffer alignment that is not a nonzero power of two");
+      fail_initialization(InitializationStatus::kInternal,
+                          "nvCOMP returned a buffer alignment that is not a nonzero power of two");
     }
   }
 
@@ -370,42 +335,37 @@ class NvcompApi {
   [[nodiscard]] const NvcompProperties& properties() const noexcept { return properties_; }
   [[nodiscard]] const NvcompAlignmentRequirements& alignments() const noexcept { return alignments_; }
 
-  [[nodiscard]] std::size_t temporary_size(
-      std::size_t chunk_count,
-      std::size_t output_stride,
-      std::size_t total_output_bytes) const {
+  [[nodiscard]] std::size_t temporary_size(std::size_t chunk_count,
+                                           std::size_t output_stride,
+                                           std::size_t total_output_bytes) const {
     std::size_t temporary_bytes = 0;
-    check(
-        get_temporary_size_(chunk_count, output_stride, options_, &temporary_bytes, total_output_bytes),
-        "query nvCOMP DEFLATE temporary size");
+    check(get_temporary_size_(chunk_count, output_stride, options_, &temporary_bytes, total_output_bytes),
+          "query nvCOMP DEFLATE temporary size");
     return temporary_bytes;
   }
 
-  void decompress(
-      const void* const* input_pointers,
-      const std::size_t* input_sizes,
-      const std::size_t* output_capacities,
-      std::size_t* actual_sizes,
-      std::size_t chunk_count,
-      void* temporary,
-      std::size_t temporary_bytes,
-      void* const* output_pointers,
-      NvcompStatus* statuses,
-      CudaStream stream) const {
-    check(
-        decompress_(
-            input_pointers,
-            input_sizes,
-            output_capacities,
-            actual_sizes,
-            chunk_count,
-            temporary,
-            temporary_bytes,
-            output_pointers,
-            options_,
-            statuses,
-            stream),
-        "launch nvCOMP DEFLATE decompression");
+  void decompress(const void* const* input_pointers,
+                  const std::size_t* input_sizes,
+                  const std::size_t* output_capacities,
+                  std::size_t* actual_sizes,
+                  std::size_t chunk_count,
+                  void* temporary,
+                  std::size_t temporary_bytes,
+                  void* const* output_pointers,
+                  NvcompStatus* statuses,
+                  CudaStream stream) const {
+    check(decompress_(input_pointers,
+                      input_sizes,
+                      output_capacities,
+                      actual_sizes,
+                      chunk_count,
+                      temporary,
+                      temporary_bytes,
+                      output_pointers,
+                      options_,
+                      statuses,
+                      stream),
+          "launch nvCOMP DEFLATE decompression");
   }
 
  private:
@@ -433,28 +393,27 @@ class Packed8Kernels {
  public:
   explicit Packed8Kernels(const CudaDriverApi& driver) : driver_(driver) {
     module_ = driver_.load_module(kPacked8KernelPtx);
-    descriptor_function_ = driver_.get_function(module_, kDescriptorKernelName.data());
-    finalize_function_ = driver_.get_function(module_, kFinalizeKernelName.data());
+    descriptor_function_ = driver_.get_function(module_, kDescriptorKernelName);
+    finalize_function_ = driver_.get_function(module_, kFinalizeKernelName);
   }
 
   Packed8Kernels(const Packed8Kernels&) = delete;
   Packed8Kernels& operator=(const Packed8Kernels&) = delete;
 
-  void launch_descriptors(
-      const std::uint8_t* compressed_slab,
-      std::size_t compressed_slab_bytes,
-      const std::uint32_t* compressed_metadata,
-      std::size_t input_alignment,
-      std::uint8_t* fallback_input,
-      std::uint8_t* output_slab,
-      std::size_t output_stride,
-      const void** input_pointers,
-      std::size_t* input_sizes,
-      void** output_pointers,
-      std::size_t* output_capacities,
-      std::uint32_t* descriptor_statuses,
-      std::size_t chunk_count,
-      CudaStream stream) const {
+  void launch_descriptors(const std::uint8_t* compressed_slab,
+                          std::size_t compressed_slab_bytes,
+                          const std::uint32_t* compressed_metadata,
+                          std::size_t input_alignment,
+                          std::uint8_t* fallback_input,
+                          std::uint8_t* output_slab,
+                          std::size_t output_stride,
+                          const void** input_pointers,
+                          std::size_t* input_sizes,
+                          void** output_pointers,
+                          std::size_t* output_capacities,
+                          std::uint32_t* descriptor_statuses,
+                          std::size_t chunk_count,
+                          CudaStream stream) const {
     const std::size_t grid_size = (chunk_count + kKernelBlockSize - 1) / kKernelBlockSize;
     if (grid_size > std::numeric_limits<unsigned int>::max()) {
       fail_runtime("descriptor kernel grid exceeds uint32");
@@ -478,36 +437,34 @@ class Packed8Kernels {
         &descriptor_statuses,
         &chunk_count_argument,
     };
-    driver_.launch(
-        descriptor_function_,
-        static_cast<unsigned int>(grid_size),
-        kKernelBlockSize,
-        stream,
-        arguments,
-        "launch descriptor kernel");
+    driver_.launch(descriptor_function_,
+                   static_cast<unsigned int>(grid_size),
+                   kKernelBlockSize,
+                   stream,
+                   arguments,
+                   "launch descriptor kernel");
   }
 
-  void launch_finalize(
-      const std::uint8_t* decompressed_slab,
-      const std::size_t* actual_sizes,
-      const NvcompStatus* nvcomp_statuses,
-      const std::uint32_t* compressed_metadata,
-      const std::uint32_t* descriptor_statuses,
-      const std::uint32_t* selected_sample_indices,
-      std::int64_t selection_start,
-      std::size_t logical_variant_count,
-      std::size_t compute_variant_count,
-      std::size_t source_sample_count,
-      std::size_t selected_sample_count,
-      std::size_t output_stride,
-      std::uint8_t* probabilities,
-      std::uint64_t* raw_dosage_sums,
-      std::uint64_t* raw_dosage_square_sums,
-      std::uint32_t* zero_counts,
-      std::uint32_t* homozygous_alternate_counts,
-      std::uint32_t* statuses,
-      float* genotype_means,
-      CudaStream stream) const {
+  void launch_finalize(const std::uint8_t* decompressed_slab,
+                       const std::size_t* actual_sizes,
+                       const NvcompStatus* nvcomp_statuses,
+                       const std::uint32_t* compressed_metadata,
+                       const std::uint32_t* descriptor_statuses,
+                       const std::uint32_t* selected_sample_indices,
+                       std::int64_t selection_start,
+                       std::size_t logical_variant_count,
+                       std::size_t compute_variant_count,
+                       std::size_t source_sample_count,
+                       std::size_t selected_sample_count,
+                       std::size_t output_stride,
+                       std::uint8_t* probabilities,
+                       std::uint64_t* raw_dosage_sums,
+                       std::uint64_t* raw_dosage_square_sums,
+                       std::uint32_t* zero_counts,
+                       std::uint32_t* homozygous_alternate_counts,
+                       std::uint32_t* statuses,
+                       float* genotype_means,
+                       CudaStream stream) const {
     if (compute_variant_count > std::numeric_limits<unsigned int>::max()) {
       fail_runtime("packed8 finalize kernel grid exceeds uint32");
     }
@@ -537,13 +494,12 @@ class Packed8Kernels {
         &statuses,
         &genotype_means,
     };
-    driver_.launch(
-        finalize_function_,
-        static_cast<unsigned int>(compute_variant_count),
-        kKernelBlockSize,
-        stream,
-        arguments,
-        "launch packed8 finalize kernel");
+    driver_.launch(finalize_function_,
+                   static_cast<unsigned int>(compute_variant_count),
+                   kKernelBlockSize,
+                   stream,
+                   arguments,
+                   "launch packed8 finalize kernel");
   }
 
  private:
@@ -595,10 +551,7 @@ class RuntimeState {
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;
 
-  void validate(
-      std::int32_t device_ordinal,
-      std::size_t member_alignment,
-      GGenotypeCudaCapability& capability) const {
+  void validate(std::int32_t device_ordinal, std::size_t member_alignment, GGenotypeCudaCapability& capability) const {
     const NvcompProperties& properties = nvcomp_.properties();
     const NvcompAlignmentRequirements& alignments = nvcomp_.alignments();
     capability.nvcomp_version = properties.version;
@@ -609,33 +562,28 @@ class RuntimeState {
 
     if (properties.version < g::genotype_cuda::abi::kMinimumNvcompVersion ||
         properties.version >= g::genotype_cuda::abi::kMaximumNvcompVersion) {
-      fail_initialization(
-          InitializationStatus::kNvcompVersionUnsupported,
-          "expected 5.2 <= nvCOMP < 6, observed encoded version " + std::to_string(properties.version));
+      fail_initialization(InitializationStatus::kNvcompVersionUnsupported,
+                          "expected 5.2 <= nvCOMP < 6, observed encoded version " + std::to_string(properties.version));
     }
     if (capability.cuda_driver_version < kMinimumCudaDriverVersion) {
-      fail_initialization(
-          InitializationStatus::kCudaDriverTooOld,
-          "embedded PTX ISA 8.2 requires CUDA driver API version 12020 or newer");
+      fail_initialization(InitializationStatus::kCudaDriverTooOld,
+                          "embedded PTX ISA 8.2 requires CUDA driver API version 12020 or newer");
     }
     if (!is_power_of_two(member_alignment)) {
-      fail_initialization(
-          InitializationStatus::kInternal,
-          "Rust DEFLATE member alignment must be a nonzero power of two");
+      fail_initialization(InitializationStatus::kInternal,
+                          "Rust DEFLATE member alignment must be a nonzero power of two");
     }
     if (member_alignment % alignments.input != 0) {
-      fail_initialization(
-          InitializationStatus::kNvcompInputAlignmentUnsupported,
-          "configured " + std::to_string(member_alignment) +
-              "-byte DEFLATE member alignment does not cover runtime nvCOMP input alignment " +
-              std::to_string(alignments.input));
+      fail_initialization(InitializationStatus::kNvcompInputAlignmentUnsupported,
+                          "configured " + std::to_string(member_alignment) +
+                              "-byte DEFLATE member alignment does not cover runtime nvCOMP input alignment " +
+                              std::to_string(alignments.input));
     }
 
     driver_.inspect_device(device_ordinal, capability);
     if (capability.compute_capability_major < kMinimumComputeCapabilityMajor) {
-      fail_initialization(
-          InitializationStatus::kComputeCapabilityUnsupported,
-          "nvCOMP DEFLATE requires compute capability 7.0 or newer");
+      fail_initialization(InitializationStatus::kComputeCapabilityUnsupported,
+                          "nvCOMP DEFLATE requires compute capability 7.0 or newer");
     }
   }
 
@@ -693,25 +641,23 @@ class WorkspaceLayout {
 template <DataType data_type>
 bool is_result_vector(ResultBufferR1<data_type>& result, std::size_t expected_count) {
   const auto dimensions = result->dimensions();
-  return dimensions.size() == 1 && dimensions[0] >= 0 &&
-      static_cast<std::uint64_t>(dimensions[0]) == expected_count;
+  return dimensions.size() == 1 && dimensions[0] >= 0 && static_cast<std::uint64_t>(dimensions[0]) == expected_count;
 }
 
-Error decode_packed8(
-    BufferR1<DataType::U8> compressed_slab,
-    BufferR2<DataType::U32> compressed_metadata,
-    BufferR1<DataType::U32> selected_sample_indices,
-    ResultBufferR3<DataType::U8> probabilities,
-    ResultBufferR1<DataType::U64> raw_dosage_sums,
-    ResultBufferR1<DataType::U64> raw_dosage_square_sums,
-    ResultBufferR1<DataType::U32> zero_counts,
-    ResultBufferR1<DataType::U32> homozygous_alternate_counts,
-    ResultBufferR1<DataType::U32> statuses,
-    ResultBufferR1<DataType::F32> genotype_means,
-    std::int64_t source_sample_count_attribute,
-    std::int64_t selection_start,
-    CudaStream stream,
-    ScratchAllocator scratch) {
+Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
+                     BufferR2<DataType::U32> compressed_metadata,
+                     BufferR1<DataType::U32> selected_sample_indices,
+                     ResultBufferR3<DataType::U8> probabilities,
+                     ResultBufferR1<DataType::U64> raw_dosage_sums,
+                     ResultBufferR1<DataType::U64> raw_dosage_square_sums,
+                     ResultBufferR1<DataType::U32> zero_counts,
+                     ResultBufferR1<DataType::U32> homozygous_alternate_counts,
+                     ResultBufferR1<DataType::U32> statuses,
+                     ResultBufferR1<DataType::F32> genotype_means,
+                     std::int64_t source_sample_count_attribute,
+                     std::int64_t selection_start,
+                     CudaStream stream,
+                     ScratchAllocator scratch) {
   try {
     const auto metadata_dimensions = compressed_metadata.dimensions();
     if (metadata_dimensions.size() != 2 || metadata_dimensions[0] <= 0 || metadata_dimensions[1] != 3) {
@@ -732,10 +678,9 @@ Error decode_packed8(
     const std::size_t output_stride = 3 * source_sample_count + 10;
 
     const auto probability_dimensions = probabilities->dimensions();
-    if (probability_dimensions.size() != 3 || probability_dimensions[0] < 0 ||
-        probability_dimensions[1] <= 0 || probability_dimensions[2] != 2) {
-      return Error::InvalidArgument(
-          "packed8 probabilities must have shape [compute_variants, selected_samples, 2]");
+    if (probability_dimensions.size() != 3 || probability_dimensions[0] < 0 || probability_dimensions[1] <= 0 ||
+        probability_dimensions[2] != 2) {
+      return Error::InvalidArgument("packed8 probabilities must have shape [compute_variants, selected_samples, 2]");
     }
     const std::size_t compute_variant_count = static_cast<std::size_t>(probability_dimensions[0]);
     const std::size_t selected_sample_count = static_cast<std::size_t>(probability_dimensions[1]);
@@ -801,10 +746,8 @@ Error decode_packed8(
     const std::size_t output_capacities_offset = workspace_layout.append_array<std::size_t>(logical_variant_count);
     const std::size_t actual_sizes_offset = workspace_layout.append_array<std::size_t>(logical_variant_count);
     const std::size_t nvcomp_statuses_offset = workspace_layout.append_array<NvcompStatus>(logical_variant_count);
-    const std::size_t descriptor_statuses_offset =
-        workspace_layout.append_array<std::uint32_t>(logical_variant_count);
-    const std::size_t temporary_offset =
-        workspace_layout.append_bytes(temporary_bytes, alignments.temporary);
+    const std::size_t descriptor_statuses_offset = workspace_layout.append_array<std::uint32_t>(logical_variant_count);
+    const std::size_t temporary_offset = workspace_layout.append_bytes(temporary_bytes, alignments.temporary);
 
     std::optional<void*> workspace_allocation =
         scratch.Allocate(workspace_layout.byte_count(), workspace_layout.alignment());
@@ -820,59 +763,55 @@ Error decode_packed8(
     std::size_t* output_capacities = reinterpret_cast<std::size_t*>(workspace + output_capacities_offset);
     std::size_t* actual_sizes = reinterpret_cast<std::size_t*>(workspace + actual_sizes_offset);
     NvcompStatus* nvcomp_statuses = reinterpret_cast<NvcompStatus*>(workspace + nvcomp_statuses_offset);
-    std::uint32_t* descriptor_statuses =
-        reinterpret_cast<std::uint32_t*>(workspace + descriptor_statuses_offset);
+    std::uint32_t* descriptor_statuses = reinterpret_cast<std::uint32_t*>(workspace + descriptor_statuses_offset);
     void* temporary = temporary_bytes == 0 ? nullptr : workspace + temporary_offset;
 
     const Packed8Kernels& kernels = runtime.kernels();
-    kernels.launch_descriptors(
-        compressed_slab.typed_data(),
-        compressed_slab_bytes,
-        compressed_metadata.typed_data(),
-        alignments.input,
-        fallback_input,
-        decompressed_slab,
-        output_stride,
-        input_pointers,
-        input_sizes,
-        output_pointers,
-        output_capacities,
-        descriptor_statuses,
-        logical_variant_count,
-        stream);
-    nvcomp.decompress(
-        input_pointers,
-        input_sizes,
-        output_capacities,
-        actual_sizes,
-        logical_variant_count,
-        temporary,
-        temporary_bytes,
-        output_pointers,
-        nvcomp_statuses,
-        stream);
+    kernels.launch_descriptors(compressed_slab.typed_data(),
+                               compressed_slab_bytes,
+                               compressed_metadata.typed_data(),
+                               alignments.input,
+                               fallback_input,
+                               decompressed_slab,
+                               output_stride,
+                               input_pointers,
+                               input_sizes,
+                               output_pointers,
+                               output_capacities,
+                               descriptor_statuses,
+                               logical_variant_count,
+                               stream);
+    nvcomp.decompress(input_pointers,
+                      input_sizes,
+                      output_capacities,
+                      actual_sizes,
+                      logical_variant_count,
+                      temporary,
+                      temporary_bytes,
+                      output_pointers,
+                      nvcomp_statuses,
+                      stream);
 
-    kernels.launch_finalize(
-        decompressed_slab,
-        actual_sizes,
-        nvcomp_statuses,
-        compressed_metadata.typed_data(),
-        descriptor_statuses,
-        selected_sample_indices.typed_data(),
-        selection_start,
-        logical_variant_count,
-        compute_variant_count,
-        source_sample_count,
-        selected_sample_count,
-        output_stride,
-        probabilities->typed_data(),
-        raw_dosage_sums->typed_data(),
-        raw_dosage_square_sums->typed_data(),
-        zero_counts->typed_data(),
-        homozygous_alternate_counts->typed_data(),
-        statuses->typed_data(),
-        genotype_means->typed_data(),
-        stream);
+    kernels.launch_finalize(decompressed_slab,
+                            actual_sizes,
+                            nvcomp_statuses,
+                            compressed_metadata.typed_data(),
+                            descriptor_statuses,
+                            selected_sample_indices.typed_data(),
+                            selection_start,
+                            logical_variant_count,
+                            compute_variant_count,
+                            source_sample_count,
+                            selected_sample_count,
+                            output_stride,
+                            probabilities->typed_data(),
+                            raw_dosage_sums->typed_data(),
+                            raw_dosage_square_sums->typed_data(),
+                            zero_counts->typed_data(),
+                            homozygous_alternate_counts->typed_data(),
+                            statuses->typed_data(),
+                            genotype_means->typed_data(),
+                            stream);
     return Error::Success();
   } catch (const HandlerFailure& failure) {
     return Error(failure.code(), failure.what());
@@ -885,11 +824,10 @@ Error decode_packed8(
 
 }  // namespace
 
-extern "C" std::int32_t g_genotype_cuda_initialize_nvcomp_runtime(
-    std::int32_t device_ordinal,
-    std::size_t member_alignment,
-    GGenotypeCudaCapability* capability,
-    const char** detail) noexcept {
+extern "C" std::int32_t g_genotype_cuda_initialize_nvcomp_runtime(std::int32_t device_ordinal,
+                                                                  std::size_t member_alignment,
+                                                                  GGenotypeCudaCapability* capability,
+                                                                  const char** detail) noexcept {
   thread_local std::string initialization_detail;
   if (detail != nullptr) {
     *detail = nullptr;
@@ -916,21 +854,20 @@ extern "C" std::int32_t g_genotype_cuda_initialize_nvcomp_runtime(
   }
 }
 
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    g_nvcomp_decode_packed8_ffi,
-    decode_packed8,
-    xla::ffi::Ffi::Bind()
-        .Arg<BufferR1<DataType::U8>>()
-        .Arg<BufferR2<DataType::U32>>()
-        .Arg<BufferR1<DataType::U32>>()
-        .Ret<xla::ffi::BufferR3<DataType::U8>>()
-        .Ret<xla::ffi::BufferR1<DataType::U64>>()
-        .Ret<xla::ffi::BufferR1<DataType::U64>>()
-        .Ret<xla::ffi::BufferR1<DataType::U32>>()
-        .Ret<xla::ffi::BufferR1<DataType::U32>>()
-        .Ret<xla::ffi::BufferR1<DataType::U32>>()
-        .Ret<xla::ffi::BufferR1<DataType::F32>>()
-        .Attr<std::int64_t>("source_sample_count")
-        .Attr<std::int64_t>("selection_start")
-        .Ctx<xla::ffi::PlatformStream<CudaStream>>()
-        .Ctx<ScratchAllocator>());
+XLA_FFI_DEFINE_HANDLER_SYMBOL(g_nvcomp_decode_packed8_ffi,
+                              decode_packed8,
+                              xla::ffi::Ffi::Bind()
+                                  .Arg<BufferR1<DataType::U8>>()
+                                  .Arg<BufferR2<DataType::U32>>()
+                                  .Arg<BufferR1<DataType::U32>>()
+                                  .Ret<xla::ffi::BufferR3<DataType::U8>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U64>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U64>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U32>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U32>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U32>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::F32>>()
+                                  .Attr<std::int64_t>("source_sample_count")
+                                  .Attr<std::int64_t>("selection_start")
+                                  .Ctx<xla::ffi::PlatformStream<CudaStream>>()
+                                  .Ctx<ScratchAllocator>());

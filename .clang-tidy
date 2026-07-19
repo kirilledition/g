@@ -1,0 +1,19 @@
+---
+Checks: >-
+  -*,
+  clang-diagnostic-*,
+  -clang-diagnostic-unknown-cuda-version,
+  clang-analyzer-*,
+  bugprone-*,
+  -bugprone-bitwise-pointer-cast,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-reserved-identifier,
+  performance-*,
+  -performance-enum-size,
+  portability-*
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'crates/(compute-cuda|genotype-cuda)/native/.*'
+SystemHeaders: false
+FormatStyle: file
+...

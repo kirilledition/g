@@ -38,6 +38,9 @@ just dev-bootstrap
 just dev-bootstrap-gpu
 just dev-install
 just dev-install-release
+just cuda-format
+just cuda-format-check
+just cuda-lint
 just check-local
 just check-artifact-schema data/profiles/example/report.json
 just check-rust-architecture
@@ -57,6 +60,15 @@ builds. Cargo defaults to 30 build jobs through `.cargo/config.toml`;
 `CARGO_BUILD_JOBS` or an explicit `--jobs` option can impose a different cap.
 SLURM jobs use the scheduler allocation unless `CARGO_BUILD_JOBS` is already
 set.
+
+`cuda-format` applies the repository ClangFormat policy to the explicit list of
+maintained `.cu`, `.cc`, and `.h` files. `cuda-format-check` checks the same
+files without rewriting them. `cuda-lint` runs the pinned ClangTidy analysis of
+CUDA host/device code and native C++ through the saved
+`debug_check_cuda_native` configuration. These commands exclude generated PTX
+and vendored sources. Static analysis runs on Linux x86-64 without a GPU and
+does not compile or regenerate PTX. The aggregate `format`, `lint`, `check`,
+and `check-local` recipes include the corresponding native checks.
 
 Use SLURM for CPU-heavy validation:
 

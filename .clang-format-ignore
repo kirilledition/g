@@ -1,0 +1,6 @@
+**/*.ptx
+data/**
+reference/**
+references/**
+target/**
+vendor/**

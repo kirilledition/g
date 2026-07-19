@@ -28,6 +28,7 @@ server_env := '. tooling/server/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
 symphony_worktree_root := env_var_or_default('SYMPHONY_WORKTREE_ROOT', '/mnt/beegfs/kirill/Projects/g-worktrees/symphony')
+cuda_native_sources := 'crates/compute-cuda/native/cuda_driver_abi.h crates/compute-cuda/native/firth_components_ffi.cc crates/compute-cuda/native/firth_components_kernel.cu crates/genotype-cuda/native/cuda_driver_abi.h crates/genotype-cuda/native/nvcomp_abi.h crates/genotype-cuda/native/packed8_deflate_ffi.cc crates/genotype-cuda/native/packed8_kernel.cu'
 
 default: help
 
@@ -729,8 +730,23 @@ profile-chr22-binary-gpu-full *overrides:
 
 # --- checks and tests ---
 
+# Format maintained CUDA and native C++ sources
+cuda-format:
+    uv sync --group cuda-format --frozen --no-install-project
+    uv run --no-sync clang-format --style=file -i {{ cuda_native_sources }}
+
+# Check maintained CUDA and native C++ formatting without rewriting files
+cuda-format-check:
+    uv sync --group cuda-format --frozen --no-install-project
+    uv run --no-sync clang-format --style=file --dry-run --Werror {{ cuda_native_sources }}
+
+# Lint maintained CUDA and native C++ sources without requiring a GPU
+cuda-lint:
+    uv sync --group dev --group cuda-lint --frozen --no-install-project
+    PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_cuda_native
+
 # Format code
-format:
+format: cuda-format
     {{ server_env }} && uv run ruff format .
     {{ server_env }} && cargo fmt
 
@@ -739,7 +755,7 @@ rust-format-check:
     {{ server_env }} && cargo fmt --all --check
 
 # Lint code
-lint:
+lint: cuda-lint
     {{ server_env }} && uv run ruff check . --fix
     {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
 
@@ -788,12 +804,12 @@ check-artifact-schema path:
 # Run all checks
 check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-python-architecture check-justfile
 
-# Check Python formatting without requiring Nix or direct Cargo access
-format-local-check:
+# Check formatting without requiring Nix or direct Cargo access
+format-local-check: cuda-format-check
     uv run ruff format --check .
 
-# Lint Python without applying fixes
-lint-local:
+# Lint Python and native CUDA/C++ without applying fixes
+lint-local: cuda-lint
     uv run ruff check .
 
 # Type check Python in uv/maturin-only environments

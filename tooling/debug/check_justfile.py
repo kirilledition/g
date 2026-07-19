@@ -31,6 +31,7 @@ ALLOWED_RECIPE_PREFIXES = {
     "check",
     "ci",
     "coverage",
+    "cuda",
     "data",
     "dev",
     "docs",

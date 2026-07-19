@@ -11,6 +11,7 @@ from tooling.cli import schema_check
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import registry as tooling_registry
 from tooling.debug import (
+    check_cuda_native,
     check_internal_defaults,
     check_internal_init_exports,
     check_justfile,
@@ -30,6 +31,7 @@ class DebugToolName(enum.StrEnum):
     BINARY_FIRTH = "binary_firth"
     BINARY_REGENIE_PARITY = "binary_regenie_parity"
     LINEAR_REGENIE_PARITY = "linear_regenie_parity"
+    CHECK_CUDA_NATIVE = "check_cuda_native"
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_JUSTFILE = "check_justfile"
@@ -92,6 +94,13 @@ def run_check_pyo3_stub(arguments: None) -> None:
     """Run the PyO3 stub guardrail."""
     del arguments
     exit_code = check_pyo3_stub.run_tool()
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
+def run_check_cuda_native(arguments: check_cuda_native.CudaNativeCheckArguments) -> None:
+    """Run CUDA native static analysis."""
+    exit_code = check_cuda_native.run_tool(arguments)
     if exit_code:
         raise SystemExit(exit_code)
 
@@ -160,6 +169,12 @@ TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
         config_name="debug_linear_regenie_parity",
         build_arguments=build_linear_regenie_parity_arguments,
         run=run_linear_regenie_parity,
+    ),
+    DebugToolName.CHECK_CUDA_NATIVE.value: tooling_registry.ToolSpec(
+        name=DebugToolName.CHECK_CUDA_NATIVE.value,
+        config_name="debug_check_cuda_native",
+        build_arguments=check_cuda_native.build_arguments_from_config,
+        run=run_check_cuda_native,
     ),
     DebugToolName.CHECK_PYO3_STUB.value: tooling_registry.ToolSpec(
         name=DebugToolName.CHECK_PYO3_STUB.value,

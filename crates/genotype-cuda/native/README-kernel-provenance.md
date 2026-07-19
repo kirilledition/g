@@ -3,7 +3,7 @@
 `packed8_kernel.cu` is the maintained source for the embedded
 `packed8_kernel.compute_70.ptx` artifact. The frozen files have these hashes:
 
-- source: `sha256:7b42f6c03be38dfebd21e748b3282dd98abaf4e32c88ac82b12670347c5a050d`
+- source: `sha256:673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d`
 - PTX: `sha256:a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088`
 
 The PTX was generated twice reproducibly with CUDA NVRTC 12.2.140 for

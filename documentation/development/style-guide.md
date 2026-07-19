@@ -161,3 +161,23 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 * Update the stub whenever Rust `#[pyclass]`, `#[pyfunction]`, `add_class`, or `add_function` changes touch argument or return types used by Python callers.
 * Run `uv run python -m tooling.cli.debug tool.name=check_pyo3_stub` (or `just check-core-stub`) before reviewing Rust/native-facing type updates.
 * Treat `just check` failures from `check-core-stub` as mandatory follow-up work when modifying native API exports.
+
+## **3\. CUDA and Native C++ Guidelines**
+
+### **Maintained Source Scope**
+
+* The formatting and static-analysis scope is the maintained `.cu`, `.cc`, and `.h` source under `crates/compute-cuda/native/` and `crates/genotype-cuda/native/`.
+* Generated PTX, generated build-directory includes, and vendored sources under `vendor/` are not maintained source. Do not format or lint them as first-party code.
+* Keep the explicit maintained-source allowlist in the repository `Justfile`. Adding or removing a maintained native source requires updating that allowlist in the same change.
+
+### **Formatting**
+
+* **Tooling:** `clang-format` is the source of truth for maintained CUDA and native C++ formatting. The repository `.clang-format` defines the style.
+* Run `just cuda-format` after editing maintained native source. Run `just cuda-format-check` for the non-mutating check used by CI.
+* Never apply `clang-format` to checked-in PTX. Formatting CUDA source does not authorize regenerating or otherwise changing its PTX artifact.
+
+### **Static Analysis**
+
+* **Tooling:** `clang-tidy` is the source of truth for maintained CUDA and native C++ static analysis. The repository `.clang-tidy` defines enabled checks and documented CUDA/FFI exclusions.
+* Run `just cuda-lint` after editing maintained native source. Findings are errors; fix actionable findings instead of adding broad source-level suppressions.
+* The lint command analyzes CUDA host and device code and native C++ on a CPU-only Linux x86-64 host using pinned toolkit headers. It does not require a GPU and is not a CUDA compilation, PTX-reproduction, or runtime-correctness gate.

@@ -1,0 +1,9 @@
+tool:
+  name: check_cuda_native
+  repository_root: .
+  clang_tidy_executable: clang-tidy
+  gpu_architecture: sm_70
+
+hydra:
+  job:
+    chdir: false
