@@ -169,11 +169,17 @@ Compatible zlib-compressed packed8 BGEN groups use the installed nvCOMP runtime
 path automatically. The runtime is loaded only for a group that can use this
 path; CPU runs and GPU groups using host dosage or a non-zlib encoding do not
 initialize it. A source installation must therefore preserve the locked
-`nvidia-libnvcomp-cu12` dependency for Linux x86-64 GPU execution. This path
+`nvidia-libnvcomp-cu12` 5.3 dependency for Linux x86-64 GPU execution. This path
 requires an NVIDIA driver exposing CUDA driver API 12.2 or newer and a device
 with compute capability 7.0 or newer. An eligible zlib packed8 run fails with a
 specific initialization error when those requirements or nvCOMP are missing;
 it does not silently replace the requested device decode with host decode.
+
+The locked JAX 0.11 runtime deliberately uses CUDA 12 on gauss/landau. The
+node's V100 GPUs expose compute capability 7.0 through an R535 driver; JAX's
+CUDA 13 wheels require compute capability 7.5 and an R580-or-newer driver.
+Upgrade the cluster hardware and driver before changing the project to the
+CUDA 13 extra.
 
 Binary approximate-Firth GPU runs also use a private raw-CUDA component kernel
 when the CUDA driver exposes API 12.2 or newer and the device has compute
