@@ -20,6 +20,12 @@ pub(crate) struct NativeCliRunResult {
 
 struct PythonRunHost;
 
+// A named adapter keeps the callback generic over the attached Python
+// lifetime; the method item alone is not higher-ranked enough for `attach`.
+fn check_python_signals(python: Python<'_>) -> PyResult<()> {
+    python.check_signals()
+}
+
 impl native_runner::NativeRunHost for PythonRunHost {
     type Backend = PyJaxBackend;
     type Error = PyErr;
@@ -44,9 +50,8 @@ impl native_runner::NativeRunHost for PythonRunHost {
         Python::attach(|py| create_jax_backend(py, device, plan).map(Arc::new))
     }
 
-    #[allow(clippy::redundant_closure_for_method_calls)]
     fn check_interruption(&mut self) -> PyResult<()> {
-        Python::attach(|py| py.check_signals())
+        Python::attach(check_python_signals)
     }
 
     fn sigterm_interruption_error(&mut self) -> Self::Error {
@@ -143,6 +148,8 @@ impl NativeCliRunResult {
 
 /// Execute the native CLI through the Python host adapter.
 #[pyfunction]
+// PyO3 extracts a Python list into an owned vector at this boundary; the
+// runner borrows that storage for the duration of the native call.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn run(arguments: Vec<String>) -> PyResult<NativeCliRunResult> {
     let mut host = PythonRunHost;

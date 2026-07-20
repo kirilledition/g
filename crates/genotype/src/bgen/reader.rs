@@ -42,8 +42,14 @@ pub struct BgenReadSession<'reader> {
     pub(super) compressed_packed8_state: OnceLock<super::raw_deflate::CompressedPacked8SessionState>,
 }
 
-#[allow(clippy::missing_errors_doc)]
 impl BgenReaderCore {
+    /// Open and index a Layout 2 BGEN source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be opened or mapped, its header or
+    /// variant index is invalid, its layout is unsupported, or it changes while
+    /// being indexed.
     pub fn open(bgen_path: &Path) -> Result<Self, BgenError> {
         let source = super::packed8_cache::ValidationCacheSource::open(bgen_path)?;
         let mmap = unsafe { MmapOptions::new().map(&source.file)? };
@@ -116,6 +122,12 @@ impl BgenReaderCore {
         &self.source.identity
     }
 
+    /// Plan uncommitted chunks without crossing chromosome boundaries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the chunk size is zero or chromosome boundaries
+    /// cannot be normalized for this reader.
     pub fn plan_chromosome_homogeneous_chunks(
         &self,
         chunk_size: usize,
@@ -211,6 +223,12 @@ impl BgenReaderCore {
         Ok(compatibility)
     }
 
+    /// Return shared metadata for a validated half-open variant range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the requested range is reversed or exceeds the
+    /// indexed variant count.
     pub fn variant_metadata_slice(
         &self,
         variant_start: usize,

@@ -62,8 +62,9 @@ SLURM jobs use the scheduler allocation unless `CARGO_BUILD_JOBS` is already
 set.
 
 `cuda-format` applies the repository ClangFormat policy to the explicit list of
-maintained `.cu`, `.cc`, and `.h` files. `cuda-format-check` checks the same
-files without rewriting them. `cuda-lint` runs the pinned ClangTidy analysis of
+maintained `.cu`, `.cc`, and `.h` files, including the shared private CUDA
+driver support header. `cuda-format-check` checks the same files without
+rewriting them. `cuda-lint` runs the pinned ClangTidy analysis of
 CUDA host/device code and native C++ through the saved
 `debug_check_cuda_native` configuration. These commands exclude generated PTX
 and vendored sources. Static analysis runs on Linux x86-64 without a GPU and

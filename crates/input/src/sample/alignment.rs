@@ -45,15 +45,15 @@ fn build_compatible_sample_group_drafts(
                 request.phenotype_names[phenotype_index]
             ));
         }
-        match groups_by_sample_array_indices.get_mut(complete_sample_array_indices.as_slice()) {
-            Some((_group_order, phenotype_indices)) => phenotype_indices.push(phenotype_index),
-            None => {
-                let group_order = groups_by_sample_array_indices.len();
-                let stored_sample_array_indices = std::mem::take(&mut complete_sample_array_indices);
-                groups_by_sample_array_indices
-                    .insert(stored_sample_array_indices, (group_order, vec![phenotype_index]));
-                complete_sample_array_indices = Vec::with_capacity(sample_count);
-            }
+        if let Some((_group_order, phenotype_indices)) =
+            groups_by_sample_array_indices.get_mut(complete_sample_array_indices.as_slice())
+        {
+            phenotype_indices.push(phenotype_index);
+        } else {
+            let group_order = groups_by_sample_array_indices.len();
+            let stored_sample_array_indices = std::mem::take(&mut complete_sample_array_indices);
+            groups_by_sample_array_indices.insert(stored_sample_array_indices, (group_order, vec![phenotype_index]));
+            complete_sample_array_indices = Vec::with_capacity(sample_count);
         }
     }
 

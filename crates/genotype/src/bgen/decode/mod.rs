@@ -1,4 +1,6 @@
-use super::BgenError;
+use super::metadata::VariantRecord;
+use super::sample_selection::SampleSelection;
+use super::{BgenError, CompressionType};
 
 mod matrix;
 mod probability;
@@ -15,6 +17,16 @@ pub(super) use probability::{
     u32_to_usize, validate_layout_two_probability_values,
 };
 pub(super) use variant_major::{decode_variant_major_dosage_tile, validate_variant_major_tile_stats_lengths};
+
+#[derive(Clone, Copy)]
+pub(super) struct VariantMajorTileDecodeRequest<'request> {
+    pub(super) mmap: &'request [u8],
+    pub(super) compression_type: CompressionType,
+    pub(super) sample_count: usize,
+    pub(super) sample_selection: &'request SampleSelection,
+    pub(super) variant_records: &'request [VariantRecord],
+    pub(super) tile_variant_start_index: usize,
+}
 
 pub(super) struct VariantDecodeFailure {
     pub(super) relative_variant_index: Option<usize>,

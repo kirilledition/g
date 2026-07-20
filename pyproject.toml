@@ -74,6 +74,7 @@ cache-keys = [
     { file = "crates/**/*.cc" },
     { file = "crates/**/*.cu" },
     { file = "crates/**/*.h" },
+    { file = "native/**/*.h" },
     { file = "crates/**/*.ptx" },
     { file = "vendor/openxla/**/*.h" },
     { file = "vendor/openxla/*.md" },
@@ -88,7 +89,7 @@ cache-keys = [
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-exclude = ["reference/", "scripts/", ".git/", ".agents/"]
+exclude = ["reference/", "scripts/", ".agents/"]
 
 [tool.ruff.lint]
 fixable = ["ALL"]
@@ -120,10 +121,9 @@ select = [
     "D",   # docstrings
 ]
 ignore = [
-    "COM812", # enforce trailing comma rules
-    "D200",   # one-line docstring should fit on one line
-    "D203",   # allow blank line before class docstrings
-    "D213",   # allow free-form second summary line
+    "COM812", # redundant with the Ruff formatter's trailing-comma policy
+    "D203",   # conflicts with the formatter and the selected D211 convention
+    "D213",   # conflicts with the selected D212 first-line summary convention
 ]
 
 [tool.ruff.lint.per-file-ignores]

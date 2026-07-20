@@ -11,6 +11,8 @@ use crate::error::RuntimeCompatibilityError;
 /// only the concrete resources and never interprets application planning
 /// enums or output layout.
 #[derive(Debug, Eq, PartialEq)]
+// These switches describe independent logging and telemetry capabilities, not
+// mutually exclusive states that would benefit from an enum state machine.
 #[allow(clippy::struct_excessive_bools)]
 pub struct NativeRunSessionPolicy {
     pub log_filter: String,
@@ -26,6 +28,7 @@ pub struct NativeRunSessionPolicy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+// The projected subscriber retains the same independent capability switches.
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct LoggingSubscriberPolicy<'policy> {
     pub(crate) log_filter: Cow<'policy, str>,

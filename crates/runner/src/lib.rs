@@ -1,7 +1,5 @@
 //! Python-free native CLI lifecycle coordination.
 
-#![warn(clippy::pedantic)]
-
 mod api;
 mod backend_plan;
 mod cli_output;

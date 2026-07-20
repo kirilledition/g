@@ -28,7 +28,7 @@ server_env := '. tooling/server/server_env.sh'
 symphony_elixir_dir := env_var_or_default('SYMPHONY_ELIXIR_DIR', '/mnt/beegfs/kirill/Projects/symphony/elixir')
 symphony_port := env_var_or_default('SYMPHONY_PORT', '4000')
 symphony_worktree_root := env_var_or_default('SYMPHONY_WORKTREE_ROOT', '/mnt/beegfs/kirill/Projects/g-worktrees/symphony')
-cuda_native_sources := 'crates/compute-cuda/native/cuda_driver_abi.h crates/compute-cuda/native/firth_components_ffi.cc crates/compute-cuda/native/firth_components_kernel.cu crates/genotype-cuda/native/cuda_driver_abi.h crates/genotype-cuda/native/nvcomp_abi.h crates/genotype-cuda/native/packed8_deflate_ffi.cc crates/genotype-cuda/native/packed8_kernel.cu'
+cuda_native_sources := 'native/cuda-driver/cuda_driver.h crates/compute-cuda/native/firth_components_ffi.cc crates/compute-cuda/native/firth_components_kernel.cu crates/genotype-cuda/native/nvcomp_abi.h crates/genotype-cuda/native/packed8_deflate_ffi.cc crates/genotype-cuda/native/packed8_kernel.cu'
 
 default: help
 

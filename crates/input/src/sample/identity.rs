@@ -12,6 +12,12 @@ struct SampleFileReader<R: BufRead> {
     line_buffer: String,
 }
 
+/// Load ordered family and individual identifiers from an Oxford sample file.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, its header or rows are
+/// malformed, identifiers are invalid, or the sample count differs.
 pub fn load_sample_identifier_data_from_sample_file(
     sample_path: &Path,
     expected_sample_count: usize,

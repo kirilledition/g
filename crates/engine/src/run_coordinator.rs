@@ -114,7 +114,6 @@ pub struct PhenotypeRunArtifact {
 /// # Errors
 ///
 /// Returns a typed preparation, execution, telemetry, or diagnostic error.
-#[allow(clippy::too_many_arguments)]
 pub fn execute_coordinated_run<Backend, Hooks>(
     run_plan: g_plan::RunPlan,
     effective_config_toml: String,
@@ -155,7 +154,6 @@ where
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute_coordinated_run_detail<Backend, Hooks>(
     run_plan: g_plan::RunPlan,
     effective_config_toml: String,

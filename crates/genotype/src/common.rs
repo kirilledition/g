@@ -1,7 +1,5 @@
 //! Genotype reader and preprocessing contracts.
 
-#![allow(clippy::missing_errors_doc)]
-
 use std::fmt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};

@@ -330,30 +330,26 @@ fn select_covariate_names(
     requested_covariate_names: Option<&[String]>,
     covariate_path: &str,
 ) -> SampleAlignmentResult<Vec<String>> {
-    match requested_covariate_names {
-        Some(covariate_names) => {
-            let missing_covariates: Vec<String> = covariate_names
-                .iter()
-                .filter(|covariate_name| column_index(covariate_headers, covariate_name).is_none())
-                .cloned()
-                .collect();
-            if !missing_covariates.is_empty() {
-                return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}."));
-            }
-            Ok(covariate_names.to_vec())
+    if let Some(covariate_names) = requested_covariate_names {
+        let missing_covariates: Vec<String> = covariate_names
+            .iter()
+            .filter(|covariate_name| column_index(covariate_headers, covariate_name).is_none())
+            .cloned()
+            .collect();
+        if !missing_covariates.is_empty() {
+            return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}."));
         }
-        None => {
-            let inferred_covariate_names: Vec<String> = covariate_headers
-                .iter()
-                .filter(|column_name| column_name.as_str() != "FID" && column_name.as_str() != "IID")
-                .cloned()
-                .collect();
-            if inferred_covariate_names.is_empty() {
-                return Err("Covariate table must contain at least one non-identifier column.".to_string());
-            }
-            Ok(inferred_covariate_names)
-        }
+        return Ok(covariate_names.to_vec());
     }
+    let inferred_covariate_names: Vec<String> = covariate_headers
+        .iter()
+        .filter(|column_name| column_name.as_str() != "FID" && column_name.as_str() != "IID")
+        .cloned()
+        .collect();
+    if inferred_covariate_names.is_empty() {
+        return Err("Covariate table must contain at least one non-identifier column.".to_string());
+    }
+    Ok(inferred_covariate_names)
 }
 
 fn read_covariate_table(
@@ -446,10 +442,12 @@ fn parse_phenotype_value(
     if !is_binary_trait {
         return Ok(parsed_value);
     }
-    if parsed_value == 1.0 {
+    // Binary phenotype coding is discrete: approximate comparisons would
+    // incorrectly admit values other than the specified 1 and 2 tokens.
+    if parsed_value.to_bits() == 1.0_f32.to_bits() {
         return Ok(0.0);
     }
-    if parsed_value == 2.0 {
+    if parsed_value.to_bits() == 2.0_f32.to_bits() {
         return Ok(1.0);
     }
     Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}."))

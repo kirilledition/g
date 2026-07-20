@@ -10,7 +10,7 @@ const KERNEL_PTX_SHA256: &str = "a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850
 
 fn main() {
     println!("cargo:rerun-if-changed=native/firth_components_ffi.cc");
-    println!("cargo:rerun-if-changed=native/cuda_driver_abi.h");
+    println!("cargo:rerun-if-changed=../../native/cuda-driver/cuda_driver.h");
     println!("cargo:rerun-if-changed=native/firth_components_kernel.cu");
     println!("cargo:rerun-if-changed=native/firth_components_kernel.compute_70.ptx");
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/api.h");
@@ -31,6 +31,7 @@ fn main() {
         .std("c++20")
         .define("NDEBUG", None)
         .include("native")
+        .include("../../native/cuda-driver")
         .include(&output_directory)
         .include("../../vendor/openxla")
         .file("native/firth_components_ffi.cc")

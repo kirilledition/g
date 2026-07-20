@@ -1,7 +1,5 @@
 //! Chunk planning for native genotype pipelines.
 
-#![allow(clippy::missing_errors_doc)]
-
 use std::collections::BTreeSet;
 
 use crate::common::ChunkSpec;

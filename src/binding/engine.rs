@@ -1,7 +1,5 @@
 //! Private PyO3 adapter for the coarse JAX association backend.
 
-#![allow(clippy::needless_pass_by_value)]
-
 use std::sync::{Arc, OnceLock};
 
 use numpy::ndarray::{Array2, ArrayView1, ArrayView2, ArrayView3, Ix1, Ix2};

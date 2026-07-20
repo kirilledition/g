@@ -43,7 +43,9 @@ typed arrays to Rust.
 | Immutable run contracts and host policy | `g-plan` |
 | Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
 | BGEN mmap/index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
+| Optional capability-gated packed8 raw-DEFLATE delivery and typed-XLA FFI handlers | `g-genotype-cuda` |
 | Optional capability-gated CUDA association kernels and typed-XLA FFI handlers | `g-compute-cuda` |
+| Private header-only CUDA driver ABI, loading, and device/context validation | `native/cuda-driver` |
 | Sample, phenotype, covariate, and prediction alignment | `g-input` |
 | BGEN delivery orchestration, result writing, backend trait, bounded compute/materialize pipeline | `g-engine` |
 | Logging/telemetry transport, timing, Rayon state, SIGTERM | `g-runtime` |
@@ -94,6 +96,10 @@ register its private component-reduction target once. Compatible runs use the
 embedded PTX through typed XLA FFI; an unavailable driver, unsupported device,
 or registration failure selects the mathematically equivalent JAX reduction.
 This optional compute capability is not coupled to packed8 delivery or nvCOMP.
+The two CUDA crates have independent Rust APIs and PTX/kernel ownership. They
+source-include only the neutral repository-private `native/cuda-driver` support
+header so CUDA ABI declarations, dynamic loading, and device/context checks
+have one maintained implementation without a linked support library.
 
 Runner holds process runtime state across logging-compatibility validation,
 native session construction, subscriber installation, and topology recording.

@@ -174,19 +174,19 @@ CUDA_LIBDEVICE_PATH = Path("nvidia/cuda_nvcc/nvvm/libdevice")
 NATIVE_DIRECTORIES = (
     Path("crates/compute-cuda/native"),
     Path("crates/genotype-cuda/native"),
+    Path("native/cuda-driver"),
 )
 MAINTAINED_NATIVE_PATHS = (
     Path("crates/compute-cuda/native/firth_components_kernel.cu"),
     Path("crates/genotype-cuda/native/packed8_kernel.cu"),
     Path("crates/compute-cuda/native/firth_components_ffi.cc"),
     Path("crates/genotype-cuda/native/packed8_deflate_ffi.cc"),
-    Path("crates/compute-cuda/native/cuda_driver_abi.h"),
-    Path("crates/genotype-cuda/native/cuda_driver_abi.h"),
+    Path("native/cuda-driver/cuda_driver.h"),
     Path("crates/genotype-cuda/native/nvcomp_abi.h"),
 )
 REQUIRED_TRANSITIVE_HEADERS = {
-    Path("crates/compute-cuda/native/firth_components_ffi.cc"): ("cuda_driver_abi.h",),
-    Path("crates/genotype-cuda/native/packed8_deflate_ffi.cc"): ("cuda_driver_abi.h", "nvcomp_abi.h"),
+    Path("crates/compute-cuda/native/firth_components_ffi.cc"): ("cuda_driver.h",),
+    Path("crates/genotype-cuda/native/packed8_deflate_ffi.cc"): ("cuda_driver.h", "nvcomp_abi.h"),
 }
 NATIVE_SOURCE_SUFFIXES = frozenset({".cc", ".cu", ".h"})
 PLACEHOLDER_INCLUDE_NAMES = (
@@ -451,12 +451,14 @@ def build_clang_tidy_commands(
             )
         else:
             native_include_directory = source_path.parent
+            shared_native_include_directory = repository_root / "native/cuda-driver"
             compiler_arguments = (
                 "-x",
                 NativeSourceLanguage.CPLUSPLUS.value,
                 f"-std={translation_unit.language_standard}",
                 "-DNDEBUG",
                 f"-I{native_include_directory}",
+                f"-I{shared_native_include_directory}",
                 f"-I{generated_include_directory}",
                 "-isystem",
                 str(vendor_include_directory),

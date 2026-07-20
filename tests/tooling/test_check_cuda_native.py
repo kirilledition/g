@@ -16,8 +16,7 @@ EXPECTED_NATIVE_PATHS = (
     Path("crates/genotype-cuda/native/packed8_kernel.cu"),
     Path("crates/compute-cuda/native/firth_components_ffi.cc"),
     Path("crates/genotype-cuda/native/packed8_deflate_ffi.cc"),
-    Path("crates/compute-cuda/native/cuda_driver_abi.h"),
-    Path("crates/genotype-cuda/native/cuda_driver_abi.h"),
+    Path("native/cuda-driver/cuda_driver.h"),
     Path("crates/genotype-cuda/native/nvcomp_abi.h"),
 )
 
@@ -35,9 +34,9 @@ def create_repository(repository_root: Path) -> None:
         source_path = repository_root / relative_path
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_text("// test\n", encoding="utf-8")
-    (repository_root / EXPECTED_NATIVE_PATHS[2]).write_text('#include "cuda_driver_abi.h"\n', encoding="utf-8")
+    (repository_root / EXPECTED_NATIVE_PATHS[2]).write_text('#include "cuda_driver.h"\n', encoding="utf-8")
     (repository_root / EXPECTED_NATIVE_PATHS[3]).write_text(
-        '#include "cuda_driver_abi.h"\n#include "nvcomp_abi.h"\n',
+        '#include "cuda_driver.h"\n#include "nvcomp_abi.h"\n',
         encoding="utf-8",
     )
     for relative_directory in check_cuda_native.NATIVE_DIRECTORIES:
@@ -90,7 +89,7 @@ def create_distribution(distribution_root: Path, version: str) -> importlib.meta
 
 
 def test_discover_repository_inventory_matches_current_scope(tmp_path: Path) -> None:
-    """The runner finds the four translation units and three transitive headers."""
+    """The runner finds the four translation units and two transitive headers."""
     repository_root = tmp_path / "repository"
     create_repository(repository_root)
 
@@ -126,7 +125,7 @@ def test_discover_repository_inventory_requires_transitive_header_include(tmp_pa
     """A maintained header cannot be counted unless a lint translation unit includes it."""
     repository_root = tmp_path / "repository"
     create_repository(repository_root)
-    (repository_root / EXPECTED_NATIVE_PATHS[3]).write_text('#include "cuda_driver_abi.h"\n', encoding="utf-8")
+    (repository_root / EXPECTED_NATIVE_PATHS[3]).write_text('#include "cuda_driver.h"\n', encoding="utf-8")
 
     with pytest.raises(check_cuda_native.CudaNativeCheckError, match=r"nvcomp_abi\.h"):
         check_cuda_native.discover_repository_inventory(repository_root)
@@ -227,6 +226,7 @@ def test_build_clang_tidy_commands_cover_host_and_device_parsing(tmp_path: Path)
             assert "--cuda-host-only" not in command.arguments
         else:
             assert "-std=c++20" in command.arguments
+            assert f"-I{repository_root / 'native/cuda-driver'}" in command.arguments
             assert f"-I{generated_include_directory}" in command.arguments
             assert str(repository_root / "vendor/openxla") in command.arguments
 

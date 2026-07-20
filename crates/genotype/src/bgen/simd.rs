@@ -104,6 +104,8 @@ impl EightBitRawIntegerSummary {
         }
     }
 
+    // Exact integer accumulation avoids lane-order drift; conversion occurs
+    // once at the documented f32 dosage-statistics boundary.
     #[allow(clippy::cast_precision_loss)]
     pub(super) fn into_decode_summary(self) -> DosageSummary {
         DosageSummary {
@@ -362,6 +364,7 @@ fn raw_dosage_integer(homozygous_reference_probability_byte: u8, heterozygous_pr
     510_i32 - (2_i32 * i32::from(homozygous_reference_probability_byte)) - i32::from(heterozygous_probability_byte)
 }
 
+// The raw dosage is bounded to 0..=510 before conversion to the f32 output domain.
 #[allow(clippy::cast_precision_loss)]
 fn raw_dosage_value(raw_dosage_integer: i32) -> f32 {
     raw_dosage_integer as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL
@@ -391,6 +394,8 @@ use std::arch::x86_64::{
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
+// The cast feeds `_mm256_loadu_si256`, whose contract explicitly permits an
+// unaligned address.
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn all_samples_present_diploid_avx2(sample_ploidy_and_missingness: &[u8]) -> bool {
     let expected_ploidy_and_missingness = _mm256_set1_epi8(2_i8);
@@ -410,6 +415,8 @@ unsafe fn all_samples_present_diploid_avx2(sample_ploidy_and_missingness: &[u8])
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
+// The cast feeds `_mm256_loadu_si256`, whose contract explicitly permits an
+// unaligned address.
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn all_unphased_eight_bit_probability_pairs_valid_avx2(packed_probability_bytes: &[u8]) -> bool {
     let probability_byte_mask = _mm256_set1_epi16(0x00FF);
@@ -436,6 +443,8 @@ fn avx2_mask_count(comparison_mask: i32) -> i32 {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
+// Both casts feed `_mm256_storeu_si256`, which explicitly supports unaligned
+// stack-array addresses.
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn record_raw_dosage_accumulators_avx2(
     raw_integer_summary: &mut EightBitRawIntegerSummary,
@@ -466,6 +475,8 @@ unsafe fn sum_i16_lanes_avx2(accumulator: __m256i) -> i32 {
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
+// The cast feeds `_mm_loadu_si128`, whose contract explicitly permits an
+// unaligned byte-slice address.
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn decode_unphased_eight_bit_identity_raw_avx2(
     packed_probability_bytes: &[u8],
@@ -557,6 +568,8 @@ unsafe fn decode_unphased_eight_bit_identity_raw_avx2(
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[target_feature(enable = "avx2")]
+// The casts feed unaligned AVX2 load/store intrinsics; neither slice promises
+// 32-byte alignment.
 #[allow(clippy::cast_ptr_alignment)]
 unsafe fn copy_unphased_eight_bit_probability_pairs_and_summarize_raw_avx2(
     packed_probability_bytes: &[u8],

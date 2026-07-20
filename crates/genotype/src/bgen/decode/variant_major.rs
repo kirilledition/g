@@ -4,7 +4,6 @@ use super::super::metadata::VariantRecord;
 use super::super::sample_selection::SampleSelection;
 use super::super::simd;
 use super::super::{BgenError, CompressionType};
-use super::VariantDecodeFailure;
 use super::matrix::{
     ThreadScratch, VariantMajorTileStatsMut, exact_eight_bit_probability_pairs, packed_eight_bit_probability_index,
     read_eight_bit_probability_pair, selected_sample_count_to_i32, unphased_eight_bit_dosage_lookup,
@@ -13,26 +12,29 @@ use super::probability::{
     PackedProbabilityReader, layout_two_probability_byte_count, parse_layout_two_probability_block, read_exact_bytes,
     read_probability_block, validate_diploid_sample_flags, validate_stored_probability_pair,
 };
+use super::{VariantDecodeFailure, VariantMajorTileDecodeRequest};
 use crate::common::DosageSummary;
 use crate::preprocess;
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::bgen) fn decode_variant_major_dosage_tile(
-    mmap: &[u8],
-    compression_type: CompressionType,
-    sample_count: usize,
-    sample_selection: &SampleSelection,
-    variant_record_chunk: &[VariantRecord],
+    request: VariantMajorTileDecodeRequest<'_>,
     output_values: &mut [MaybeUninit<f32>],
-    tile_variant_start_index: usize,
     tile_stats: &mut VariantMajorTileStatsMut<'_>,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), VariantDecodeFailure> {
-    validate_variant_major_tile_stats_lengths(tile_stats, variant_record_chunk.len())
+    let VariantMajorTileDecodeRequest {
+        mmap,
+        compression_type,
+        sample_count,
+        sample_selection,
+        variant_records,
+        tile_variant_start_index,
+    } = request;
+    validate_variant_major_tile_stats_lengths(tile_stats, variant_records.len())
         .map_err(|source| VariantDecodeFailure { relative_variant_index: None, source })?;
     let selected_sample_count = sample_selection.selected_sample_count();
     let expected_output_value_count =
-        variant_record_chunk.len().checked_mul(selected_sample_count).ok_or_else(|| VariantDecodeFailure {
+        variant_records.len().checked_mul(selected_sample_count).ok_or_else(|| VariantDecodeFailure {
             relative_variant_index: None,
             source: BgenError::Range("Integer overflow while validating a variant-major BGEN output tile.".to_string()),
         })?;
@@ -50,7 +52,7 @@ pub(in crate::bgen) fn decode_variant_major_dosage_tile(
     }
     let collect_sparse_candidate_counts = tile_stats.sparse_candidate_counts.is_some();
     for ((tile_variant_index, variant_record), output_row) in
-        variant_record_chunk.iter().enumerate().zip(output_values.chunks_exact_mut(selected_sample_count))
+        variant_records.iter().enumerate().zip(output_values.chunks_exact_mut(selected_sample_count))
     {
         let variant_decode_result = decode_variant_dosages_into_variant_major_row(
             mmap,
@@ -94,7 +96,6 @@ pub(in crate::bgen) fn validate_variant_major_tile_stats_lengths(
     Err(BgenError::Range(format!("Variant-major tile stats shape mismatch for {variant_count} variants.")))
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments, clippy::too_many_lines)]
 fn decode_variant_dosages_into_variant_major_row(
     mmap: &[u8],
     compression_type: CompressionType,
@@ -170,11 +171,15 @@ fn decode_variant_dosages_into_variant_major_row(
         )?;
         let first_probability_scaled = f64::from(first_probability) / probability_scale_denominator;
         let second_probability_scaled = f64::from(second_probability) / probability_scale_denominator;
-        let dosage_value = if phased_flag == 0 {
+        let dosage_value_f64 = if phased_flag == 0 {
             2.0_f64 - ((2.0 * first_probability_scaled) + second_probability_scaled)
         } else {
             2.0_f64 - (first_probability_scaled + second_probability_scaled)
-        } as f32;
+        };
+        // A BGEN dosage is bounded to [0, 2]; f32 is the engine's documented
+        // genotype storage contract.
+        #[allow(clippy::cast_possible_truncation)]
+        let dosage_value = dosage_value_f64 as f32;
 
         let Some(selected_index) = sample_selection.selected_index(file_sample_index) else {
             continue;
@@ -205,7 +210,6 @@ fn decode_variant_dosages_into_variant_major_row(
     Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn decode_unphased_eight_bit_dosages_into_variant_major_row(
     sample_ploidy_and_missingness: &[u8],
     packed_probability_bytes: &[u8],
@@ -239,80 +243,22 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
         return Ok(decode_summary);
     }
 
+    if all_samples_present {
+        return decode_all_present_unphased_eight_bit_subset(
+            &packed_probability_bytes[..expected_probability_byte_count],
+            sample_selection,
+            output_row,
+            collect_sparse_candidate_counts,
+        );
+    }
+
     let mut dosage_sum = 0.0_f32;
     let mut dosage_square_sum = 0.0_f32;
     let mut observation_count = 0_i32;
     let mut has_missing_values = false;
     let mut sparse_candidate_counts = collect_sparse_candidate_counts.then_some((0_i32, 0_i32));
-
     let probability_pairs =
         exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
-    if !sample_selection.is_identity() && all_samples_present {
-        if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start() {
-            let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
-                BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
-            })?;
-            let selected_probability_byte_count = selected_sample_count.checked_mul(2).ok_or_else(|| {
-                BgenError::InvalidFormat(
-                    "Integer overflow while slicing selected 8-bit BGEN probabilities.".to_string(),
-                )
-            })?;
-            let selected_probability_bytes = read_exact_bytes(
-                &packed_probability_bytes[..expected_probability_byte_count],
-                probability_offset,
-                selected_probability_byte_count,
-            )?;
-            let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
-                selected_probability_bytes,
-                output_row,
-                collect_sparse_candidate_counts,
-            )
-            .ok_or_else(|| {
-                BgenError::InvalidFormat("contains an 8-bit probability pair whose values sum above 255.".to_string())
-            })?;
-            return Ok(decode_summary);
-        }
-
-        let dosage_lookup = unphased_eight_bit_dosage_lookup();
-        let selected_file_indices = sample_selection
-            .indexed_file_indices()
-            .expect("non-identity, non-contiguous sample selections store explicit file indices");
-        for (selected_index, file_sample_index) in selected_file_indices.iter().copied().enumerate() {
-            let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
-                BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
-            })?;
-            let probability_pair = read_eight_bit_probability_pair(
-                &packed_probability_bytes[..expected_probability_byte_count],
-                probability_offset,
-            )?;
-            validate_stored_probability_pair(
-                u32::from(probability_pair[0]),
-                u32::from(probability_pair[1]),
-                u64::from(u8::MAX),
-                0,
-                false,
-                file_sample_index,
-            )?;
-            let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
-            let dosage_value = dosage_lookup[packed_probability_index];
-            output_row[selected_index].write(dosage_value);
-            dosage_sum += dosage_value;
-            dosage_square_sum += dosage_value * dosage_value;
-            observation_count += 1;
-            if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
-                preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
-            }
-        }
-        let (zero_count, homozygous_alternate_count) = sparse_candidate_counts.unwrap_or_default();
-        return Ok(DosageSummary {
-            dosage_sum,
-            dosage_square_sum,
-            observation_count,
-            zero_count,
-            homozygous_alternate_count,
-        });
-    }
-
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
         sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
@@ -352,7 +298,65 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
     Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
 }
 
-#[allow(clippy::cast_precision_loss)]
+fn decode_all_present_unphased_eight_bit_subset(
+    packed_probability_bytes: &[u8],
+    sample_selection: &SampleSelection,
+    output_row: &mut [MaybeUninit<f32>],
+    collect_sparse_candidate_counts: bool,
+) -> Result<DosageSummary, BgenError> {
+    if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start() {
+        let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
+        })?;
+        let selected_probability_byte_count = output_row.len().checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while slicing selected 8-bit BGEN probabilities.".to_string())
+        })?;
+        let selected_probability_bytes =
+            read_exact_bytes(packed_probability_bytes, probability_offset, selected_probability_byte_count)?;
+        return simd::decode_unphased_eight_bit_identity_simd_or_scalar(
+            selected_probability_bytes,
+            output_row,
+            collect_sparse_candidate_counts,
+        )
+        .ok_or_else(|| {
+            BgenError::InvalidFormat("contains an 8-bit probability pair whose values sum above 255.".to_string())
+        });
+    }
+
+    let dosage_lookup = unphased_eight_bit_dosage_lookup();
+    let selected_file_indices = sample_selection
+        .indexed_file_indices()
+        .expect("non-identity, non-contiguous sample selections store explicit file indices");
+    let mut dosage_sum = 0.0_f32;
+    let mut dosage_square_sum = 0.0_f32;
+    let mut observation_count = 0_i32;
+    let mut sparse_candidate_counts = collect_sparse_candidate_counts.then_some((0_i32, 0_i32));
+    for (selected_index, file_sample_index) in selected_file_indices.iter().copied().enumerate() {
+        let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
+            BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
+        })?;
+        let probability_pair = read_eight_bit_probability_pair(packed_probability_bytes, probability_offset)?;
+        validate_stored_probability_pair(
+            u32::from(probability_pair[0]),
+            u32::from(probability_pair[1]),
+            u64::from(u8::MAX),
+            0,
+            false,
+            file_sample_index,
+        )?;
+        let dosage_value = dosage_lookup[packed_eight_bit_probability_index(probability_pair)];
+        output_row[selected_index].write(dosage_value);
+        dosage_sum += dosage_value;
+        dosage_square_sum += dosage_value * dosage_value;
+        observation_count += 1;
+        if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
+            preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
+        }
+    }
+    let (zero_count, homozygous_alternate_count) = sparse_candidate_counts.unwrap_or_default();
+    Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
+}
+
 fn impute_variant_major_row_if_needed(
     output_row: &mut [MaybeUninit<f32>],
     dosage_sum: f32,
@@ -362,6 +366,9 @@ fn impute_variant_major_row_if_needed(
     if !has_missing_values {
         return;
     }
+    // Observation counts are exact up to the enforced i32 sample limit; f32
+    // division matches the dosage accumulator and output representation.
+    #[allow(clippy::cast_precision_loss)]
     let imputed_dosage_value = dosage_sum / observation_count.max(1) as f32;
     let initialized_output_row = unsafe {
         // Every selected sample position is written exactly once before this

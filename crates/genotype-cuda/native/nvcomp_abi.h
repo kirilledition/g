@@ -5,11 +5,12 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "cuda_driver_abi.h"
+#include "cuda_driver.h"
 
 namespace g::genotype_cuda::abi {
 
 using NvcompStatus = std::int32_t;
+using g::cuda_native::CudaStream;
 
 struct NvcompProperties {
   std::uint32_t version;

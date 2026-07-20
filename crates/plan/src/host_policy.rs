@@ -1,7 +1,5 @@
 //! Deterministic host-side planning policy.
 
-#![allow(clippy::missing_errors_doc)]
-
 use std::collections::BTreeMap;
 
 use serde_json::Value;

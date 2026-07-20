@@ -9,6 +9,12 @@ use super::keys::build_sample_row_indices_by_key;
 use super::tables::{load_covariate_table, multi_phenotype_parse_candidate_mask, read_multi_phenotype_table};
 use super::types::{AlignedPhenotypeGroup, AlignedPhenotypeGroupDraft, PhenotypeGroupLoadRequest};
 
+/// Load phenotype groups after sample, covariate, and prediction alignment.
+///
+/// # Errors
+///
+/// Returns an error when an input table is invalid, identifiers cannot be
+/// aligned, prediction data cannot be loaded, or a matrix shape overflows.
 pub fn load_aligned_phenotype_groups(
     request: &PhenotypeGroupLoadRequest<'_>,
 ) -> InputResult<Vec<AlignedPhenotypeGroup>> {

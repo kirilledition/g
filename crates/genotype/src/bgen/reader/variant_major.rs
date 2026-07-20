@@ -3,8 +3,8 @@ use std::mem::MaybeUninit;
 use rayon::prelude::*;
 
 use crate::bgen::decode::{
-    ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileStatsMut, decode_variant_major_dosage_tile,
-    with_worker_thread_scratch,
+    ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest, VariantMajorTileStatsMut,
+    decode_variant_major_dosage_tile, with_worker_thread_scratch,
 };
 use crate::bgen::error::BgenError;
 use crate::bgen::packed8;
@@ -249,7 +249,6 @@ impl BgenReadSession<'_> {
 }
 
 impl BgenReaderCore {
-    #[allow(clippy::too_many_arguments)]
     fn read_preprocessed_variant_major_dosage_f32_with_selection(
         &self,
         sample_selection: &SampleSelection,
@@ -271,7 +270,6 @@ impl BgenReaderCore {
         stats_buffers.into_chunk_stats(read_shape.selected_sample_count, statistics_policy)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn read_preprocessed_variant_major_packed8_probability_pairs_with_selection(
         &self,
         sample_selection: &SampleSelection,
@@ -312,13 +310,15 @@ impl BgenReaderCore {
                            output_tile: &mut [MaybeUninit<f32>],
                            tile_stats: &mut VariantMajorTileStatsMut<'_>| {
             decode_variant_major_dosage_tile(
-                &self.mmap,
-                self.compression_type,
-                self.sample_count,
-                request.sample_selection,
-                variant_record_chunk,
+                VariantMajorTileDecodeRequest {
+                    mmap: &self.mmap,
+                    compression_type: self.compression_type,
+                    sample_count: self.sample_count,
+                    sample_selection: request.sample_selection,
+                    variant_records: variant_record_chunk,
+                    tile_variant_start_index: tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
+                },
                 output_tile,
-                tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
                 tile_stats,
                 thread_scratch,
             )

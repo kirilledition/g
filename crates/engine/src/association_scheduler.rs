@@ -142,7 +142,6 @@ struct TransferredAssociationBatch<TransferredInput> {
 
 // Keeping batches inline lets the bounded channel allocate its storage once;
 // boxing the hot variant would add one allocation to every submitted batch.
-#[allow(clippy::large_enum_variant)]
 enum ComputeCommand<ChromosomeState, TransferredInput> {
     PrepareChromosome { state: ChromosomeState },
     ReleaseChromosome,

@@ -9,6 +9,8 @@ pub enum OutputError {
 }
 
 impl OutputError {
+    // `Result::map_err` transfers each concrete source error into this adapter;
+    // accepting it by value matches that ownership boundary directly.
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn runtime(error: impl ToString) -> Self {
         Self::Runtime(error.to_string())

@@ -13,7 +13,7 @@ Checks: >-
   -performance-enum-size,
   portability-*
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'crates/(compute-cuda|genotype-cuda)/native/.*'
+HeaderFilterRegex: '(crates/(compute-cuda|genotype-cuda)/native|native/cuda-driver)/.*'
 SystemHeaders: false
 FormatStyle: file
 ...

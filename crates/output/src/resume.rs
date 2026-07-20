@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::ops::Range;

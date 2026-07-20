@@ -60,6 +60,8 @@ pub(super) fn validate_variant_compatible_with_packed8(
     Ok(if requires_dosage { Packed8Compatibility::RequiresDosage } else { Packed8Compatibility::Compatible })
 }
 
+// Keeping this hot, lightweight tile boundary flat avoids passing a request
+// aggregate indirectly; the wrapper measured about 2.3% slower on chr22.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decode_variant_major_probability_pair_tile(
     mmap: &[u8],
@@ -130,8 +132,6 @@ pub(super) fn decode_variant_major_probability_pair_tile(
     Ok(())
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
 fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
     mmap: &[u8],
     compression_type: CompressionType,

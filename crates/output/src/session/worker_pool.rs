@@ -139,6 +139,7 @@ pub(super) fn record_worker_error(worker_error: &Arc<Mutex<Option<String>>>, err
     }
 }
 
+// The spawned worker owns its receiver for the full thread lifetime.
 #[allow(clippy::needless_pass_by_value)]
 fn run_output_writer_worker(receiver: Receiver<OutputWriteTask>) {
     while let Ok(output_write_task) = receiver.recv() {

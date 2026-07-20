@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-
 mod chunks;
 mod fingerprint;
 mod header;

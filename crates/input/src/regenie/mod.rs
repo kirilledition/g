@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -35,6 +33,12 @@ pub struct PredictionLocoPath {
     pub loco_file_path: PathBuf,
 }
 
+/// Resolve one LOCO prediction file for every requested phenotype.
+///
+/// # Errors
+///
+/// Returns an error when the prediction list cannot be read or does not define
+/// a LOCO file for every requested phenotype.
 pub fn resolve_prediction_loco_paths(
     prediction_list_path: &Path,
     phenotype_names: &[String],

@@ -1,20 +1,17 @@
-#include <dlfcn.h>
 #include <xla/ffi/api/ffi.h>
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 
-#include "cuda_driver_abi.h"
+#include "cuda_driver.h"
 
 static_assert(XLA_FFI_API_MAJOR == 0);
 static_assert(XLA_FFI_API_MINOR == 3);
@@ -32,22 +29,10 @@ static_assert(std::is_standard_layout_v<GComputeCudaCapability>);
 
 namespace {
 
-using g::compute_cuda::abi::CudaContext;
-using g::compute_cuda::abi::CudaContextGetCurrent;
-using g::compute_cuda::abi::CudaContextGetDevice;
-using g::compute_cuda::abi::CudaDevice;
-using g::compute_cuda::abi::CudaDeviceGet;
-using g::compute_cuda::abi::CudaDeviceGetAttribute;
-using g::compute_cuda::abi::CudaDriverGetVersion;
-using g::compute_cuda::abi::CudaFunction;
-using g::compute_cuda::abi::CudaInit;
-using g::compute_cuda::abi::CudaLaunchKernel;
-using g::compute_cuda::abi::CudaModule;
-using g::compute_cuda::abi::CudaModuleGetFunction;
-using g::compute_cuda::abi::CudaModuleLoadDataEx;
-using g::compute_cuda::abi::CudaModuleUnload;
-using g::compute_cuda::abi::CudaResult;
-using g::compute_cuda::abi::CudaStream;
+using g::cuda_native::CudaContext;
+using g::cuda_native::CudaFunction;
+using g::cuda_native::CudaModule;
+using g::cuda_native::CudaStream;
 using xla::ffi::AnyBuffer;
 using xla::ffi::DataType;
 using xla::ffi::Error;
@@ -100,172 +85,37 @@ class HandlerFailure final : public std::runtime_error {
 
 [[noreturn]] void fail_handler(ErrorCode code, const std::string& detail) { throw HandlerFailure(code, detail); }
 
-[[noreturn]] void fail_runtime(const std::string& detail) { fail_handler(ErrorCode::kInternal, detail); }
-
-std::string dynamic_loader_error(std::string_view operation) {
-  const char* detail = ::dlerror();
-  if (detail == nullptr) {
-    return std::string(operation) + ": dynamic loader returned no diagnostic";
-  }
-  return std::string(operation) + ": " + detail;
-}
-
-struct DynamicLibraryCloser {
-  void operator()(void* library) const noexcept {
-    if (library != nullptr) {
-      static_cast<void>(::dlclose(library));
+struct CudaErrorFactory {
+  static InitializationFailure initialization_failure(g::cuda_native::CudaInitializationFailureKind failure_kind,
+                                                      const std::string& detail) {
+    InitializationStatus status = InitializationStatus::kInternal;
+    switch (failure_kind) {
+      case g::cuda_native::CudaInitializationFailureKind::kCudaDriverUnavailable:
+        status = InitializationStatus::kCudaDriverUnavailable;
+        break;
+      case g::cuda_native::CudaInitializationFailureKind::kRequiredSymbolUnavailable:
+        status = InitializationStatus::kRequiredSymbolUnavailable;
+        break;
+      case g::cuda_native::CudaInitializationFailureKind::kCudaDriverFailure:
+        status = InitializationStatus::kCudaDriverFailure;
+        break;
+      case g::cuda_native::CudaInitializationFailureKind::kCudaDeviceUnavailable:
+        status = InitializationStatus::kCudaDeviceUnavailable;
+        break;
     }
+    return InitializationFailure(status, detail);
+  }
+
+  static HandlerFailure runtime_failure(g::cuda_native::CudaRuntimeFailureKind failure_kind,
+                                        const std::string& detail) {
+    const ErrorCode code = failure_kind == g::cuda_native::CudaRuntimeFailureKind::kFailedPrecondition
+                               ? ErrorCode::kFailedPrecondition
+                               : ErrorCode::kInternal;
+    return HandlerFailure(code, detail);
   }
 };
 
-using DynamicLibrary = std::unique_ptr<void, DynamicLibraryCloser>;
-
-DynamicLibrary open_cuda_driver() {
-  ::dlerror();
-  void* handle = ::dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
-  if (handle == nullptr) {
-    fail_initialization(InitializationStatus::kCudaDriverUnavailable, dynamic_loader_error("load libcuda.so.1"));
-  }
-  return DynamicLibrary(handle);
-}
-
-template <typename Function>
-Function load_symbol(void* library, const char* symbol_name) {
-  static_assert(std::is_pointer_v<Function>);
-  static_assert(sizeof(Function) == sizeof(void*));
-  ::dlerror();
-  void* symbol = ::dlsym(library, symbol_name);
-  if (const char* detail = ::dlerror(); detail != nullptr) {
-    fail_initialization(InitializationStatus::kRequiredSymbolUnavailable,
-                        std::string("load CUDA driver symbol ") + symbol_name + ": " + detail);
-  }
-  Function function = nullptr;
-  std::memcpy(&function, &symbol, sizeof(function));
-  return function;
-}
-
-void check_cuda_initialization(CudaResult status, std::string_view operation) {
-  if (status != g::compute_cuda::abi::kCudaSuccess) {
-    fail_initialization(InitializationStatus::kCudaDriverFailure,
-                        std::string(operation) + " failed with CUDA driver status " + std::to_string(status));
-  }
-}
-
-void check_cuda_runtime(CudaResult status, std::string_view operation) {
-  if (status != g::compute_cuda::abi::kCudaSuccess) {
-    fail_runtime(std::string(operation) + " failed with CUDA driver status " + std::to_string(status));
-  }
-}
-
-class CudaDriverApi {
- public:
-  CudaDriverApi()
-      : library_(open_cuda_driver()),
-        initialize_(load_symbol<CudaInit>(library_.get(), "cuInit")),
-        driver_get_version_(load_symbol<CudaDriverGetVersion>(library_.get(), "cuDriverGetVersion")),
-        device_get_(load_symbol<CudaDeviceGet>(library_.get(), "cuDeviceGet")),
-        device_get_attribute_(load_symbol<CudaDeviceGetAttribute>(library_.get(), "cuDeviceGetAttribute")),
-        context_get_current_(load_symbol<CudaContextGetCurrent>(library_.get(), "cuCtxGetCurrent")),
-        context_get_device_(load_symbol<CudaContextGetDevice>(library_.get(), "cuCtxGetDevice")),
-        module_load_data_(load_symbol<CudaModuleLoadDataEx>(library_.get(), "cuModuleLoadDataEx")),
-        module_unload_(load_symbol<CudaModuleUnload>(library_.get(), "cuModuleUnload")),
-        module_get_function_(load_symbol<CudaModuleGetFunction>(library_.get(), "cuModuleGetFunction")),
-        launch_kernel_(load_symbol<CudaLaunchKernel>(library_.get(), "cuLaunchKernel")) {
-    check_cuda_initialization(initialize_(0), "initialize CUDA driver");
-    check_cuda_initialization(driver_get_version_(&driver_version_), "query CUDA driver version");
-  }
-
-  CudaDriverApi(const CudaDriverApi&) = delete;
-  CudaDriverApi& operator=(const CudaDriverApi&) = delete;
-
-  [[nodiscard]] std::int32_t driver_version() const noexcept { return driver_version_; }
-
-  void inspect_device(std::int32_t device_ordinal, GComputeCudaCapability& capability) const {
-    capability.device_ordinal = device_ordinal;
-    CudaDevice device = 0;
-    const CudaResult device_status = device_get_(&device, device_ordinal);
-    if (device_status != g::compute_cuda::abi::kCudaSuccess) {
-      fail_initialization(InitializationStatus::kCudaDeviceUnavailable,
-                          "query CUDA device ordinal " + std::to_string(device_ordinal) + " failed with status " +
-                              std::to_string(device_status));
-    }
-    check_cuda_initialization(device_get_attribute_(&capability.compute_capability_major,
-                                                    g::compute_cuda::abi::kComputeCapabilityMajor,
-                                                    device),
-                              "query CUDA compute-capability major version");
-    check_cuda_initialization(device_get_attribute_(&capability.compute_capability_minor,
-                                                    g::compute_cuda::abi::kComputeCapabilityMinor,
-                                                    device),
-                              "query CUDA compute-capability minor version");
-  }
-
-  [[nodiscard]] CudaContext current_context() const {
-    CudaContext context = nullptr;
-    check_cuda_runtime(context_get_current_(&context), "query current CUDA context");
-    if (context == nullptr) {
-      fail_handler(ErrorCode::kFailedPrecondition, "the XLA FFI execution thread has no current CUDA context");
-    }
-    return context;
-  }
-
-  void validate_current_context_device() const {
-    CudaDevice device = 0;
-    check_cuda_runtime(context_get_device_(&device), "query current XLA CUDA context device");
-    std::int32_t compute_capability_major = 0;
-    std::int32_t compute_capability_minor = 0;
-    check_cuda_runtime(
-        device_get_attribute_(&compute_capability_major, g::compute_cuda::abi::kComputeCapabilityMajor, device),
-        "query current XLA CUDA context compute-capability major version");
-    check_cuda_runtime(
-        device_get_attribute_(&compute_capability_minor, g::compute_cuda::abi::kComputeCapabilityMinor, device),
-        "query current XLA CUDA context compute-capability minor version");
-    if (compute_capability_major < kMinimumComputeCapabilityMajor) {
-      fail_handler(ErrorCode::kFailedPrecondition,
-                   "current XLA CUDA context uses device " + std::to_string(device) +
-                       " with unsupported compute capability " + std::to_string(compute_capability_major) + "." +
-                       std::to_string(compute_capability_minor) + "; CUDA Firth components require 7.0 or newer");
-    }
-  }
-
-  [[nodiscard]] CudaModule load_module() const {
-    CudaModule module = nullptr;
-    check_cuda_runtime(module_load_data_(&module, kFirthComponentsKernelPtx, 0, nullptr, nullptr),
-                       "load Firth component compute_70 PTX");
-    return module;
-  }
-
-  void unload_module(CudaModule module) const noexcept {
-    if (module != nullptr) {
-      static_cast<void>(module_unload_(module));
-    }
-  }
-
-  [[nodiscard]] CudaFunction get_function(CudaModule module, const char* name) const {
-    CudaFunction function = nullptr;
-    check_cuda_runtime(module_get_function_(&function, module, name), std::string("find CUDA kernel ") + name);
-    return function;
-  }
-
-  void launch(CudaFunction function, unsigned int grid_width, CudaStream stream, void** arguments) const {
-    check_cuda_runtime(
-        launch_kernel_(function, grid_width, 1, 1, kKernelBlockSize, 1, 1, 0, stream, arguments, nullptr),
-        "launch Firth component kernel");
-  }
-
- private:
-  DynamicLibrary library_;
-  CudaInit initialize_;
-  CudaDriverGetVersion driver_get_version_;
-  CudaDeviceGet device_get_;
-  CudaDeviceGetAttribute device_get_attribute_;
-  CudaContextGetCurrent context_get_current_;
-  CudaContextGetDevice context_get_device_;
-  CudaModuleLoadDataEx module_load_data_;
-  CudaModuleUnload module_unload_;
-  CudaModuleGetFunction module_get_function_;
-  CudaLaunchKernel launch_kernel_;
-  std::int32_t driver_version_ = 0;
-};
+using CudaDriverApi = g::cuda_native::CudaDriverApi<CudaErrorFactory>;
 
 class CudaModuleOwner {
  public:
@@ -289,7 +139,9 @@ class CudaModuleOwner {
 
 class FirthComponentsKernel {
  public:
-  explicit FirthComponentsKernel(const CudaDriverApi& driver) : driver_(driver), module_(driver, driver.load_module()) {
+  explicit FirthComponentsKernel(const CudaDriverApi& driver)
+      : driver_(driver),
+        module_(driver, driver.load_module(kFirthComponentsKernelPtx, "load Firth component compute_70 PTX")) {
     function_ = driver_.get_function(module_.get(), kKernelName);
   }
 
@@ -332,7 +184,12 @@ class FirthComponentsKernel {
         &score,
         &valid,
     };
-    driver_.launch(function_, static_cast<unsigned int>(lane_count), stream, arguments);
+    driver_.launch_kernel(function_,
+                          static_cast<unsigned int>(lane_count),
+                          kKernelBlockSize,
+                          stream,
+                          arguments,
+                          "launch Firth component kernel");
   }
 
  private:
@@ -360,7 +217,8 @@ class FirthComponentsKernelCache {
     std::scoped_lock lock(mutex_);
     auto iterator = kernels_.find(context);
     if (iterator == kernels_.end()) {
-      driver_.validate_current_context_device();
+      driver_.validate_current_context_device(kMinimumComputeCapabilityMajor,
+                                              "CUDA Firth components require 7.0 or newer");
       iterator = kernels_.emplace(context, std::make_unique<FirthComponentsKernel>(driver_)).first;
     }
     thread_cache = ThreadCache{this, context, iterator->second.get()};
@@ -375,7 +233,7 @@ class FirthComponentsKernelCache {
 
 class RuntimeState {
  public:
-  RuntimeState() : kernels_(driver_) {}
+  RuntimeState() : driver_(g::cuda_native::CudaModuleUnloadPolicy::kRequired), kernels_(driver_) {}
 
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;

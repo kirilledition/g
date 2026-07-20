@@ -49,6 +49,20 @@ class DeviceCompressedTransferSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class HostCompressedTransferSelection:
+    """Validated host operands for one compressed-transfer selection.
+
+    Attributes:
+        selected_sample_indices: Indexed source samples, or an empty contiguous operand.
+        selection_start: Contiguous source offset, or ``-1`` for indexed selection.
+
+    """
+
+    selected_sample_indices: npt.NDArray[np.uint32]
+    selection_start: int
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceGroupState[AssociationState]:
     """Association state with an optional persistent compressed transfer.
 
@@ -117,6 +131,32 @@ class DeviceGenotypeBatch:
     raw_packed8_statistics: DevicePacked8RawStatistics | None
 
 
+def resolve_host_compressed_transfer_selection(
+    source_sample_count: int,
+    selected_sample_count: int,
+    selection_start: int | None,
+    selected_sample_indices: npt.NDArray[np.uint32] | None,
+) -> HostCompressedTransferSelection:
+    """Validate and normalize one compressed-transfer selection on the host."""
+    if selection_start is not None and selected_sample_indices is None:
+        if selection_start < 0 or selected_sample_count > source_sample_count - selection_start:
+            raise ValueError("Contiguous compressed selection exceeds the source sample count.")
+        return HostCompressedTransferSelection(
+            selected_sample_indices=np.empty((0,), dtype=np.uint32),
+            selection_start=selection_start,
+        )
+    if selection_start is None and selected_sample_indices is not None:
+        if selected_sample_indices.ndim != 1 or selected_sample_indices.dtype != np.dtype(np.uint32):
+            raise ValueError("Compressed selected sample indices must be a one-dimensional uint32 array.")
+        if selected_sample_indices.size != selected_sample_count:
+            raise ValueError("Indexed compressed selection requires one index per selected sample.")
+        return HostCompressedTransferSelection(
+            selected_sample_indices=selected_sample_indices,
+            selection_start=-1,
+        )
+    raise ValueError("Compressed selection must be either contiguous or indexed.")
+
+
 def prepare_compressed_transfer_selection(
     source_sample_count: int | None,
     selected_sample_count: int | None,
@@ -132,25 +172,17 @@ def prepare_compressed_transfer_selection(
         raise ValueError("Compressed transfer requires source and selected sample counts.")
     if source_sample_count <= 0 or selected_sample_count <= 0:
         raise ValueError("Compressed source and selected sample counts must be positive.")
-    if selection_start is not None and selected_sample_indices is None:
-        if selection_start < 0 or selected_sample_count > source_sample_count - selection_start:
-            raise ValueError("Contiguous compressed selection exceeds the source sample count.")
-        host_selected_sample_indices = np.empty((0,), dtype=np.uint32)
-        native_selection_start = selection_start
-    elif selection_start is None and selected_sample_indices is not None:
-        if selected_sample_indices.ndim != 1 or selected_sample_indices.dtype != np.dtype(np.uint32):
-            raise ValueError("Compressed selected sample indices must be a one-dimensional uint32 array.")
-        if selected_sample_indices.size != selected_sample_count:
-            raise ValueError("Indexed compressed selection requires one index per selected sample.")
-        host_selected_sample_indices = selected_sample_indices
-        native_selection_start = -1
-    else:
-        raise ValueError("Compressed selection must be either contiguous or indexed.")
+    host_selection = resolve_host_compressed_transfer_selection(
+        source_sample_count,
+        selected_sample_count,
+        selection_start,
+        selected_sample_indices,
+    )
     return DeviceCompressedTransferSelection(
-        selected_sample_indices=jax.device_put(host_selected_sample_indices, may_alias=False),
+        selected_sample_indices=jax.device_put(host_selection.selected_sample_indices, may_alias=False),
         source_sample_count=source_sample_count,
         selected_sample_count=selected_sample_count,
-        selection_start=native_selection_start,
+        selection_start=host_selection.selection_start,
     )
 
 

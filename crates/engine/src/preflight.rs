@@ -137,11 +137,12 @@ fn validate_binary_phenotype(values: &[f32]) -> Result<(), PreflightError> {
 }
 
 fn validate_covariate_matrix_rank(row_count: usize, column_count: usize, values: &[f32]) -> Result<(), PreflightError> {
+    let dimension_count = i32::try_from(row_count.max(column_count))
+        .map(f64::from)
+        .map_err(|_| PreflightError::JaxIndexCapacityExceeded { label: "covariate matrix dimension" })?;
     let rank_matrix = DMatrix::from_row_iterator(row_count, column_count, values.iter().copied().map(f64::from));
     let singular_values = rank_matrix.svd(false, false).singular_values;
     let largest_singular_value = singular_values.iter().copied().fold(0.0_f64, f64::max);
-    #[allow(clippy::cast_precision_loss)]
-    let dimension_count = row_count.max(column_count) as f64;
     let tolerance = largest_singular_value * dimension_count * f64::from(f32::EPSILON);
     if singular_values.iter().filter(|singular_value| **singular_value > tolerance).count() < column_count {
         return Err(PreflightError::CovariateMatrixRankDeficient);

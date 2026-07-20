@@ -1,5 +1,3 @@
-#![allow(clippy::missing_errors_doc)]
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -34,6 +32,8 @@ pub struct PredictionLocoFileFingerprint {
     pub(crate) file_fingerprint: Arc<super::ManifestFileFingerprint>,
 }
 
+// Keeping the canonical manifest value in one function makes the exact hashed
+// field set and its serialization order reviewable as one compatibility unit.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn build_current_run_manifest_header_value_with_cache(
     run_plan: &g_plan::RunPlan,

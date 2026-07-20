@@ -97,6 +97,8 @@ pub(super) fn validate_sample_identifier_block(
     Ok(())
 }
 
+// Parsing remains sequential so every bounds check advances the same audited
+// BGEN cursor; splitting it would obscure the byte-order and offset invariant.
 #[allow(clippy::too_many_lines)]
 pub(super) fn parse_variant_index(
     mmap: &[u8],

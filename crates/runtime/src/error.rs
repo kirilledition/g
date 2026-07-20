@@ -1,7 +1,5 @@
 //! Public runtime error boundary.
 
-#![allow(clippy::module_name_repetitions)]
-
 use std::error::Error;
 use std::fmt;
 

@@ -1,11 +1,5 @@
 //! Host-side genotype preprocessing shared by native readers.
 
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::unreadable_literal)]
-
 use g_genotype_contracts::{ChunkOutputStatistics, NullableFloat32Column};
 
 use crate::common::{
@@ -129,6 +123,9 @@ pub(crate) fn build_empty_chunk_stats(
     }
 }
 
+// This consumes one decode's statistics buffers. Moving the optional Vec
+// handles preserves that ownership boundary without copying their storage.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_chunk_stats_from_summaries(
     mut dosage_sum: Vec<f32>,
     mut dosage_square_sum: Vec<f32>,
@@ -179,6 +176,9 @@ pub(crate) fn build_chunk_stats_from_summaries(
             continue;
         }
 
+        // Association statistics are intentionally computed in the f32 output
+        // domain after the sample count has been validated within i32 bounds.
+        #[allow(clippy::cast_precision_loss)]
         let count_float = count as f32;
         let dosage_mean = dosage_sum[variant_index] / count_float;
         let observed_dosage_square_sum = dosage_square_sum[variant_index];
@@ -188,8 +188,12 @@ pub(crate) fn build_chunk_stats_from_summaries(
                     "Variant observation count {count} exceeds selected sample count {selected_sample_count_i32}."
                 ))
             })?;
+            // Both counts share the enforced i32 bound and the surrounding
+            // dosage-square calculation intentionally uses f32.
+            #[allow(clippy::cast_precision_loss)]
+            let missing_count_float = missing_count as f32;
             dosage_square_sum[variant_index] =
-                observed_dosage_square_sum + (missing_count as f32 * dosage_mean * dosage_mean);
+                observed_dosage_square_sum + (missing_count_float * dosage_mean * dosage_mean);
         }
         let output_statistics = calculate_output_variant_statistics(
             dosage_sum[variant_index],
@@ -210,6 +214,9 @@ pub(crate) fn build_chunk_stats_from_summaries(
             } else {
                 zero_count[variant_index]
             };
+            // This exact bounded count is converted only to compute a density
+            // in the f32 statistics domain.
+            #[allow(clippy::cast_precision_loss)]
             let zero_density = regenie_flipped_zero_count as f32 / count_float;
             sparse_candidate_mask.push(
                 zero_density >= SPARSE_ZERO_DENSITY_THRESHOLD
@@ -279,8 +286,13 @@ impl Packed8RawStatistics {
                 info_score.push(0.0, false);
                 continue;
             }
+            // Device summaries are exact bounded integers; conversion happens
+            // once at the documented f32 association-output boundary.
+            #[allow(clippy::cast_precision_loss)]
             let dosage_sum = raw_dosage_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL;
+            #[allow(clippy::cast_precision_loss)]
             let dosage_square_sum = raw_dosage_square_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL;
+            #[allow(clippy::cast_precision_loss)]
             let count_float = output_observation_count as f32;
             let dosage_mean = dosage_sum / count_float;
             let output_statistics =

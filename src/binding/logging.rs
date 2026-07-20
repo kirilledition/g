@@ -1,7 +1,5 @@
 //! Unified tracing setup for Rust and Python diagnostics.
 
-#![allow(clippy::missing_errors_doc)]
-
 use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, Ordering};
 

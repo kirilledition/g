@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_value)]
-
 use std::path::Path;
 use std::sync::Arc;
 

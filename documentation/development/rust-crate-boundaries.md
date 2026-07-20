@@ -11,8 +11,14 @@ Allowed ownership:
   genotype column storage.
 - `g-genotype`: BGEN/genotype source, immutable read sessions, owned decoded
   batch/buffer types, chunk specs, and preprocessing statistics.
+- `g-genotype-cuda`: optional capability-gated packed8 raw-DEFLATE delivery,
+  nvCOMP integration, checked-in PTX artifacts, and private typed-XLA FFI
+  handlers.
 - `g-compute-cuda`: optional capability-gated CUDA association kernels,
   checked-in PTX artifacts, and private typed-XLA FFI handlers.
+- `native/cuda-driver`: repository-private, header-only CUDA driver ABI,
+  dynamic loading, device/context validation, and module/launch support shared
+  by the two independent CUDA crates.
 - `g-input`: sample/phenotype/covariate/prediction alignment.
 - `g-output`: Parquet output sessions, manifests, and resume.
 - `g-runtime`: logging, telemetry session/writer lifecycle, timing, shutdown,
@@ -39,9 +45,11 @@ Rules:
   the Python-backed `AssociationBackend`; the root never sequences domain
   crate calls.
 - Keep hot paths batch-oriented and ownership-visible; avoid per-variant public calls and cross-crate JSON in compute paths.
-- Keep compute CUDA independent from genotype delivery. Shared vendored OpenXLA
-  FFI headers live once under repository-root `vendor/openxla`; neither CUDA
-  crate re-exports the other's contracts.
+- Keep compute CUDA independent from genotype delivery at the Rust crate and
+  public API boundaries. Shared vendored OpenXLA FFI headers live once under
+  repository-root `vendor/openxla`; private CUDA driver support lives once
+  under `native/cuda-driver`. Both CUDA crates source-include that header-only
+  support without depending on or re-exporting the other crate's contracts.
 - Update `PUBLIC_API.md` when adding or removing public facade items.
 - The root PyO3 crate depends directly on `g-runner`, `g-engine`, canonical
   `g-plan` contracts, PyO3, and NumPy. It also imports canonical backend

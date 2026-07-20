@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=native/packed8_deflate_ffi.cc");
-    println!("cargo:rerun-if-changed=native/cuda_driver_abi.h");
     println!("cargo:rerun-if-changed=native/nvcomp_abi.h");
+    println!("cargo:rerun-if-changed=../../native/cuda-driver/cuda_driver.h");
     println!("cargo:rerun-if-changed=native/packed8_kernel.cu");
     println!("cargo:rerun-if-changed=native/packed8_kernel.compute_70.ptx");
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/api.h");
@@ -25,6 +25,7 @@ fn main() {
         .std("c++20")
         .define("NDEBUG", None)
         .include("native")
+        .include("../../native/cuda-driver")
         .include(&output_directory)
         .include("../../vendor/openxla")
         .file("native/packed8_deflate_ffi.cc")

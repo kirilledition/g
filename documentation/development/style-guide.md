@@ -166,7 +166,7 @@ Optimize for explicit, self-documenting code over terse keystroke-saving. Priori
 
 ### **Maintained Source Scope**
 
-* The formatting and static-analysis scope is the maintained `.cu`, `.cc`, and `.h` source under `crates/compute-cuda/native/` and `crates/genotype-cuda/native/`.
+* The formatting and static-analysis scope is the maintained `.cu`, `.cc`, and `.h` source under `crates/compute-cuda/native/`, `crates/genotype-cuda/native/`, and the repository-private shared driver support under `native/cuda-driver/`.
 * Generated PTX, generated build-directory includes, and vendored sources under `vendor/` are not maintained source. Do not format or lint them as first-party code.
 * Keep the explicit maintained-source allowlist in the repository `Justfile`. Adding or removing a maintained native source requires updating that allowlist in the same change.
 

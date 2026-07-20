@@ -28,7 +28,6 @@ pub struct OutputWriterSession {
     config: Arc<OutputWriterConfig>,
 }
 
-#[allow(clippy::missing_errors_doc)]
 impl OutputWriterSession {
     fn new_with_writer_pool(config: OutputWriterConfig, writer_pool: Arc<OutputWriterPool>) -> Self {
         let worker_error = Arc::new(Mutex::new(None));
@@ -91,7 +90,6 @@ impl OutputWriterSession {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_regenie2_native_chunk_handle_arrays(
         &self,
         chunk_handle: NativeChunkHandle,
