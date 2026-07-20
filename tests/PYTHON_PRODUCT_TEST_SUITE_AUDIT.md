@@ -14,7 +14,7 @@ current native application boundary.
 | --- | --- |
 | `tests/numerical.py` | Shared strict `abs(actual - reference) < tolerance` assertion with exact nonfinite masks. |
 | `tests/parity/` | Login-safe upstream REGENIE metadata, composite-key alignment, strict tolerance, and significance-decision checks. |
-| `tests/test_regenie2_parity.py` | Full quantitative, binary score-only, and binary approximate-Firth chr22 runs through `g._core.cli.run`, compared with upstream REGENIE v4.1; both binary workflows remain diagnostic pending current-HEAD qualification. |
+| `tests/test_regenie2_parity.py` | Three blocking full-chromosome workflows through `g._core.cli.run`: quantitative, binary score-only, and binary approximate Firth, each compared with upstream REGENIE v4.1. |
 | `tests/test_regenie2_linear.py` | Quantitative mathematical behavior. |
 | `tests/test_regenie2_binary.py` | Binary score and approximate-Firth mathematical behavior. |
 | `tests/test_regenie2_binary_firth_null.py` | Binary null-Firth behavior. |

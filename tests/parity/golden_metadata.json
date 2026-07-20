@@ -85,7 +85,7 @@
       "identifier": "binary_score_only",
       "title": "Binary score-only",
       "status": "external_golden",
-      "gate_status": "diagnostic",
+      "gate_status": "blocking",
       "description": "Full 1KG chromosome 22 binary score-only Step 2 comparison against upstream REGENIE v4.1.",
       "regenie_version": "v4.1",
       "regenie_commands": [
@@ -130,13 +130,36 @@
         "documentation/development/regenie-parity-suite.md"
       ],
       "qualification": {
-        "reason": "The upstream golden exists, but current HEAD must complete a full g-versus-REGENIE qualification before this workflow becomes blocking.",
-        "generated_on_node": "hilbert",
-        "generation_start_time_from_log": "Mon Jul 20 13:45:00 2026",
-        "generation_end_time_from_log": "Mon Jul 20 13:45:10 2026",
-        "generation_time_zone": "not recorded by REGENIE",
-        "regenie_version": "v4.1",
-        "artifact_retained": true
+        "basis": "Full current-source chromosome 22 comparison against the pinned upstream REGENIE v4.1 golden with strict exclusive absolute tolerances.",
+        "g_commit": "68f831f9ba51e28140b281c786555e3af6c36d4f",
+        "qualified_source_parent_commit": "6ad69f40607c83fe95edb99d217e6195457975b1",
+        "qualified_source_diff_sha256": "8bf2ccce77b82dc793826048a259e2f4abfba9c99235ac623a9978d23a2b8fd7",
+        "qualification_generated_at_utc": "2026-07-20T11:56:41.403166+00:00",
+        "qualification_node": "landau",
+        "reference_generated_on_node": "hilbert",
+        "reference_generation_start_time_from_log": "Mon Jul 20 13:45:00 2026",
+        "reference_generation_end_time_from_log": "Mon Jul 20 13:45:10 2026",
+        "reference_generation_time_zone": "not recorded by REGENIE",
+        "jax_version": "0.11.0",
+        "jaxlib_version": "0.11.0",
+        "native_library_sha256": "8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c",
+        "configuration": "GPU, 16,384-variant chunks, Firth batch size 512, candidate capacity 1,024, eight writers, direct Parquet parts, telemetry off",
+        "reference_output": "data/baselines/regenie_step2_score_only_phenotype_binary.regenie",
+        "artifact_retained": false,
+        "comparison": "abs(g_value - regenie_value) < absolute_tolerance",
+        "observed_row_count": 418943,
+        "observed_maximum_absolute_differences": {
+          "BETA": 0.00000872401046753124,
+          "SE": 0.00000953237915035654,
+          "CHISQ": 0.00005738945007305318,
+          "LOG10P": 0.000015566101074115934
+        },
+        "observed_correction_count": 0,
+        "observed_correction_failure_count": 0,
+        "exact_variant_keys": true,
+        "exact_sample_counts": true,
+        "exact_schema": true,
+        "exact_significance_classifications": true
       },
       "tolerances": [
         {
@@ -165,7 +188,7 @@
       "identifier": "binary_approximate_firth",
       "title": "Binary approximate Firth",
       "status": "external_golden",
-      "gate_status": "diagnostic",
+      "gate_status": "blocking",
       "description": "Full 1KG chromosome 22 binary approximate-Firth Step 2 comparison against upstream REGENIE v4.1.",
       "regenie_version": "v4.1",
       "regenie_commands": [
@@ -211,22 +234,31 @@
         "documentation/development/regenie-parity-suite.md"
       ],
       "qualification": {
-        "reason": "Validated after the JAX 0.11 merge, but current HEAD must reproduce the result before this workflow becomes blocking.",
-        "g_commit": "bf5439aa",
+        "basis": "Full current-source chromosome 22 comparison against the pinned upstream REGENIE v4.1 golden with strict exclusive absolute tolerances.",
+        "g_commit": "68f831f9ba51e28140b281c786555e3af6c36d4f",
+        "qualified_source_parent_commit": "6ad69f40607c83fe95edb99d217e6195457975b1",
+        "qualified_source_diff_sha256": "8bf2ccce77b82dc793826048a259e2f4abfba9c99235ac623a9978d23a2b8fd7",
+        "qualification_generated_at_utc": "2026-07-20T11:57:08.548430+00:00",
+        "qualification_node": "landau",
         "jax_version": "0.11.0",
         "jaxlib_version": "0.11.0",
-        "native_library_sha256": "de785821de0e3558a7dfada4cd7dbe8eacced67ffa02006feacdab5db4db39c6",
-        "configuration": "standard bench-binary-hot-gpu-smoke production configuration",
+        "native_library_sha256": "8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c",
+        "configuration": "GPU, 16,384-variant chunks, Firth batch size 512, candidate capacity 1,024, eight writers, direct Parquet parts, telemetry off",
         "reference_output": "data/baselines/regenie_step2_phenotype_binary.regenie",
         "artifact_retained": false,
+        "comparison": "abs(g_value - regenie_value) < absolute_tolerance",
+        "observed_row_count": 418943,
         "observed_maximum_absolute_differences": {
-          "BETA": 0.0006930,
-          "SE": 0.0002226,
-          "CHISQ": 0.0013471,
-          "LOG10P": 0.0003654
+          "BETA": 0.00000872401046753124,
+          "SE": 0.00000953237915035654,
+          "CHISQ": 0.00008694763183569876,
+          "LOG10P": 0.000015566101074115934
         },
         "observed_correction_count": 17938,
         "observed_correction_failure_count": 0,
+        "exact_variant_keys": true,
+        "exact_sample_counts": true,
+        "exact_schema": true,
         "exact_significance_classifications": true
       },
       "tolerances": [

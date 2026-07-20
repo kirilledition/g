@@ -12,6 +12,7 @@ import pytest
 
 import tests.numerical
 from g import types
+from g.compute.common import genotype
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidates
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import correction as regenie2_binary_correction
@@ -349,6 +350,249 @@ def test_binary_score_matches_independent_weighted_numpy_reference() -> None:
     np.testing.assert_array_equal(
         np.asarray(observed.correction_code),
         np.full(reference.beta.shape, types.BinaryCorrectionCode.SCORE_SUCCESS.value, dtype=np.uint8),
+    )
+
+
+def test_ultra_rare_flipped_score_uses_stable_minor_allele_reductions() -> None:
+    """Keep high-frequency score statistics and Firth classification stable."""
+    sample_count = 2_504
+    variant_count = 3
+    random_generator = np.random.default_rng(192)
+    score_residual = random_generator.normal(0.0, 0.45, size=sample_count).astype(np.float32)
+    score_residual -= np.float32(score_residual.mean(dtype=np.float64))
+    bernoulli_weight = random_generator.uniform(0.08, 0.25, size=sample_count).astype(np.float32)
+    raw_genotype_matrix_by_variant = np.full((variant_count, sample_count), 2.0, dtype=np.float32)
+    for variant_index in range(variant_count):
+        carrier_indices = random_generator.choice(
+            sample_count,
+            size=variant_index + 1,
+            replace=False,
+        )
+        raw_genotype_matrix_by_variant[variant_index, carrier_indices] = random_generator.choice(
+            np.asarray([0.0, 1.0], dtype=np.float32),
+            size=carrier_indices.size,
+        )
+
+    chromosome_state = regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState(
+        score_right_hand_matrix=jnp.asarray(
+            np.concatenate(
+                [
+                    np.zeros((1, sample_count), dtype=np.float32),
+                    score_residual[None, :],
+                ],
+                axis=0,
+            )
+        ),
+        bernoulli_weight=jnp.asarray(bernoulli_weight[None, :]),
+        null_logistic_converged=jnp.asarray([True]),
+    )
+    observed = regenie2_binary_score.compute_multi_binary_score_test_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(raw_genotype_matrix_by_variant),
+        firth_candidate_p_threshold=0.05,
+        minimum_variance=1.0e-10,
+        relative_variance_tolerance=1.0e-7,
+        native_genotype_mean=None,
+    )
+
+    score_genotype_matrix_by_variant = 2.0 - raw_genotype_matrix_by_variant.astype(np.float64)
+    reference_score = score_genotype_matrix_by_variant @ score_residual.astype(np.float64)
+    reference_variance = (score_genotype_matrix_by_variant * score_genotype_matrix_by_variant) @ (
+        bernoulli_weight.astype(np.float64)
+    )
+    reference_beta = -reference_score / reference_variance
+    reference_standard_error = np.sqrt(np.reciprocal(reference_variance))
+    reference_chi_squared = reference_score * reference_score / reference_variance
+    reference_log10_p_value = compute_negative_log10_chi_square_probability(reference_chi_squared)
+
+    assert bool(np.all(np.mean(raw_genotype_matrix_by_variant, axis=1) > 1.0))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.beta[0],
+        reference_beta,
+        BINARY_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.standard_error[0],
+        reference_standard_error,
+        BINARY_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.chi_squared[0],
+        reference_chi_squared,
+        BINARY_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.log10_p_value[0],
+        reference_log10_p_value,
+        BINARY_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(observed.correction_code[0]),
+        np.asarray(
+            [
+                types.BinaryCorrectionCode.FIRTH_SUCCESS.value,
+                types.BinaryCorrectionCode.SCORE_SUCCESS.value,
+                types.BinaryCorrectionCode.SCORE_SUCCESS.value,
+            ],
+            dtype=np.uint8,
+        ),
+    )
+
+
+@pytest.mark.parametrize("sample_count", [256, 257])
+def test_decoded_score_reduction_handles_full_and_tail_tiles(sample_count: int) -> None:
+    """Reduce exact tile boundaries and one-sample tails without complement sums."""
+    sample_indices = np.arange(sample_count)
+    raw_genotype_matrix_by_variant = np.stack(
+        [
+            (sample_indices % 3).astype(np.float32),
+            np.where(sample_indices % 64 == 0, 1.0, 2.0).astype(np.float32),
+        ]
+    )
+    score_right_hand_matrix = np.stack(
+        [
+            np.zeros(sample_count, dtype=np.float32),
+            np.where(sample_indices % 2 == 0, 1.0, -1.0).astype(np.float32),
+        ]
+    )
+    bernoulli_weight = np.full((1, sample_count), 0.25, dtype=np.float32)
+    chromosome_state = regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState(
+        score_right_hand_matrix=jnp.asarray(score_right_hand_matrix),
+        bernoulli_weight=jnp.asarray(bernoulli_weight),
+        null_logistic_converged=jnp.asarray([True]),
+    )
+    genotype_flip_mask = np.mean(raw_genotype_matrix_by_variant, axis=1) > 1.0
+
+    observed = regenie2_binary_score.reduce_tiled_score_genotypes(
+        chromosome_state,
+        jnp.asarray(raw_genotype_matrix_by_variant),
+        jnp.asarray(genotype_flip_mask),
+    )
+
+    score_genotype_matrix_by_variant = np.where(
+        genotype_flip_mask[:, None],
+        2.0 - raw_genotype_matrix_by_variant,
+        raw_genotype_matrix_by_variant,
+    )
+    expected_stacked_product = score_genotype_matrix_by_variant @ score_right_hand_matrix.T
+    expected_weighted_sum_squares = (score_genotype_matrix_by_variant**2) @ bernoulli_weight.T
+    np.testing.assert_array_equal(
+        np.asarray(observed.stacked_product_by_variant),
+        expected_stacked_product,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(observed.weighted_genotype_sum_squares).T,
+        expected_weighted_sum_squares,
+    )
+
+
+@pytest.mark.parametrize("sample_count", [256, 257])
+def test_packed8_score_uses_exact_minor_dosage_numerators(sample_count: int) -> None:
+    """Decode flipped and unflipped byte rows across full and tail geometries."""
+    sample_indices = np.arange(sample_count)
+    rare_sample_mask = sample_indices % 31 == 0
+    low_frequency_first_probability = np.where(rare_sample_mask, 5, 230).astype(np.uint8)
+    low_frequency_second_probability = np.where(rare_sample_mask, 10, 20).astype(np.uint8)
+    packed_probability_pairs_by_variant = np.stack(
+        [
+            np.stack(
+                [low_frequency_first_probability, low_frequency_second_probability],
+                axis=1,
+            ),
+            np.stack(
+                [230 - low_frequency_first_probability + 5, 30 - low_frequency_second_probability],
+                axis=1,
+            ),
+        ]
+    ).astype(np.uint8)
+    probability_values = packed_probability_pairs_by_variant.astype(np.float64)
+    native_dosage_numerator = (
+        genotype.PACKED8_DIPLOID_NUMERATOR
+        - genotype.ALLELE_COUNT_MULTIPLIER * probability_values[:, :, 0]
+        - probability_values[:, :, 1]
+    )
+    native_genotype_mean = np.mean(
+        native_dosage_numerator / genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR,
+        axis=1,
+    ).astype(np.float32)
+    genotype_flip_mask = native_genotype_mean > 1.0
+    expected_score_dosage_numerator = np.where(
+        genotype_flip_mask[:, None],
+        genotype.ALLELE_COUNT_MULTIPLIER * probability_values[:, :, 0] + probability_values[:, :, 1],
+        native_dosage_numerator,
+    )
+    expected_score_genotype_matrix_by_variant = expected_score_dosage_numerator.astype(np.float32) / np.float32(
+        genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR
+    )
+    random_generator = np.random.default_rng(2_100 + sample_count)
+    score_residual = random_generator.normal(0.0, 0.45, size=sample_count).astype(np.float32)
+    score_residual -= np.float32(score_residual.mean(dtype=np.float64))
+    bernoulli_weight = random_generator.uniform(0.08, 0.25, size=sample_count).astype(np.float32)
+    chromosome_state = regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState(
+        score_right_hand_matrix=jnp.asarray(
+            np.stack(
+                [
+                    np.zeros(sample_count, dtype=np.float32),
+                    score_residual,
+                ]
+            )
+        ),
+        bernoulli_weight=jnp.asarray(bernoulli_weight[None, :]),
+        null_logistic_converged=jnp.asarray([True]),
+    )
+
+    observed_score_genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_regenie_score_genotypes(
+        jnp.asarray(packed_probability_pairs_by_variant),
+        jnp.asarray(genotype_flip_mask),
+    )
+    observed = regenie2_binary_score.compute_multi_binary_score_test_packed8_core(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
+        firth_candidate_p_threshold=None,
+        minimum_variance=1.0e-10,
+        relative_variance_tolerance=1.0e-7,
+        native_genotype_mean=jnp.asarray(native_genotype_mean),
+    )
+
+    expected_score_genotype_float64 = expected_score_genotype_matrix_by_variant.astype(np.float64)
+    expected_score = expected_score_genotype_float64 @ score_residual.astype(np.float64)
+    expected_variance = (expected_score_genotype_float64**2) @ bernoulli_weight.astype(np.float64)
+    expected_beta = np.where(
+        genotype_flip_mask, -expected_score / expected_variance, expected_score / expected_variance
+    )
+    expected_standard_error = np.sqrt(np.reciprocal(expected_variance))
+    expected_chi_squared = expected_score * expected_score / expected_variance
+    expected_log10_p_value = compute_negative_log10_chi_square_probability(expected_chi_squared)
+
+    assert genotype_flip_mask.tolist() == [False, True]
+    tests.numerical.assert_absolute_difference_less_than(
+        observed_score_genotype_matrix_by_variant,
+        expected_score_genotype_matrix_by_variant,
+        1.3e-7,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.beta[0],
+        expected_beta,
+        BINARY_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.standard_error[0],
+        expected_standard_error,
+        BINARY_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.chi_squared[0],
+        expected_chi_squared,
+        BINARY_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.log10_p_value[0],
+        expected_log10_p_value,
+        BINARY_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(observed.correction_code[0]),
+        np.full(2, types.BinaryCorrectionCode.SCORE_SUCCESS.value, dtype=np.uint8),
     )
 
 

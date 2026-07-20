@@ -49,6 +49,36 @@ def decode_packed8_probability_pairs_to_variant_major_dosage(
     ) / float(EIGHT_BIT_PROBABILITY_DENOMINATOR)
 
 
+def decode_packed8_probability_pairs_to_regenie_score_genotypes(
+    packed_probability_pairs_by_variant: jax.Array,
+    genotype_flip_mask: jax.Array,
+) -> jax.Array:
+    """Decode packed probabilities directly to REGENIE minor-allele coding.
+
+    Args:
+        packed_probability_pairs_by_variant: Variant-major uint8 probability pairs.
+        genotype_flip_mask: Per-variant flag selecting the opposite allele dosage.
+
+    Returns:
+        Variant-major minor-allele dosage matrix decoded on the active JAX device.
+
+    """
+    probability_values = jnp.asarray(packed_probability_pairs_by_variant, dtype=jnp.float32)
+    homozygous_reference_probability_byte = probability_values[:, :, 0]
+    heterozygous_probability_byte = probability_values[:, :, 1]
+    native_dosage_numerator = (
+        float(PACKED8_DIPLOID_NUMERATOR)
+        - (ALLELE_COUNT_MULTIPLIER * homozygous_reference_probability_byte)
+        - heterozygous_probability_byte
+    )
+    score_dosage_numerator = jnp.where(
+        genotype_flip_mask[:, None],
+        (ALLELE_COUNT_MULTIPLIER * homozygous_reference_probability_byte) + heterozygous_probability_byte,
+        native_dosage_numerator,
+    )
+    return score_dosage_numerator / float(EIGHT_BIT_PROBABILITY_DENOMINATOR)
+
+
 def compute_diploid_genotype_mean(
     genotype_matrix_by_variant: jax.Array,
     native_genotype_mean: jax.Array | None,
