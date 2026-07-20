@@ -37,7 +37,7 @@ dev = [
 ]
 docs = [
     "mkdocstrings-python>=2.0.4",
-    "zensical>=0.0.44,<0.0.45",
+    "zensical>=0.0.51,<0.0.52",
 ]
 cpu = ["jax[cpu]>=0.11.0,<0.12"]
 
