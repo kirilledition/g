@@ -633,7 +633,7 @@ def test_quantitative_full_chr22_matches_upstream_regenie(
     assert_and_record_workflow_qualification(QUANTITATIVE_WORKFLOW, quantitative_parity_results)
 
 
-@pytest.mark.parity_diagnostic
+@pytest.mark.parity_blocking
 def test_binary_score_only_full_chr22_matches_upstream_regenie(
     binary_score_only_parity_results: RegenieParityResults,
 ) -> None:
@@ -641,7 +641,7 @@ def test_binary_score_only_full_chr22_matches_upstream_regenie(
     assert_and_record_workflow_qualification(BINARY_SCORE_ONLY_WORKFLOW, binary_score_only_parity_results)
 
 
-@pytest.mark.parity_diagnostic
+@pytest.mark.parity_blocking
 def test_binary_approximate_firth_full_chr22_matches_upstream_regenie(
     binary_approximate_firth_parity_results: RegenieParityResults,
 ) -> None:

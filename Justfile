@@ -872,17 +872,9 @@ test-parity:
 test-parity-required:
     G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda uv run pytest --confcutdir=tests/parity tests/test_regenie2_parity.py -m parity_blocking
 
-# Run diagnostic external parity qualification; missing fixture data is an error.
-test-parity-diagnostic-required:
-    G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda uv run pytest --confcutdir=tests/parity tests/test_regenie2_parity.py -m parity_diagnostic
-
 # Run required-fixture external parity qualification on the configured GPU node
 slurm-gpu-test-parity-required:
     {{ server_env }} && just slurm-gpu-just test-parity-required
-
-# Run diagnostic external parity qualification on the configured GPU node
-slurm-gpu-test-parity-diagnostic-required:
-    {{ server_env }} && just slurm-gpu-just test-parity-diagnostic-required
 
 # Generate a Python coverage report for the active non-data test surface
 coverage-python:

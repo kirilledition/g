@@ -61,11 +61,11 @@ def test_upstream_golden_workflows_record_commands_hashes_rows_and_tolerances() 
     )
     assert (
         metadata.workflow_by_identifier("binary_score_only").gate_status
-        == tests.parity.harness.ParityGateStatus.DIAGNOSTIC
+        == tests.parity.harness.ParityGateStatus.BLOCKING
     )
     assert (
         metadata.workflow_by_identifier("binary_approximate_firth").gate_status
-        == tests.parity.harness.ParityGateStatus.DIAGNOSTIC
+        == tests.parity.harness.ParityGateStatus.BLOCKING
     )
 
 
@@ -115,9 +115,10 @@ def test_approximate_firth_records_existing_full_upstream_golden() -> None:
     assert workflow.expected_output_sha256 == "0b9dc124525b6fec63e1b0d3f446263c05f690862235bd84f51b1b3c77b6ed72"
     assert workflow.expected_correction_count == 17_938
     assert workflow.expected_correction_failure_count == 0
-    assert workflow.qualification["g_commit"] == "bf5439aa"
+    assert workflow.gate_status == tests.parity.harness.ParityGateStatus.BLOCKING
+    assert workflow.qualification["g_commit"] == "68f831f9ba51e28140b281c786555e3af6c36d4f"
     assert workflow.qualification["native_library_sha256"] == (
-        "de785821de0e3558a7dfada4cd7dbe8eacced67ffa02006feacdab5db4db39c6"
+        "8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c"
     )
     assert workflow.qualification["artifact_retained"] is False
     observed_differences = workflow.qualification["observed_maximum_absolute_differences"]
@@ -135,15 +136,28 @@ def test_score_only_records_new_full_upstream_golden() -> None:
     metadata = tests.parity.harness.load_golden_metadata()
     workflow = metadata.workflow_by_identifier("binary_score_only")
 
-    assert workflow.gate_status == tests.parity.harness.ParityGateStatus.DIAGNOSTIC
+    assert workflow.gate_status == tests.parity.harness.ParityGateStatus.BLOCKING
     assert workflow.expected_output_relative_path == Path("baselines/regenie_step2_score_only_phenotype_binary.regenie")
     assert workflow.expected_output_sha256 == "ba7278541d211a8ca446f5af3d45beba06030ad40f8124651db3038c196dac33"
     assert workflow.expected_log_sha256 == "c4002866c86dd67ebe23fcb563f17488635b59547cc30baa3a8566730e2e0e5b"
     assert workflow.expected_correction_count is None
     assert workflow.expected_correction_failure_count is None
-    assert workflow.qualification["generated_on_node"] == "hilbert"
-    assert workflow.qualification["generation_start_time_from_log"] == "Mon Jul 20 13:45:00 2026"
-    assert workflow.qualification["regenie_version"] == "v4.1"
+    assert workflow.qualification["reference_generated_on_node"] == "hilbert"
+    assert workflow.qualification["reference_generation_start_time_from_log"] == "Mon Jul 20 13:45:00 2026"
+    assert workflow.qualification["g_commit"] == "68f831f9ba51e28140b281c786555e3af6c36d4f"
+    assert workflow.qualification["native_library_sha256"] == (
+        "8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c"
+    )
+    assert workflow.qualification["artifact_retained"] is False
+    observed_differences = workflow.qualification["observed_maximum_absolute_differences"]
+    assert isinstance(observed_differences, dict)
+    configured_tolerances = {
+        tolerance.observed_column: tolerance.absolute_tolerance for tolerance in workflow.tolerances
+    }
+    for statistic_name, observed_difference in observed_differences.items():
+        assert isinstance(statistic_name, str)
+        assert isinstance(observed_difference, int | float)
+        assert float(observed_difference) < configured_tolerances[statistic_name]
 
 
 def test_statistic_comparison_uses_full_variant_key_and_strict_tolerance() -> None:

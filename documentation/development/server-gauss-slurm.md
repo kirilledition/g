@@ -84,13 +84,12 @@ just slurm-cpu-rust-build
 just slurm-cpu-rust-test
 just slurm-cpu-coverage
 just slurm-gpu-test-parity-required
-just slurm-gpu-test-parity-diagnostic-required
 ```
 
 `slurm-cpu-check` wraps `just check`. `slurm-cpu-test` runs the non-data Python
 suite with large-node pytest parallelism. External parity is deliberately a
-fresh GPU process: use the blocking and diagnostic GPU recipes above when the
-required local fixtures are present. Do not run full `just check`, full
+fresh GPU process: use the blocking GPU recipe above when the required local
+fixtures are present. Do not run full `just check`, full
 `just test`, Rust dependency builds, or Rust test builds directly on the login
 node.
 

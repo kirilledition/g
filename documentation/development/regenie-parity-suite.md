@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Quantitative gate; binary qualification | Full 1KG chromosome 22 Step 2 workflows as of 2026-07-20 | Correctness maintainers |
+| Three blocking gates | Full 1KG chromosome 22 Step 2 workflows as of 2026-07-20 | Correctness maintainers |
 
 The parity suite compares production `g` results with independently generated
 upstream REGENIE v4.1 outputs. Earlier `g` output may be used as a secondary
@@ -23,19 +23,17 @@ The metadata and comparison-helper tests are login-node safe:
 just test-local-focused
 ```
 
-The release-blocking quantitative run is a serialized GPU workload and belongs
-on `landau`:
+The three release-blocking quantitative, binary score-only, and binary
+approximate-Firth runs are serialized GPU workloads and belong on `landau`:
 
 ```bash
 just slurm-gpu-test-parity-required
 ```
 
-The required recipe sets `G_REGENIE_PARITY_REQUIRE_DATA=1`, so missing fixture
-or oracle files fail loudly. Binary score-only and approximate-Firth
-qualification run separately with
-`just slurm-gpu-test-parity-diagnostic-required`; their failures do not redefine
-the quantitative release gate. Neither full-data job runs on GitHub-hosted
-runners because the protected fixture is unavailable there.
+The required recipe selects all workflows marked `parity_blocking` and sets
+`G_REGENIE_PARITY_REQUIRE_DATA=1`, so missing fixture or oracle files fail
+loudly. The full-data gate does not run on GitHub-hosted runners because the
+protected fixture is unavailable there.
 `GWAS_ENGINE_DATA_DIR` can point at a fixture tree outside the repository's
 ignored `data/` directory. `G_REGENIE_PARITY_DEVICE` may override the recorded
 `gpu` device only for a deliberate diagnostic run on an appropriate allocation.
@@ -71,8 +69,7 @@ Its 418,943-row output is
 `ba7278541d211a8ca446f5af3d45beba06030ad40f8124651db3038c196dac33`.
 The pinned log SHA-256 is
 `c4002866c86dd67ebe23fcb563f17488635b59547cc30baa3a8566730e2e0e5b`.
-The workflow remains diagnostic until current HEAD completes the full
-comparison.
+This workflow is release-blocking.
 
 The binary approximate-Firth oracle was generated with:
 
@@ -86,17 +83,24 @@ Its 418,943-row output is
 `0b9dc124525b6fec63e1b0d3f446263c05f690862235bd84f51b1b3c77b6ed72`.
 The pinned log records 17,938 corrections and zero correction failures.
 
-The binary tolerance qualification was observed at merge commit `bf5439aa`
-with JAX and jaxlib 0.11.0 and native-library SHA-256
-`de785821de0e3558a7dfada4cd7dbe8eacced67ffa02006feacdab5db4db39c6`.
-The standard `bench-binary-hot-gpu-smoke` production configuration produced
-all-row maximum absolute differences of `0.0006930` (`BETA`), `0.0002226`
-(`SE`), `0.0013471` (`CHISQ`), and `0.0003654` (`LOG10P`), with exact
-significance classifications and 17,938/0 correction/failure counts. That
-temporary output was removed with its completed worktree, as required by the
-worktree cleanup policy. The workflow therefore remains diagnostic until the
-same result is reproduced on current HEAD; the absence of the old path is not
-presented as surviving evidence.
+Both binary gates were qualified on `landau` against the pinned full
+chromosome oracle. The qualified source is commit
+`68f831f9ba51e28140b281c786555e3af6c36d4f`; the pre-commit report identifies
+its frozen parent `6ad69f40607c83fe95edb99d217e6195457975b1` and source-diff SHA-256
+`8bf2ccce77b82dc793826048a259e2f4abfba9c99235ac623a9978d23a2b8fd7`.
+JAX and jaxlib were 0.11.0, and the native-library SHA-256 was
+`8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c`.
+
+The score-only maximum absolute differences were
+`8.72401046753124e-6` (`BETA`), `9.53237915035654e-6` (`SE`),
+`5.738945007305318e-5` (`CHISQ`), and `1.5566101074115934e-5`
+(`LOG10P`). Approximate-Firth maxima were `8.72401046753124e-6`,
+`9.53237915035654e-6`, `8.694763183569876e-5`, and
+`1.5566101074115934e-5`, respectively. Both workflows matched all 418,943
+variant keys, sample counts, schemas, and significance classifications.
+Score-only produced no corrections or failures; approximate Firth matched the
+expected 17,938 corrections and zero failures. Qualification reports are
+generated under ignored `results/` paths and are not committed artifacts.
 
 Before launching `g`, the suite verifies SHA-256 for the BGEN, Oxford sample
 file, phenotype, covariates, Step-1 prediction list, and every `.loco` file
