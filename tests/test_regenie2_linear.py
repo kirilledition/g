@@ -15,14 +15,14 @@ from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
 # The independent oracle uses float64 and production uses float32 reductions.
-# These exclusive per-statistic bounds are approximately twice the measured
-# maxima (1.09e-7, 9.34e-8, 6.18e-7, and 2.11e-7 respectively). That headroom
-# covers the expected epsilon-scaled forward error of this eight-sample fixture
-# while preventing one statistic from inheriting another's wider allowance.
-LINEAR_BETA_ABSOLUTE_TOLERANCE = 2.2e-7
-LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.0e-7
-LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE = 1.3e-6
-LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 4.5e-7
+# These exclusive per-statistic bounds exceed twice the largest measured
+# cross-host maxima (5.48e-7, 1.03e-7, 4.52e-6, and 1.24e-6 respectively).
+# That headroom covers architecture-dependent float32 lowering of this
+# eight-sample fixture while keeping each statistic independently constrained.
+LINEAR_BETA_ABSOLUTE_TOLERANCE = 1.2e-6
+LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.2e-7
+LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE = 1.0e-5
+LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 2.6e-6
 
 
 @dataclass(frozen=True)
