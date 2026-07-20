@@ -105,3 +105,87 @@ pub(crate) fn describe_logging_subscriber_policy(policy: &LoggingSubscriberPolic
 fn python_bool(value: bool) -> &'static str {
     if value { "True" } else { "False" }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::test_support::disabled_session_policy;
+
+    #[test]
+    fn subscriber_compatibility_uses_only_process_global_topology() {
+        let configured = disabled_session_policy();
+        let mut requested = disabled_session_policy();
+        requested.log_file = Some(PathBuf::from("second.log"));
+        assert!(configured.require_compatible_process_logging_policy(&requested).is_err());
+
+        let mut configured_with_files = disabled_session_policy();
+        configured_with_files.log_file = Some(PathBuf::from("first.log"));
+        configured_with_files.telemetry_stream_file = Some(PathBuf::from("first.jsonl"));
+        let mut requested_with_files = disabled_session_policy();
+        requested_with_files.log_file = Some(PathBuf::from("second.log"));
+        requested_with_files.telemetry_stream_file = Some(PathBuf::from("second.jsonl"));
+        requested_with_files.queue_size = 1;
+        requested_with_files.lossy = true;
+        assert_eq!(configured_with_files.require_compatible_process_logging_policy(&requested_with_files), Ok(()));
+    }
+
+    #[test]
+    fn every_subscriber_setting_participates_in_compatibility() {
+        let configured = disabled_session_policy();
+        let mut variants = Vec::new();
+
+        let mut log_filter = disabled_session_policy();
+        log_filter.log_filter = "debug".to_owned();
+        variants.push(log_filter);
+
+        let mut log_stderr = disabled_session_policy();
+        log_stderr.log_stderr = true;
+        variants.push(log_stderr);
+
+        let mut log_file = disabled_session_policy();
+        log_file.log_file = Some(PathBuf::from("run.log"));
+        variants.push(log_file);
+
+        let mut telemetry = disabled_session_policy();
+        telemetry.telemetry_stream_file = Some(PathBuf::from("events.jsonl"));
+        variants.push(telemetry);
+
+        let mut source_location = disabled_session_policy();
+        source_location.include_source_location = true;
+        variants.push(source_location);
+
+        let mut span_events = disabled_session_policy();
+        span_events.include_span_events = true;
+        variants.push(span_events);
+
+        for requested in variants {
+            let error = configured
+                .require_compatible_process_logging_policy(&requested)
+                .expect_err("changed subscriber setting should be incompatible");
+            assert!(error.to_string().contains("Process-global logging policies differ"));
+        }
+    }
+
+    #[test]
+    fn subscriber_description_and_owned_projection_are_stable() {
+        let policy = LoggingSubscriberPolicy {
+            log_filter: Cow::Borrowed("g=trace"),
+            log_stderr: true,
+            log_file_enabled: false,
+            structured_log_enabled: true,
+            include_source_location: false,
+            include_span_events: true,
+        };
+        assert_eq!(
+            describe_logging_subscriber_policy(&policy),
+            "log-filter=g=trace, log-stderr=True, log-file-enabled=False, structured-log-enabled=True, \
+             include-source-location=False, include-span-events=True"
+        );
+        let owned = policy.into_owned();
+        assert!(matches!(&owned.log_filter, Cow::Owned(_)));
+        assert_eq!(owned.log_filter, "g=trace");
+    }
+}

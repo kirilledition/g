@@ -213,3 +213,57 @@ fn lock_subscriber_state() -> Result<std::sync::MutexGuard<'static, LoggingSubsc
 const fn resolve_span_events(include_span_events: bool) -> FmtSpan {
     if include_span_events { FmtSpan::FULL } else { FmtSpan::NONE }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    use tracing_subscriber::fmt::writer::MakeWriter as _;
+
+    use super::*;
+    use crate::test_support::{RUNTIME_GLOBAL_TEST_MUTEX, TemporaryDirectory, disabled_session_policy};
+
+    #[test]
+    fn run_logging_session_routes_flushes_and_releases_file_writer() {
+        let _global_guard = RUNTIME_GLOBAL_TEST_MUTEX.lock().expect("runtime global test mutex should be available");
+        let temporary_directory = TemporaryDirectory::new("logging-session");
+        let log_path = temporary_directory.path().join("nested/runtime.log");
+        let mut policy = disabled_session_policy();
+        policy.log_file = Some(log_path.clone());
+        let mut session = RunLoggingSession::new(&policy).expect("logging session should open");
+
+        let duplicate_error = RunLoggingSession::new(&policy).err().expect("duplicate writer should fail");
+        assert!(matches!(&duplicate_error, LoggingSinkError::Writer(_)));
+        assert!(duplicate_error.to_string().contains("already active"));
+        assert!(duplicate_error.source().is_some());
+
+        let factory = telemetry_writer::SharedLogWriterFactory::new(telemetry_writer::SharedLogWriterKind::File);
+        let mut routed_writer = factory.make_writer();
+        routed_writer.write_all(b"routed record\n").expect("shared route should accept record");
+        drop(routed_writer);
+        session.finish().expect("logging session should flush");
+        session.finish().expect("logging finish should be idempotent");
+        assert_eq!(std::fs::read(&log_path).expect("runtime log should be readable"), b"routed record\n");
+
+        drop(session);
+        let dropped_session = RunLoggingSession::new(&policy).expect("writer route should be reusable after finish");
+        drop(dropped_session);
+        let mut replacement = RunLoggingSession::new(&policy).expect("drop should unregister file writer");
+        replacement.finish().expect("replacement session should finish");
+    }
+
+    #[test]
+    fn logging_errors_and_span_policy_have_stable_diagnostics() {
+        let invalid = LoggingSinkError::InvalidLogFilter { message: "bad directive".to_owned() };
+        assert_eq!(invalid.to_string(), "Invalid g log filter: bad directive");
+        assert!(invalid.source().is_none());
+        let poisoned = LoggingSinkError::LoggingStateMutexPoisoned;
+        assert_eq!(poisoned.to_string(), "Logging subscriber-state mutex was poisoned.");
+        assert!(poisoned.source().is_none());
+        assert_eq!(format!("{:?}", resolve_span_events(false)), "FmtSpan::NONE");
+        assert_eq!(
+            format!("{:?}", resolve_span_events(true)),
+            "FmtSpan::NEW | FmtSpan::ENTER | FmtSpan::EXIT | FmtSpan::CLOSE"
+        );
+    }
+}

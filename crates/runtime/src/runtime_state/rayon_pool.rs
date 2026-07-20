@@ -106,3 +106,38 @@ impl ProcessRuntimeState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::execute_isolated_test_body;
+
+    #[test]
+    fn rayon_configuration_validates_records_and_enforces_process_compatibility() {
+        if !execute_isolated_test_body(
+            "runtime_state::rayon_pool::tests::rayon_configuration_validates_records_and_enforces_process_compatibility",
+            "G_RUNTIME_RAYON_TEST_CHILD",
+        ) {
+            return;
+        }
+        let mut state = ProcessRuntimeState::default();
+
+        let zero_error = state.configure_rayon_thread_pool(0).expect_err("zero threads should fail");
+        assert_eq!(zero_error.to_string(), "Rayon thread count must be positive.");
+        assert!(zero_error.source().is_some());
+        assert_eq!(state.rayon_thread_count, None);
+
+        let negative_error = state.configure_rayon_thread_pool(-1).expect_err("negative threads should fail");
+        assert_eq!(negative_error.to_string(), "Rayon thread count must be positive.");
+        assert_eq!(state.rayon_thread_count, None);
+
+        state.configure_rayon_thread_pool(2).expect("valid thread count should configure Rayon");
+        assert_eq!(state.rayon_thread_count, Some(2));
+        assert_eq!(rayon::current_num_threads(), 2);
+        state.configure_rayon_thread_pool(2).expect("repeated compatible configuration should be a no-op");
+
+        let compatibility_error = state.configure_rayon_thread_pool(3).expect_err("changed thread count should fail");
+        assert!(compatibility_error.to_string().contains("Configured thread count: 2. Requested thread count: 3"));
+        assert!(compatibility_error.source().is_some());
+    }
+}

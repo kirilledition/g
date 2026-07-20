@@ -60,3 +60,53 @@ impl TelemetryWriterCounterSnapshot {
 fn supported_usize_to_u64(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn counter_snapshot_tracks_written_and_dropped_events() {
+        let state = TelemetryEventCounterState::new(true);
+        state.record_event_count(0);
+        state.record_event_count(5);
+        assert_eq!(
+            state.counter_snapshot(2),
+            TelemetryWriterCounterSnapshot {
+                accepted_event_count: 5,
+                written_event_count: 3,
+                dropped_event_count: 2,
+                queue_dropped_event_count: 2,
+                lossy: true,
+            }
+        );
+        assert_eq!(state.counter_snapshot(20).written_event_count, 0);
+        assert_eq!(TelemetryWriterCounterSnapshot::empty().accepted_event_count, 0);
+        assert!(TelemetryWriterCounterSnapshot::empty().lossy);
+    }
+
+    #[test]
+    fn accepted_counter_is_thread_safe_and_saturating() {
+        let state = Arc::new(TelemetryEventCounterState::new(false));
+        let mut workers = Vec::new();
+        for _worker_index in 0..4 {
+            let worker_state = Arc::clone(&state);
+            workers.push(std::thread::spawn(move || {
+                for _event_index in 0..25 {
+                    worker_state.record_event_count(1);
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().expect("counter worker should complete");
+        }
+        assert_eq!(state.counter_snapshot(0).accepted_event_count, 100);
+
+        state.accepted_event_count.store(usize::MAX, Ordering::Relaxed);
+        state.record_event_count(1);
+        let saturated = state.counter_snapshot(0);
+        assert_eq!(saturated.accepted_event_count, u64::try_from(usize::MAX).unwrap_or(u64::MAX));
+    }
+}

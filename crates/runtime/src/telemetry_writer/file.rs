@@ -56,3 +56,41 @@ pub(super) fn build_telemetry_file_writer(
     let event_counter_state = TelemetryEventCounterState::new(log_lossy);
     Ok((TelemetryWriterFactory::new(writer, event_counter_state), guard))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write as _;
+
+    use super::*;
+    use crate::test_support::TemporaryDirectory;
+
+    #[test]
+    fn log_file_writer_creates_parents_flushes_and_appends() {
+        let temporary_directory = TemporaryDirectory::new("log-file-writer");
+        let path = temporary_directory.path().join("nested/runtime.log");
+
+        let (mut first_writer, first_guard) =
+            build_log_file_writer(&path, 16, false).expect("first log writer should open");
+        first_writer.write_all(b"first\n").expect("first record should enqueue");
+        drop(first_writer);
+        drop(first_guard);
+
+        let (mut second_writer, second_guard) =
+            build_log_file_writer(&path, 16, false).expect("second log writer should open");
+        second_writer.write_all(b"second\n").expect("second record should enqueue");
+        drop(second_writer);
+        drop(second_guard);
+
+        assert_eq!(std::fs::read(&path).expect("log file should be readable"), b"first\nsecond\n");
+    }
+
+    #[test]
+    fn log_file_writer_reports_parent_creation_failures() {
+        let temporary_directory = TemporaryDirectory::new("log-file-error");
+        let blocking_file = temporary_directory.path().join("blocking-file");
+        std::fs::write(&blocking_file, b"file").expect("blocking fixture should be written");
+        let error = build_log_file_writer(&blocking_file.join("runtime.log"), 16, false)
+            .expect_err("file parent should reject directory creation");
+        assert!(matches!(error.kind(), io::ErrorKind::AlreadyExists | io::ErrorKind::NotADirectory));
+    }
+}
