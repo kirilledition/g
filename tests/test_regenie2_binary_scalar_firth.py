@@ -1,471 +1,346 @@
+"""Correctness tests for scalar approximate-Firth primitives."""
+
 from __future__ import annotations
 
-import typing
+import math
+from dataclasses import dataclass
 
-import jax
-import jax.experimental
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from g import execution_plan, types
-from g.compute.regenie2_binary import api as regenie2_binary
+import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
-from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-from g.interface import config as interface_config
-
-if typing.TYPE_CHECKING:
-    import pytest
-
-SCORE_DTYPE = types.FloatingPointDtype.FLOAT32
-SCORE_ONLY_CORRECTION_PLAN = types.BinaryCorrectionPlan(
-    method=types.BinaryFallbackMethod.SCORE_ONLY,
-    p_threshold=0.05,
-    firth_se=False,
-)
 
 
-def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
-    """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
+@dataclass(frozen=True)
+class ScalarFirthFixture:
+    """Deterministic scalar approximate-Firth operands."""
+
+    phenotype_vector: npt.NDArray[np.float64]
+    genotype_vector: npt.NDArray[np.float64]
+    offset_vector: npt.NDArray[np.float64]
+    active_sample_mask: npt.NDArray[np.bool_]
+    non_active_deviance: float
+    beta: float
 
 
-def build_stubbed_scalar_attempt_result(
-    operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
-    attempt_code: int,
-    *,
-    valid: bool,
-    runtime_attempts: list[int],
-) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-    """Build a scalar attempt result that records runtime execution."""
+@dataclass(frozen=True)
+class ScalarFirthComponentReference:
+    """Independent scalar Firth component values."""
 
-    def record_runtime_attempt(attempt_code_array: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
-        observed_attempt_code = int(np.asarray(attempt_code_array))
-        runtime_attempts.append(observed_attempt_code)
-        return np.asarray(observed_attempt_code, dtype=np.int32)
+    genotype_information: float
+    score_adjustment: float
+    penalized_deviance: float
+    score: float
 
-    observed_attempt_code = jax.experimental.io_callback(
-        record_runtime_attempt,
-        jax.ShapeDtypeStruct((), jnp.int32),
-        jnp.asarray(attempt_code, dtype=jnp.int32),
-        ordered=True,
-    )
-    scalar_dtype = operands.offset_vector.dtype
-    observed_float = observed_attempt_code.astype(scalar_dtype)
-    valid_mask = (observed_attempt_code == observed_attempt_code) & jnp.asarray(valid, dtype=jnp.bool_)
-    failure_reason_code = jnp.where(
-        valid_mask,
-        regenie2_binary_firth_types.FirthConvergenceReason.CONVERGED.value,
-        regenie2_binary_firth_types.FirthConvergenceReason.NUMERICAL_FAILURE.value,
-    ).astype(jnp.int32)
-    return regenie2_binary_firth_types.ScalarFirthAttemptResult(
-        beta=observed_float,
-        standard_error=jnp.asarray(1.0, dtype=scalar_dtype),
-        chi_squared=observed_float + jnp.asarray(1.0, dtype=scalar_dtype),
-        log10_p_value=observed_float + jnp.asarray(2.0, dtype=scalar_dtype),
-        penalized_deviance=operands.deviance_null - observed_float - jnp.asarray(1.0, dtype=scalar_dtype),
-        genotype_information=jnp.asarray(1.0, dtype=scalar_dtype),
-        converged=valid_mask,
-        valid=valid_mask,
-        iteration_count=observed_attempt_code,
-        failure_reason_code=failure_reason_code,
+
+def build_scalar_firth_fixture() -> ScalarFirthFixture:
+    """Build a well-conditioned lane with one inactive sample."""
+    return ScalarFirthFixture(
+        phenotype_vector=np.asarray([0.0, 1.0, 0.0, 1.0, 1.0, 0.0], dtype=np.float64),
+        genotype_vector=np.asarray([0.2, 1.1, 0.5, 1.8, 1.3, 0.7], dtype=np.float64),
+        offset_vector=np.asarray([-0.2, 0.1, -0.1, 0.3, 0.2, -0.05], dtype=np.float64),
+        active_sample_mask=np.asarray([True, True, True, True, False, True], dtype=np.bool_),
+        non_active_deviance=0.7,
+        beta=0.4,
     )
 
 
-def run_stubbed_single_variant_scalar_firth(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    skip_firth: bool,
-    null_failed: bool,
-    pseudo_valid: bool,
-    zero_start_valid: bool,
-    warm_start_valid: bool,
-    sparse_correction: bool,
-    warm_start_beta: float,
-) -> tuple[regenie2_binary_firth_types.FirthVariantResult, list[int]]:
-    """Run the scalar selector with observable runtime attempt callbacks."""
-    runtime_attempts: list[int] = []
+def build_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
+    """Build a small but production-shaped scalar solver policy."""
+    return regenie2_binary_config.BinaryKernelConfig(
+        numerical=regenie2_binary_config.BinaryNumericalConfig(
+            minimum_probability=1.0e-7,
+            minimum_variance=1.0e-10,
+            relative_variance_tolerance=1.0e-7,
+        ),
+        null_logistic=regenie2_binary_config.BinaryNullLogisticConfig(
+            maximum_iterations=100,
+            coefficient_tolerance=1.0e-6,
+        ),
+        firth_candidate=regenie2_binary_config.FirthCandidateConfig(
+            batch_size=4,
+            candidate_capacity=8,
+        ),
+        approximate_firth=regenie2_binary_config.ApproximateFirthConfig(
+            maximum_iterations=30,
+            gradient_tolerance=1.0e-8,
+            maximum_step_size=5.0,
+            pseudo_maximum_iterations=20,
+            pseudo_inner_maximum_iterations=30,
+            line_search_maximum_attempts=20,
+            sparse_carrier_dosage_threshold=0.5,
+            use_cuda_components=False,
+        ),
+        null_firth=regenie2_binary_config.NullFirthConfig(
+            maximum_iterations=30,
+            gradient_tolerance=1.0e-8,
+            maximum_step_size=5.0,
+            fallback_iteration_multiplier=2,
+            fallback_step_divisor=2.0,
+            line_search_maximum_attempts=20,
+            step_halving_scale=0.5,
+        ),
+    )
 
-    def run_pseudo_attempt(
-        operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
-    ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-        return build_stubbed_scalar_attempt_result(
-            operands,
-            1,
-            valid=pseudo_valid,
-            runtime_attempts=runtime_attempts,
+
+def compute_scalar_firth_component_reference(
+    fixture: ScalarFirthFixture,
+) -> ScalarFirthComponentReference:
+    """Evaluate the scalar penalized likelihood and adjusted score in NumPy."""
+    linear_predictor = fixture.offset_vector + fixture.genotype_vector * fixture.beta
+    probability = np.reciprocal(1.0 + np.exp(-linear_predictor))
+    weight = probability * (1.0 - probability)
+    active_weight = np.where(fixture.active_sample_mask, weight, 0.0)
+    information_diagonal = fixture.genotype_vector**2 * active_weight
+    genotype_information = float(np.sum(information_diagonal))
+    negative_log_likelihood = -np.where(
+        fixture.phenotype_vector > 0.5,
+        np.log(probability),
+        np.log1p(-probability),
+    )
+    active_deviance = 2.0 * np.sum(np.where(fixture.active_sample_mask, negative_log_likelihood, 0.0))
+    score_adjustment = float(
+        np.sum(
+            np.where(
+                fixture.active_sample_mask,
+                fixture.genotype_vector * information_diagonal * (0.5 - probability),
+                0.0,
+            )
         )
-
-    def run_zero_start_attempt(
-        operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
-    ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-        return build_stubbed_scalar_attempt_result(
-            operands,
-            2,
-            valid=zero_start_valid,
-            runtime_attempts=runtime_attempts,
+        / genotype_information
+    )
+    score = float(
+        np.sum(
+            np.where(
+                fixture.active_sample_mask,
+                fixture.genotype_vector * (fixture.phenotype_vector - probability),
+                0.0,
+            )
         )
-
-    def run_warm_start_attempt(
-        operands: regenie2_binary_firth_types.ScalarApproximateFirthDispatchOperands,
-    ) -> regenie2_binary_firth_types.ScalarFirthAttemptResult:
-        return build_stubbed_scalar_attempt_result(
-            operands,
-            3,
-            valid=warm_start_valid,
-            runtime_attempts=runtime_attempts,
-        )
-
-    monkeypatch.setattr(regenie2_binary_firth_scalar_approx, "run_scalar_pseudo_firth_attempt", run_pseudo_attempt)
-    monkeypatch.setattr(
-        regenie2_binary_firth_scalar_approx,
-        "run_scalar_zero_start_newton_raphson_attempt",
-        run_zero_start_attempt,
+        + score_adjustment
     )
-    monkeypatch.setattr(
-        regenie2_binary_firth_scalar_approx,
-        "run_scalar_warm_start_newton_raphson_attempt",
-        run_warm_start_attempt,
-    )
-    jax.clear_caches()
-
-    phenotype_vector = jnp.asarray([0.0, 1.0, 1.0], dtype=jnp.float32)
-    genotype_vector = jnp.asarray([0.0, 1.0, 2.0], dtype=jnp.float32)
-    offset_vector = jnp.zeros(phenotype_vector.shape, dtype=jnp.float32)
-    carrier_sample_mask = jnp.asarray([False, True, True], dtype=jnp.bool_)
-    kernel_config = build_default_binary_kernel_config()
-
-    @jax.jit
-    def fit_model() -> regenie2_binary_firth_types.FirthVariantResult:
-        return regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-            phenotype_vector=phenotype_vector,
-            genotype_vector=genotype_vector,
-            offset_vector=offset_vector,
-            carrier_sample_mask=carrier_sample_mask,
-            sparse_correction=jnp.asarray(sparse_correction, dtype=jnp.bool_),
-            warm_start_beta=jnp.asarray(warm_start_beta, dtype=jnp.float32),
-            skip_firth=jnp.asarray(skip_firth, dtype=jnp.bool_),
-            null_failed=jnp.asarray(null_failed, dtype=jnp.bool_),
-            kernel_config=kernel_config,
-        )
-
-    result = fit_model()
-    jax.block_until_ready(result.beta)
-    return result, runtime_attempts
-
-
-def build_scalar_fixture() -> tuple[regenie2_binary_state.Regenie2BinaryChromosomeState, jax.Array, jax.Array]:
-    """Build a deterministic separation fixture for scalar Firth tests."""
-    covariate_matrix = jnp.asarray(
-        [
-            [1.0, 20.0],
-            [1.0, 25.0],
-            [1.0, 30.0],
-            [1.0, 35.0],
-            [1.0, 40.0],
-            [1.0, 45.0],
-            [1.0, 50.0],
-            [1.0, 55.0],
-        ],
-        dtype=jnp.float32,
-    )
-    phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    genotype_vector = jnp.asarray([0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 2.0, 0.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector, SCORE_DTYPE)
-    kernel_config = build_default_binary_kernel_config()
-    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
-        state,
-        jnp.zeros_like(phenotype_vector),
-        SCORE_ONLY_CORRECTION_PLAN,
-        kernel_config,
-        SCORE_DTYPE,
-    )
-    residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth
-    residualized_genotype_vector = residualize_genotypes(chromosome_state, genotype_vector[None, :])[0]
-    return chromosome_state, genotype_vector, residualized_genotype_vector
-
-
-def test_regenie_logistic_deviance_matches_manual_formula() -> None:
-    phenotype_vector = jnp.asarray([0.0, 1.0, 1.0], dtype=jnp.float32)
-    probability_vector = jnp.asarray([0.25, 0.75, 0.50], dtype=jnp.float32)
-    active_sample_mask = jnp.asarray([True, True, False], dtype=jnp.bool_)
-
-    deviance = regenie2_binary_logistic.compute_logistic_deviance(
-        phenotype_vector,
-        probability_vector,
-        active_sample_mask,
+    return ScalarFirthComponentReference(
+        genotype_information=genotype_information,
+        score_adjustment=score_adjustment,
+        penalized_deviance=fixture.non_active_deviance + active_deviance - math.log(genotype_information),
+        score=score,
     )
 
-    expected = -2.0 * (np.log1p(-0.25) + np.log(0.75))
-    np.testing.assert_allclose(np.asarray(deviance), expected, rtol=1.0e-6)
 
-
-def test_scalar_pseudo_firth_components_match_formula() -> None:
-    phenotype_vector = jnp.asarray([0.0, 1.0, 1.0], dtype=jnp.float32)
-    genotype_vector = jnp.asarray([0.0, 1.0, 2.0], dtype=jnp.float32)
-    offset_vector = jnp.asarray([-0.2, 0.1, 0.3], dtype=jnp.float32)
-    active_sample_mask = jnp.asarray([True, True, True], dtype=jnp.bool_)
-
-    components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float32),
-        beta=jnp.asarray(0.4, dtype=jnp.float32),
-        kernel_config=build_default_binary_kernel_config(),
+def compute_fixture_components(
+    fixture: ScalarFirthFixture,
+) -> regenie2_binary_firth_types.ScalarFirthComponents:
+    """Evaluate the production pure-JAX scalar component path."""
+    return regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        genotype_vector=jnp.asarray(fixture.genotype_vector),
+        offset_vector=jnp.asarray(fixture.offset_vector),
+        active_sample_mask=jnp.asarray(fixture.active_sample_mask),
+        non_active_deviance=jnp.asarray(fixture.non_active_deviance),
+        beta=jnp.asarray(fixture.beta),
+        minimum_variance=jnp.asarray(1.0e-10),
+        use_cuda_components=False,
     )
 
-    probability_vector = regenie2_binary_logistic.compute_regenie_logistic_probability(
-        offset_vector + genotype_vector * 0.4
+
+def test_scalar_firth_components_match_independent_numpy_formula() -> None:
+    """Validate information, adjustment, penalized deviance, and score together."""
+    fixture = build_scalar_firth_fixture()
+    reference = compute_scalar_firth_component_reference(fixture)
+
+    observed = compute_fixture_components(fixture)
+
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.genotype_information,
+        reference.genotype_information,
+        1.0e-12,
     )
-    weight_vector = probability_vector * (1.0 - probability_vector)
-    genotype_information_diagonal = genotype_vector * genotype_vector * weight_vector
-    genotype_information = jnp.sum(genotype_information_diagonal)
-    leverage_vector = genotype_information_diagonal / genotype_information
-    adjusted_response = phenotype_vector + leverage_vector * (0.5 - probability_vector)
-    expected_score = jnp.sum(genotype_vector * (adjusted_response - probability_vector))
-    expected_deviance = regenie2_binary_logistic.compute_logistic_deviance(
-        phenotype_vector, probability_vector, active_sample_mask
-    ) - jnp.log(genotype_information)
-
-    np.testing.assert_allclose(np.asarray(components.score), np.asarray(expected_score), rtol=1.0e-6)
-    np.testing.assert_allclose(
-        np.asarray(components.penalized_deviance),
-        np.asarray(expected_deviance),
-        rtol=1.0e-6,
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.score_adjustment,
+        reference.score_adjustment,
+        1.0e-12,
     )
-    assert bool(np.asarray(components.valid))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.penalized_deviance,
+        reference.penalized_deviance,
+        1.0e-12,
+    )
+    tests.numerical.assert_absolute_difference_less_than(observed.score, reference.score, 1.0e-12)
+    assert bool(np.asarray(observed.valid))
 
 
-def test_scalar_approximate_firth_uses_nr_fallback_after_pseudo_attempt() -> None:
-    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
-    offset_vector = chromosome_state.null_firth_offset
-    kernel_config = build_default_binary_kernel_config()
+def test_scalar_firth_rejects_zero_genotype_information() -> None:
+    """Reject a collinear or empty scalar genotype lane."""
+    observed = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
+        phenotype_vector=jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jnp.float64),
+        genotype_vector=jnp.zeros((4,), dtype=jnp.float64),
+        offset_vector=jnp.zeros((4,), dtype=jnp.float64),
+        active_sample_mask=jnp.ones((4,), dtype=jnp.bool_),
+        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
+        beta=jnp.asarray(0.0, dtype=jnp.float64),
+        minimum_variance=jnp.asarray(1.0e-10, dtype=jnp.float64),
+        use_cuda_components=False,
+    )
 
-    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-        phenotype_vector=chromosome_state.phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+    assert not bool(np.asarray(observed.valid))
+    assert float(np.asarray(observed.genotype_information)) == 0.0
+
+
+def test_scalar_solver_parameter_budget_is_split_between_pseudo_and_newton() -> None:
+    """Keep the total configured budget bounded across both solver phases."""
+    observed = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+        build_binary_kernel_config()
+    )
+
+    assert int(np.asarray(observed.pseudo_maximum_iterations)) == 15
+    assert int(np.asarray(observed.newton_raphson_maximum_iterations)) == 15
+    assert int(np.asarray(observed.pseudo_inner_maximum_iterations)) == 30
+    assert int(np.asarray(observed.line_search_maximum_attempts)) == 20
+    assert not observed.use_cuda_components
+
+
+def test_scalar_line_search_with_zero_attempts_retains_trusted_state() -> None:
+    """Do not move beta when the line-search budget is exhausted up front."""
+    fixture = build_scalar_firth_fixture()
+    current_components = compute_fixture_components(fixture)
+    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        genotype_vector=jnp.asarray(fixture.genotype_vector),
+        offset_vector=jnp.asarray(fixture.offset_vector),
+        active_sample_mask=jnp.asarray(fixture.active_sample_mask),
+        non_active_deviance=jnp.asarray(fixture.non_active_deviance),
+        current_beta=jnp.asarray(fixture.beta),
+        current_penalized_deviance=current_components.penalized_deviance,
+        current_genotype_information=current_components.genotype_information,
+        current_score=current_components.score,
+        current_valid=current_components.valid,
+        initial_step_size=jnp.asarray(1.0),
+        maximum_attempts=0,
+        minimum_variance=jnp.asarray(1.0e-10),
+        use_cuda_components=False,
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(observed.beta, fixture.beta, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.penalized_deviance,
+        current_components.penalized_deviance,
+        1.0e-15,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.genotype_information,
+        current_components.genotype_information,
+        1.0e-15,
+    )
+    tests.numerical.assert_absolute_difference_less_than(observed.score, current_components.score, 1.0e-15)
+    assert int(np.asarray(observed.attempt_count)) == 0
+    assert not bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+
+
+def test_sparse_initialization_accounts_for_inactive_null_deviance() -> None:
+    """Retain the full-sample null objective while solving on carriers only."""
+    phenotype = jnp.asarray([0.0, 1.0, 0.0, 1.0, 1.0], dtype=jnp.float64)
+    genotype = jnp.asarray([0.0, 1.0, 0.0, 1.5, 0.0], dtype=jnp.float64)
+    offset = jnp.asarray([-0.2, 0.1, 0.0, 0.3, -0.1], dtype=jnp.float64)
+    carrier_mask = genotype > 0.5
+    null_probability = regenie2_binary_logistic.compute_regenie_logistic_probability(offset)
+    full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype,
+        null_probability,
+        jnp.ones_like(phenotype, dtype=jnp.bool_),
+    )
+    solver_parameters = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+        build_binary_kernel_config()
+    )
+
+    observed = regenie2_binary_firth_scalar_approx.initialize_single_variant_regenie_approximate_firth(
+        phenotype_vector=phenotype,
+        genotype_vector=genotype,
+        offset_vector=offset,
+        carrier_sample_mask=carrier_mask,
+        full_null_deviance=full_null_deviance,
         sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
-        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
-        skip_firth=jnp.asarray(0, dtype=jnp.bool_),
-        null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=kernel_config,
+        solver_parameters=solver_parameters,
+    )
+    active_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype,
+        null_probability,
+        carrier_mask,
     )
 
-    assert bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.pseudo_firth_iteration_count)) > 0
-    assert int(np.asarray(result.correction_code)) == types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value
-    assert int(np.asarray(result.nr_zero_start_iteration_count)) == 0
-    assert int(np.asarray(result.nr_warm_start_iteration_count)) > 0
-
-
-def test_scalar_approximate_firth_reports_zero_counts_for_skipped_lane() -> None:
-    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
-    kernel_config = build_default_binary_kernel_config()
-
-    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-        phenotype_vector=chromosome_state.phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=chromosome_state.null_firth_offset,
-        carrier_sample_mask=raw_genotype_vector > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-        sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
-        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
-        skip_firth=jnp.asarray(1, dtype=jnp.bool_),
-        null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=kernel_config,
+    np.testing.assert_array_equal(np.asarray(observed.active_sample_mask), np.asarray(carrier_mask))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.non_active_deviance,
+        np.asarray(full_null_deviance - active_null_deviance),
+        1.0e-12,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.deviance_null,
+        np.asarray(full_null_deviance - jnp.log(observed.components.genotype_information)),
+        1.0e-12,
     )
 
-    assert not bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.pseudo_firth_iteration_count)) == 0
-    assert int(np.asarray(result.nr_zero_start_iteration_count)) == 0
-    assert int(np.asarray(result.nr_warm_start_iteration_count)) == 0
 
-
-def test_scalar_approximate_firth_runtime_skips_inactive_and_null_failed_lanes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    skipped_result, skipped_attempts = run_stubbed_single_variant_scalar_firth(
-        monkeypatch,
-        skip_firth=True,
-        null_failed=False,
-        pseudo_valid=True,
-        zero_start_valid=True,
-        warm_start_valid=True,
-        sparse_correction=True,
-        warm_start_beta=1.0,
+def test_scalar_newton_solver_converges_on_regular_dense_lane() -> None:
+    """Reach a valid finite terminal result from a shared initialization."""
+    phenotype = jnp.asarray([0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0], dtype=jnp.float64)
+    genotype = jnp.asarray([0.1, 1.2, 0.4, 1.8, 1.1, 0.3, 1.6, 0.7], dtype=jnp.float64)
+    offset = jnp.asarray([-0.1, 0.1, -0.05, 0.2, 0.1, -0.1, 0.15, 0.0], dtype=jnp.float64)
+    null_probability = regenie2_binary_logistic.compute_regenie_logistic_probability(offset)
+    full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+        phenotype,
+        null_probability,
+        jnp.ones_like(phenotype, dtype=jnp.bool_),
     )
-    assert skipped_attempts == []
-    assert not bool(np.asarray(skipped_result.valid_mask))
-    assert int(np.asarray(skipped_result.pseudo_firth_iteration_count)) == 0
-
-    null_failed_result, null_failed_attempts = run_stubbed_single_variant_scalar_firth(
-        monkeypatch,
-        skip_firth=False,
-        null_failed=True,
-        pseudo_valid=True,
-        zero_start_valid=True,
-        warm_start_valid=True,
-        sparse_correction=True,
-        warm_start_beta=1.0,
+    solver_parameters = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+        build_binary_kernel_config()
     )
-    assert null_failed_attempts == []
-    assert not bool(np.asarray(null_failed_result.valid_mask))
-    assert int(np.asarray(null_failed_result.pseudo_firth_iteration_count)) == 0
-
-
-def test_scalar_approximate_firth_runtime_pseudo_success_skips_newton_raphson(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result, runtime_attempts = run_stubbed_single_variant_scalar_firth(
-        monkeypatch,
-        skip_firth=False,
-        null_failed=False,
-        pseudo_valid=True,
-        zero_start_valid=True,
-        warm_start_valid=True,
-        sparse_correction=True,
-        warm_start_beta=1.0,
-    )
-
-    assert runtime_attempts == [1]
-    assert bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.correction_code)) == types.FirthCorrectionCode.PSEUDO_FIRTH.value
-    assert int(np.asarray(result.nr_zero_start_iteration_count)) == 0
-    assert int(np.asarray(result.nr_warm_start_iteration_count)) == 0
-
-
-def test_scalar_approximate_firth_runtime_zero_start_success_skips_warm_start(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result, runtime_attempts = run_stubbed_single_variant_scalar_firth(
-        monkeypatch,
-        skip_firth=False,
-        null_failed=False,
-        pseudo_valid=False,
-        zero_start_valid=True,
-        warm_start_valid=True,
-        sparse_correction=True,
-        warm_start_beta=1.0,
-    )
-
-    assert runtime_attempts == [1, 2]
-    assert bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.correction_code)) == types.FirthCorrectionCode.NEWTON_RAPHSON_ZERO_START.value
-    assert int(np.asarray(result.nr_warm_start_iteration_count)) == 0
-
-
-def test_scalar_approximate_firth_runtime_runs_warm_start_after_zero_start_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    result, runtime_attempts = run_stubbed_single_variant_scalar_firth(
-        monkeypatch,
-        skip_firth=False,
-        null_failed=False,
-        pseudo_valid=False,
-        zero_start_valid=False,
-        warm_start_valid=True,
-        sparse_correction=True,
-        warm_start_beta=1.0,
-    )
-
-    assert runtime_attempts == [1, 2, 3]
-    assert bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.correction_code)) == types.FirthCorrectionCode.NEWTON_RAPHSON_WARM_START.value
-
-
-def test_scalar_newton_line_search_exhaustion_does_not_move_beta() -> None:
-    phenotype_vector = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
-    genotype_vector = jnp.asarray([0.0, 1.0], dtype=jnp.float32)
-    offset_vector = jnp.zeros_like(phenotype_vector)
-    initial_beta = jnp.asarray(0.25, dtype=jnp.float32)
-    initial_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=jnp.ones_like(phenotype_vector, dtype=jnp.bool_),
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float32),
-        beta=initial_beta,
-        kernel_config=build_default_binary_kernel_config(),
-    )
-
-    result = regenie2_binary_firth_scalar_approx.fit_scalar_newton_raphson_firth(
-        deviance_null=initial_components.penalized_deviance,
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=jnp.ones_like(phenotype_vector, dtype=jnp.bool_),
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float32),
-        initial_beta=initial_beta,
-        maximum_iterations=1,
-        tolerance=jnp.asarray(1.0e-8, dtype=jnp.float32),
-        maximum_step_size=jnp.asarray(1.0, dtype=jnp.float32),
-        line_search_maximum_attempts=0,
-        kernel_config=build_default_binary_kernel_config(),
-    )
-
-    np.testing.assert_allclose(np.asarray(result.beta), np.asarray(initial_beta), rtol=0.0, atol=0.0)
-    assert not bool(np.asarray(result.valid))
-    assert not bool(np.asarray(result.converged))
-
-
-def test_sparse_carrier_only_flag_is_recorded_for_sparse_candidate() -> None:
-    chromosome_state, raw_genotype_vector, genotype_vector = build_scalar_fixture()
-    offset_vector = chromosome_state.null_firth_offset
-    kernel_config = build_default_binary_kernel_config()
-
-    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-        phenotype_vector=chromosome_state.phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        carrier_sample_mask=raw_genotype_vector > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
-        sparse_correction=jnp.asarray(1, dtype=jnp.bool_),
-        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
-        skip_firth=jnp.asarray(0, dtype=jnp.bool_),
-        null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=kernel_config,
-    )
-
-    assert bool(np.asarray(result.sparse_correction_mask))
-    assert np.isfinite(np.asarray(result.beta))
-    assert np.isfinite(np.asarray(result.chi_squared))
-
-
-def test_collinear_scalar_candidate_gets_numerical_failure_label() -> None:
-    covariate_matrix = jnp.asarray(
-        [[1.0, 20.0], [1.0, 25.0], [1.0, 30.0], [1.0, 35.0], [1.0, 40.0], [1.0, 45.0]],
-        dtype=jnp.float32,
-    )
-    phenotype_vector = jnp.asarray([0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=jnp.float32)
-    state = regenie2_binary.prepare_regenie2_binary_state(covariate_matrix, phenotype_vector, SCORE_DTYPE)
-    kernel_config = build_default_binary_kernel_config()
-    chromosome_state = regenie2_binary.prepare_regenie2_binary_chromosome_state(
-        state,
-        jnp.zeros_like(phenotype_vector),
-        SCORE_ONLY_CORRECTION_PLAN,
-        kernel_config,
-        SCORE_DTYPE,
-    )
-    raw_genotype_vector = covariate_matrix[:, 1]
-    residualize_genotypes = regenie2_binary_firth_scalar_approx.residualize_and_scale_genotypes_for_approximate_firth
-    genotype_vector = residualize_genotypes(chromosome_state, raw_genotype_vector[None, :])[0]
-
-    result = regenie2_binary_firth_scalar_approx.fit_single_variant_regenie_approximate_firth(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=chromosome_state.null_firth_offset,
-        carrier_sample_mask=raw_genotype_vector > kernel_config.approximate_firth.sparse_carrier_dosage_threshold,
+    initial_state = regenie2_binary_firth_scalar_approx.initialize_single_variant_regenie_approximate_firth(
+        phenotype_vector=phenotype,
+        genotype_vector=genotype,
+        offset_vector=offset,
+        carrier_sample_mask=jnp.ones_like(phenotype, dtype=jnp.bool_),
+        full_null_deviance=full_null_deviance,
         sparse_correction=jnp.asarray(0, dtype=jnp.bool_),
-        warm_start_beta=jnp.asarray(0.0, dtype=jnp.float32),
-        skip_firth=jnp.asarray(0, dtype=jnp.bool_),
-        null_failed=jnp.asarray(0, dtype=jnp.bool_),
-        kernel_config=kernel_config,
+        solver_parameters=solver_parameters,
     )
 
-    assert not bool(np.asarray(result.valid_mask))
-    assert int(np.asarray(result.failure_code)) == types.FirthFailureCode.NUMERICAL.value
+    terminal = regenie2_binary_firth_scalar_approx.run_initialized_scalar_newton_raphson_firth_solver(initial_state)
+    terminal_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
+        phenotype_vector=phenotype,
+        genotype_vector=genotype,
+        offset_vector=offset,
+        active_sample_mask=jnp.ones_like(phenotype, dtype=jnp.bool_),
+        non_active_deviance=jnp.asarray(0.0),
+        beta=terminal.beta,
+        minimum_variance=solver_parameters.minimum_variance,
+        use_cuda_components=False,
+    )
+
+    assert bool(np.asarray(terminal.valid_mask))
+    assert float(np.abs(np.asarray(terminal_components.score))) < 1.0e-8
+    assert float(np.asarray(terminal.chi_squared)) >= 0.0
+    assert float(np.asarray(terminal.standard_error)) > 0.0
+
+
+def test_finalization_uses_chi_square_tail_without_changing_status() -> None:
+    """Convert the terminal likelihood ratio and retain exact validity."""
+    terminal = regenie2_binary_firth_types.ScalarFirthTerminalResult(
+        beta=jnp.asarray([0.5, -0.2], dtype=jnp.float64),
+        standard_error=jnp.asarray([0.2, 0.3], dtype=jnp.float64),
+        chi_squared=jnp.asarray([4.0, 0.0], dtype=jnp.float64),
+        valid_mask=jnp.asarray([True, False]),
+    )
+    observed = regenie2_binary_firth_scalar_approx.finalize_scalar_firth_terminal_result(terminal)
+    reference_log10_p_value = np.asarray(
+        [-math.log10(math.erfc(math.sqrt(2.0))), 0.0],
+        dtype=np.float64,
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(observed.log10_p_value, reference_log10_p_value, 1.0e-12)
+    np.testing.assert_array_equal(np.asarray(observed.valid_mask), np.asarray([True, False]))

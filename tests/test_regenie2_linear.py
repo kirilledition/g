@@ -1,54 +1,43 @@
-"""Unit tests for REGENIE step 2 linear association kernel."""
+"""Correctness tests for shared and quantitative REGENIE kernels."""
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
-import jax
 import jax.numpy as jnp
 import numpy as np
-import numpy.testing
 import numpy.typing as npt
 
-from g import types
+import tests.numerical
 from g.compute.common import genotype, linalg, pvalue
-from g.compute.regenie2_linear import api as regenie2_linear
-from g.compute.regenie2_linear import config as regenie2_linear_config
-from g.compute.regenie2_linear import result as regenie2_linear_result
 from g.compute.regenie2_linear import score as regenie2_linear_score
 from g.compute.regenie2_linear import state as regenie2_linear_state
 
-DEFAULT_LINEAR_NUMERICAL_CONFIG = regenie2_linear_config.DEFAULT_LINEAR_NUMERICAL_CONFIG
+# The independent oracle uses float64 and production uses float32 reductions.
+# These exclusive per-statistic bounds are approximately twice the measured
+# maxima (1.09e-7, 9.34e-8, 6.18e-7, and 2.11e-7 respectively). That headroom
+# covers the expected epsilon-scaled forward error of this eight-sample fixture
+# while preventing one statistic from inheriting another's wider allowance.
+LINEAR_BETA_ABSOLUTE_TOLERANCE = 2.2e-7
+LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.0e-7
+LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE = 1.3e-6
+LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 4.5e-7
 
 
 @dataclass(frozen=True)
-class ReferenceRegenie2LinearChunkResult:
-    """Reference result from an unoptimized score-statistic formula."""
-
-    beta: jax.Array
-    standard_error: jax.Array
-    chi_squared: jax.Array
-    log10_p_value: jax.Array
-    valid_mask: jax.Array
-
-
-@dataclass(frozen=True)
-class LinearLocoCovariateFixture:
-    """Tiny REGENIE parity fixture with covariate-correlated LOCO predictions."""
+class LinearFixture:
+    """Deterministic inputs spanning allele orientation and LOCO projection."""
 
     covariate_matrix: npt.NDArray[np.float64]
-    phenotype_vector: npt.NDArray[np.float64]
-    genotype_matrix: npt.NDArray[np.float64]
-    loco_predictions: npt.NDArray[np.float64]
-    expected_beta: npt.NDArray[np.float64]
-    expected_standard_error: npt.NDArray[np.float64]
-    expected_chi_squared: npt.NDArray[np.float64]
-    expected_log10_p_value: npt.NDArray[np.float64]
+    phenotype_matrix: npt.NDArray[np.float64]
+    loco_prediction_matrix: npt.NDArray[np.float64]
+    genotype_matrix_by_variant: npt.NDArray[np.float64]
 
 
 @dataclass(frozen=True)
-class LinearFormulaResult:
-    """Linear association statistics for one candidate LOCO residualization formula."""
+class LinearReferenceResult:
+    """Independent NumPy result for one multi-trait linear chunk."""
 
     beta: npt.NDArray[np.float64]
     standard_error: npt.NDArray[np.float64]
@@ -56,1528 +45,398 @@ class LinearFormulaResult:
     log10_p_value: npt.NDArray[np.float64]
 
 
-def normalize_test_sample_major_genotypes(
-    genotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> jax.Array:
-    """Normalize sample-major test genotypes with explicit production arguments."""
-    return genotype.normalize_high_frequency_diploid_genotypes_sample_major(
-        genotype_matrix,
-        score_dtype=score_dtype,
-    )
-
-
-def normalize_test_variant_major_genotypes(
-    genotype_matrix_by_variant: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> jax.Array:
-    """Normalize variant-major test genotypes with explicit production arguments."""
-    return genotype.normalize_high_frequency_diploid_genotypes_variant_major(
-        genotype_matrix_by_variant,
-        score_dtype=score_dtype,
-    )
-
-
-def normalize_test_variant_major_genotypes_from_stats(
-    genotype_matrix_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array,
-    genotype_observation_count: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> jax.Array:
-    """Normalize native-stat variant-major test genotypes with explicit production arguments."""
-    return genotype.normalize_high_frequency_diploid_genotypes_variant_major_from_stats(
-        genotype_matrix_by_variant,
-        genotype_dosage_sum,
-        genotype_observation_count,
-        score_dtype=score_dtype,
-    )
-
-
-def compute_test_normalized_genotype_sum_squares_from_stats(
-    *,
-    genotype_dosage_sum: jax.Array,
-    genotype_observation_count: jax.Array,
-    genotype_imputed_dosage_square_sum: jax.Array,
-    sample_count: int,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> jax.Array:
-    """Compute normalized genotype sum squares with explicit production arguments."""
-    return regenie2_linear_score.compute_normalized_genotype_sum_squares_from_stats(
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        sample_count=sample_count,
-        score_dtype=score_dtype,
-    )
-
-
-def prepare_test_linear_state(
-    *,
-    covariate_matrix: jax.Array,
-    phenotype_vector: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> regenie2_linear_state.Regenie2LinearState:
-    """Prepare a single-trait linear state with explicit production arguments."""
-    return regenie2_linear.prepare_regenie2_linear_state(
-        covariate_matrix=covariate_matrix,
-        phenotype_vector=phenotype_vector,
-        score_dtype=score_dtype,
-    )
-
-
-def prepare_test_multi_linear_state(
-    covariate_matrix: jax.Array,
-    phenotype_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> regenie2_linear_state.Regenie2MultiLinearState:
-    """Prepare a multi-trait linear state with explicit production arguments."""
-    return regenie2_linear.prepare_regenie2_multi_linear_state(
-        covariate_matrix,
-        phenotype_matrix,
-        score_dtype=score_dtype,
-    )
-
-
-def compute_test_linear_chunk(
-    *,
-    state: regenie2_linear_state.Regenie2LinearState,
-    genotype_matrix: jax.Array,
-    loco_predictions: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
-    """Compute a single-trait linear chunk with explicit production arguments."""
-    return regenie2_linear.compute_regenie2_linear_chunk(
-        state=state,
-        genotype_matrix=genotype_matrix,
-        loco_predictions=loco_predictions,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def prepare_test_linear_chromosome_state(
-    state: regenie2_linear_state.Regenie2LinearState,
-    loco_predictions: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> regenie2_linear_state.Regenie2LinearChromosomeState:
-    """Prepare a single-trait chromosome state with explicit production arguments."""
-    return regenie2_linear.prepare_regenie2_linear_chromosome_state(
-        state=state,
-        loco_predictions=loco_predictions,
-        score_dtype=score_dtype,
-    )
-
-
-def prepare_test_multi_linear_chromosome_state(
-    state: regenie2_linear_state.Regenie2MultiLinearState,
-    loco_prediction_matrix: jax.Array,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-) -> regenie2_linear_state.Regenie2MultiLinearChromosomeState:
-    """Prepare a multi-trait chromosome state with explicit production arguments."""
-    return regenie2_linear.prepare_regenie2_multi_linear_chromosome_state(
-        state=state,
-        loco_prediction_matrix=loco_prediction_matrix,
-        score_dtype=score_dtype,
-    )
-
-
-def compute_test_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
-    genotype_matrix: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
-    """Compute a sample-major chunk from cached state with explicit production arguments."""
-    return regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_test_multi_linear_chunk_from_chromosome_state(
-    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
-    genotype_matrix: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
-    """Compute a multi-trait sample-major chunk from cached state with explicit production arguments."""
-    return regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state(
-        chromosome_state=chromosome_state,
-        genotype_matrix=genotype_matrix,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_test_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
-    """Compute a variant-major chunk from cached state with explicit production arguments."""
-    return regenie2_linear.compute_regenie2_linear_chunk_from_chromosome_state_variant_major(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_test_multi_linear_chunk_from_chromosome_state_variant_major(
-    chromosome_state: regenie2_linear_state.Regenie2MultiLinearChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
-    """Compute a multi-trait variant-major chunk from cached state with explicit production arguments."""
-    return regenie2_linear.compute_regenie2_multi_linear_chunk_from_chromosome_state_variant_major(
-        chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_test_linear_chunk_packed8_donating_inputs(
-    chromosome_state: regenie2_linear_state.Regenie2LinearChromosomeState,
-    packed_probability_pairs_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2LinearChunkResult:
-    """Compute a packed8 chunk from cached state with explicit production arguments."""
-    return regenie2_linear.compute_linear_chunk_packed8_donating_inputs(
-        chromosome_state=chromosome_state,
-        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_test_linear_chunk_trait_major_variant_major(
-    *,
-    whitened_covariate_transpose: jax.Array,
-    adjusted_residual_matrix: jax.Array,
-    adjusted_residual_projection_coordinate_matrix: jax.Array,
-    adjusted_residual_sum_squares: jax.Array,
-    degrees_of_freedom: jax.Array,
-    genotype_matrix_by_variant: jax.Array,
-    genotype_dosage_sum: jax.Array | None = None,
-    genotype_observation_count: jax.Array | None = None,
-    genotype_imputed_dosage_square_sum: jax.Array | None = None,
-    score_left_hand_matrix: jax.Array | None = None,
-    score_dtype: types.FloatingPointDtype = types.FloatingPointDtype.FLOAT32,
-    linear_minimum_variance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.minimum_variance,
-    linear_relative_variance_tolerance: float = DEFAULT_LINEAR_NUMERICAL_CONFIG.relative_variance_tolerance,
-) -> regenie2_linear_result.Regenie2MultiLinearChunkResult:
-    """Compute a trait-major variant-major linear chunk with explicit production arguments."""
-    return regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major(
-        whitened_covariate_transpose=whitened_covariate_transpose,
-        adjusted_residual_matrix=adjusted_residual_matrix,
-        adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
-        adjusted_residual_sum_squares=adjusted_residual_sum_squares,
-        degrees_of_freedom=degrees_of_freedom,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
-        genotype_dosage_sum=genotype_dosage_sum,
-        genotype_observation_count=genotype_observation_count,
-        genotype_imputed_dosage_square_sum=genotype_imputed_dosage_square_sum,
-        score_left_hand_matrix=score_left_hand_matrix,
-        score_dtype=score_dtype,
-        linear_minimum_variance=linear_minimum_variance,
-        linear_relative_variance_tolerance=linear_relative_variance_tolerance,
-    )
-
-
-def compute_score_reference_chunk(
-    state: regenie2_linear_state.Regenie2LinearState,
-    covariate_matrix: jax.Array,
-    genotype_matrix: jax.Array,
-    loco_predictions: jax.Array,
-) -> ReferenceRegenie2LinearChunkResult:
-    """Compute the unoptimized score-statistic formula for regression-test comparison."""
-    normalized_genotype_matrix = normalize_test_sample_major_genotypes(
-        genotype_matrix,
-    )
-    covariate_matrix_compute = jnp.asarray(covariate_matrix, dtype=jnp.float32)
-    covariate_matrix_transpose = covariate_matrix_compute.T
-    covariate_crossproduct_cholesky_factor = jnp.linalg.cholesky(covariate_matrix_transpose @ covariate_matrix_compute)
-    adjusted_residual = state.phenotype_residual - loco_predictions
-    covariate_genotype_crossproduct = covariate_matrix_transpose @ normalized_genotype_matrix
-    covariate_adjusted_residual_crossproduct = covariate_matrix_transpose @ adjusted_residual
-    genotype_projection = linalg.solve_positive_definite_system(
-        covariate_crossproduct_cholesky_factor,
-        covariate_genotype_crossproduct,
-    )
-    adjusted_residual_projection = linalg.solve_positive_definite_system(
-        covariate_crossproduct_cholesky_factor,
-        covariate_adjusted_residual_crossproduct,
-    )
-    raw_adjusted_residual_sum_squares = jnp.dot(adjusted_residual, adjusted_residual)
-    adjusted_residual_projection_sum_squares = covariate_adjusted_residual_crossproduct @ adjusted_residual_projection
-    adjusted_residual_sum_squares = jnp.maximum(
-        raw_adjusted_residual_sum_squares - adjusted_residual_projection_sum_squares,
-        0.0,
-    )
-    genotype_sum_squares = jnp.einsum("ij,ij->j", normalized_genotype_matrix, normalized_genotype_matrix)
-    projection_sum_squares = jnp.einsum("ij,ij->j", covariate_genotype_crossproduct, genotype_projection)
-    genotype_residual_sum_squares = jnp.maximum(genotype_sum_squares - projection_sum_squares, 0.0)
-    raw_covariance_with_phenotype = normalized_genotype_matrix.T @ adjusted_residual
-    covariance_projection = covariate_genotype_crossproduct.T @ adjusted_residual_projection
-    covariance_with_phenotype = raw_covariance_with_phenotype - covariance_projection
-    covariance_squared = covariance_with_phenotype * covariance_with_phenotype
-    positive_genotype_residual_mask = genotype_residual_sum_squares > 0.0
-    genotype_residual_sum_squares_inverse = jnp.where(
-        positive_genotype_residual_mask,
-        jnp.reciprocal(genotype_residual_sum_squares),
-        0.0,
-    )
-    beta = jnp.where(
-        positive_genotype_residual_mask,
-        covariance_with_phenotype * genotype_residual_sum_squares_inverse,
-        jnp.nan,
-    )
-    null_mean_squared_error = adjusted_residual_sum_squares / state.degrees_of_freedom
-    positive_null_mean_squared_error_mask = null_mean_squared_error > 0.0
-    standard_error = jnp.where(
-        positive_genotype_residual_mask & positive_null_mean_squared_error_mask,
-        jnp.sqrt(null_mean_squared_error * genotype_residual_sum_squares_inverse),
-        jnp.nan,
-    )
-    valid_statistic_mask = positive_genotype_residual_mask & positive_null_mean_squared_error_mask
-    chi_squared = jnp.where(
-        valid_statistic_mask,
-        covariance_squared * genotype_residual_sum_squares_inverse / null_mean_squared_error,
-        jnp.nan,
-    )
-    log10_p_value = jnp.where(
-        valid_statistic_mask,
-        pvalue.chi_squared_to_log10_p_value(chi_squared),
-        jnp.nan,
-    )
-    valid_mask = jnp.isfinite(beta) & jnp.isfinite(standard_error) & (standard_error > 0.0)
-    return ReferenceRegenie2LinearChunkResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-        valid_mask=valid_mask,
-    )
-
-
-def build_loco_covariate_fixture() -> LinearLocoCovariateFixture:
-    """Build a tiny fixture generated against REGENIE v4.1 step 2 output."""
-    sample_count = 12
-    correlated_covariate = np.asarray(
-        [-1.6, -1.3, -0.9, -0.5, -0.2, 0.0, 0.3, 0.5, 0.8, 1.1, 1.4, 1.7],
-        dtype=np.float64,
-    )
-    covariate_matrix = np.column_stack([np.ones(sample_count, dtype=np.float64), correlated_covariate])
-
-    base_residual = np.asarray(
-        [1.2, -0.7, 0.4, -1.1, 0.9, -0.2, 1.5, -1.4, 0.6, -0.8, 1.0, -1.3],
-        dtype=np.float64,
-    )
-    residual_projection = covariate_matrix @ np.linalg.solve(
-        covariate_matrix.T @ covariate_matrix,
-        covariate_matrix.T @ base_residual,
-    )
-    phenotype_residual = base_residual - residual_projection
-    phenotype_residual *= np.sqrt(sample_count - covariate_matrix.shape[1]) / np.linalg.norm(phenotype_residual)
-    phenotype_vector = 1.25 + 0.4 * correlated_covariate + phenotype_residual
-
-    loco_predictions = 0.65 * correlated_covariate + 0.15 * phenotype_residual
-    genotype_matrix = 2.0 - np.asarray(
-        [
-            [0.0, 0.0, 2.0],
-            [0.0, 1.0, 1.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 2.0, 2.0],
-            [2.0, 1.0, 1.0],
-            [2.0, 2.0, 0.0],
-            [0.0, 0.0, 2.0],
-            [1.0, 1.0, 1.0],
-            [2.0, 2.0, 0.0],
-            [0.0, 2.0, 1.0],
-            [1.0, 1.0, 1.0],
-            [2.0, 0.0, 1.0],
-        ],
-        dtype=np.float64,
-    )
-
-    return LinearLocoCovariateFixture(
-        covariate_matrix=covariate_matrix,
-        phenotype_vector=phenotype_vector,
-        genotype_matrix=genotype_matrix,
-        loco_predictions=loco_predictions,
-        expected_beta=np.asarray([0.0502609, 0.29938, -0.0627165], dtype=np.float64),
-        expected_standard_error=np.asarray([0.325455, 0.306214, 0.354042], dtype=np.float64),
-        expected_chi_squared=np.asarray([0.0238496, 0.955865, 0.0313802], dtype=np.float64),
-        expected_log10_p_value=np.asarray([0.0568676, 0.483821, 0.0658072], dtype=np.float64),
-    )
-
-
-def encode_integer_dosage_matrix_to_packed8_probability_pairs(
-    genotype_matrix_by_variant: npt.NDArray[np.float32],
-) -> npt.NDArray[np.uint8]:
-    """Encode exact 0/1/2 dosages as trusted unphased 8-bit probability pairs."""
-    packed_probability_pairs = np.zeros((*genotype_matrix_by_variant.shape, 2), dtype=np.uint8)
-    packed_probability_pairs[:, :, 0] = np.where(genotype_matrix_by_variant == 0.0, 255, 0).astype(np.uint8)
-    packed_probability_pairs[:, :, 1] = np.where(genotype_matrix_by_variant == 1.0, 255, 0).astype(np.uint8)
-    return packed_probability_pairs
-
-
-def residualize_against_covariates(
-    covariate_matrix: npt.NDArray[np.float64],
-    value_array: npt.NDArray[np.float64],
-) -> npt.NDArray[np.float64]:
-    """Residualize one vector or matrix against the covariate matrix."""
-    covariate_coefficients = np.linalg.solve(covariate_matrix.T @ covariate_matrix, covariate_matrix.T @ value_array)
-    return value_array - covariate_matrix @ covariate_coefficients
-
-
-def compute_regenie_null_mse_formula(
-    *,
-    covariate_matrix: npt.NDArray[np.float64],
-    adjusted_residual: npt.NDArray[np.float64],
-    genotype_matrix: npt.NDArray[np.float64],
-) -> LinearFormulaResult:
-    """Compute REGENIE default QT score statistics for a chosen adjusted residual."""
-    genotype_residual_matrix = residualize_against_covariates(covariate_matrix, genotype_matrix)
-    genotype_residual_sum_squares = np.einsum("ij,ij->j", genotype_residual_matrix, genotype_residual_matrix)
-    covariance_with_phenotype = genotype_residual_matrix.T @ adjusted_residual
-    residualized_adjusted_residual = residualize_against_covariates(covariate_matrix, adjusted_residual)
-    adjusted_residual_sum_squares = float(residualized_adjusted_residual @ residualized_adjusted_residual)
-    null_degrees_of_freedom = covariate_matrix.shape[0] - covariate_matrix.shape[1]
-
-    beta = covariance_with_phenotype / genotype_residual_sum_squares
-    standard_error = np.sqrt(adjusted_residual_sum_squares / null_degrees_of_freedom / genotype_residual_sum_squares)
-    chi_squared = np.square(beta / standard_error)
-    log10_p_value = np.asarray(
-        pvalue.chi_squared_to_log10_p_value(jnp.asarray(chi_squared, dtype=jnp.float32)),
-        dtype=np.float64,
-    )
-    return LinearFormulaResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-    )
-
-
-def compute_unprojected_null_mse_formula(
-    *,
-    covariate_matrix: npt.NDArray[np.float64],
-    adjusted_residual: npt.NDArray[np.float64],
-    genotype_matrix: npt.NDArray[np.float64],
-) -> LinearFormulaResult:
-    """Compute the incorrect formula that skips adjusted-residual covariate projection."""
-    genotype_residual_matrix = residualize_against_covariates(covariate_matrix, genotype_matrix)
-    genotype_residual_sum_squares = np.einsum("ij,ij->j", genotype_residual_matrix, genotype_residual_matrix)
-    covariance_with_phenotype = genotype_residual_matrix.T @ adjusted_residual
-    adjusted_residual_sum_squares = float(adjusted_residual @ adjusted_residual)
-    null_degrees_of_freedom = covariate_matrix.shape[0] - covariate_matrix.shape[1]
-
-    beta = covariance_with_phenotype / genotype_residual_sum_squares
-    standard_error = np.sqrt(adjusted_residual_sum_squares / null_degrees_of_freedom / genotype_residual_sum_squares)
-    chi_squared = np.square(beta / standard_error)
-    log10_p_value = np.asarray(
-        pvalue.chi_squared_to_log10_p_value(jnp.asarray(chi_squared, dtype=jnp.float32)),
-        dtype=np.float64,
-    )
-    return LinearFormulaResult(
-        beta=beta,
-        standard_error=standard_error,
-        chi_squared=chi_squared,
-        log10_p_value=log10_p_value,
-    )
-
-
-class TestPrepareRegenie2LinearState:
-    """Tests for prepare_regenie2_linear_state."""
-
-    def test_creates_valid_state(self) -> None:
-        """Ensure state preparation creates valid projection components."""
-        sample_count = 100
-        covariate_count = 3
-
-        covariate_matrix = jnp.ones((sample_count, covariate_count), dtype=jnp.float32)
-        covariate_matrix = covariate_matrix.at[:, 1].set(jnp.arange(sample_count, dtype=jnp.float32))
-        covariate_matrix = covariate_matrix.at[:, 2].set(jnp.arange(sample_count, dtype=jnp.float32) ** 2)
-
-        phenotype_vector = jnp.arange(sample_count, dtype=jnp.float32) + 0.5
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-
-        assert state.whitened_covariate_transpose.shape == (covariate_count, sample_count)
-        assert state.phenotype_residual.shape == (sample_count,)
-        assert float(state.degrees_of_freedom) == sample_count - covariate_count
-
-    def test_phenotype_residual_orthogonal_to_covariates(self) -> None:
-        """Ensure phenotype residual is orthogonal to covariate space."""
-        sample_count = 100
-        covariate_count = 2
-
-        rng = np.random.default_rng(42)
-        covariate_matrix = jnp.array(rng.standard_normal((sample_count, covariate_count)), dtype=jnp.float32)
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-
-        crossproduct = covariate_matrix.T @ state.phenotype_residual
-        numpy.testing.assert_allclose(crossproduct, jnp.zeros(covariate_count), atol=1e-4)
-
-    def test_chromosome_state_caches_score_left_hand_matrix(self) -> None:
-        """Ensure chromosome state caches the score-kernel matrix product input."""
-        sample_count = 24
-        covariate_count = 2
-        trait_count = 3
-        rng = np.random.default_rng(42)
-        covariate_matrix = jnp.asarray(rng.standard_normal((sample_count, covariate_count)), dtype=jnp.float32)
-        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
-        loco_prediction_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
-        state = prepare_test_multi_linear_state(covariate_matrix, phenotype_matrix)
-
-        chromosome_state = prepare_test_multi_linear_chromosome_state(
-            state,
-            loco_prediction_matrix,
-        )
-
-        expected_score_left_hand_matrix = jnp.concatenate(
+def build_linear_fixture() -> LinearFixture:
+    """Build a full-rank fixture with ordinary and high-frequency variants."""
+    return LinearFixture(
+        covariate_matrix=np.asarray(
             [
-                chromosome_state.whitened_covariate_transpose,
-                chromosome_state.adjusted_residual_matrix,
-            ],
-            axis=0,
-        )
-        assert chromosome_state.score_left_hand_matrix.shape == (
-            covariate_count + trait_count,
-            sample_count,
-        )
-        numpy.testing.assert_allclose(
-            np.asarray(chromosome_state.score_left_hand_matrix),
-            np.asarray(expected_score_left_hand_matrix),
-            rtol=1.0e-6,
-        )
-
-
-class TestChiSquaredToLog10PValue:
-    """Tests for chi_squared_to_log10_p_value."""
-
-    def test_known_values(self) -> None:
-        """Validate against known chi-squared to p-value conversions."""
-        chi_squared = jnp.array([3.841, 6.635, 10.828], dtype=jnp.float32)
-
-        log10_p = pvalue.chi_squared_to_log10_p_value(chi_squared)
-
-        numpy.testing.assert_allclose(log10_p[0], 1.30103, atol=0.01)
-        numpy.testing.assert_allclose(log10_p[1], 2.0, atol=0.01)
-        numpy.testing.assert_allclose(log10_p[2], 3.0, atol=0.01)
-
-    def test_zero_chi_squared(self) -> None:
-        """Ensure zero chi-squared gives zero log10 p-value."""
-        chi_squared = jnp.array([0.0], dtype=jnp.float32)
-
-        log10_p = pvalue.chi_squared_to_log10_p_value(chi_squared)
-
-        numpy.testing.assert_allclose(log10_p[0], 0.0, atol=1e-6)
-
-    def test_large_chi_squared(self) -> None:
-        """Ensure large chi-squared values don't overflow."""
-        chi_squared = jnp.array([100.0, 200.0], dtype=jnp.float32)
-
-        log10_p = pvalue.chi_squared_to_log10_p_value(chi_squared)
-
-        assert jnp.all(jnp.isfinite(log10_p))
-        assert log10_p[1] > log10_p[0]
-
-    def test_float64_chi_squared_preserves_tail_precision(self) -> None:
-        """Ensure float64 chi-squared inputs keep float64 tail precision."""
-        chi_squared_float64 = jnp.asarray([100_000_001.0], dtype=jnp.float64)
-        chi_squared_float32 = chi_squared_float64.astype(jnp.float32)
-
-        log10_p_value_float64 = pvalue.chi_squared_to_log10_p_value(chi_squared_float64)
-        log10_p_value_float32 = pvalue.chi_squared_to_log10_p_value(chi_squared_float32).astype(jnp.float64)
-        expected_log10_p_value = -(
-            jnp.log(jnp.asarray(2.0, dtype=jnp.float64)) + jax.scipy.stats.norm.logsf(jnp.sqrt(chi_squared_float64))
-        ) / jnp.log(jnp.asarray(10.0, dtype=jnp.float64))
-
-        assert log10_p_value_float64.dtype == jnp.dtype(jnp.float64)
-        numpy.testing.assert_allclose(log10_p_value_float64, expected_log10_p_value, rtol=1e-12)
-        assert jnp.max(jnp.abs(log10_p_value_float64 - log10_p_value_float32)) > 0.1
-
-
-class TestComputeRegenie2LinearChunk:
-    """Tests for compute_regenie2_linear_chunk."""
-
-    def test_variant_major_kernel_matches_native_sum_square_stats_path(self) -> None:
-        """Ensure native genotype statistics reproduce normalized genotype sum squares."""
-        sample_count = 5
-        variant_count = 3
-        genotype_matrix_by_variant = jnp.asarray(
-            [
-                [0.0, 0.0, 1.0, 2.0, 0.0],
-                [2.0, 2.0, 1.0, 2.0, 2.0],
-                [2.0, 2.0, 1.75, 2.0, 1.0],
-            ],
-            dtype=jnp.float32,
-        )
-        native_dosage_sum = jnp.asarray([3.0, 9.0, 7.0], dtype=jnp.float32)
-        native_observation_count = jnp.asarray([5, 5, 4], dtype=jnp.int32)
-        native_imputed_dosage_square_sum = jnp.asarray([5.0, 17.0, 16.0625], dtype=jnp.float32)
-        normalized_genotype_matrix_by_variant = normalize_test_variant_major_genotypes(genotype_matrix_by_variant)
-        stats_normalized_genotype_matrix_by_variant = normalize_test_variant_major_genotypes_from_stats(
-            genotype_matrix_by_variant,
-            native_dosage_sum,
-            native_observation_count,
-        )
-        numpy.testing.assert_allclose(
-            stats_normalized_genotype_matrix_by_variant,
-            normalized_genotype_matrix_by_variant,
-            rtol=1e-6,
-            atol=1e-6,
-        )
-        expected_sum_squares = jnp.einsum(
-            "ij,ij->i",
-            normalized_genotype_matrix_by_variant,
-            normalized_genotype_matrix_by_variant,
-        )
-        observed_sum_squares = compute_test_normalized_genotype_sum_squares_from_stats(
-            genotype_dosage_sum=native_dosage_sum,
-            genotype_observation_count=native_observation_count,
-            genotype_imputed_dosage_square_sum=native_imputed_dosage_square_sum,
-            sample_count=genotype_matrix_by_variant.shape[1],
-        )
-
-        numpy.testing.assert_allclose(observed_sum_squares, expected_sum_squares, rtol=1e-6, atol=1e-6)
-
-        whitened_covariate_transpose = jnp.asarray([[0.0] * sample_count], dtype=jnp.float32)
-        adjusted_residual_matrix = jnp.asarray([[0.2, -0.1, 0.4, -0.3, 0.5]], dtype=jnp.float32)
-        adjusted_residual_projection_coordinate_matrix = jnp.asarray([[0.0]], dtype=jnp.float32)
-        adjusted_residual_sum_squares = jnp.asarray([0.55], dtype=jnp.float32)
-        degrees_of_freedom = jnp.asarray(sample_count - 1, dtype=jnp.float32)
-        fallback_result = compute_test_linear_chunk_trait_major_variant_major(
-            whitened_covariate_transpose=whitened_covariate_transpose,
-            adjusted_residual_matrix=adjusted_residual_matrix,
-            adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
-            adjusted_residual_sum_squares=adjusted_residual_sum_squares,
-            degrees_of_freedom=degrees_of_freedom,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-        )
-        stats_result = compute_test_linear_chunk_trait_major_variant_major(
-            whitened_covariate_transpose=whitened_covariate_transpose,
-            adjusted_residual_matrix=adjusted_residual_matrix,
-            adjusted_residual_projection_coordinate_matrix=adjusted_residual_projection_coordinate_matrix,
-            adjusted_residual_sum_squares=adjusted_residual_sum_squares,
-            degrees_of_freedom=degrees_of_freedom,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
-            genotype_dosage_sum=native_dosage_sum,
-            genotype_observation_count=native_observation_count,
-            genotype_imputed_dosage_square_sum=native_imputed_dosage_square_sum,
-        )
-
-        assert fallback_result.beta.shape == (1, variant_count)
-        numpy.testing.assert_allclose(stats_result.beta, fallback_result.beta, rtol=1e-6, atol=1e-6)
-        numpy.testing.assert_allclose(
-            stats_result.standard_error,
-            fallback_result.standard_error,
-            rtol=1e-6,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(stats_result.chi_squared, fallback_result.chi_squared, rtol=1e-6, atol=1e-6)
-        numpy.testing.assert_allclose(stats_result.log10_p_value, fallback_result.log10_p_value, rtol=1e-6, atol=1e-6)
-        numpy.testing.assert_array_equal(stats_result.valid_mask, fallback_result.valid_mask)
-
-    def test_matches_manual_calculation(self) -> None:
-        """Validate chunk computation against manual numpy calculation."""
-        sample_count = 100
-        variant_count = 5
-        covariate_count = 2
-
-        rng = np.random.default_rng(42)
-
-        covariate_matrix = np.zeros((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 0] = 1.0
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix = jnp.array(covariate_matrix)
-
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-
-        genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
-
-        loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-
-        result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-
-        assert result.beta.shape == (variant_count,)
-        assert result.standard_error.shape == (variant_count,)
-        assert result.chi_squared.shape == (variant_count,)
-        assert result.log10_p_value.shape == (variant_count,)
-        assert result.valid_mask.shape == (variant_count,)
-
-        assert jnp.all(result.valid_mask)
-        assert jnp.all(result.chi_squared >= 0)
-        assert jnp.all(result.log10_p_value >= 0)
-
-    def test_optimized_kernel_matches_score_reference_formula(self) -> None:
-        """Ensure stacked-score optimization preserves the score statistic formula."""
-        sample_count = 128
-        variant_count = 8
-        covariate_count = 3
-
-        rng = np.random.default_rng(19)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-        genotype_matrix = rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32)
-        genotype_matrix[:, 0] = 0.0
-        genotype_matrix = jnp.array(genotype_matrix)
-        loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.array(covariate_matrix),
-            phenotype_vector=phenotype_vector,
-        )
-        optimized_result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-        reference_result = compute_score_reference_chunk(
-            state=state,
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-
-        numpy.testing.assert_allclose(optimized_result.beta, reference_result.beta, rtol=1e-4, atol=1e-5)
-        numpy.testing.assert_allclose(
-            optimized_result.standard_error,
-            reference_result.standard_error,
-            rtol=1e-4,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(optimized_result.chi_squared, reference_result.chi_squared, rtol=1e-4, atol=1e-5)
-        numpy.testing.assert_allclose(
-            optimized_result.log10_p_value,
-            reference_result.log10_p_value,
-            rtol=1e-4,
-            atol=1e-5,
-        )
-        numpy.testing.assert_array_equal(optimized_result.valid_mask, reference_result.valid_mask)
-
-    def test_score_dtype_float64_controls_linear_score_kernel_dtype(self) -> None:
-        """Ensure the linear score path honors an explicit float64 policy."""
-        covariate_matrix = jnp.asarray(
-            [
+                [1.0, -1.5],
                 [1.0, -1.0],
                 [1.0, -0.5],
+                [1.0, 0.0],
                 [1.0, 0.5],
                 [1.0, 1.0],
-            ],
-            dtype=jnp.float64,
-        )
-        phenotype_vector = jnp.asarray([0.1, -0.2, 0.3, 0.7], dtype=jnp.float64)
-        genotype_matrix = jnp.asarray(
-            [
-                [0.0, 2.0],
+                [1.0, 1.5],
                 [1.0, 2.0],
-                [1.0, 1.0],
-                [2.0, 0.0],
             ],
-            dtype=jnp.float64,
-        )
-        loco_predictions = jnp.asarray([0.01, -0.02, 0.03, -0.01], dtype=jnp.float64)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-        )
-        result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-        )
-
-        assert state.phenotype_residual.dtype == jnp.float64
-        assert result.beta.dtype == jnp.float64
-        assert result.chi_squared.dtype == jnp.float64
-
-    def test_linear_variance_floor_rejects_near_collinear_genotype(self) -> None:
-        """Ensure near-covariate genotype residuals do not pass the variance mask."""
-        sample_count = 64
-        rng = np.random.default_rng(719)
-        covariate_signal = np.linspace(-1.0, 1.0, sample_count, dtype=np.float64)
-        covariate_matrix = np.column_stack([np.ones(sample_count, dtype=np.float64), covariate_signal])
-        raw_noise = rng.normal(size=sample_count)
-        residual_noise = residualize_against_covariates(covariate_matrix, raw_noise)
-        genotype_vector = 1.0 + (0.25 * covariate_signal) + (1.0e-6 * residual_noise)
-        phenotype_vector = rng.normal(size=sample_count)
-        loco_predictions = np.zeros(sample_count, dtype=np.float64)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_vector=jnp.asarray(phenotype_vector),
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(
-            state,
-            jnp.asarray(loco_predictions),
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-        )
-        strict_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.asarray(genotype_vector[None, :]),
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-            linear_minimum_variance=regenie2_linear_config.DEFAULT_LINEAR_MINIMUM_VARIANCE,
-            linear_relative_variance_tolerance=regenie2_linear_config.DEFAULT_LINEAR_RELATIVE_VARIANCE_TOLERANCE,
-        )
-        permissive_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.asarray(genotype_vector[None, :]),
-            score_dtype=types.FloatingPointDtype.FLOAT64,
-            linear_minimum_variance=1.0e-20,
-            linear_relative_variance_tolerance=1.0e-20,
-        )
-
-        assert not bool(strict_result.valid_mask[0])
-        assert bool(permissive_result.valid_mask[0])
-        assert jnp.isnan(strict_result.chi_squared[0])
-        assert jnp.isfinite(permissive_result.chi_squared[0])
-
-    def test_native_stats_high_frequency_sum_squares_use_stable_arithmetic(self) -> None:
-        """Ensure mostly-homozygous alternate stats avoid float32 cancellation."""
-        sample_count = 2504
-        rng = np.random.default_rng(91)
-        dosage_deficit = rng.uniform(0.001, 0.006, size=sample_count).astype(np.float64)
-        dosage_values = 2.0 - dosage_deficit
-        dosage_sum = np.asarray([np.sum(dosage_values, dtype=np.float64)], dtype=np.float64)
-        observation_count = np.asarray([sample_count], dtype=np.int32)
-        imputed_dosage_square_sum = np.asarray(
-            [np.sum(np.square(dosage_values), dtype=np.float64)],
             dtype=np.float64,
-        )
-        expected_sum_squares = float(np.sum(np.square(dosage_values - 2.0), dtype=np.float64))
+        ),
+        phenotype_matrix=np.asarray(
+            [
+                [1.2, 0.7, 1.6, 2.4, 2.0, 3.1, 2.8, 4.2],
+                [-0.4, 0.6, -0.1, 1.1, 0.8, 0.2, 1.8, 1.4],
+            ],
+            dtype=np.float64,
+        ),
+        loco_prediction_matrix=np.asarray(
+            [
+                [0.10, -0.05, 0.00, 0.08, -0.04, 0.02, -0.03, 0.06],
+                [-0.03, 0.04, -0.02, 0.01, 0.05, -0.06, 0.02, -0.01],
+            ],
+            dtype=np.float64,
+        ),
+        genotype_matrix_by_variant=np.asarray(
+            [
+                [0.0, 0.0, 1.0, 0.0, 1.0, 2.0, 1.0, 2.0],
+                [2.0, 2.0, 1.0, 2.0, 1.5, 1.0, 1.0, 0.0],
+                [0.2, 1.1, 0.4, 1.8, 0.7, 1.5, 0.1, 1.2],
+            ],
+            dtype=np.float64,
+        ),
+    )
 
-        observed_sum_squares = compute_test_normalized_genotype_sum_squares_from_stats(
-            genotype_dosage_sum=jnp.asarray(dosage_sum),
-            genotype_observation_count=jnp.asarray(observation_count),
-            genotype_imputed_dosage_square_sum=jnp.asarray(imputed_dosage_square_sum),
-            sample_count=sample_count,
-            score_dtype=types.FloatingPointDtype.FLOAT32,
-        )
-        naive_dosage_sum = dosage_sum.astype(np.float32)
-        naive_observation_count = observation_count.astype(np.float32)
-        naive_square_sum = imputed_dosage_square_sum.astype(np.float32)
-        naive_mean = naive_dosage_sum / naive_observation_count
-        naive_sum_squares = float(
-            (naive_square_sum - (4.0 * naive_mean * np.float32(sample_count)) + np.float32(4.0 * sample_count))[0]
-        )
 
-        observed_relative_error = abs(float(observed_sum_squares[0]) - expected_sum_squares) / expected_sum_squares
-        naive_relative_error = abs(naive_sum_squares - expected_sum_squares) / expected_sum_squares
-        assert observed_relative_error < 1.0e-5
-        assert naive_relative_error > 1.0e-3
+def compute_negative_log10_chi_square_probability(
+    chi_squared: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Evaluate the one-degree-of-freedom chi-square tail independently."""
+    flat_probabilities = [math.erfc(math.sqrt(float(value) / 2.0)) for value in chi_squared.ravel()]
+    probabilities = np.asarray(flat_probabilities, dtype=np.float64).reshape(chi_squared.shape)
+    return -np.log10(probabilities)
 
-    def test_chromosome_state_matches_direct_chunk_api(self) -> None:
-        """Ensure chromosome-cached computation matches the compatibility wrapper."""
-        sample_count = 64
-        variant_count = 4
-        covariate_count = 2
 
-        rng = np.random.default_rng(7)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-        genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
-        loco_predictions = jnp.array(rng.standard_normal(sample_count) * 0.2, dtype=jnp.float32)
+def compute_linear_reference(fixture: LinearFixture) -> LinearReferenceResult:
+    """Compute the current quantitative contract with independent NumPy algebra."""
+    return compute_linear_reference_with_genotype_statistics(
+        fixture=fixture,
+        genotype_means=np.mean(fixture.genotype_matrix_by_variant, axis=1),
+        imputed_dosage_square_sum=None,
+    )
 
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.array(covariate_matrix),
-            phenotype_vector=phenotype_vector,
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(state, loco_predictions)
 
-        direct_result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-        cached_result = compute_test_linear_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix,
-        )
+def compute_linear_reference_with_genotype_statistics(
+    *,
+    fixture: LinearFixture,
+    genotype_means: npt.NDArray[np.float64],
+    imputed_dosage_square_sum: npt.NDArray[np.float64] | None,
+) -> LinearReferenceResult:
+    """Compute quantitative statistics with explicit native genotype moments."""
+    covariates = fixture.covariate_matrix
+    phenotypes = fixture.phenotype_matrix
+    covariate_crossproduct = covariates.T @ covariates
+    phenotype_coefficients = np.linalg.solve(covariate_crossproduct, covariates.T @ phenotypes.T)
+    phenotype_residual_matrix = phenotypes - (covariates @ phenotype_coefficients).T
 
-        numpy.testing.assert_allclose(direct_result.beta, cached_result.beta)
-        numpy.testing.assert_allclose(direct_result.standard_error, cached_result.standard_error)
-        numpy.testing.assert_allclose(direct_result.chi_squared, cached_result.chi_squared)
-        numpy.testing.assert_allclose(direct_result.log10_p_value, cached_result.log10_p_value)
-        numpy.testing.assert_array_equal(direct_result.valid_mask, cached_result.valid_mask)
+    cholesky_factor = np.linalg.cholesky(covariate_crossproduct)
+    whitened_covariate_transpose = np.linalg.solve(cholesky_factor, covariates.T)
+    adjusted_residual_matrix = phenotype_residual_matrix - fixture.loco_prediction_matrix
+    residual_projection_coordinates = adjusted_residual_matrix @ whitened_covariate_transpose.T
+    adjusted_residual_sum_squares = np.sum(adjusted_residual_matrix**2, axis=1) - np.sum(
+        residual_projection_coordinates**2,
+        axis=1,
+    )
 
-    def test_variant_major_kernel_matches_sample_major_with_native_square_sums(self) -> None:
-        """Ensure native-square-sum variant-major computation matches sample-major results."""
-        sample_count = 96
-        variant_count = 6
-        covariate_count = 3
+    genotype_offsets = np.where(genotype_means > 1.0, 2.0, 0.0)
+    normalized_genotypes = fixture.genotype_matrix_by_variant - genotype_offsets[:, None]
+    if imputed_dosage_square_sum is None:
+        genotype_sum_squares = np.sum(normalized_genotypes**2, axis=1)
+    else:
+        sample_count = fixture.genotype_matrix_by_variant.shape[1]
+        imputed_dosage_sum = genotype_means * sample_count
+        genotype_sum_squares = (
+            imputed_dosage_square_sum - 2.0 * genotype_offsets * imputed_dosage_sum + sample_count * genotype_offsets**2
+        )
+    genotype_projection_coordinates = whitened_covariate_transpose @ normalized_genotypes.T
+    genotype_residual_sum_squares = genotype_sum_squares - np.sum(genotype_projection_coordinates**2, axis=0)
+    covariance = adjusted_residual_matrix @ normalized_genotypes.T - (
+        residual_projection_coordinates @ genotype_projection_coordinates
+    )
+    degrees_of_freedom = covariates.shape[0] - covariates.shape[1]
+    null_mean_squared_error = adjusted_residual_sum_squares / degrees_of_freedom
 
-        rng = np.random.default_rng(23)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
-        genotype_matrix = jnp.asarray(
-            rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32),
-        )
-        loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_vector=phenotype_vector,
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(state, loco_predictions)
-        sample_major_result = compute_test_linear_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix,
-        )
-        variant_major_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix.T,
-        )
+    beta = covariance / genotype_residual_sum_squares[None, :]
+    standard_error = np.sqrt(null_mean_squared_error[:, None] / genotype_residual_sum_squares[None, :])
+    chi_squared = covariance**2 / genotype_residual_sum_squares[None, :] / null_mean_squared_error[:, None]
+    return LinearReferenceResult(
+        beta=beta,
+        standard_error=standard_error,
+        chi_squared=chi_squared,
+        log10_p_value=compute_negative_log10_chi_square_probability(chi_squared),
+    )
 
-        numpy.testing.assert_allclose(variant_major_result.beta, sample_major_result.beta, rtol=1e-5, atol=1e-5)
-        numpy.testing.assert_allclose(
-            variant_major_result.standard_error,
-            sample_major_result.standard_error,
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(
-            variant_major_result.chi_squared,
-            sample_major_result.chi_squared,
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(
-            variant_major_result.log10_p_value,
-            sample_major_result.log10_p_value,
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_array_equal(variant_major_result.valid_mask, sample_major_result.valid_mask)
 
-    def test_packed8_kernel_matches_variant_major_with_native_square_sums(self) -> None:
-        """Ensure packed8 linear computation matches variant-major dosage results."""
-        sample_count = 96
-        variant_count = 6
-        covariate_count = 3
+def build_linear_chromosome_state(
+    fixture: LinearFixture,
+) -> regenie2_linear_state.Regenie2MultiLinearChromosomeState:
+    """Build the production state for the deterministic fixture."""
+    shared_state = regenie2_linear_state.build_multi_linear_state(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_matrix=jnp.asarray(fixture.phenotype_matrix),
+    )
+    return regenie2_linear_state.build_multi_linear_chromosome_state(
+        state=shared_state,
+        loco_prediction_matrix=jnp.asarray(fixture.loco_prediction_matrix),
+    )
 
-        rng = np.random.default_rng(37)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
-        genotype_matrix = rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32)
-        genotype_matrix[:90, 0] = 2.0
-        genotype_matrix[90:, 0] = 1.0
-        genotype_matrix_by_variant = genotype_matrix.T
-        loco_predictions = jnp.asarray(rng.standard_normal(sample_count) * 0.1, dtype=jnp.float32)
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_vector=phenotype_vector,
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(state, loco_predictions)
-        dosage_sum = jnp.asarray(np.sum(genotype_matrix_by_variant, axis=1), dtype=jnp.float32)
-        observation_count = jnp.full((variant_count,), sample_count, dtype=jnp.int32)
-        imputed_dosage_square_sum = jnp.asarray(
-            np.sum(np.square(genotype_matrix_by_variant), axis=1), dtype=jnp.float32
-        )
-        variant_major_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
-            genotype_dosage_sum=dosage_sum,
-            genotype_observation_count=observation_count,
-            genotype_imputed_dosage_square_sum=imputed_dosage_square_sum,
-        )
-        packed_probability_pairs_by_variant = encode_integer_dosage_matrix_to_packed8_probability_pairs(
-            genotype_matrix_by_variant,
-        )
-        packed_result = compute_test_linear_chunk_packed8_donating_inputs(
-            chromosome_state=chromosome_state,
-            packed_probability_pairs_by_variant=jnp.asarray(packed_probability_pairs_by_variant),
-            genotype_dosage_sum=dosage_sum,
-            genotype_observation_count=observation_count,
-            genotype_imputed_dosage_square_sum=imputed_dosage_square_sum,
-        )
 
-        numpy.testing.assert_allclose(packed_result.beta, variant_major_result.beta, rtol=1e-5, atol=1e-5)
-        numpy.testing.assert_allclose(
+def test_packed8_decode_matches_probability_definition() -> None:
+    """Decode probability bytes through the BGEN eight-bit dosage equation."""
+    packed_probabilities = jnp.asarray(
+        [[[255, 0], [0, 0], [0, 255], [64, 127]]],
+        dtype=jnp.uint8,
+    )
+
+    observed = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(packed_probabilities)
+
+    tests.numerical.assert_absolute_difference_less_than(
+        observed,
+        np.asarray([[0.0, 2.0, 1.0, 1.0]], dtype=np.float64),
+        1.0e-7,
+    )
+
+
+def test_regenie_allele_flip_is_strictly_above_mean_one() -> None:
+    """Preserve REGENIE's strict high-frequency allele orientation boundary."""
+    genotype_matrix = jnp.asarray(
+        [
+            [0.0, 1.0, 2.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.5, 2.0],
+        ],
+        dtype=jnp.float32,
+    )
+
+    result = genotype.build_regenie_flipped_genotypes(genotype_matrix, native_genotype_mean=None)
+
+    np.testing.assert_array_equal(np.asarray(result.flip_mask), np.asarray([False, False, True]))
+    tests.numerical.assert_absolute_difference_less_than(
+        result.genotype_matrix_by_variant,
+        np.asarray(
+            [
+                [0.0, 1.0, 2.0],
+                [1.0, 1.0, 1.0],
+                [1.0, 0.5, 0.0],
+            ],
+            dtype=np.float64,
+        ),
+        1.0e-7,
+    )
+
+
+def test_positive_variance_mask_uses_exclusive_absolute_and_relative_floors() -> None:
+    """Reject values equal to either numerical variance floor."""
+    observed = linalg.compute_positive_residual_variance_mask(
+        variance=jnp.asarray([1.0e-6, 1.1e-6, 2.0e-3, 2.1e-3]),
+        reference_sum_squares=jnp.asarray([1.0e-4, 1.0e-4, 2.0, 2.0]),
+        minimum_variance=1.0e-6,
+        relative_variance_tolerance=1.0e-3,
+    )
+
+    np.testing.assert_array_equal(np.asarray(observed), np.asarray([False, True, False, True]))
+
+
+def test_positive_definite_solve_matches_numpy() -> None:
+    """Solve vector and matrix right-hand sides from one Cholesky factor."""
+    coefficient_matrix = np.asarray([[4.0, 1.0], [1.0, 3.0]], dtype=np.float64)
+    right_hand_side = np.asarray([[1.0, 2.0], [3.0, -1.0]], dtype=np.float64)
+    observed = linalg.solve_positive_definite_system(
+        jnp.asarray(np.linalg.cholesky(coefficient_matrix)),
+        jnp.asarray(right_hand_side),
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(
+        observed,
+        np.linalg.solve(coefficient_matrix, right_hand_side),
+        1.0e-12,
+    )
+
+
+def test_chi_squared_tail_matches_erfc_reference_and_clamps_negative_input() -> None:
+    """Match the analytic one-degree-of-freedom survival function."""
+    chi_squared = np.asarray([-1.0, 0.0, 1.0, 4.0, 9.0], dtype=np.float64)
+    safe_chi_squared = np.maximum(chi_squared, 0.0)
+    reference = compute_negative_log10_chi_square_probability(safe_chi_squared)
+
+    observed = pvalue.chi_squared_to_log10_p_value(jnp.asarray(chi_squared))
+
+    tests.numerical.assert_absolute_difference_less_than(observed, reference, 1.0e-12)
+
+
+def test_linear_state_residualizes_phenotypes_against_covariates() -> None:
+    """Keep reusable phenotype residuals orthogonal to the covariate space."""
+    fixture = build_linear_fixture()
+    shared_state = regenie2_linear_state.build_multi_linear_state(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_matrix=jnp.asarray(fixture.phenotype_matrix),
+    )
+    crossproduct = np.asarray(shared_state.phenotype_residual_matrix) @ fixture.covariate_matrix
+
+    tests.numerical.assert_absolute_difference_less_than(crossproduct, np.zeros_like(crossproduct), 2.0e-5)
+    assert float(np.asarray(shared_state.degrees_of_freedom)) == 6.0
+
+
+def test_linear_chunk_matches_independent_numpy_reference() -> None:
+    """Validate beta, uncertainty, chi-square, and tail probability together."""
+    fixture = build_linear_fixture()
+    chromosome_state = build_linear_chromosome_state(fixture)
+    reference = compute_linear_reference(fixture)
+
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.beta,
+        reference.beta,
+        LINEAR_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.standard_error,
+        reference.standard_error,
+        LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.chi_squared,
+        reference.chi_squared,
+        LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.log10_p_value,
+        reference.log10_p_value,
+        LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+    assert observed.correction_code is None
+
+
+def test_linear_native_statistics_path_uses_supplied_moments() -> None:
+    """Use native BGEN summaries instead of silently reducing delivered dosages."""
+    fixture = build_linear_fixture()
+    chromosome_state = build_linear_chromosome_state(fixture)
+    direct_genotype_means = np.mean(fixture.genotype_matrix_by_variant, axis=1)
+    direct_genotype_square_sums = np.sum(fixture.genotype_matrix_by_variant**2, axis=1)
+    native_genotype_means = direct_genotype_means + np.asarray([0.03, -0.02, 0.04], dtype=np.float64)
+    native_genotype_square_sums = direct_genotype_square_sums + np.asarray(
+        [0.75, 1.25, 0.50],
+        dtype=np.float64,
+    )
+    reference = compute_linear_reference_with_genotype_statistics(
+        fixture=fixture,
+        genotype_means=native_genotype_means,
+        imputed_dosage_square_sum=native_genotype_square_sums,
+    )
+
+    direct = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+    summarized = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant),
+        native_genotype_mean=jnp.asarray(native_genotype_means),
+        genotype_imputed_dosage_square_sum=jnp.asarray(native_genotype_square_sums),
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert float(np.max(np.abs(np.asarray(summarized.beta) - np.asarray(direct.beta)))) > 1.0e-3
+    tests.numerical.assert_absolute_difference_less_than(
+        summarized.beta,
+        reference.beta,
+        LINEAR_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        summarized.standard_error,
+        reference.standard_error,
+        LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        summarized.chi_squared,
+        reference.chi_squared,
+        LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        summarized.log10_p_value,
+        reference.log10_p_value,
+        LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+
+
+def test_linear_monomorphic_variant_produces_invalid_statistics() -> None:
+    """Reject a variant with no residual variance after covariate projection."""
+    fixture = build_linear_fixture()
+    chromosome_state = build_linear_chromosome_state(fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.ones((1, fixture.covariate_matrix.shape[0]), dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert bool(np.all(np.isnan(np.asarray(observed.beta))))
+    assert bool(np.all(np.isnan(np.asarray(observed.standard_error))))
+    assert bool(np.all(np.isnan(np.asarray(observed.chi_squared))))
+    assert bool(np.all(np.isnan(np.asarray(observed.log10_p_value))))
+
+
+def test_linear_packed8_path_matches_explicit_decode() -> None:
+    """Match both delivery paths to a well-conditioned independent oracle."""
+    fixture = build_linear_fixture()
+    chromosome_state = build_linear_chromosome_state(fixture)
+    packed_probabilities = jnp.asarray(
+        [
+            [[255, 0], [0, 0], [255, 0], [0, 0], [255, 0], [0, 0], [255, 0], [0, 0]],
+            [[255, 0], [0, 255], [0, 0], [255, 0], [0, 0], [0, 255], [255, 0], [0, 0]],
+        ],
+        dtype=jnp.uint8,
+    )
+    decoded_genotypes = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(packed_probabilities)
+    decoded_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=fixture.phenotype_matrix,
+        loco_prediction_matrix=fixture.loco_prediction_matrix,
+        genotype_matrix_by_variant=np.asarray(decoded_genotypes, dtype=np.float64),
+    )
+    reference = compute_linear_reference(decoded_fixture)
+
+    packed_result = regenie2_linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
+        chromosome_state=chromosome_state,
+        packed_probability_pairs_by_variant=packed_probabilities,
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-6,
+    )
+    decoded_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=decoded_genotypes,
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-6,
+    )
+
+    result_fields = (
+        (packed_result.beta, decoded_result.beta, reference.beta, LINEAR_BETA_ABSOLUTE_TOLERANCE),
+        (
             packed_result.standard_error,
-            variant_major_result.standard_error,
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(packed_result.chi_squared, variant_major_result.chi_squared, rtol=1e-5, atol=1e-5)
-        numpy.testing.assert_allclose(
+            decoded_result.standard_error,
+            reference.standard_error,
+            LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+        ),
+        (
+            packed_result.chi_squared,
+            decoded_result.chi_squared,
+            reference.chi_squared,
+            LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+        ),
+        (
             packed_result.log10_p_value,
-            variant_major_result.log10_p_value,
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_array_equal(packed_result.valid_mask, variant_major_result.valid_mask)
-
-    def test_high_frequency_diploid_dosages_match_float64_reference(self) -> None:
-        """Guard REGENIE parity for mostly-homozygous alternate dosage columns."""
-        sample_count = 2504
-        rng = np.random.default_rng(547528741)
-        covariate_matrix = np.ones((sample_count, 3), dtype=np.float64)
-        covariate_matrix[:, 1] = np.linspace(-1.0, 1.0, sample_count, dtype=np.float64)
-        covariate_matrix[:, 2] = rng.normal(size=sample_count)
-        phenotype_vector = rng.normal(size=sample_count)
-        loco_predictions = rng.normal(scale=0.05, size=sample_count)
-        genotype_matrix = np.full((sample_count, 1), 2.0, dtype=np.float64)
-        genotype_matrix[:5, 0] = 1.0
-
-        phenotype_residual = residualize_against_covariates(covariate_matrix, phenotype_vector)
-        reference_result = compute_regenie_null_mse_formula(
-            covariate_matrix=covariate_matrix,
-            adjusted_residual=phenotype_residual - loco_predictions,
-            genotype_matrix=genotype_matrix,
-        )
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
-            phenotype_vector=jnp.asarray(phenotype_vector, dtype=jnp.float32),
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(
-            state,
-            jnp.asarray(loco_predictions, dtype=jnp.float32),
-        )
-        genotype_matrix_float32 = jnp.asarray(genotype_matrix, dtype=jnp.float32)
-
-        sample_major_result = compute_test_linear_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix_float32,
-        )
-        variant_major_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_float32.T,
-        )
-
-        numpy.testing.assert_allclose(sample_major_result.beta, reference_result.beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(variant_major_result.beta, reference_result.beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(
-            sample_major_result.standard_error,
-            reference_result.standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            variant_major_result.standard_error,
-            reference_result.standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-
-    def test_handles_zero_variance_genotypes(self) -> None:
-        """Ensure monomorphic variants are marked invalid."""
-        sample_count = 50
-        covariate_count = 2
-
-        rng = np.random.default_rng(42)
-
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix = jnp.array(covariate_matrix)
-
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-
-        genotype_matrix = jnp.zeros((sample_count, 2), dtype=jnp.float32)
-        genotype_matrix = genotype_matrix.at[:, 0].set(0.0)
-        genotype_matrix = genotype_matrix.at[:, 1].set(rng.choice([0, 1, 2], size=sample_count).astype(np.float32))
-
-        loco_predictions = jnp.zeros(sample_count, dtype=jnp.float32)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-
-        result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-
-        assert not result.valid_mask[0]
-        assert result.valid_mask[1]
-        assert jnp.isnan(result.chi_squared[0])
-        assert jnp.isnan(result.log10_p_value[0])
-        assert jnp.isfinite(result.chi_squared[1])
-        assert jnp.isfinite(result.log10_p_value[1])
-
-    def test_invalid_variants_emit_nan_statistics_for_sample_and_variant_major_paths(self) -> None:
-        """Ensure invalid quantitative rows do not look like valid null associations."""
-        sample_count = 32
-        covariate_count = 2
-
-        rng = np.random.default_rng(17)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_vector = jnp.asarray(rng.standard_normal(sample_count), dtype=jnp.float32)
-        genotype_matrix = jnp.asarray(
-            np.column_stack(
-                [
-                    np.zeros(sample_count, dtype=np.float32),
-                    rng.choice([0, 1, 2], size=sample_count).astype(np.float32),
-                ]
-            ),
-            dtype=jnp.float32,
-        )
-        loco_predictions = jnp.zeros(sample_count, dtype=jnp.float32)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_vector=phenotype_vector,
-        )
-        chromosome_state = prepare_test_linear_chromosome_state(state, loco_predictions)
-        sample_major_result = compute_test_linear_chunk_from_chromosome_state(
-            chromosome_state=chromosome_state,
-            genotype_matrix=genotype_matrix,
-        )
-        variant_major_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix.T,
-        )
-
-        numpy.testing.assert_array_equal(np.asarray(sample_major_result.valid_mask), np.asarray([False, True]))
-        numpy.testing.assert_array_equal(np.asarray(variant_major_result.valid_mask), np.asarray([False, True]))
-        assert jnp.isnan(sample_major_result.chi_squared[0])
-        assert jnp.isnan(sample_major_result.log10_p_value[0])
-        assert jnp.isnan(variant_major_result.chi_squared[0])
-        assert jnp.isnan(variant_major_result.log10_p_value[0])
-        assert jnp.isfinite(sample_major_result.chi_squared[1])
-        assert jnp.isfinite(sample_major_result.log10_p_value[1])
-        assert jnp.isfinite(variant_major_result.chi_squared[1])
-        assert jnp.isfinite(variant_major_result.log10_p_value[1])
-
-    def test_invalid_multi_trait_variants_emit_nan_statistics(self) -> None:
-        """Ensure multi-trait invalid quantitative rows emit NaN statistics."""
-        sample_count = 40
-        covariate_count = 2
-        trait_count = 2
-
-        rng = np.random.default_rng(23)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
-        genotype_matrix = jnp.asarray(
-            np.column_stack(
-                [
-                    np.zeros(sample_count, dtype=np.float32),
-                    rng.choice([0, 1, 2], size=sample_count).astype(np.float32),
-                ]
-            ),
-            dtype=jnp.float32,
-        )
-        loco_prediction_matrix = jnp.zeros((trait_count, sample_count), dtype=jnp.float32)
-
-        multi_state = prepare_test_multi_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_matrix=phenotype_matrix,
-        )
-        multi_chromosome_state = prepare_test_multi_linear_chromosome_state(
-            multi_state,
-            loco_prediction_matrix,
-        )
-        sample_major_result = compute_test_multi_linear_chunk_from_chromosome_state(
-            multi_chromosome_state,
-            genotype_matrix,
-        )
-        variant_major_result = compute_test_multi_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=multi_chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix.T,
-        )
-
-        numpy.testing.assert_array_equal(
-            np.asarray(sample_major_result.valid_mask),
-            np.asarray([[False, True], [False, True]]),
-        )
-        numpy.testing.assert_array_equal(
-            np.asarray(variant_major_result.valid_mask),
-            np.asarray([[False, True], [False, True]]),
-        )
-        assert jnp.all(jnp.isnan(sample_major_result.chi_squared[:, 0]))
-        assert jnp.all(jnp.isnan(sample_major_result.log10_p_value[:, 0]))
-        assert jnp.all(jnp.isnan(variant_major_result.chi_squared[:, 0]))
-        assert jnp.all(jnp.isnan(variant_major_result.log10_p_value[:, 0]))
-        assert jnp.all(jnp.isfinite(sample_major_result.chi_squared[:, 1]))
-        assert jnp.all(jnp.isfinite(sample_major_result.log10_p_value[:, 1]))
-        assert jnp.all(jnp.isfinite(variant_major_result.chi_squared[:, 1]))
-        assert jnp.all(jnp.isfinite(variant_major_result.log10_p_value[:, 1]))
-
-    def test_loco_adjustment_affects_results(self) -> None:
-        """Ensure LOCO predictions affect the association statistics."""
-        sample_count = 100
-        covariate_count = 2
-        variant_count = 3
-
-        rng = np.random.default_rng(42)
-
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix = jnp.array(covariate_matrix)
-
-        phenotype_vector = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-
-        genotype_matrix = jnp.array(rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32))
-
-        state = prepare_test_linear_state(
-            covariate_matrix=covariate_matrix,
-            phenotype_vector=phenotype_vector,
-        )
-
-        result_no_loco = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=jnp.zeros(sample_count, dtype=jnp.float32),
-        )
-
-        loco_predictions = jnp.array(rng.standard_normal(sample_count), dtype=jnp.float32)
-        result_with_loco = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=genotype_matrix,
-            loco_predictions=loco_predictions,
-        )
-
-        assert not jnp.allclose(result_no_loco.beta, result_with_loco.beta)
-        assert not jnp.allclose(result_no_loco.chi_squared, result_with_loco.chi_squared)
-
-    def test_loco_predictions_with_covariate_signal_residualize_null_mse(self) -> None:
-        """Lock down null MSE when LOCO predictions are not covariate-orthogonal."""
-        fixture = build_loco_covariate_fixture()
-        phenotype_residual = residualize_against_covariates(
-            fixture.covariate_matrix,
-            fixture.phenotype_vector,
-        )
-        current_order_residual = phenotype_residual - fixture.loco_predictions
-        alternative_order_residual = residualize_against_covariates(
-            fixture.covariate_matrix,
-            fixture.phenotype_vector - fixture.loco_predictions,
-        )
-        adjusted_residual_covariate_crossproduct = fixture.covariate_matrix.T @ current_order_residual
-        assert np.linalg.norm(adjusted_residual_covariate_crossproduct) > 1.0
-
-        current_order_result = compute_regenie_null_mse_formula(
-            covariate_matrix=fixture.covariate_matrix,
-            adjusted_residual=current_order_residual,
-            genotype_matrix=fixture.genotype_matrix,
-        )
-        alternative_order_result = compute_regenie_null_mse_formula(
-            covariate_matrix=fixture.covariate_matrix,
-            adjusted_residual=alternative_order_residual,
-            genotype_matrix=fixture.genotype_matrix,
-        )
-        unprojected_result = compute_unprojected_null_mse_formula(
-            covariate_matrix=fixture.covariate_matrix,
-            adjusted_residual=current_order_residual,
-            genotype_matrix=fixture.genotype_matrix,
-        )
-
-        numpy.testing.assert_allclose(current_order_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
-        numpy.testing.assert_allclose(
-            current_order_result.standard_error,
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-7,
-        )
-        numpy.testing.assert_allclose(
-            current_order_result.chi_squared,
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-7,
-        )
-        numpy.testing.assert_allclose(
-            current_order_result.log10_p_value,
-            fixture.expected_log10_p_value,
-            rtol=1e-5,
-            atol=1e-7,
-        )
-        numpy.testing.assert_allclose(alternative_order_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
-        numpy.testing.assert_allclose(
-            alternative_order_result.standard_error,
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-7,
-        )
-        numpy.testing.assert_allclose(
-            alternative_order_result.chi_squared,
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-7,
-        )
-        numpy.testing.assert_allclose(unprojected_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-7)
-        assert not np.allclose(unprojected_result.standard_error, fixture.expected_standard_error, rtol=1e-5, atol=1e-7)
-        assert not np.allclose(unprojected_result.chi_squared, fixture.expected_chi_squared, rtol=1e-5, atol=1e-7)
-
-        state = prepare_test_linear_state(
-            covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
-            phenotype_vector=jnp.asarray(fixture.phenotype_vector, dtype=jnp.float32),
-        )
-        observed_result = compute_test_linear_chunk(
-            state=state,
-            genotype_matrix=jnp.asarray(fixture.genotype_matrix, dtype=jnp.float32),
-            loco_predictions=jnp.asarray(fixture.loco_predictions, dtype=jnp.float32),
-        )
-
-        numpy.testing.assert_allclose(observed_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(
-            observed_result.standard_error,
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            observed_result.chi_squared,
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            observed_result.log10_p_value,
-            fixture.expected_log10_p_value,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-
-        chromosome_state = prepare_test_linear_chromosome_state(
-            state,
-            jnp.asarray(fixture.loco_predictions, dtype=jnp.float32),
-        )
-        genotype_matrix = jnp.asarray(fixture.genotype_matrix, dtype=jnp.float32)
-        variant_major_result = compute_test_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix.T,
-        )
-        numpy.testing.assert_allclose(variant_major_result.beta, fixture.expected_beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(
-            variant_major_result.standard_error,
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            variant_major_result.chi_squared,
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            variant_major_result.log10_p_value,
-            fixture.expected_log10_p_value,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-
-        multi_state = prepare_test_multi_linear_state(
-            covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
-            phenotype_matrix=jnp.asarray(fixture.phenotype_vector[None, :], dtype=jnp.float32),
-        )
-        multi_chromosome_state = prepare_test_multi_linear_chromosome_state(
-            multi_state,
-            jnp.asarray(fixture.loco_predictions[None, :], dtype=jnp.float32),
-        )
-        multi_result = compute_test_multi_linear_chunk_from_chromosome_state(
-            multi_chromosome_state,
-            genotype_matrix,
-        )
-        numpy.testing.assert_allclose(multi_result.beta[0], fixture.expected_beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(
-            multi_result.standard_error[0],
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            multi_result.chi_squared[0],
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            multi_result.log10_p_value[0],
-            fixture.expected_log10_p_value,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        multi_variant_major_result = compute_test_multi_linear_chunk_from_chromosome_state_variant_major(
-            chromosome_state=multi_chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix.T,
-        )
-        numpy.testing.assert_allclose(multi_variant_major_result.beta[0], fixture.expected_beta, rtol=1e-5, atol=1e-6)
-        numpy.testing.assert_allclose(
-            multi_variant_major_result.standard_error[0],
-            fixture.expected_standard_error,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            multi_variant_major_result.chi_squared[0],
-            fixture.expected_chi_squared,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-        numpy.testing.assert_allclose(
-            multi_variant_major_result.log10_p_value[0],
-            fixture.expected_log10_p_value,
-            rtol=1e-5,
-            atol=1e-6,
-        )
-
-    def test_multi_trait_kernel_matches_stacked_single_trait_results(self) -> None:
-        """Ensure multi-trait computation matches stacked single-trait computation."""
-        sample_count = 96
-        variant_count = 6
-        covariate_count = 3
-        trait_count = 2
-
-        rng = np.random.default_rng(31)
-        covariate_matrix = np.ones((sample_count, covariate_count), dtype=np.float32)
-        covariate_matrix[:, 1] = rng.standard_normal(sample_count).astype(np.float32)
-        covariate_matrix[:, 2] = rng.standard_normal(sample_count).astype(np.float32)
-        phenotype_matrix = jnp.asarray(rng.standard_normal((trait_count, sample_count)), dtype=jnp.float32)
-        genotype_matrix = jnp.asarray(
-            rng.choice([0, 1, 2], size=(sample_count, variant_count)).astype(np.float32),
-            dtype=jnp.float32,
-        )
-        loco_prediction_matrix = jnp.asarray(
-            rng.standard_normal((trait_count, sample_count)) * 0.1,
-            dtype=jnp.float32,
-        )
-
-        multi_state = prepare_test_multi_linear_state(
-            covariate_matrix=jnp.asarray(covariate_matrix),
-            phenotype_matrix=phenotype_matrix,
-        )
-        multi_chromosome_state = prepare_test_multi_linear_chromosome_state(
-            multi_state,
-            loco_prediction_matrix,
-        )
-        multi_result = compute_test_multi_linear_chunk_from_chromosome_state(
-            multi_chromosome_state,
-            genotype_matrix,
-        )
-
-        single_results = []
-        for trait_index in range(trait_count):
-            single_state = prepare_test_linear_state(
-                covariate_matrix=jnp.asarray(covariate_matrix),
-                phenotype_vector=phenotype_matrix[trait_index],
-            )
-            single_results.append(
-                compute_test_linear_chunk(
-                    state=single_state,
-                    genotype_matrix=genotype_matrix,
-                    loco_predictions=loco_prediction_matrix[trait_index],
-                )
-            )
-
-        numpy.testing.assert_allclose(
-            np.asarray(multi_result.beta),
-            np.stack([np.asarray(result.beta) for result in single_results], axis=0),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(
-            np.asarray(multi_result.standard_error),
-            np.stack([np.asarray(result.standard_error) for result in single_results], axis=0),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(
-            np.asarray(multi_result.chi_squared),
-            np.stack([np.asarray(result.chi_squared) for result in single_results], axis=0),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-        numpy.testing.assert_allclose(
-            np.asarray(multi_result.log10_p_value),
-            np.stack([np.asarray(result.log10_p_value) for result in single_results], axis=0),
-            rtol=1e-5,
-            atol=1e-5,
-        )
-
-
-class TestSolvePositiveDefiniteSystem:
-    """Tests for solve_positive_definite_system."""
-
-    def test_solves_correctly(self) -> None:
-        """Ensure the solver returns correct solutions."""
-        rng = np.random.default_rng(42)
-        matrix_a = rng.standard_normal((5, 5)).astype(np.float32)
-        positive_definite = jnp.array(matrix_a.T @ matrix_a + 0.1 * np.eye(5), dtype=jnp.float32)
-        right_hand_side = jnp.array(rng.standard_normal(5), dtype=jnp.float32)
-
-        cholesky_factor = jnp.linalg.cholesky(positive_definite)
-        solution = linalg.solve_positive_definite_system(cholesky_factor, right_hand_side)
-
-        reconstructed = positive_definite @ solution
-        numpy.testing.assert_allclose(reconstructed, right_hand_side, atol=1e-4)
+            decoded_result.log10_p_value,
+            reference.log10_p_value,
+            LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+        ),
+    )
+    for packed_values, decoded_values, reference_values, tolerance in result_fields:
+        tests.numerical.assert_absolute_difference_less_than(packed_values, reference_values, tolerance)
+        tests.numerical.assert_absolute_difference_less_than(decoded_values, reference_values, tolerance)

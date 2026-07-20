@@ -1,23 +1,11 @@
-"""Shared pytest runtime setup."""
+"""Process-wide JAX policy for CPU-safe mathematical tests."""
 
 from __future__ import annotations
 
-from g.interface import config
-from g.jax_runtime import resolution as jax_runtime_resolution
-from g.jax_runtime import setup as jax_runtime_setup
+import os
 
-COMPUTE_CONFIG = config.RegenieConfig.from_options(
-    {
-        "bgen": "dataset.bgen",
-        "phenoFile": "phenotype.tsv",
-        "phenoCol": "trait",
-        "pred": "predictions.list",
-        "out": "results/output",
-        "jax_persistent_cache": False,
-    }
-).g_compute
-JAX_RUNTIME_POLICY = jax_runtime_resolution.resolve_jax_runtime_policy(COMPUTE_CONFIG)
-jax_runtime_setup.configure_before_backend_init(
-    native_setup_session=jax_runtime_resolution.build_native_jax_runtime_setup_session(JAX_RUNTIME_POLICY),
-    diagnostic_sink=None,
-)
+# Pytest imports this file before test modules. Keep runtime selection here so
+# direct compute-module imports cannot initialize a CUDA backend on login nodes.
+# GPU jobs can opt in explicitly by exporting JAX_PLATFORMS before pytest starts.
+os.environ.setdefault("JAX_ENABLE_X64", "true")
+os.environ.setdefault("JAX_PLATFORMS", "cpu")

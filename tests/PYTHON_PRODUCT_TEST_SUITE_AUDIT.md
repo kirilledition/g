@@ -1,31 +1,46 @@
-# Python Math Test Suite Audit
+# Python Test Suite Audit
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Math-only suite | Python tests after the 2026-07-09 pruning pass | Correctness maintainers |
+| Foundation repaired | Python tests as of 2026-07-20 | Correctness maintainers |
 
-The checked-in Python tests are limited to mathematical correctness coverage:
-quantitative kernels, binary score/Firth kernels, and REGENIE parity comparison
-helpers. Product, CLI, lifecycle, output/resume, telemetry, architecture,
-tooling, warm-cache, and pipeline orchestration tests were removed from
-`tests/`.
+The active Python suite is intentionally a mathematical and external-parity
+surface. It does not pretend that deleted product tests still protect the
+current native application boundary.
 
-## Retained Tests
+## Active Tests
 
-| Path | Reason |
+| Path | Contract |
 | --- | --- |
-| `tests/test_regenie2_linear.py` | Quantitative association statistics, p-value conversion, residualization, LOCO behavior, packed8/dosage equivalence, and numerical edge cases. |
-| `tests/test_regenie2_binary.py` | Binary score, candidate selection, approximate Firth correction, sparse/dense paths, packed8/dosage equivalence, and CPU/GPU numerical parity. |
-| `tests/test_regenie2_binary_firth_null.py` | Null Firth fallback attempts and convergence behavior. |
-| `tests/test_regenie2_binary_full_model.py` | Full-model Firth matrix blocks, score components, log-likelihood behavior, and solver outcomes. |
-| `tests/test_regenie2_binary_scalar_firth.py` | Scalar approximate-Firth formulas, Newton-Raphson fallback behavior, sparse flags, and numerical failure labels. |
-| `tests/test_regenie2_parity.py` | External REGENIE golden comparisons for public association statistics. |
-| `tests/parity/` | Metadata and helper checks that keep parity comparisons tied to current numerical coverage. |
+| `tests/numerical.py` | Shared strict `abs(actual - reference) < tolerance` assertion with exact nonfinite masks. |
+| `tests/parity/` | Login-safe upstream REGENIE metadata, composite-key alignment, strict tolerance, and significance-decision checks. |
+| `tests/test_regenie2_parity.py` | Full quantitative, binary score-only, and binary approximate-Firth chr22 runs through `g._core.cli.run`, compared with upstream REGENIE v4.1; both binary workflows remain diagnostic pending current-HEAD qualification. |
+| `tests/test_regenie2_linear.py` | Quantitative mathematical behavior. |
+| `tests/test_regenie2_binary.py` | Binary score and approximate-Firth mathematical behavior. |
+| `tests/test_regenie2_binary_firth_null.py` | Binary null-Firth behavior. |
+| `tests/test_regenie2_binary_scalar_firth.py` | Scalar approximate-Firth behavior. |
 
-## Removed Categories
+Additional focused compute tests may be added only for supported production
+code. Product tests for deleted Python orchestration modules are not revived.
 
-The pruning pass removed Python tests that validated non-mathematical contracts:
-API import boundaries, CLI behavior, configuration validation, BGEN bridge
-plumbing, preflight checks, output writers, resume manifests, callbacks,
-telemetry, timing, JAX runtime policy, warm-cache planning, development tooling,
-architecture rules, Symphony automation, and benchmark/report tooling.
+## Plumbing Repairs
+
+- `just test-local-focused` now names an existing login-safe test instead of
+  deleted `tests/test_core.py` and `tests/test_io_output.py`.
+- GitHub workflows no longer require deleted `tests/test_cli_smoke.py`. The
+  package-install job remains the real installed-console-script smoke check.
+- Non-data CI still collects the active mathematical suite and the parity
+  harness.
+- `just test-parity-required` turns absent protected fixtures into failures;
+  ordinary local parity runs may skip them.
+- Coverage recipes report the measured active surface without claiming an
+  unsupported 90% product-coverage gate.
+
+## Known Boundary
+
+CLI validation, output/resume lifecycle, telemetry, orchestration, and tooling
+automation are not broadly covered by Python product tests at this foundation
+stage. Those contracts should be added later against the supported `g.cli` and
+`g._core.cli.run` surfaces, with committed small fixtures where possible. Their
+absence must stay visible rather than being hidden behind stale node IDs or
+placeholder tests.

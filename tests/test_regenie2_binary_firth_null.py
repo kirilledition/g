@@ -1,160 +1,214 @@
+"""Correctness tests for the covariate-only Firth null solver."""
+
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
-import jax
-import jax.experimental
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from g import execution_plan
+import tests.numerical
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
-from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-from g.interface import config as interface_config
 
-if typing.TYPE_CHECKING:
-    import pytest
-
-    from g.compute.regenie2_binary import config as regenie2_binary_config
+PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
+PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
 
 
 @dataclass(frozen=True)
-class StubbedNullFirthRun:
-    """Observed result from a stubbed null Firth fallback run.
+class NullFirthFixture:
+    """Full-rank covariate-only Firth inputs."""
 
-    Attributes:
-        result: Selected null Firth fit result.
-        runtime_attempts: Fallback attempt indices observed at runtime.
-
-    """
-
-    result: regenie2_binary_firth_types.NullFirthFitResult
-    runtime_attempts: list[int]
+    covariate_matrix: npt.NDArray[np.float64]
+    phenotype_vector: npt.NDArray[np.float64]
+    loco_offset: npt.NDArray[np.float64]
+    coefficients: npt.NDArray[np.float64]
 
 
-def build_default_binary_kernel_config() -> regenie2_binary_config.BinaryKernelConfig:
-    """Build the packaged-default kernel config for tests."""
-    return execution_plan.build_binary_kernel_config(interface_config.load_packaged_config().g_compute)
+@dataclass(frozen=True)
+class NullFirthComponentReference:
+    """Independent NumPy null-Firth components."""
+
+    information_cholesky_factor: npt.NDArray[np.float64]
+    deviance: float
+    modified_score: npt.NDArray[np.float64]
 
 
-def run_stubbed_covariate_only_null_firth(
-    monkeypatch: pytest.MonkeyPatch,
-    successful_attempt: int,
-) -> StubbedNullFirthRun:
-    """Run the null Firth selector with observable runtime attempt callbacks."""
-    traced_attempts: list[int] = []
-    runtime_attempts: list[int] = []
-
-    def record_runtime_attempt(attempt_index_array: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
-        attempt_index = int(np.asarray(attempt_index_array))
-        runtime_attempts.append(attempt_index)
-        return np.asarray(attempt_index, dtype=np.int32)
-
-    def fit_once(
-        *,
-        covariate_matrix: jax.Array,
-        phenotype_vector: jax.Array,
-        loco_offset: jax.Array,
-        initial_coefficients: jax.Array,
-        maximum_iterations: int,
-        maximum_step_size: float,
-        tolerance: float,
-        line_search_maximum_attempts: int,
-        line_search_step_halving_scale: float,
-        check_score_increase: bool,
-    ) -> regenie2_binary_firth_types.NullFirthFitResult:
-        del (
-            covariate_matrix,
-            phenotype_vector,
-            loco_offset,
-            maximum_iterations,
-            maximum_step_size,
-            tolerance,
-            line_search_maximum_attempts,
-            line_search_step_halving_scale,
-            check_score_increase,
-        )
-        attempt_index = len(traced_attempts) + 1
-        traced_attempts.append(attempt_index)
-        observed_attempt_index = jax.experimental.io_callback(
-            record_runtime_attempt,
-            jax.ShapeDtypeStruct((), jnp.int32),
-            jnp.asarray(attempt_index, dtype=jnp.int32),
-            ordered=True,
-        )
-        attempt_value = observed_attempt_index.astype(initial_coefficients.dtype)
-        return regenie2_binary_firth_types.NullFirthFitResult(
-            coefficients=jnp.full(initial_coefficients.shape, attempt_value, dtype=initial_coefficients.dtype),
-            penalized_log_likelihood=observed_attempt_index.astype(jnp.float64) + jnp.asarray(0.25, dtype=jnp.float64),
-            iteration_count=observed_attempt_index,
-            convergence_reason_code=observed_attempt_index,
-            converged=observed_attempt_index == jnp.asarray(successful_attempt, dtype=jnp.int32),
-        )
-
-    monkeypatch.setattr(regenie2_binary_firth_null, "fit_covariate_only_firth_null_model_once", fit_once)
-    jax.clear_caches()
-    covariate_matrix = jnp.asarray(
-        [
-            [1.0, 0.0],
-            [1.0, 1.0],
-            [1.0, 2.0],
-            [1.0, 3.0],
-        ],
-        dtype=jnp.float32,
+def build_null_firth_fixture() -> NullFirthFixture:
+    """Build a non-separated fixture with a nonzero offset and start."""
+    return NullFirthFixture(
+        covariate_matrix=np.asarray(
+            [
+                [1.0, -1.5],
+                [1.0, -1.0],
+                [1.0, -0.5],
+                [1.0, 0.0],
+                [1.0, 0.5],
+                [1.0, 1.0],
+                [1.0, 1.5],
+                [1.0, 2.0],
+            ],
+            dtype=np.float64,
+        ),
+        phenotype_vector=np.asarray([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0], dtype=np.float64),
+        loco_offset=np.asarray([0.04, -0.03, 0.01, 0.00, -0.02, 0.03, -0.01, 0.02], dtype=np.float64),
+        coefficients=np.asarray([0.15, -0.08], dtype=np.float64),
     )
-    phenotype_vector = jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=jnp.float32)
-    loco_offset = jnp.zeros(phenotype_vector.shape, dtype=jnp.float32)
-    initial_coefficients = jnp.asarray([0.125, 0.25], dtype=jnp.float32)
-    kernel_config = build_default_binary_kernel_config()
-
-    @jax.jit
-    def fit_model() -> regenie2_binary_firth_types.NullFirthFitResult:
-        return regenie2_binary_firth_null.fit_covariate_only_firth_null_model(
-            covariate_matrix,
-            phenotype_vector,
-            loco_offset,
-            initial_coefficients,
-            kernel_config,
-        )
-
-    result = fit_model()
-    jax.block_until_ready(result.coefficients)
-    return StubbedNullFirthRun(result=result, runtime_attempts=runtime_attempts)
 
 
-def test_covariate_only_null_firth_skips_fallbacks_after_first_success(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = run_stubbed_covariate_only_null_firth(monkeypatch, successful_attempt=1)
+def compute_null_firth_component_reference(fixture: NullFirthFixture) -> NullFirthComponentReference:
+    """Evaluate the Jeffreys-adjusted null score with NumPy."""
+    linear_predictor = fixture.covariate_matrix @ fixture.coefficients + fixture.loco_offset
+    probability = np.reciprocal(1.0 + np.exp(-linear_predictor))
+    weight = probability * (1.0 - probability)
+    information = (fixture.covariate_matrix.T * weight) @ fixture.covariate_matrix
+    cholesky_factor = np.linalg.cholesky(information)
+    negative_log_likelihood = -np.where(
+        fixture.phenotype_vector > 0.5,
+        np.log(probability),
+        np.log1p(-probability),
+    )
+    deviance = 2.0 * np.sum(negative_log_likelihood) - np.linalg.slogdet(information).logabsdet
+    projected_covariates = np.linalg.solve(information, fixture.covariate_matrix.T).T
+    leverage = weight * np.sum(projected_covariates * fixture.covariate_matrix, axis=1)
+    modified_score = fixture.covariate_matrix.T @ (
+        fixture.phenotype_vector - probability + leverage * (0.5 - probability)
+    )
+    return NullFirthComponentReference(
+        information_cholesky_factor=cholesky_factor,
+        deviance=float(deviance),
+        modified_score=modified_score,
+    )
 
-    assert run.runtime_attempts == [1]
-    np.testing.assert_allclose(np.asarray(run.result.coefficients), np.asarray([1.0, 1.0]))
-    assert float(np.asarray(run.result.penalized_log_likelihood)) == 1.25
-    assert int(np.asarray(run.result.iteration_count)) == 1
-    assert bool(np.asarray(run.result.converged))
+
+def test_null_firth_components_match_independent_numpy_formula() -> None:
+    """Validate information, penalized deviance, leverage, and modified score."""
+    fixture = build_null_firth_fixture()
+    reference = compute_null_firth_component_reference(fixture)
+
+    observed = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        coefficients=jnp.asarray(fixture.coefficients),
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.information_cholesky_factor,
+        reference.information_cholesky_factor,
+        1.0e-12,
+    )
+    tests.numerical.assert_absolute_difference_less_than(observed.deviance, reference.deviance, 1.0e-12)
+    tests.numerical.assert_absolute_difference_less_than(observed.modified_score, reference.modified_score, 1.0e-12)
+    assert bool(np.asarray(observed.valid))
 
 
-def test_covariate_only_null_firth_runs_second_attempt_only_after_first_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = run_stubbed_covariate_only_null_firth(monkeypatch, successful_attempt=2)
+def test_null_firth_line_search_accepts_a_deviance_decreasing_newton_step() -> None:
+    """Accept the first full or halved Newton step that improves the objective."""
+    fixture = build_null_firth_fixture()
+    current_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        coefficients=jnp.asarray(fixture.coefficients),
+    )
+    information = np.asarray(current_components.information_cholesky_factor)
+    information = information @ information.T
+    coefficient_step = np.linalg.solve(information, np.asarray(current_components.modified_score))
 
-    assert run.runtime_attempts == [1, 2]
-    np.testing.assert_allclose(np.asarray(run.result.coefficients), np.asarray([2.0, 2.0]))
-    assert float(np.asarray(run.result.penalized_log_likelihood)) == 2.25
-    assert int(np.asarray(run.result.iteration_count)) == 2
-    assert bool(np.asarray(run.result.converged))
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        current_coefficients=jnp.asarray(fixture.coefficients),
+        current_deviance=current_components.deviance,
+        coefficient_step=jnp.asarray(coefficient_step),
+        maximum_attempts=8,
+        step_halving_scale=0.5,
+    )
+
+    assert bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+    assert float(np.asarray(observed.deviance)) < float(np.asarray(current_components.deviance))
 
 
-def test_covariate_only_null_firth_uses_fourth_attempt_when_all_earlier_attempts_fail(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = run_stubbed_covariate_only_null_firth(monkeypatch, successful_attempt=0)
+def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
+    """Leave coefficients and deviance untouched when no attempt is authorized."""
+    fixture = build_null_firth_fixture()
+    current_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        coefficients=jnp.asarray(fixture.coefficients),
+    )
 
-    assert run.runtime_attempts == [1, 2, 3, 4]
-    np.testing.assert_allclose(np.asarray(run.result.coefficients), np.asarray([4.0, 4.0]))
-    assert np.isnan(np.asarray(run.result.penalized_log_likelihood))
-    assert int(np.asarray(run.result.iteration_count)) == 4
-    assert not bool(np.asarray(run.result.converged))
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        current_coefficients=jnp.asarray(fixture.coefficients),
+        current_deviance=current_components.deviance,
+        coefficient_step=jnp.asarray([1.0, -1.0]),
+        maximum_attempts=0,
+        step_halving_scale=0.5,
+    )
+
+    tests.numerical.assert_absolute_difference_less_than(observed.coefficients, fixture.coefficients, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-15)
+    assert not bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+
+
+def test_null_firth_single_attempt_converges_to_a_small_modified_score() -> None:
+    """Converge on a regular fixture under the production numerical policy."""
+    fixture = build_null_firth_fixture()
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model_once(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        initial_coefficients=jnp.zeros((fixture.covariate_matrix.shape[1],), dtype=jnp.float64),
+        maximum_iterations=100,
+        maximum_step_size=PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE,
+        tolerance=PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE,
+        line_search_maximum_attempts=25,
+        line_search_step_halving_scale=0.5,
+        check_score_increase=True,
+    )
+    terminal_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        coefficients=observed.coefficients,
+    )
+
+    assert bool(np.asarray(observed.converged))
+    assert bool(np.asarray(terminal_components.valid))
+    assert (
+        float(np.max(np.abs(np.asarray(terminal_components.modified_score)))) < PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.penalized_log_likelihood,
+        -0.5 * np.asarray(terminal_components.deviance),
+        1.0e-12,
+    )
+
+
+def test_null_firth_zero_iteration_budget_returns_failure_without_moving_start() -> None:
+    """Make exhaustion explicit and never present an untrusted likelihood."""
+    fixture = build_null_firth_fixture()
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model_once(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        initial_coefficients=jnp.asarray(fixture.coefficients),
+        maximum_iterations=0,
+        maximum_step_size=5.0,
+        tolerance=1.0e-8,
+        line_search_maximum_attempts=20,
+        line_search_step_halving_scale=0.5,
+        check_score_increase=True,
+    )
+
+    assert not bool(np.asarray(observed.converged))
+    assert bool(np.isnan(np.asarray(observed.penalized_log_likelihood)))
+    tests.numerical.assert_absolute_difference_less_than(observed.coefficients, fixture.coefficients, 1.0e-15)

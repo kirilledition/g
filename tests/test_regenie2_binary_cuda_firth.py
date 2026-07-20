@@ -1,3 +1,5 @@
+"""CPU-safe contracts around the optional raw-CUDA Firth component path."""
+
 from __future__ import annotations
 
 import typing
@@ -6,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import tests.numerical
 from g.compute.regenie2_binary.firth import cuda_components as regenie2_binary_firth_cuda_components
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 
@@ -47,10 +50,11 @@ def test_cuda_component_abstract_evaluation_preserves_multi_axis_batch_prefix() 
     assert components.valid.shape == (2, 3)
 
 
-def test_disabled_cuda_components_retain_jax_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the fallback independent from CUDA target registration."""
+def test_disabled_cuda_components_retain_independent_jax_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CPU correctness independent from CUDA target registration."""
 
-    def reject_cuda_call(**_operands: jax.Array) -> typing.NoReturn:
+    def reject_cuda_call(**operands: jax.Array) -> typing.NoReturn:
+        del operands
         raise AssertionError("disabled CUDA components must not invoke the FFI wrapper")
 
     monkeypatch.setattr(
@@ -58,19 +62,49 @@ def test_disabled_cuda_components_retain_jax_fallback(monkeypatch: pytest.Monkey
         "compute_scalar_firth_components",
         reject_cuda_call,
     )
+    phenotype = np.asarray([0.0, 1.0, 1.0], dtype=np.float64)
+    genotype = np.asarray([0.25, 1.5, 0.75], dtype=np.float64)
+    offset = np.asarray([-0.2, 0.1, 0.3], dtype=np.float64)
+    active_mask = np.asarray([True, True, False])
+    beta = 0.4
+    non_active_deviance = 0.7
+
     components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=jnp.asarray([0.0, 1.0, 1.0]),
-        genotype_vector=jnp.asarray([0.25, 1.5, 0.75]),
-        offset_vector=jnp.asarray([-0.2, 0.1, 0.3]),
-        active_sample_mask=jnp.asarray([True, True, False]),
-        non_active_deviance=jnp.asarray(0.7),
-        beta=jnp.asarray(0.4),
+        phenotype_vector=jnp.asarray(phenotype),
+        genotype_vector=jnp.asarray(genotype),
+        offset_vector=jnp.asarray(offset),
+        active_sample_mask=jnp.asarray(active_mask),
+        non_active_deviance=jnp.asarray(non_active_deviance),
+        beta=jnp.asarray(beta),
         minimum_variance=jnp.asarray(1.0e-8),
         use_cuda_components=False,
     )
 
-    np.testing.assert_allclose(components.genotype_information, 0.51443997, rtol=1.0e-6)
-    np.testing.assert_allclose(components.score_adjustment, -0.24444907, rtol=1.0e-6)
-    np.testing.assert_allclose(components.penalized_deviance, 3.45984183, rtol=1.0e-6)
-    np.testing.assert_allclose(components.score, 0.13451406, rtol=1.0e-6)
-    assert bool(components.valid)
+    probability = np.reciprocal(1.0 + np.exp(-(offset + genotype * beta)))
+    weight = probability * (1.0 - probability)
+    information_diagonal = genotype**2 * np.where(active_mask, weight, 0.0)
+    genotype_information = float(np.sum(information_diagonal))
+    score_adjustment = float(
+        np.sum(np.where(active_mask, genotype * information_diagonal * (0.5 - probability), 0.0)) / genotype_information
+    )
+    negative_log_likelihood = -np.where(phenotype > 0.5, np.log(probability), np.log1p(-probability))
+    penalized_deviance = (
+        non_active_deviance
+        + 2.0 * np.sum(np.where(active_mask, negative_log_likelihood, 0.0))
+        - np.log(genotype_information)
+    )
+    score = float(np.sum(np.where(active_mask, genotype * (phenotype - probability), 0.0)) + score_adjustment)
+
+    tests.numerical.assert_absolute_difference_less_than(
+        components.genotype_information,
+        genotype_information,
+        1.0e-12,
+    )
+    tests.numerical.assert_absolute_difference_less_than(components.score_adjustment, score_adjustment, 1.0e-12)
+    tests.numerical.assert_absolute_difference_less_than(
+        components.penalized_deviance,
+        penalized_deviance,
+        1.0e-12,
+    )
+    tests.numerical.assert_absolute_difference_less_than(components.score, score, 1.0e-12)
+    assert bool(np.asarray(components.valid))
