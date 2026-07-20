@@ -62,3 +62,40 @@ pub fn sigterm_shutdown_requested() -> bool {
             .and_then(|result| result.as_ref().ok())
             .is_some_and(|requested| requested.load(Ordering::SeqCst))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::execute_isolated_test_body;
+
+    #[test]
+    fn sigterm_scope_is_exclusive_resets_requests_and_disarms_on_drop() {
+        if !execute_isolated_test_body(
+            "shutdown::process::tests::sigterm_scope_is_exclusive_resets_requests_and_disarms_on_drop",
+            "G_RUNTIME_SIGTERM_TEST_CHILD",
+        ) {
+            return;
+        }
+        assert!(!sigterm_shutdown_requested());
+
+        let scope = begin_sigterm_shutdown_scope().expect("first shutdown scope should open");
+        assert!(!sigterm_shutdown_requested());
+        let duplicate_error = begin_sigterm_shutdown_scope().err().expect("concurrent shutdown scope should fail");
+        assert_eq!(duplicate_error.to_string(), "A SIGTERM shutdown scope is already active.");
+
+        let requested = SIGTERM_FLAG
+            .get()
+            .expect("signal flag should be initialized")
+            .as_ref()
+            .expect("signal handlers should install");
+        requested.store(true, Ordering::SeqCst);
+        assert!(sigterm_shutdown_requested());
+
+        drop(scope);
+        assert!(!sigterm_shutdown_requested());
+
+        let next_scope = begin_sigterm_shutdown_scope().expect("shutdown scope should reopen after drop");
+        assert!(!sigterm_shutdown_requested());
+        drop(next_scope);
+    }
+}

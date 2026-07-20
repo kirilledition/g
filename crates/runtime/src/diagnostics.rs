@@ -46,3 +46,49 @@ where
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use serde::Serializer;
+    use serde::ser::Error as _;
+    use tracing_subscriber::prelude::*;
+
+    use super::*;
+
+    struct SerializationFailure;
+
+    impl serde::Serialize for SerializationFailure {
+        fn serialize<SerializerType>(
+            &self,
+            _serializer: SerializerType,
+        ) -> Result<SerializerType::Ok, SerializerType::Error>
+        where
+            SerializerType: Serializer,
+        {
+            Err(SerializerType::Error::custom("intentional diagnostic serialization failure"))
+        }
+    }
+
+    #[test]
+    fn disabled_diagnostics_do_not_serialize_fields() {
+        tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
+            emit_diagnostic_event("info", "ignored", "ignored", &SerializationFailure)
+                .expect("disabled diagnostic should not serialize fields");
+        });
+    }
+
+    #[test]
+    fn enabled_diagnostics_propagate_serialization_errors_for_every_level_route() {
+        let subscriber = tracing_subscriber::registry().with(tracing_subscriber::EnvFilter::new("trace"));
+        tracing::subscriber::with_default(subscriber, || {
+            let error = emit_diagnostic_event("info", "invalid", "invalid", &SerializationFailure)
+                .expect_err("enabled diagnostic should serialize fields");
+            assert!(error.to_string().contains("intentional diagnostic serialization failure"));
+
+            for level in ["error", "warn", "warning", "info", "debug", "trace", "notice"] {
+                emit_diagnostic_event(level, "test_event", "diagnostic", &serde_json::json!({"value": 1}))
+                    .expect("valid diagnostic fields should serialize");
+            }
+        });
+    }
+}

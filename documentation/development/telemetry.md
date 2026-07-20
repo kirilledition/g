@@ -46,6 +46,11 @@ Profile mode also writes `profile.summary.json` under that directory. Output
 writers write `output_stage_timings.json` in each phenotype run directory.
 The same native run ID is used by the telemetry stream and profile summary.
 
+The telemetry JSONL envelope and `profile.summary.json` currently carry
+`schema_version: 0`. The application is still unreleased, so these persisted
+contracts remain at version `0` until the first public release establishes the
+initial compatibility baseline.
+
 ## Lifecycle
 
 The native CLI owns:

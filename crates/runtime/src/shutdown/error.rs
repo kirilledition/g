@@ -18,3 +18,16 @@ impl fmt::Display for ShutdownError {
 }
 
 impl std::error::Error for ShutdownError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_error_preserves_message_and_supports_equality() {
+        let error = ShutdownError::new("shutdown unavailable");
+        assert_eq!(error, ShutdownError::new("shutdown unavailable"));
+        assert_eq!(error.to_string(), "shutdown unavailable");
+        assert!(std::error::Error::source(&error).is_none());
+    }
+}

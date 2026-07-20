@@ -49,3 +49,42 @@ impl ProcessRuntimeState {
         self.logging_subscriber_policy = Some(logging_policy.subscriber_policy().into_owned());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::test_support::disabled_session_policy;
+
+    #[test]
+    fn process_state_accepts_run_owned_changes_and_rejects_global_changes() {
+        let mut state = ProcessRuntimeState::default();
+        let configured = disabled_session_policy();
+        assert_eq!(state.require_compatible_runtime_policy(&configured, Some(8)), Ok(()));
+
+        state.record_logging_subscriber_policy(&configured);
+        state.rayon_thread_count = Some(8);
+
+        let mut run_owned_changes = disabled_session_policy();
+        run_owned_changes.stage_timing_file = Some(PathBuf::from("stage.json"));
+        run_owned_changes.profile_summary_file = Some(PathBuf::from("profile.json"));
+        run_owned_changes.queue_size = 1;
+        run_owned_changes.lossy = true;
+        assert_eq!(state.require_compatible_runtime_policy(&run_owned_changes, None), Ok(()));
+        assert_eq!(state.require_compatible_runtime_policy(&run_owned_changes, Some(8)), Ok(()));
+
+        let thread_error = state
+            .require_compatible_runtime_policy(&run_owned_changes, Some(9))
+            .expect_err("changed Rayon thread count should fail");
+        assert!(thread_error.to_string().contains("Configured thread count: 8. Requested thread count: 9"));
+
+        let mut logging_change = disabled_session_policy();
+        logging_change.include_span_events = true;
+        let logging_error = state
+            .require_compatible_runtime_policy(&logging_change, Some(8))
+            .expect_err("changed logging topology should fail first");
+        assert!(logging_error.to_string().contains("Logging subscriber policy is process-global"));
+        assert!(logging_error.to_string().contains("include-span-events=True"));
+    }
+}

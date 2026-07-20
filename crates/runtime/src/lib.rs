@@ -12,6 +12,8 @@ mod runtime_state;
 mod shutdown;
 mod telemetry_session;
 mod telemetry_writer;
+#[cfg(test)]
+mod test_support;
 mod timing;
 
 pub use api::*;

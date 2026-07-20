@@ -6,6 +6,8 @@ use chrono::{DateTime, SecondsFormat};
 use serde::Serialize;
 use uuid::Uuid;
 
+const TELEMETRY_SCHEMA_VERSION: i64 = 0;
+
 #[derive(Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct TelemetryEventEnvelope<'event> {
     pub schema_version: i64,
@@ -29,7 +31,7 @@ pub(crate) fn build_current_telemetry_event_envelope<'event>(
     thread_name: &'event str,
 ) -> TelemetryEventEnvelope<'event> {
     TelemetryEventEnvelope {
-        schema_version: 1,
+        schema_version: TELEMETRY_SCHEMA_VERSION,
         run_id,
         timestamp: current_telemetry_timestamp(),
         level: uppercase_level(level),
@@ -71,4 +73,53 @@ fn current_telemetry_timestamp() -> String {
         || "1970-01-01T00:00:00.000000Z".to_string(),
         |timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Micros, true),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_uses_prerelease_contract_and_stable_runtime_fields() {
+        let envelope = build_current_telemetry_event_envelope("run-id", "chunk_finished", "info", "worker-2");
+        assert_eq!(envelope.schema_version, TELEMETRY_SCHEMA_VERSION);
+        assert_eq!(envelope.schema_version, 0);
+        assert_eq!(envelope.run_id, "run-id");
+        assert_eq!(envelope.level, "INFO");
+        assert_eq!(envelope.source, "python");
+        assert_eq!(envelope.target, "g.engine.telemetry");
+        assert_eq!(envelope.event, "chunk_finished");
+        assert_eq!(envelope.process_identifier, std::process::id());
+        assert_eq!(envelope.thread_name, "worker-2");
+        assert!(envelope.timestamp.ends_with('Z'));
+        assert!(chrono::DateTime::parse_from_rfc3339(&envelope.timestamp).is_ok());
+    }
+
+    #[test]
+    fn telemetry_levels_are_normalized_without_allocating_known_values() {
+        for (input, expected) in [
+            ("error", "ERROR"),
+            ("ERROR", "ERROR"),
+            ("warn", "WARN"),
+            ("warning", "WARNING"),
+            ("info", "INFO"),
+            ("debug", "DEBUG"),
+            ("trace", "TRACE"),
+            ("NOTICE", "NOTICE"),
+        ] {
+            assert_eq!(uppercase_level(input), expected);
+            assert!(matches!(uppercase_level(input), Cow::Borrowed(_)));
+        }
+        assert_eq!(uppercase_level("Notice"), "NOTICE");
+        assert!(matches!(uppercase_level("Notice"), Cow::Owned(_)));
+    }
+
+    #[test]
+    fn generated_run_identifiers_are_unique_lowercase_uuid_hex() {
+        let first = generate_run_id();
+        let second = generate_run_id();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    }
 }

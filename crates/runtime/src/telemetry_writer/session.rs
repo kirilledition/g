@@ -75,3 +75,41 @@ impl Drop for TelemetrySessionWriter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{RUNTIME_GLOBAL_TEST_MUTEX, TemporaryDirectory};
+
+    #[test]
+    fn session_writer_enforces_single_owner_and_finishes_idempotently() {
+        let _global_guard = RUNTIME_GLOBAL_TEST_MUTEX.lock().expect("runtime global test mutex should be available");
+        let temporary_directory = TemporaryDirectory::new("telemetry-writer");
+        let first_path = temporary_directory.path().join("first.jsonl");
+        let second_path = temporary_directory.path().join("second.jsonl");
+        let mut writer = TelemetrySessionWriter::new(&first_path, 16, false).expect("first writer should open");
+
+        let duplicate_error =
+            TelemetrySessionWriter::new(&second_path, 16, false).err().expect("second active writer should fail");
+        assert_eq!(duplicate_error.kind(), io::ErrorKind::AlreadyExists);
+
+        writer.write_json_line("{\"event\":\"one\"}\n").expect("event should enqueue");
+        assert_eq!(writer.counter_snapshot().accepted_event_count, 1);
+        writer.stop_shared_logging().expect("first unregister should succeed");
+        writer.stop_shared_logging().expect("second unregister should be a no-op");
+        writer.finish();
+        writer.finish();
+        assert_eq!(writer.counter_snapshot(), TelemetryWriterCounterSnapshot::empty());
+        writer.write_json_line("{\"event\":\"ignored\"}\n").expect("finished writer should be a no-op");
+        assert_eq!(std::fs::read(&first_path).expect("first stream should be readable"), b"{\"event\":\"one\"}\n");
+
+        drop(writer);
+        let dropped_writer =
+            TelemetrySessionWriter::new(&second_path, 16, false).expect("registry should be reusable after finish");
+        drop(dropped_writer);
+        let mut replacement =
+            TelemetrySessionWriter::new(&second_path, 16, false).expect("drop should unregister active writer");
+        replacement.stop_shared_logging().expect("replacement should unregister");
+        replacement.finish();
+    }
+}

@@ -47,6 +47,10 @@ per stage; borrowed serialization views preserve the separate totals/counts
 JSON contract without duplicate maps. Do not add data-matrix copies, genotype
 parsing, or JAX host/device transfers here.
 
+Telemetry JSONL envelopes and profile summaries use persisted schema version
+`0` while the application remains unreleased. These versions stay at `0` until
+the first public release establishes a compatibility baseline.
+
 ## Allowed downstream users
 
 `g-engine` and `g-runner` only.
