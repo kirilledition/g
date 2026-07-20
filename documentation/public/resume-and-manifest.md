@@ -132,7 +132,7 @@ The scalar approximate-Firth solver is the only supported correction path.
 Pre-release configurations and manifests must remove the experimental
 `use_block_firth_math` option and its block-only coefficient, likelihood,
 step-halving, and initial-response settings. Effective configuration metadata
-uses option schema version `6`, and these fields are not accepted by manifest
+uses option schema version `0`, and these fields are not accepted by manifest
 schema version `17`; start a new output directory instead of resuming an older
 block-Firth-compatible run.
 
