@@ -358,3 +358,226 @@ fn get_run_manifest_update_lock() -> &'static Mutex<()> {
     static RUN_MANIFEST_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     RUN_MANIFEST_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::{Value, json};
+
+    use super::{
+        RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, extend_run_manifest_metadata, initialize_output_run,
+        load_run_manifest_json, mark_run_manifest_completed, mark_run_manifest_interrupted, prepare_output_run,
+        read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text,
+        record_run_manifest_chunk_commits, resolve_output_run_paths,
+    };
+
+    struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            static DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
+            let sequence = DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let timestamp =
+                SystemTime::now().duration_since(UNIX_EPOCH).expect("test time is after Unix epoch").as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("g-output-manifest-{label}-{}-{timestamp}-{sequence}", std::process::id()));
+            std::fs::create_dir_all(&path).expect("test directory is created");
+            Self { path }
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn read_manifest(run_directory: &Path) -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(run_directory.join(RUN_MANIFEST_FILE_NAME)).expect("manifest reads"),
+        )
+        .expect("manifest is valid JSON")
+    }
+
+    fn chunk_commit(chunk_identifier: i64, file_name: &str) -> RunManifestChunkCommit {
+        RunManifestChunkCommit {
+            chunk_identifier,
+            variant_start_index: chunk_identifier,
+            variant_stop_index: chunk_identifier + 2,
+            row_count: 2,
+            chunk_file_name: file_name.to_string(),
+        }
+    }
+
+    #[test]
+    fn output_paths_accept_explicit_run_directory_or_add_mode_suffix() {
+        let explicit = resolve_output_run_paths(Path::new("results.run"), "regenie2_binary");
+        assert_eq!(explicit.run_directory, Path::new("results.run"));
+        assert_eq!(explicit.parts_directory, Path::new("results.run/parts"));
+
+        let derived = resolve_output_run_paths(Path::new("results"), "regenie2_binary");
+        assert_eq!(derived.run_directory, Path::new("results.regenie2_binary.run"));
+        assert_eq!(derived.parts_directory, Path::new("results.regenie2_binary.run/parts"));
+    }
+
+    #[test]
+    fn prepare_output_run_enforces_fresh_and_resume_preconditions() {
+        let directory = TestDirectory::new("prepare");
+        let root = directory.path.join("fresh");
+        let prepared = prepare_output_run(&root, "regenie2_binary", false).expect("fresh run prepares");
+        assert!(prepared.output_run_paths.parts_directory.is_dir());
+        assert_eq!(prepared.existing_manifest_json, None);
+
+        std::fs::write(prepared.output_run_paths.run_directory.join("sentinel"), b"occupied").expect("sentinel writes");
+        let error = prepare_output_run(&root, "regenie2_binary", false).expect_err("nonempty fresh run is rejected");
+        assert!(error.to_string().contains("already exists and is not empty"));
+
+        let resume_root = directory.path.join("resume");
+        let error =
+            prepare_output_run(&resume_root, "regenie2_binary", true).expect_err("resume without manifest is rejected");
+        assert!(error.to_string().contains("Resume requires run_manifest.json"));
+    }
+
+    #[test]
+    fn manifest_loader_rejects_invalid_json_and_non_object_roots() {
+        let directory = TestDirectory::new("load");
+        assert_eq!(load_run_manifest_json(&directory.path).expect("missing manifest is valid"), None);
+        for malformed in ["not-json", "[]"] {
+            std::fs::write(directory.path.join(RUN_MANIFEST_FILE_NAME), malformed).expect("fixture writes");
+            assert!(load_run_manifest_json(&directory.path).is_err());
+        }
+    }
+
+    #[test]
+    fn manifest_gpu_format_reader_accepts_public_formats_and_rejects_unknown_or_missing() {
+        for (format, expected) in
+            [("dosage", g_plan::GpuGenotypeFormat::Dosage), ("packed8", g_plan::GpuGenotypeFormat::Packed8)]
+        {
+            let manifest = json!({"execution_plan": {"association_backend": {"genotype_format": format}}});
+            assert_eq!(
+                read_run_manifest_gpu_genotype_format_from_text(&manifest.to_string()).expect("format reads"),
+                expected
+            );
+        }
+
+        let unsupported = json!({"execution_plan": {"association_backend": {"genotype_format": "packed16"}}});
+        let error = read_run_manifest_gpu_genotype_format_from_text(&unsupported.to_string())
+            .expect_err("unsupported format is rejected");
+        assert!(error.to_string().contains("unsupported execution-plan GPU genotype format 'packed16'"));
+        assert!(read_run_manifest_gpu_genotype_format_from_text("{}").is_err());
+    }
+
+    #[test]
+    fn manifest_lifecycle_is_atomic_sorted_and_idempotent() {
+        let directory = TestDirectory::new("lifecycle");
+        let header = json!({"schema_version": 0, "output_schema_version": 0, "execution_plan": {"name": "test"}});
+        let identifiers =
+            initialize_output_run(&directory.path, None, &header, None).expect("new manifest initializes");
+        assert!(identifiers.is_empty());
+        assert_eq!(read_manifest(&directory.path)["status"], "running");
+
+        record_run_manifest_chunk_commits(
+            &directory.path,
+            vec![chunk_commit(4, "part-4.parquet"), chunk_commit(0, "part-0.parquet")],
+        )
+        .expect("commits record");
+        record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "part-0.parquet")])
+            .expect("identical commit replay is idempotent");
+        let manifest = read_manifest(&directory.path);
+        let identifiers = manifest["committed_chunks"]
+            .as_array()
+            .expect("commits are a list")
+            .iter()
+            .map(|commit| commit["chunk_identifier"].as_i64().expect("identifier is int64"))
+            .collect::<Vec<_>>();
+        assert_eq!(identifiers, [0, 4]);
+
+        let error = record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "conflict.parquet")])
+            .expect_err("conflicting replay is rejected");
+        assert!(error.to_string().contains("conflicting commit metadata"));
+
+        mark_run_manifest_interrupted(&directory.path, "SIGTERM").expect("manifest marks interrupted");
+        let interrupted = read_manifest(&directory.path);
+        assert_eq!(interrupted["status"], "interrupted");
+        assert_eq!(interrupted["interrupted_signal"], "SIGTERM");
+        mark_run_manifest_completed(&directory.path).expect("manifest marks complete");
+        let completed = read_manifest(&directory.path);
+        assert_eq!(completed["status"], "completed");
+        assert!(completed.get("interrupted_signal").is_none());
+
+        extend_run_manifest_metadata(&directory.path, json!({"name": "g"}), json!({"gpu": "test"}))
+            .expect("metadata extends");
+        let extended = read_manifest(&directory.path);
+        assert_eq!(extended["command"]["name"], "g");
+        assert_eq!(extended["runtime"]["gpu"], "test");
+    }
+
+    #[test]
+    fn metadata_upsert_creates_manifest_while_status_updates_ignore_missing_manifest() {
+        let directory = TestDirectory::new("upsert");
+        mark_run_manifest_completed(&directory.path).expect("missing manifest update is a no-op");
+        mark_run_manifest_interrupted(&directory.path, "SIGINT").expect("missing manifest update is a no-op");
+        record_run_manifest_chunk_commits(&directory.path, Vec::new()).expect("empty commit update is a no-op");
+        assert!(!directory.path.join(RUN_MANIFEST_FILE_NAME).exists());
+
+        extend_run_manifest_metadata(&directory.path, json!(["g", "run"]), json!({"device": "gpu"}))
+            .expect("metadata upsert creates manifest");
+        let manifest = read_manifest(&directory.path);
+        assert_eq!(manifest["command"], json!(["g", "run"]));
+        assert_eq!(manifest["runtime"]["device"], "gpu");
+    }
+
+    #[test]
+    fn resumed_initialization_replaces_commits_and_clears_interruption() {
+        let directory = TestDirectory::new("resume");
+        let header = json!({"schema_version": 0, "execution_plan": {"name": "test"}});
+        let existing = json!({
+            "schema_version": 0,
+            "execution_plan": {"name": "test"},
+            "status": "interrupted",
+            "interrupted_signal": "SIGTERM",
+            "committed_chunks": [],
+        });
+        let commits = vec![chunk_commit(4, "part-4.parquet"), chunk_commit(0, "part-0.parquet")];
+        let identifiers = initialize_output_run(&directory.path, Some(&existing.to_string()), &header, Some(commits))
+            .expect("resumed manifest initializes");
+        assert_eq!(identifiers, [4, 0]);
+        let manifest = read_manifest(&directory.path);
+        assert_eq!(manifest["status"], "running");
+        assert!(manifest.get("interrupted_signal").is_none());
+        assert_eq!(manifest["committed_chunks"].as_array().expect("commits are a list").len(), 2);
+
+        let error = initialize_output_run(&directory.path, None, &header, Some(Vec::new()))
+            .expect_err("resume commits require existing manifest");
+        assert!(error.to_string().contains("Resume requires run_manifest.json"));
+    }
+
+    #[test]
+    fn manifest_commit_reader_sorts_and_rejects_duplicate_or_malformed_entries() {
+        let manifest = json!({
+            "committed_chunks": [
+                {"chunk_identifier": 4, "variant_start_index": 4, "variant_stop_index": 6, "row_count": 2, "chunk_file_name": "part-4.parquet"},
+                {"chunk_identifier": 0, "variant_start_index": 0, "variant_stop_index": 2, "row_count": 2, "chunk_file_name": "part-0.parquet"},
+            ],
+        });
+        let commits = read_run_manifest_chunk_commits_from_text(&manifest.to_string()).expect("commits read");
+        assert_eq!(commits.iter().map(|commit| commit.chunk_identifier).collect::<Vec<_>>(), [0, 4]);
+
+        let duplicate = json!({
+            "committed_chunks": [
+                {"chunk_identifier": 0, "variant_start_index": 0, "variant_stop_index": 2, "row_count": 2, "chunk_file_name": "first.parquet"},
+                {"chunk_identifier": 0, "variant_start_index": 0, "variant_stop_index": 2, "row_count": 2, "chunk_file_name": "second.parquet"},
+            ],
+        });
+        let error = read_run_manifest_chunk_commits_from_text(&duplicate.to_string())
+            .expect_err("duplicate commit identifier is rejected");
+        assert!(error.to_string().contains("duplicate chunk identifiers"));
+        assert!(read_run_manifest_chunk_commits_from_text(r#"{"committed_chunks": {}}"#).is_err());
+        assert!(read_run_manifest_chunk_commits_from_text("{}").is_err());
+    }
+}

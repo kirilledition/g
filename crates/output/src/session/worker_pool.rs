@@ -184,3 +184,51 @@ fn run_output_write_task(output_write_task: OutputWriteTask) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crossbeam_channel::bounded;
+
+    use super::{
+        OutputWriteCompletionGuard, OutputWriteCompletionTracker, OutputWriteTask, OutputWriterPool,
+        record_worker_error, run_output_writer_worker,
+    };
+
+    #[test]
+    fn writer_pool_rejects_zero_workers_or_queue_depth() {
+        let worker_error = OutputWriterPool::new(0, 1).err().expect("zero workers are rejected");
+        assert!(worker_error.to_string().contains("Writer thread count must be at least 1"));
+        let queue_error = OutputWriterPool::new(1, 0).err().expect("zero queue depth is rejected");
+        assert!(queue_error.to_string().contains("Writer queue depth must be at least 1"));
+
+        drop(OutputWriterPool::new(1, 1).expect("valid writer pool starts and stops"));
+    }
+
+    #[test]
+    fn completion_guard_decrements_tracker_and_unblocks_wait() {
+        let tracker = OutputWriteCompletionTracker::new();
+        tracker.increment().expect("pending count increments");
+        let guard = OutputWriteCompletionGuard { completion_tracker: tracker.clone() };
+        drop(guard);
+        tracker.wait().expect("zero pending writes return immediately");
+    }
+
+    #[test]
+    fn worker_error_records_only_the_first_failure() {
+        let worker_error = Arc::new(Mutex::new(None));
+        record_worker_error(&worker_error, "first".to_string());
+        record_worker_error(&worker_error, "second".to_string());
+
+        assert_eq!(worker_error.lock().expect("error lock is available").as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn worker_exits_cleanly_when_task_channel_disconnects() {
+        let (sender, receiver) = bounded::<OutputWriteTask>(1);
+        drop(sender);
+
+        run_output_writer_worker(receiver);
+    }
+}

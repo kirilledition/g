@@ -129,3 +129,84 @@ fn file_metadata_mtime_ns(metadata: &std::fs::Metadata) -> Result<i64, OutputErr
         .and_then(|mtime_seconds_ns| mtime_seconds_ns.checked_add(metadata.mtime_nsec()))
         .ok_or_else(|| OutputError::Runtime("File modification timestamp overflowed nanoseconds.".to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::json;
+
+    use super::{
+        FILE_FINGERPRINT_METADATA_ONLY, ManifestFileFingerprintCache, build_manifest_value_sha256,
+        manifest_file_fingerprint_to_value,
+    };
+
+    struct TestFile {
+        path: PathBuf,
+    }
+
+    impl TestFile {
+        fn new(contents: &[u8]) -> Self {
+            static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+            let sequence = FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let timestamp =
+                SystemTime::now().duration_since(UNIX_EPOCH).expect("test time is after Unix epoch").as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("g-output-fingerprint-{}-{timestamp}-{sequence}", std::process::id()));
+            std::fs::write(&path, contents).expect("test file writes");
+            Self { path }
+        }
+    }
+
+    impl Drop for TestFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn content_fingerprint_hashes_bytes_and_reuses_identical_cache_entry() {
+        let test_file = TestFile::new(b"abc");
+        let mut cache = ManifestFileFingerprintCache::default();
+        let first = cache.build_file_fingerprint(&test_file.path, true).expect("fingerprint builds");
+        let second = cache.build_file_fingerprint(&test_file.path, true).expect("fingerprint is cached");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.size, 3);
+        assert_eq!(first.content_hash_algorithm, "sha256");
+        assert_eq!(
+            first.content_sha256.as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
+        assert_eq!(manifest_file_fingerprint_to_value(&first)["path"], first.path);
+    }
+
+    #[test]
+    fn metadata_only_fingerprint_has_distinct_cache_identity_and_no_content_hash() {
+        let test_file = TestFile::new(b"content");
+        let mut cache = ManifestFileFingerprintCache::default();
+        let content = cache.build_file_fingerprint(&test_file.path, true).expect("content fingerprint builds");
+        let metadata = cache.build_file_fingerprint(&test_file.path, false).expect("metadata fingerprint builds");
+
+        assert!(!Arc::ptr_eq(&content, &metadata));
+        assert_eq!(metadata.content_hash_algorithm, FILE_FINGERPRINT_METADATA_ONLY);
+        assert_eq!(metadata.content_sha256, None);
+    }
+
+    #[test]
+    fn manifest_value_hash_is_deterministic_and_value_sensitive() {
+        let first =
+            build_manifest_value_sha256(&json!({"schema_version": 0, "name": "alpha"})).expect("manifest hashes");
+        let repeated = build_manifest_value_sha256(&json!({"schema_version": 0, "name": "alpha"}))
+            .expect("manifest hashes repeatedly");
+        let changed = build_manifest_value_sha256(&json!({"schema_version": 0, "name": "beta"}))
+            .expect("changed manifest hashes");
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, changed);
+        assert_eq!(first.len(), 64);
+    }
+}

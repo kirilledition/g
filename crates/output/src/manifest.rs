@@ -20,6 +20,6 @@ pub(crate) use run::{
 };
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
-const RUN_MANIFEST_SCHEMA_VERSION: i64 = 17;
-const OUTPUT_SCHEMA_VERSION: i64 = 3;
+const RUN_MANIFEST_SCHEMA_VERSION: i64 = 0;
+const OUTPUT_SCHEMA_VERSION: i64 = 0;
 const RESUME_POLICY: &str = "manifest_committed_chunks";

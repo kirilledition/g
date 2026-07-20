@@ -70,11 +70,12 @@ consolidation pass.
 
 ## Manifest And Resume Contract
 
-`run_manifest.json` is the resume authority. Manifest schema version `17`
+`run_manifest.json` is the resume authority. Pre-release manifest schema version `0`
 stores prepared-run fields, input fingerprints, and Parquet writer settings in
 one canonical `execution_plan` object plus `execution_plan_hash`. Top-level
 state is limited to schema and mutable lifecycle fields such as committed
-chunks. The Parquet output schema remains version `3`.
+chunks. The pre-release Parquet output schema is version `0`; `INFO` is nullable
+when its expected-variance denominator is undefined.
 
 Each compute group records a required fingerprint of its trait-major aligned
 phenotype matrix, including phenotype names, shape, and float32 values. Resume

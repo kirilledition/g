@@ -60,7 +60,8 @@ configuration keys.
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns
 use `BYTE_STREAM_SPLIT` before Zstandard compression. These are physical
-encodings only: the logical schema below remains output schema version `3`.
+encodings only: the logical schema below remains pre-release output schema
+version `0`.
 Supported Python readers are PyArrow `>=24.0.0` and Polars `>=1.41.2`, matching
 the project's dependency floors. Older readers must support Parquet 2.0 and
 `BYTE_STREAM_SPLIT` or be upgraded before consuming current parts.
@@ -82,7 +83,7 @@ Parquet footer. The run manifest records the same commits for resume.
 
 ## Result Schema
 
-### Current Schema Contract (v3)
+### Current Pre-Release Schema Contract (v0)
 
 | Column | Parquet type | Nullable | Unit | Meaning |
 | --- | --- | --- | --- | --- |
@@ -92,7 +93,7 @@ Parquet footer. The run manifest records the same commits for resume.
 | `ALLELE0` | `Utf8` | No | - | Reference/first allele string. |
 | `ALLELE1` | `Utf8` | No | - | Alternate/second allele string. |
 | `A1FREQ` | `Float32` | No | allele frequency | Observed allele-one frequency after sample alignment. |
-| `INFO` | `Float32` | No | INFO score | Observed dosage INFO score. |
+| `INFO` | `Float32` | Yes | INFO score | Observed dosage INFO score; null when expected Hardy-Weinberg variance is undefined. |
 | `N` | `Int32` | No | sample count | Number of observed genotypes used in statistics. |
 | `BETA` | `Float32` | No | effect size | Estimated effect for `ALLELE1`. |
 | `SE` | `Float32` | No | effect size standard error | Standard error for `BETA`. |
@@ -119,17 +120,21 @@ are reserved for future support and are not emitted by current runs.
 
 Current schema properties:
 
-- `output_schema_version`: `3`
+- `output_schema_version`: `0`
 - Column order is part of the contract for stable downstream parsing.
-- Invalid association statistics are stored as `NaN`; Arrow nulls are not used.
+- Invalid association statistics are stored as `NaN`. Undefined `INFO` values
+  use Arrow nulls because the genotype has no valid expected-variance denominator.
 - `A1FREQ`, `INFO`, `BETA`, `SE`, `CHISQ`, and `LOG10P` are persisted as
   `Float32`.
 
 Compatibility policy:
 
 - New columns may only be appended and must be documented.
-- Changing an existing column name, type, nullability, order, or semantics
-  requires an output schema version bump.
+- Before the first release, the contract version remains `0`; incompatible
+  pre-release output is rejected through strict manifest and Parquet-schema
+  validation rather than implying a stable numbered migration path.
+- After the first release, changing an existing column name, type,
+  nullability, order, or semantics requires an output schema version bump.
 - Additional correction labels or diagnostic meanings require a documented
   schema policy change before release.
 

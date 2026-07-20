@@ -80,3 +80,48 @@ pub(crate) struct RegenieStep2ChunkWriteResult {
     pub(crate) chunk_commits: Vec<manifest::RunManifestChunkCommit>,
     pub(crate) timing: RegenieStep2ChunkWriteTiming,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{RegenieStep2ParquetFileWriteTiming, RegenieStep2RecordBatchBuildTiming};
+
+    #[test]
+    fn record_batch_timing_adds_seconds_and_saturates_memory() {
+        let mut total = RegenieStep2RecordBatchBuildTiming {
+            metadata_array_build_seconds: 0.1,
+            statistic_array_build_seconds: 0.2,
+            result_array_build_seconds: 0.3,
+            record_batch_try_new_seconds: 0.4,
+            arrow_array_memory_bytes: u64::MAX - 1,
+        };
+        total.add(RegenieStep2RecordBatchBuildTiming {
+            metadata_array_build_seconds: 0.5,
+            statistic_array_build_seconds: 0.6,
+            result_array_build_seconds: 0.7,
+            record_batch_try_new_seconds: 0.8,
+            arrow_array_memory_bytes: 2,
+        });
+
+        for (observed, expected) in [
+            (total.metadata_array_build_seconds, 0.6),
+            (total.statistic_array_build_seconds, 0.8),
+            (total.result_array_build_seconds, 1.0),
+            (total.record_batch_try_new_seconds, 1.2),
+        ] {
+            assert!((observed - expected).abs() < 1.0e-12);
+        }
+        assert_eq!(total.arrow_array_memory_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn parquet_file_timing_sums_all_stages() {
+        let timing = RegenieStep2ParquetFileWriteTiming {
+            file_create: 0.1,
+            writer_init: 0.2,
+            batch_write: 0.3,
+            writer_finish: 0.4,
+        };
+
+        assert!((timing.total_seconds() - 1.0).abs() < f64::EPSILON);
+    }
+}

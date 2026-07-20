@@ -370,3 +370,22 @@ fn extend_manifest_from_plan(run_plan: &g_plan::RunPlan, run: &ManagedOutputRun)
     .map_err(OutputError::runtime)?;
     extend_run_manifest_metadata(&run.paths.run_directory, command, runtime)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::finish_thread_count;
+
+    fn output_plan(writer_thread_count: u32) -> g_plan::OutputPlan {
+        g_plan::OutputPlan { output_run_root: "unused".to_string(), resume: false, writer_thread_count }
+    }
+
+    #[test]
+    fn finish_thread_count_is_bounded_by_sessions_and_rejects_zero_with_work() {
+        assert_eq!(finish_thread_count(&output_plan(8), 3).expect("thread count is valid"), 3);
+        assert_eq!(finish_thread_count(&output_plan(2), 3).expect("thread count is valid"), 2);
+        assert_eq!(finish_thread_count(&output_plan(0), 0).expect("empty output needs no threads"), 0);
+
+        let error = finish_thread_count(&output_plan(0), 1).expect_err("zero threads with output is rejected");
+        assert!(error.to_string().contains("must be positive"));
+    }
+}

@@ -288,3 +288,53 @@ fn build_uint8_dictionary_array(dictionary_keys: Vec<u8>, dictionary_values: Arr
         .map(|dictionary_array| Arc::new(dictionary_array) as ArrayRef)
         .map_err(OutputError::runtime)
 }
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::{Array, DictionaryArray, StringArray};
+    use arrow::datatypes::UInt8Type;
+
+    use super::{
+        CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY, CORRECTION_STATUS_SUCCESS_KEY, RegenieStep2RecordBatchArrayCache,
+        build_correction_dictionary_arrays, correction_dictionary_keys,
+    };
+
+    #[test]
+    fn correction_codes_map_to_stable_method_and_status_keys() {
+        let expected_keys = [(0, 0), (0, 1), (1, 0), (1, 1)];
+        for (correction_code, (expected_method, expected_status)) in (0_u8..=3).zip(expected_keys) {
+            let keys = correction_dictionary_keys(correction_code).expect("supported correction code");
+            assert_eq!(keys.method, expected_method);
+            assert_eq!(keys.status, expected_status);
+        }
+        let error = correction_dictionary_keys(4).err().expect("unsupported correction code must fail");
+        assert!(error.to_string().contains("Unsupported REGENIE step 2 correction code: 4"));
+        assert_eq!(CORRECTION_METHOD_FIRTH_APPROXIMATE_KEY, 1);
+        assert_eq!(CORRECTION_STATUS_SUCCESS_KEY, 0);
+    }
+
+    #[test]
+    fn correction_arrays_preserve_public_labels_for_mixed_codes() {
+        let correction_codes = std::sync::Arc::new(arrow::array::UInt8Array::from(vec![0, 1, 2, 3]));
+        let mut cache = RegenieStep2RecordBatchArrayCache::default();
+        let arrays = build_correction_dictionary_arrays(Some(correction_codes), 4, &mut cache)
+            .expect("supported correction codes build dictionaries");
+
+        let methods =
+            arrays.method.as_any().downcast_ref::<DictionaryArray<UInt8Type>>().expect("method is a uint8 dictionary");
+        let statuses =
+            arrays.status.as_any().downcast_ref::<DictionaryArray<UInt8Type>>().expect("status is a uint8 dictionary");
+        let method_values = methods.values().as_any().downcast_ref::<StringArray>().expect("method values are Utf8");
+        let status_values = statuses.values().as_any().downcast_ref::<StringArray>().expect("status values are Utf8");
+        let observed_methods = (0..methods.len())
+            .map(|index| method_values.value(usize::from(methods.keys().value(index))))
+            .collect::<Vec<_>>();
+        let observed_statuses = (0..statuses.len())
+            .map(|index| status_values.value(usize::from(statuses.keys().value(index))))
+            .collect::<Vec<_>>();
+        assert_eq!(observed_methods, ["score", "score", "firth_approximate", "firth_approximate"]);
+        assert_eq!(observed_statuses, ["success", "failed", "success", "failed"]);
+        assert_eq!(methods.null_count(), 0);
+        assert_eq!(statuses.null_count(), 0);
+    }
+}
