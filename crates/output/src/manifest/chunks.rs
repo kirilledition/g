@@ -83,3 +83,106 @@ fn read_manifest_non_negative_integer(committed_chunk: &Value, field_name: &str)
     }
     Ok(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::json;
+
+    use super::{
+        RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit, read_chunk_commits_from_text,
+        read_run_manifest_chunk_commit,
+    };
+
+    fn chunk_commit(chunk_identifier: i64, chunk_file_name: &str) -> RunManifestChunkCommit {
+        RunManifestChunkCommit {
+            chunk_identifier,
+            variant_start_index: chunk_identifier,
+            variant_stop_index: chunk_identifier + 3,
+            row_count: 3,
+            chunk_file_name: chunk_file_name.to_string(),
+        }
+    }
+
+    #[test]
+    fn chunk_commit_round_trip_preserves_public_geometry() {
+        let expected_commit = chunk_commit(12, "part_000000012.parquet");
+        let value = chunk_commit_to_value(&expected_commit);
+
+        assert_eq!(read_run_manifest_chunk_commit(&value).expect("commit reads"), expected_commit);
+    }
+
+    #[test]
+    fn insertion_accepts_identical_replay_and_rejects_conflicting_replay() {
+        let mut commits = BTreeMap::new();
+        let original_commit = chunk_commit(12, "part_000000012.parquet");
+        insert_or_validate_chunk_commit(&mut commits, chunk_commit(12, "part_000000012.parquet"))
+            .expect("first commit inserts");
+        insert_or_validate_chunk_commit(&mut commits, chunk_commit(12, "part_000000012.parquet"))
+            .expect("identical replay is idempotent");
+        assert_eq!(commits.get(&12), Some(&original_commit));
+
+        let error = insert_or_validate_chunk_commit(&mut commits, chunk_commit(12, "different.parquet"))
+            .expect_err("conflicting replay is rejected");
+        assert!(error.to_string().contains("conflicting commit metadata"));
+    }
+
+    #[test]
+    fn parquet_footer_commit_parser_uses_observed_part_name() {
+        let footer = json!([{
+            "chunk_identifier": 4,
+            "variant_start_index": 4,
+            "variant_stop_index": 7,
+            "row_count": 3,
+            "chunk_file_name": "untrusted-name.parquet",
+        }]);
+
+        let commits = read_chunk_commits_from_text(&footer.to_string(), "observed.parquet").expect("footer reads");
+        assert_eq!(commits, [chunk_commit(4, "observed.parquet")]);
+    }
+
+    #[test]
+    fn malformed_chunk_commits_report_each_required_contract() {
+        let malformed_cases = [
+            (json!({}), "chunk_file_name"),
+            (json!({"chunk_file_name": "part.parquet"}), "chunk_identifier"),
+            (
+                json!({
+                    "chunk_file_name": "part.parquet",
+                    "chunk_identifier": 0,
+                    "variant_start_index": 0,
+                }),
+                "variant_stop_index",
+            ),
+            (
+                json!({
+                    "chunk_file_name": "part.parquet",
+                    "chunk_identifier": 0,
+                    "variant_start_index": 0,
+                    "variant_stop_index": 1,
+                }),
+                "row_count",
+            ),
+            (
+                json!({
+                    "chunk_file_name": "part.parquet",
+                    "chunk_identifier": 0,
+                    "variant_start_index": 0,
+                    "variant_stop_index": 1,
+                    "row_count": -1,
+                }),
+                "non-negative",
+            ),
+        ];
+
+        for (value, expected_message) in malformed_cases {
+            let error = read_run_manifest_chunk_commit(&value).expect_err("malformed commit is rejected");
+            assert!(error.to_string().contains(expected_message), "unexpected error: {error}");
+        }
+
+        let error = read_chunk_commits_from_text("{}", "part.parquet").expect_err("footer must be a list");
+        assert!(error.to_string().contains("must be a list"));
+        assert!(read_chunk_commits_from_text("not-json", "part.parquet").is_err());
+    }
+}

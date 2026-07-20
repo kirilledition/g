@@ -121,3 +121,57 @@ where
 {
     Arc::new(PrimitiveArray::<ArrowType>::new(ScalarBuffer::from(values), None))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Regenie2StatisticBatch, validate_statistic_batch_lengths};
+
+    fn statistic_batch(value_count: usize) -> Regenie2StatisticBatch {
+        Regenie2StatisticBatch {
+            trait_count: 1,
+            variant_count: value_count,
+            beta: vec![0.1; value_count],
+            standard_error: vec![0.2; value_count],
+            chi_squared: vec![0.25; value_count],
+            log10_p_value: vec![0.3; value_count],
+            correction_code: Some(vec![0; value_count]),
+        }
+    }
+
+    #[test]
+    fn statistic_batch_accepts_exact_trait_major_shape() {
+        validate_statistic_batch_lengths(&statistic_batch(4), 4).expect("matching columns are valid");
+    }
+
+    #[test]
+    fn statistic_batch_rejects_each_mismatched_result_column() {
+        for column_index in 0..4 {
+            let mut batch = statistic_batch(4);
+            match column_index {
+                0 => {
+                    batch.beta.pop();
+                }
+                1 => {
+                    batch.standard_error.pop();
+                }
+                2 => {
+                    batch.chi_squared.pop();
+                }
+                3 => {
+                    batch.log10_p_value.pop();
+                }
+                _ => unreachable!("test column index is bounded"),
+            }
+            let error = validate_statistic_batch_lengths(&batch, 4).expect_err("mismatched result column must fail");
+            assert!(error.to_string().contains("value counts"));
+        }
+    }
+
+    #[test]
+    fn statistic_batch_rejects_mismatched_correction_codes() {
+        let mut batch = statistic_batch(4);
+        batch.correction_code.as_mut().expect("test correction codes exist").pop();
+        let error = validate_statistic_batch_lengths(&batch, 4).expect_err("mismatched correction codes must fail");
+        assert!(error.to_string().contains("correction-code value count 3"));
+    }
+}

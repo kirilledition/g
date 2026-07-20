@@ -345,3 +345,50 @@ fn finish_interrupted_output_writer_session_batch(
         Ok(())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{
+        OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
+        finish_output_writer_sessions,
+    };
+
+    fn output_plan(writer_thread_count: u32) -> g_plan::OutputPlan {
+        g_plan::OutputPlan { output_run_root: "unused".to_string(), resume: false, writer_thread_count }
+    }
+
+    #[test]
+    fn session_creation_validates_directory_geometry_and_writer_count() {
+        let mismatch = create_output_writer_sessions(vec![PathBuf::from("run")], Vec::new(), &output_plan(1), false)
+            .err()
+            .expect("directory count mismatch is rejected");
+        assert!(mismatch.to_string().contains("run directory count (1)"));
+
+        let empty = create_output_writer_sessions(Vec::new(), Vec::new(), &output_plan(0), false)
+            .expect("empty session set needs no workers");
+        assert!(empty.is_empty());
+
+        let zero_workers = create_output_writer_sessions(
+            vec![PathBuf::from("run")],
+            vec![PathBuf::from("parts")],
+            &output_plan(0),
+            false,
+        )
+        .err()
+        .expect("nonempty session set needs workers");
+        assert!(zero_workers.to_string().contains("Writer thread count must be at least 1"));
+    }
+
+    #[test]
+    fn empty_session_completion_is_valid_for_serial_and_parallel_paths() {
+        let sessions: [&OutputWriterSession; 0] = [];
+        finish_output_writer_sessions(&sessions, 1).expect("serial empty finish succeeds");
+        finish_output_writer_sessions(&sessions, 2).expect("parallel empty finish succeeds");
+        finish_interrupted_output_writer_sessions(&sessions, 1, "SIGTERM")
+            .expect("serial empty interrupted finish succeeds");
+        finish_interrupted_output_writer_sessions(&sessions, 2, "SIGTERM")
+            .expect("parallel empty interrupted finish succeeds");
+    }
+}

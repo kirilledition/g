@@ -85,3 +85,88 @@ fn manifest_scalar_values_match(manifest_value: &Value, current_value: &Value) -
         _ => manifest_value == current_value,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::validate_manifest_compatibility_values;
+
+    #[test]
+    fn compatibility_accepts_equal_nested_values_and_manifest_extensions() {
+        let manifest = json!({
+            "schema_version": 0,
+            "execution_plan": {"names": ["alpha", "beta"], "count": 2},
+            "future_extension": true,
+        });
+        let current = json!({
+            "schema_version": 0,
+            "execution_plan": {"names": ["alpha", "beta"], "count": 2},
+        });
+
+        validate_manifest_compatibility_values(&manifest, &current).expect("compatible manifest is accepted");
+    }
+
+    #[test]
+    fn compatibility_reports_deterministic_nested_object_and_array_paths() {
+        let current = json!({
+            "execution_plan": {
+                "association_backend": {"genotype_format": "packed8"},
+                "covariates": ["age", "sex"],
+            },
+        });
+        let nested_mismatch = json!({
+            "execution_plan": {
+                "association_backend": {"genotype_format": "dosage"},
+                "covariates": ["age", "batch"],
+            },
+        });
+        let error = validate_manifest_compatibility_values(&nested_mismatch, &current)
+            .expect_err("nested mismatch is rejected");
+        assert!(error.to_string().contains("execution_plan.association_backend.genotype_format"));
+
+        let array_mismatch = json!({
+            "execution_plan": {
+                "association_backend": {"genotype_format": "packed8"},
+                "covariates": ["age", "batch"],
+            },
+        });
+        let error =
+            validate_manifest_compatibility_values(&array_mismatch, &current).expect_err("array mismatch is rejected");
+        assert!(error.to_string().contains("execution_plan.covariates[1]"));
+    }
+
+    #[test]
+    fn compatibility_rejects_missing_extra_and_different_length_nested_fields() {
+        let current = json!({"execution_plan": {"names": ["alpha", "beta"], "required": true}});
+        let cases = [
+            (json!({}), "execution_plan"),
+            (json!({"execution_plan": {"names": ["alpha", "beta"]}}), "execution_plan.required"),
+            (
+                json!({"execution_plan": {"names": ["alpha", "beta"], "required": true, "stale": 1}}),
+                "execution_plan.stale",
+            ),
+            (json!({"execution_plan": {"names": ["alpha"], "required": true}}), "execution_plan.names"),
+        ];
+
+        for (manifest, expected_path) in cases {
+            let error = validate_manifest_compatibility_values(&manifest, &current)
+                .expect_err("incompatible manifest is rejected");
+            assert!(error.to_string().contains(expected_path), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn compatibility_rejects_non_object_roots_and_scalar_type_changes() {
+        let non_object_manifest = validate_manifest_compatibility_values(&json!([]), &json!({}))
+            .expect_err("manifest root must be an object");
+        assert!(non_object_manifest.to_string().contains("Run manifest must contain a JSON object"));
+        let non_object_header =
+            validate_manifest_compatibility_values(&json!({}), &json!([])).expect_err("header root must be an object");
+        assert!(non_object_header.to_string().contains("header must contain a JSON object"));
+
+        let error = validate_manifest_compatibility_values(&json!({"count": "2"}), &json!({"count": 2}))
+            .expect_err("scalar type change is rejected");
+        assert!(error.to_string().contains("field 'count'"));
+    }
+}

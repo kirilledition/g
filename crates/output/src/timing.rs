@@ -120,3 +120,137 @@ pub(crate) fn write_stage_timing_snapshot(
     std::fs::write(&temporary_timing_path, timing_text).map_err(OutputError::runtime)?;
     std::fs::rename(&temporary_timing_path, &timing_path).map_err(OutputError::runtime)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde_json::Value;
+
+    use super::{
+        OUTPUT_STAGE_TIMING_FILE_NAME, OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot,
+    };
+    use crate::writer::RegenieStep2ChunkWriteTiming;
+
+    struct TestDirectory {
+        path: PathBuf,
+    }
+
+    impl TestDirectory {
+        fn new() -> Self {
+            static DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
+            let sequence = DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let timestamp =
+                SystemTime::now().duration_since(UNIX_EPOCH).expect("test time is after Unix epoch").as_nanos();
+            let path =
+                std::env::temp_dir().join(format!("g-output-timing-{}-{timestamp}-{sequence}", std::process::id()));
+            std::fs::create_dir_all(&path).expect("test directory is created");
+            Self { path }
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn writer_timing() -> RegenieStep2ChunkWriteTiming {
+        RegenieStep2ChunkWriteTiming {
+            chunk_file_count: 2,
+            chunk_count: 3,
+            row_count: 4,
+            record_batch_build_seconds: 0.1,
+            metadata_array_build_seconds: 0.2,
+            statistic_array_build_seconds: 0.3,
+            result_array_build_seconds: 0.4,
+            record_batch_try_new_seconds: 0.5,
+            parquet_file_write_seconds: 0.6,
+            parquet_file_create_seconds: 0.7,
+            parquet_writer_init_seconds: 0.8,
+            parquet_batch_write_seconds: 0.9,
+            parquet_writer_finish_seconds: 1.0,
+            parquet_file_rename_seconds: 1.1,
+            arrow_array_memory_bytes: 5,
+            parquet_file_bytes: 6,
+            total_seconds: 1.2,
+        }
+    }
+
+    #[test]
+    fn optional_timer_tracks_only_enabled_diagnostics() {
+        assert!(start_optional_timing(false).is_none());
+        assert!(start_optional_timing(true).is_some());
+    }
+
+    #[test]
+    fn writer_timing_accumulates_seconds_and_saturates_counters() {
+        let mut accumulator = OutputStageTimingAccumulator {
+            writer_chunk_file_count: u64::MAX - 1,
+            writer_chunk_count: u64::MAX - 2,
+            writer_row_count: u64::MAX - 3,
+            writer_arrow_array_memory_bytes: u64::MAX - 4,
+            writer_parquet_file_bytes: u64::MAX - 5,
+            ..OutputStageTimingAccumulator::default()
+        };
+        accumulator.add_writer_timing(writer_timing());
+
+        for (observed, expected) in [
+            (accumulator.writer_record_batch_build_seconds, 0.1),
+            (accumulator.writer_metadata_array_build_seconds, 0.2),
+            (accumulator.writer_statistic_array_build_seconds, 0.3),
+            (accumulator.writer_result_array_build_seconds, 0.4),
+            (accumulator.writer_record_batch_try_new_seconds, 0.5),
+            (accumulator.writer_parquet_file_write_seconds, 0.6),
+            (accumulator.writer_parquet_file_create_seconds, 0.7),
+            (accumulator.writer_parquet_init_seconds, 0.8),
+            (accumulator.writer_parquet_batch_write_seconds, 0.9),
+            (accumulator.writer_parquet_finish_seconds, 1.0),
+            (accumulator.writer_parquet_rename_seconds, 1.1),
+            (accumulator.writer_total_seconds, 1.2),
+        ] {
+            assert!((observed - expected).abs() < f64::EPSILON);
+        }
+        assert_eq!(accumulator.writer_chunk_file_count, u64::MAX);
+        assert_eq!(accumulator.writer_chunk_count, u64::MAX);
+        assert_eq!(accumulator.writer_row_count, u64::MAX);
+        assert_eq!(accumulator.writer_arrow_array_memory_bytes, u64::MAX);
+        assert_eq!(accumulator.writer_parquet_file_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn timing_snapshot_persists_stable_stage_and_metric_names_atomically() {
+        let directory = TestDirectory::new();
+        let stage_timings = OutputStageTimingAccumulator {
+            enqueue_seconds: 0.25,
+            finish_total_seconds: 0.75,
+            enqueue_count: 2,
+            writer_chunk_file_count: 3,
+            writer_chunk_count: 4,
+            writer_row_count: 5,
+            writer_arrow_array_memory_bytes: 6,
+            writer_parquet_file_bytes: 7,
+            finish_count: 1,
+            ..OutputStageTimingAccumulator::default()
+        };
+        write_stage_timing_snapshot(&directory.path, &stage_timings).expect("timing snapshot writes");
+
+        let timing_path = directory.path.join(OUTPUT_STAGE_TIMING_FILE_NAME);
+        let timing_text = std::fs::read_to_string(&timing_path).expect("timing snapshot reads");
+        assert!(timing_text.ends_with('\n'));
+        assert!(!timing_path.with_extension("json.tmp").exists());
+        let payload: Value = serde_json::from_str(&timing_text).expect("timing snapshot is valid JSON");
+        let enqueue = payload["stage_totals_seconds"]["rust_output_enqueue"].as_f64().expect("enqueue is float");
+        let finish = payload["stage_totals_seconds"]["rust_output_finish_total"].as_f64().expect("finish is float");
+        assert!((enqueue - 0.25).abs() < f64::EPSILON);
+        assert!((finish - 0.75).abs() < f64::EPSILON);
+        assert_eq!(payload["stage_counts"]["rust_output_enqueue"], 2);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_total"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_metadata_arrays"], 4);
+        assert_eq!(payload["output_metrics"]["writer_row_count"], 5);
+        assert_eq!(payload["output_metrics"]["writer_arrow_array_memory_bytes"], 6);
+        assert_eq!(payload["output_metrics"]["writer_parquet_file_bytes"], 7);
+    }
+}

@@ -15,6 +15,9 @@ mod timing;
 mod write_plan;
 mod writer;
 
+#[cfg(test)]
+mod tests;
+
 pub use api::*;
 
 pub(crate) const CHUNKS_PER_PARQUET_FILE: usize = 8;
