@@ -1,7 +1,7 @@
 # Vendored OpenXLA FFI headers
 
 These three header-only external FFI files were copied byte-for-byte from the
-official `jaxlib==0.10.2` Linux wheel installed on 2026-07-16:
+official `jaxlib==0.11.0` Linux wheel installed on 2026-07-20:
 
 - `jaxlib/include/xla/ffi/api/api.h`
   (`sha256:7f76572a80ed2097e5924e6d02d84891c725300172280bd009c0a7c9ac7961eb`)

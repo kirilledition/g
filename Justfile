@@ -741,11 +741,11 @@ rust-format-check:
 # Lint code
 lint:
     {{ server_env }} && uv run ruff check . --fix
-    {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+    {{ server_env }} && cargo clippy --workspace --all-targets -- -W clippy::pedantic
 
 # Check Rust lints without rewriting files
 rust-lint-check:
-    {{ server_env }} && cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+    {{ server_env }} && cargo clippy --workspace --all-targets -- -W clippy::pedantic
 
 # Type check Python code
 typecheck:

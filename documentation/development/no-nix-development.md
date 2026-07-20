@@ -57,8 +57,12 @@ Rust toolchain available:
 
 ```bash
 cargo fmt
-cargo clippy --workspace --all-targets -- -D warnings -W clippy::pedantic
+cargo clippy --workspace --all-targets -- -W clippy::pedantic
 ```
+
+Cargo 1.97 or newer reads the repository's `build.warnings = "deny"` policy,
+so local workspace warnings are errors without repeating `-D warnings` on each
+command.
 
 Rust coverage also requires `cargo-llvm-cov`:
 

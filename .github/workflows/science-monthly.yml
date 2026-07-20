@@ -11,7 +11,7 @@ permissions:
 env:
   CARGO_BUILD_JOBS: "4"
   PYTHON_VERSION: "3.14"
-  RUST_VERSION: "1.96.0"
+  RUST_VERSION: "1.97.1"
 
 jobs:
   monthly-rot-check:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -40,7 +40,7 @@ jobs:
           print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
           PY
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
