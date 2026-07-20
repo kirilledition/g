@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 REGENIE Step 2 compatibility | Public user docs |
+| Pre-release draft | main branch as of 2026-07-20 REGENIE Step 2 compatibility | Public user docs |
 
 This page is the canonical public compatibility and scope reference.
 
@@ -14,8 +14,8 @@ release line exists.
 | Area | Status |
 | --- | --- |
 | REGENIE Step 2 quantitative traits | Supported with `--qt`. |
-| REGENIE Step 2 binary score test | Supported with `--bt`. |
-| Binary approximate Firth fallback | Experimental with `--bt --binary-fallback firth_approximate`; not production-stable until upstream golden parity is added. |
+| REGENIE Step 2 binary score test | Supported with `--bt`; its upstream parity workflow remains diagnostic pending current-HEAD qualification. |
+| Binary approximate Firth fallback | Experimental with `--bt --binary-fallback firth_approximate`; an upstream golden exists, but current-HEAD full-golden qualification must be reproduced before this mode is production-stable. |
 | Layout 2 BGEN input | Supported with uncompressed or zlib blocks and the BGEN v1.3 Zstandard extension. |
 | Oxford `.sample` files | Required for BGEN row identities. |
 | Embedded BGEN sample identifiers | Unsupported; pass an Oxford sample file with `--sample`. |
@@ -61,8 +61,10 @@ Important migration limits:
 - Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
 - Compare equivalent statistical modes only. A binary score-only `g` run should
   not be compared to upstream REGENIE output that used approximate Firth.
-- Treat `--bt --binary-fallback firth_approximate` as experimental until the pre-release parity
-  suite includes an upstream golden approximate-Firth fixture.
+- Score-only `--bt` remains supported. Its diagnostic parity status describes
+  evidence maturity and does not remove the supported CLI surface.
+- Treat `--bt --binary-fallback firth_approximate` as experimental until the
+  current release candidate reproduces the full upstream-golden qualification.
 - Consume each phenotype run's `parts/` directory as a Parquet dataset. This is
   the sole result contract; there is no consolidated result file.
 

@@ -76,10 +76,15 @@ Use SLURM for CPU-heavy validation:
 ```bash
 just slurm-cpu-check
 just slurm-cpu-test
-just slurm-cpu-test-full
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
+just slurm-gpu-test-parity-required
+just slurm-gpu-test-parity-diagnostic-required
 ```
+
+CPU and GPU correctness run in separate processes. The CPU recipe excludes
+data-dependent parity; the two GPU recipes qualify the blocking and diagnostic
+upstream-REGENIE workflows with required local fixtures.
 
 ## Data
 

@@ -193,7 +193,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/python-tests
           uv run --no-sync pytest tests/ \
-            -m "not phase0_data and not phase1_parity and not cli_smoke" \
+            -m "not phase0_data and not phase1_parity" \
             -v \
             --junitxml=artifacts/python-tests/junit.xml
 
@@ -263,61 +263,6 @@ jobs:
           path: |
             dist/**
             package-install-artifacts/**
-          if-no-files-found: ignore
-          retention-days: 14
-
-  cli-smoke:
-    name: cli-smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: astral-sh/setup-uv@v8.3.2
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Set up Rust toolchain for mixed-package test installs
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Install Mold linker
-        uses: rui314/setup-mold@v1
-        with:
-          mold-version: "2.41.0"
-          make-default: false
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install project and test dependencies
-        run: uv sync --group dev --frozen
-
-      - name: Run installed CLI smoke test
-        shell: bash
-        env:
-          G_CLI_SMOKE_ARTIFACT_DIR: artifacts/cli-smoke
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/cli-smoke
-          uv run --no-sync pytest tests/test_cli_smoke.py \
-            -m cli_smoke \
-            -v \
-            --junitxml=artifacts/cli-smoke/junit.xml
-
-      - name: Upload CLI smoke artifacts
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: cli-smoke
-          path: artifacts/cli-smoke/**
           if-no-files-found: ignore
           retention-days: 14
 
@@ -643,7 +588,7 @@ jobs:
         continue-on-error: true
         run: >
           uv run --no-sync pytest tests/
-          -m "not phase0_data and not phase1_parity and not cli_smoke"
+          -m "not phase0_data and not phase1_parity"
           --cov=src/g
           --cov-report=xml:coverage-python.xml
           --cov-report=term-missing
@@ -670,7 +615,6 @@ jobs:
     needs:
       - format
       - package-install
-      - cli-smoke
       - cuda-lint
       - python-lint
       - typecheck
@@ -688,7 +632,6 @@ jobs:
           set -euo pipefail
           echo "format: ${{ needs.format.result }}"
           echo "package-install: ${{ needs['package-install'].result }}"
-          echo "cli-smoke: ${{ needs['cli-smoke'].result }}"
           echo "cuda-lint: ${{ needs['cuda-lint'].result }}"
           echo "python-lint: ${{ needs['python-lint'].result }}"
           echo "typecheck: ${{ needs.typecheck.result }}"
@@ -699,7 +642,6 @@ jobs:
           echo "rust-tests: ${{ needs['rust-tests'].result }}"
           test "${{ needs.format.result }}" = "success"
           test "${{ needs['package-install'].result }}" = "success"
-          test "${{ needs['cli-smoke'].result }}" = "success"
           test "${{ needs['cuda-lint'].result }}" = "success"
           test "${{ needs['python-lint'].result }}" = "success"
           test "${{ needs.typecheck.result }}" = "success"

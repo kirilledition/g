@@ -67,24 +67,12 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/monthly-python-tests
           uv run --no-sync pytest tests/ \
-            -m "not phase0_data and not phase1_parity and not cli_smoke" \
+            -m "not phase0_data and not phase1_parity" \
             -v \
             --junitxml=artifacts/monthly-python-tests/junit.xml
 
       - name: Run locked Rust test suite
         run: cargo test --workspace --locked
-
-      - name: Run installed CLI smoke test
-        shell: bash
-        env:
-          G_CLI_SMOKE_ARTIFACT_DIR: artifacts/monthly-cli-smoke
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/monthly-cli-smoke
-          uv run --no-sync pytest tests/test_cli_smoke.py \
-            -m cli_smoke \
-            -v \
-            --junitxml=artifacts/monthly-cli-smoke/junit.xml
 
       - name: Upload monthly rot check artifacts
         if: always()

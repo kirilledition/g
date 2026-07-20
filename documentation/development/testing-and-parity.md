@@ -2,88 +2,89 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Math-only Python suite | main branch as of 2026-07-09 tests and parity workflow | Correctness maintainers |
+| Active foundation | Main branch as of 2026-07-20 | Correctness maintainers |
 
-This page defines how to validate mathematical correctness work without
-confusing fast local checks, full correctness runs, and external REGENIE parity
-work.
+This page separates fast mathematical checks from full external REGENIE
+comparisons. A comparison with an earlier `g` build is useful for locating a
+regression, but it is not the primary correctness oracle: two `g` versions can
+share the same defect.
 
 ## Test Tiers
 
-| Tier | Commands | Use when |
+| Tier | Command | Execution policy |
 | --- | --- | --- |
-| Local focused | `just check-local`, `just test-local-focused` | Fast agent iteration and documentation-adjacent changes. |
-| Local full Python | `just test-local` | Broader Python behavior without large native/GPU work. |
-| Repository checks | `just format`, `just lint`, `just typecheck`, `just check` | Pre-merge quality gates on a suitable host. |
-| Full tests | `just test` | Full suite on a host where native builds and larger tests are appropriate. |
-| SLURM CPU/GPU | Server recipes in [Server Gauss SLURM](server-gauss-slurm.md) | Heavy CPU validation, GPU validation, large suites, and benchmarks. |
+| External-contract harness | `just test-local-focused` | Login-node safe; reads metadata and tiny in-memory frames only. |
+| Active non-data Python suite | `just test-local` | Run on an appropriate CPU allocation when JAX compilation would be material. |
+| Optional external parity | `just test-parity` | Full chr22 GPU work when fixtures exist; missing local fixtures skip. |
+| Blocking required-fixture parity | `just slurm-gpu-test-parity-required` | Serialized GPU-node release gate; missing fixtures fail the test. |
+| Diagnostic required-fixture parity | `just slurm-gpu-test-parity-diagnostic-required` | Serialized GPU-node qualification of workflows that are not yet release gates. |
+| Full repository suite | `just test-full` | GPU allocation only; CPU and parity tests run in separate processes. |
 
-Do not run GPU workloads, heavy compilation, large test suites, or benchmark
-sweeps on a login node.
+Do not run GPU workloads, heavy compilation, large suites, or benchmark sweeps
+on a login node. GitHub-hosted CI runs the active non-data tests and the
+login-safe parity harness. It does not claim to run the protected full chr22
+fixture.
 
-## Python Correctness Ownership
+## Correctness Oracle
 
-| Area | Representative tests |
-| --- | --- |
-| Quantitative kernels | `tests/test_regenie2_linear.py`, `tests/test_regenie2_parity.py` |
-| Binary score and scalar Firth kernels | `tests/test_regenie2_binary.py`, `tests/test_regenie2_binary_firth_null.py`, `tests/test_regenie2_binary_scalar_firth.py` |
-| REGENIE parity metadata and comparison helpers | `tests/parity/` |
+Use an independently generated, version-pinned upstream REGENIE output as the
+primary oracle whenever the project claims REGENIE compatibility. The current
+goldens use upstream REGENIE v4.1 and are recorded in
+`tests/parity/golden_metadata.json` with their commands, row counts, and
+SHA-256 digests. Each workflow separately records whether it is blocking or
+diagnostic. Binary score-only and approximate Firth remain diagnostic until
+their full comparisons are reproduced on current HEAD.
 
-The Python suite intentionally excludes non-mathematical product contracts such
-as CLI behavior, configuration validation, output/resume behavior, telemetry,
-pipeline orchestration, architecture checks, and tooling automation.
+The comparison contract is:
 
-## Rust Correctness Ownership
+- align all rows by `(CHROM, GENPOS, ID, ALLELE0, ALLELE1)`; `ID` alone is not
+  unique in the full chr22 fixture;
+- require both inputs and the one-to-one join to contain all 418,943 rows;
+- for each finite statistic, require `abs(g_value - regenie_value) < tolerance`;
+- require identical `NaN`, positive-infinity, and negative-infinity masks;
+- require exact `N` and exact significance decisions at `p < 0.05` and
+  `p < 5e-8`;
+- verify every BGEN, sample, phenotype, covariate, Step-1 prediction list and
+  referenced `.loco` file, REGENIE output, and REGENIE log hash before
+  execution;
+- parse correction and correction-failure counts from the pinned upstream log
+  and require the production aggregate to match it.
 
-The active Rust test surface is math-only and lives in `g-genotype`. Keep
-`cargo test -p g-genotype` focused on BGEN dosage decoding, imputation,
-variant summaries, and SIMD/scalar numerical equivalence.
+The hashes identify the external oracle artifacts. They are not a request for
+byte-for-byte equality between REGENIE text and `g` Parquet output.
 
-Rust product, runtime, CLI, IO, scheduling, and planning contracts stay out of
-the test suite until those APIs stabilize.
+Binary approximate-Firth labels need a narrower statement. Upstream REGENIE's
+saved table does not expose a per-row successful-Firth label. The comparison
+therefore checks its recorded aggregate correction and failure counts, checks `g`'s
+allowed method/status values, and compares every public statistic and
+significance decision. It does not claim per-row correction-label parity that
+the upstream artifact cannot establish.
 
-## REGENIE Parity Rules
+## Supported Production Boundary
 
-The pre-release Step 2 parity gate is documented in
-[REGENIE Parity Suite](regenie-parity-suite.md). Its machine-readable coverage
-matrix lives in `tests/parity/golden_metadata.json`, and the lightweight harness
-checks live under `tests/parity/`.
+Full parity invokes only the supported `g._core.cli.run` binding. Results are
+loaded from the production `*.run/parts/*.parquet` dataset. The test does not
+restore legacy Python orchestration or expect a post-run `final.parquet`.
 
-Parity checks must compare equivalent statistical modes:
+Local missing data are a skip so contributors can run the harness without the
+protected fixture. Required scheduled runs set
+`G_REGENIE_PARITY_REQUIRE_DATA=1`; every missing BGEN, sample, phenotype,
+covariate, prediction, output, or log artifact is then a hard failure.
 
-- quantitative Step 2 to quantitative Step 2;
-- binary score-only to binary score-only;
-- approximate Firth only when both tools use approximate Firth with the same
-  fallback threshold;
-- same phenotype, covariates, Step 1 predictions, `(FID, IID)` sample set, and
-  genotype source.
+Each completed full comparison writes an ignored qualification report below
+`results/parity/qualification/<workflow>/`. It records source, native library,
+dependencies, device/configuration, all input/reference/output hashes,
+per-statistic maxima, correction counts, and pass/failure status. Set
+`G_REGENIE_PARITY_REPORT_DIRECTORY` to place reports in another ignored or
+temporary directory.
 
-Use matching upstream REGENIE output as the primary numerical oracle whenever
-it is available. Comparing a candidate only with an earlier `g` build is a
-secondary regression check: it can attribute a change to the candidate, but it
-cannot establish external correctness when both builds share the same error.
-Compare statistic values with documented absolute tolerances and separately
-check correction decisions and significance classifications. Output-file byte
-equality may be retained as a reproducibility diagnostic, but it is not a
-numerical parity gate.
+## Coverage Reports
 
-Do not treat differences caused by different complete-case sample sets as kernel
-bugs until input alignment has been verified.
-
-## Numerical Expectations
-
-Result statistics and score-test kernels use `float32`. Approximate-Firth outer
-components, reductions, solver state, validation, and fallback use `float64`.
-Its inner pseudo-logistic elementwise proposal uses `float32` and widens before
-`float64` reductions; corrected values narrow once during result
-materialization. When validating a numerical change, record:
-
-- command and commit;
-- input paths and phenotype/covariate columns;
-- trait mode and binary correction plan;
-- device setting;
-- tolerance used for comparison;
-- whether differences are isolated to invalid or failed-correction rows.
+`just coverage-python` and `just coverage-rust` generate reports for the active
+test surface. They are not advertised as percentage gates while the product
+suite is being rebuilt around the current native boundary. Restore a threshold
+only with a measured baseline and tests for real supported contracts; do not
+meet a number by adding placeholder product tests.
 
 ## Documentation Changes
 
@@ -93,5 +94,4 @@ For documentation-only changes, run:
 just docs-build
 ```
 
-Run code tests as well when docs expose behavior that was changed in code or
-when examples depend on newly changed CLI/config semantics.
+Run code tests as well when documentation describes behavior changed in code.

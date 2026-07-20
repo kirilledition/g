@@ -80,18 +80,19 @@ Use one CPU SLURM node for full CPU validation:
 ```bash
 just slurm-cpu-check
 just slurm-cpu-test
-just slurm-cpu-test-full
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
 just slurm-cpu-coverage
+just slurm-gpu-test-parity-required
+just slurm-gpu-test-parity-diagnostic-required
 ```
 
 `slurm-cpu-check` wraps `just check`. `slurm-cpu-test` runs the non-data Python
-suite with large-node pytest parallelism. `slurm-cpu-test-full` and
-`just slurm-cpu-just test` run the full Python suite, including data/parity
-tests when the required local files are present. Do not run full `just check`,
-full `just test`, Rust dependency builds, or Rust test builds directly on the
-login node.
+suite with large-node pytest parallelism. External parity is deliberately a
+fresh GPU process: use the blocking and diagnostic GPU recipes above when the
+required local fixtures are present. Do not run full `just check`, full
+`just test`, Rust dependency builds, or Rust test builds directly on the login
+node.
 
 `perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
 `perf-cpu`, `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
@@ -161,7 +162,7 @@ process-level JAX/native thread pools. Override after measuring:
 
 ```bash
 GWAS_ENGINE_CPU_PYTEST_WORKERS=16 just slurm-cpu-test
-GWAS_ENGINE_CPU_PYTEST_WORKERS=1 just slurm-cpu-test-full
+GWAS_ENGINE_CPU_PYTEST_WORKERS=1 just slurm-cpu-test
 ```
 
 When xdist is active, pytest subprocesses get conservative BLAS/OpenMP thread
@@ -264,8 +265,8 @@ Post-change timings on the same node and allocation:
   workers.
 - `just slurm-cpu-just test`: 224.76 seconds for the full suite with 8 xdist
   workers.
-- `just slurm-cpu-test-full`: 230.24 seconds through the explicit full-suite
-  alias.
+- The former CPU full-suite wrapper took 230.24 seconds before external parity
+  was separated into serialized GPU qualification recipes.
 - `just slurm-cpu-rust-build`: 128.03 seconds.
 - `just slurm-cpu-rust-test`: 32.45 seconds after the strict-resume diagnostic
   fix.
