@@ -149,7 +149,17 @@ pub fn initialize_nvcomp_runtime(device_ordinal: i32) -> Result<NvcompCapability
         // initialization call on this thread; it is copied before this function returns.
         unsafe { CStr::from_ptr(native_detail) }.to_string_lossy().into_owned()
     };
-    Err(match status {
+    Err(initialization_error_from_native_status(status, &native_capability, device_ordinal, detail))
+}
+
+#[cfg(target_os = "linux")]
+fn initialization_error_from_native_status(
+    status: c_int,
+    native_capability: &NativeCapability,
+    device_ordinal: i32,
+    detail: String,
+) -> NvcompInitializationError {
+    match status {
         CUDA_DRIVER_UNAVAILABLE => NvcompInitializationError::CudaDriverUnavailable { detail },
         NVCOMP_LIBRARY_UNAVAILABLE => NvcompInitializationError::NvcompLibraryUnavailable { detail },
         REQUIRED_SYMBOL_UNAVAILABLE => NvcompInitializationError::RequiredSymbolUnavailable { detail },
@@ -173,7 +183,7 @@ pub fn initialize_nvcomp_runtime(device_ordinal: i32) -> Result<NvcompCapability
             detail,
         },
         _ => NvcompInitializationError::Internal { detail },
-    })
+    }
 }
 
 /// Reports that the CUDA FFI path is unavailable on non-Linux builds.
@@ -208,4 +218,226 @@ unsafe extern "C" {
     ) -> c_int;
 
     fn g_nvcomp_decode_packed8_ffi(call_frame: *mut c_void) -> *mut c_void;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    struct DisplayCase {
+        error: NvcompInitializationError,
+        expected: &'static str,
+    }
+
+    #[cfg(target_os = "linux")]
+    struct MappingCase {
+        status: c_int,
+        expected: NvcompInitializationError,
+    }
+
+    #[cfg(target_os = "linux")]
+    const NATIVE_INTERNAL_FAILURE: c_int = 10;
+
+    #[test]
+    fn ffi_target_and_member_alignment_are_stable() {
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_TARGET), "g.bgen.packed8_deflate.v1");
+        assert_eq!(std::hint::black_box(g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT), 4);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_status_and_capability_abi_match_the_linked_boundary() {
+        let status_values = std::hint::black_box([
+            INITIALIZATION_SUCCESS,
+            CUDA_DRIVER_UNAVAILABLE,
+            NVCOMP_LIBRARY_UNAVAILABLE,
+            REQUIRED_SYMBOL_UNAVAILABLE,
+            NVCOMP_VERSION_UNSUPPORTED,
+            CUDA_DRIVER_FAILURE,
+            CUDA_DRIVER_TOO_OLD,
+            CUDA_DEVICE_UNAVAILABLE,
+            COMPUTE_CAPABILITY_UNSUPPORTED,
+            NVCOMP_INPUT_ALIGNMENT_UNSUPPORTED,
+            NATIVE_INTERNAL_FAILURE,
+        ]);
+
+        assert_eq!(status_values, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(std::mem::size_of::<NativeCapability>(), 32);
+        assert_eq!(std::mem::align_of::<NativeCapability>(), std::mem::align_of::<usize>());
+        assert_eq!(NativeCapability::default().nvcomp_input_alignment, 0);
+    }
+
+    #[test]
+    fn initialization_errors_render_every_diagnostic_field() {
+        let cases = [
+            DisplayCase {
+                error: NvcompInitializationError::UnsupportedPlatform,
+                expected: "the nvCOMP path is supported only on Linux",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::CudaDriverUnavailable { detail: "driver unavailable".to_owned() },
+                expected: "driver unavailable",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::NvcompLibraryUnavailable { detail: "nvCOMP unavailable".to_owned() },
+                expected: "nvCOMP unavailable",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::RequiredSymbolUnavailable { detail: "symbol unavailable".to_owned() },
+                expected: "symbol unavailable",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::UnsupportedNvcompVersion {
+                    version: 50_100,
+                    detail: "5.2 or newer is required".to_owned(),
+                },
+                expected: "unsupported nvCOMP version 50100: 5.2 or newer is required",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::CudaDriverFailure { detail: "driver failure".to_owned() },
+                expected: "driver failure",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::CudaDriverTooOld {
+                    version: 12_010,
+                    detail: "PTX ISA 8.2 requires CUDA 12.2".to_owned(),
+                },
+                expected: "CUDA driver API version 12010 is too old: PTX ISA 8.2 requires CUDA 12.2",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::CudaDeviceUnavailable {
+                    device_ordinal: 3,
+                    detail: "ordinal is not visible".to_owned(),
+                },
+                expected: "CUDA device 3 is unavailable: ordinal is not visible",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::UnsupportedComputeCapability {
+                    device_ordinal: 4,
+                    major: 6,
+                    minor: 1,
+                    detail: "compute_70 is required".to_owned(),
+                },
+                expected: "CUDA device 4 has unsupported compute capability 6.1: compute_70 is required",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::UnsupportedNvcompInputAlignment {
+                    required_alignment: 8,
+                    member_alignment: 4,
+                    detail: "runtime requirement exceeds slab alignment".to_owned(),
+                },
+                expected: "nvCOMP requires 8-byte DEFLATE input alignment, but slab members use 4-byte alignment: runtime requirement exceeds slab alignment",
+            },
+            DisplayCase {
+                error: NvcompInitializationError::Internal { detail: "internal failure".to_owned() },
+                expected: "internal failure",
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(case.error.to_string(), case.expected);
+            assert!(case.error.source().is_none());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_native_failure_status_maps_to_the_public_error_taxonomy() {
+        let native_capability = NativeCapability {
+            nvcomp_version: 50_300,
+            nvcomp_cuda_runtime_version: 12_200,
+            cuda_driver_version: 12_010,
+            device_ordinal: 99,
+            compute_capability_major: 6,
+            compute_capability_minor: 1,
+            nvcomp_input_alignment: 8,
+        };
+        let requested_device_ordinal = 3;
+        let cases = [
+            MappingCase {
+                status: CUDA_DRIVER_UNAVAILABLE,
+                expected: NvcompInitializationError::CudaDriverUnavailable { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: NVCOMP_LIBRARY_UNAVAILABLE,
+                expected: NvcompInitializationError::NvcompLibraryUnavailable { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: REQUIRED_SYMBOL_UNAVAILABLE,
+                expected: NvcompInitializationError::RequiredSymbolUnavailable { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: NVCOMP_VERSION_UNSUPPORTED,
+                expected: NvcompInitializationError::UnsupportedNvcompVersion {
+                    version: 50_300,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: CUDA_DRIVER_FAILURE,
+                expected: NvcompInitializationError::CudaDriverFailure { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: CUDA_DRIVER_TOO_OLD,
+                expected: NvcompInitializationError::CudaDriverTooOld { version: 12_010, detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: CUDA_DEVICE_UNAVAILABLE,
+                expected: NvcompInitializationError::CudaDeviceUnavailable {
+                    device_ordinal: requested_device_ordinal,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: COMPUTE_CAPABILITY_UNSUPPORTED,
+                expected: NvcompInitializationError::UnsupportedComputeCapability {
+                    device_ordinal: requested_device_ordinal,
+                    major: 6,
+                    minor: 1,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: NVCOMP_INPUT_ALIGNMENT_UNSUPPORTED,
+                expected: NvcompInitializationError::UnsupportedNvcompInputAlignment {
+                    required_alignment: 8,
+                    member_alignment: 4,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: NATIVE_INTERNAL_FAILURE,
+                expected: NvcompInitializationError::Internal { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: i32::MAX,
+                expected: NvcompInitializationError::Internal { detail: "detail".to_owned() },
+            },
+        ];
+
+        for case in cases {
+            let observed = initialization_error_from_native_status(
+                case.status,
+                &native_capability,
+                requested_device_ordinal,
+                "detail".to_owned(),
+            );
+            assert_eq!(observed, case.expected);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capability_gates_a_stable_non_null_handler_address() {
+        let capability = NvcompCapability { private: () };
+
+        let first_handler = packed8_deflate_ffi_handler(&capability);
+        let second_handler = packed8_deflate_ffi_handler(&capability);
+
+        assert_eq!(first_handler, second_handler);
+        assert_eq!(capability, NvcompCapability { private: () });
+        assert!(format!("{capability:?}").contains("NvcompCapability"));
+    }
 }

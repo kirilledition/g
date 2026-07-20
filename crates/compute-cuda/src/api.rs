@@ -120,7 +120,17 @@ pub fn initialize_firth_components_runtime(
         // the next initialization call on this thread; copy it before returning.
         unsafe { CStr::from_ptr(native_detail) }.to_string_lossy().into_owned()
     };
-    Err(match status {
+    Err(initialization_error_from_native_status(status, &native_capability, device_ordinal, detail))
+}
+
+#[cfg(target_os = "linux")]
+fn initialization_error_from_native_status(
+    status: c_int,
+    native_capability: &NativeCapability,
+    device_ordinal: i32,
+    detail: String,
+) -> FirthComponentsInitializationError {
+    match status {
         CUDA_DRIVER_UNAVAILABLE => FirthComponentsInitializationError::CudaDriverUnavailable { detail },
         REQUIRED_SYMBOL_UNAVAILABLE => FirthComponentsInitializationError::RequiredSymbolUnavailable { detail },
         CUDA_DRIVER_FAILURE => FirthComponentsInitializationError::CudaDriverFailure { detail },
@@ -136,7 +146,7 @@ pub fn initialize_firth_components_runtime(
             detail,
         },
         _ => FirthComponentsInitializationError::Internal { detail },
-    })
+    }
 }
 
 /// Reports that raw CUDA Firth components are unavailable off Linux.
@@ -168,4 +178,188 @@ unsafe extern "C" {
         detail: *mut *const c_char,
     ) -> c_int;
     fn g_firth_components_ffi(call_frame: *mut c_void) -> *mut c_void;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    struct DisplayCase {
+        error: FirthComponentsInitializationError,
+        expected: &'static str,
+    }
+
+    #[cfg(target_os = "linux")]
+    struct MappingCase {
+        status: c_int,
+        expected: FirthComponentsInitializationError,
+    }
+
+    #[cfg(target_os = "linux")]
+    const NATIVE_INTERNAL_FAILURE: c_int = 7;
+
+    #[test]
+    fn ffi_target_name_is_stable() {
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_FFI_TARGET), "g.firth.components.v1");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_status_and_capability_abi_match_the_linked_boundary() {
+        let status_values = std::hint::black_box([
+            INITIALIZATION_SUCCESS,
+            CUDA_DRIVER_UNAVAILABLE,
+            REQUIRED_SYMBOL_UNAVAILABLE,
+            CUDA_DRIVER_FAILURE,
+            CUDA_DRIVER_TOO_OLD,
+            CUDA_DEVICE_UNAVAILABLE,
+            COMPUTE_CAPABILITY_UNSUPPORTED,
+            NATIVE_INTERNAL_FAILURE,
+        ]);
+
+        assert_eq!(status_values, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(std::mem::size_of::<NativeCapability>(), 16);
+        assert_eq!(std::mem::align_of::<NativeCapability>(), std::mem::align_of::<i32>());
+        assert_eq!(NativeCapability::default().cuda_driver_version, 0);
+    }
+
+    #[test]
+    fn initialization_errors_render_every_diagnostic_field() {
+        let cases = [
+            DisplayCase {
+                error: FirthComponentsInitializationError::UnsupportedPlatform,
+                expected: "CUDA Firth components are supported only on Linux",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::CudaDriverUnavailable {
+                    detail: "driver unavailable".to_owned(),
+                },
+                expected: "driver unavailable",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::RequiredSymbolUnavailable {
+                    detail: "symbol unavailable".to_owned(),
+                },
+                expected: "symbol unavailable",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::CudaDriverFailure { detail: "driver failure".to_owned() },
+                expected: "driver failure",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::CudaDriverTooOld {
+                    version: 12_010,
+                    detail: "PTX ISA 8.2 requires CUDA 12.2".to_owned(),
+                },
+                expected: "CUDA driver API version 12010 is too old: PTX ISA 8.2 requires CUDA 12.2",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::CudaDeviceUnavailable {
+                    device_ordinal: 3,
+                    detail: "ordinal is not visible".to_owned(),
+                },
+                expected: "CUDA device 3 is unavailable: ordinal is not visible",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::UnsupportedComputeCapability {
+                    device_ordinal: 4,
+                    major: 6,
+                    minor: 1,
+                    detail: "compute_70 is required".to_owned(),
+                },
+                expected: "CUDA device 4 has unsupported compute capability 6.1: compute_70 is required",
+            },
+            DisplayCase {
+                error: FirthComponentsInitializationError::Internal { detail: "internal failure".to_owned() },
+                expected: "internal failure",
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(case.error.to_string(), case.expected);
+            assert!(case.error.source().is_none());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_native_failure_status_maps_to_the_public_error_taxonomy() {
+        let native_capability = NativeCapability {
+            cuda_driver_version: 12_010,
+            device_ordinal: 99,
+            compute_capability_major: 6,
+            compute_capability_minor: 1,
+        };
+        let requested_device_ordinal = 3;
+        let cases = [
+            MappingCase {
+                status: CUDA_DRIVER_UNAVAILABLE,
+                expected: FirthComponentsInitializationError::CudaDriverUnavailable { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: REQUIRED_SYMBOL_UNAVAILABLE,
+                expected: FirthComponentsInitializationError::RequiredSymbolUnavailable { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: CUDA_DRIVER_FAILURE,
+                expected: FirthComponentsInitializationError::CudaDriverFailure { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: CUDA_DRIVER_TOO_OLD,
+                expected: FirthComponentsInitializationError::CudaDriverTooOld {
+                    version: 12_010,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: CUDA_DEVICE_UNAVAILABLE,
+                expected: FirthComponentsInitializationError::CudaDeviceUnavailable {
+                    device_ordinal: requested_device_ordinal,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: COMPUTE_CAPABILITY_UNSUPPORTED,
+                expected: FirthComponentsInitializationError::UnsupportedComputeCapability {
+                    device_ordinal: requested_device_ordinal,
+                    major: 6,
+                    minor: 1,
+                    detail: "detail".to_owned(),
+                },
+            },
+            MappingCase {
+                status: NATIVE_INTERNAL_FAILURE,
+                expected: FirthComponentsInitializationError::Internal { detail: "detail".to_owned() },
+            },
+            MappingCase {
+                status: i32::MAX,
+                expected: FirthComponentsInitializationError::Internal { detail: "detail".to_owned() },
+            },
+        ];
+
+        for case in cases {
+            let observed = initialization_error_from_native_status(
+                case.status,
+                &native_capability,
+                requested_device_ordinal,
+                "detail".to_owned(),
+            );
+            assert_eq!(observed, case.expected);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn capability_gates_a_stable_non_null_handler_address() {
+        let capability = FirthComponentsCapability { private: () };
+
+        let first_handler = firth_components_ffi_handler(&capability);
+        let second_handler = firth_components_ffi_handler(&capability);
+
+        assert_eq!(first_handler, second_handler);
+        assert_eq!(capability, FirthComponentsCapability { private: () });
+        assert!(format!("{capability:?}").contains("FirthComponentsCapability"));
+    }
 }
