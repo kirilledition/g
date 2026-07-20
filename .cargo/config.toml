@@ -1,5 +1,6 @@
 [build]
 jobs = 30
+warnings = "deny"
 
 [env]
 PYO3_PYTHON = "python3.14"

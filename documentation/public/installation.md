@@ -19,7 +19,7 @@ Install or load these tools before syncing the Python environment:
 | --- | --- | --- |
 | `git` | Clone the repository | [Git install guide](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git) |
 | `uv` | Create the isolated Python environment and install Python `3.14` | [uv installation](https://docs.astral.sh/uv/getting-started/installation/) |
-| Rust/Cargo | Build the native extension from source | [rustup installation](https://rustup.rs/) |
+| Rust 1.97.1/Cargo | Build the native extension from source | [rustup installation](https://rustup.rs/) |
 | C/C++ build tools | Compile native dependencies used by Rust crates; Linux `cc` must accept `-fuse-ld=mold` (GCC 12.1+ or a compatible Clang driver) | [GCC binaries](https://gcc.gnu.org/install/binaries.html) or your cluster module guide |
 | Mold and `ld.mold` | Link Linux native builds | [Mold installation](https://github.com/rui314/mold#installation) |
 | NVIDIA driver and a CUDA-capable node | GPU runs only | [JAX installation](https://docs.jax.dev/en/latest/installation.html) |
@@ -29,6 +29,8 @@ Install or load these tools before syncing the Python environment:
 `just` is not required to run `g`; it is a development task runner for this repository.
 Linux source builds use the `cc` compiler driver with Mold by default. Cargo
 uses up to 30 build jobs unless `CARGO_BUILD_JOBS` or `--jobs` overrides it.
+Cargo 1.97's repository-level warning policy treats warnings from local Rust
+packages as errors while leaving dependency warnings informational.
 Run `just doctor` to verify that the installed compiler driver can invoke Mold.
 
 ## Supported Platforms
@@ -101,8 +103,10 @@ uv sync --python 3.14 --no-dev
 uv run python -c "import jax; print(jax.devices())"
 ```
 
-The base environment installs the CUDA-enabled JAX extra declared by this checkout. If JAX does not
-list the expected GPU, compare the installed extra with the current [JAX installation
+The base environment installs JAX 0.11 with its CUDA 12 extra. CUDA 12 is intentional: it supports
+the V100 GPUs and R535 driver deployed on the primary gauss/landau path, while JAX's CUDA 13 wheels
+require an R580-or-newer driver and compute capability 7.5 or newer. If JAX does not list the
+expected GPU, compare the installed extra with the current [JAX installation
 matrix](https://docs.jax.dev/en/latest/installation.html), then adjust the environment before
 measuring performance.
 

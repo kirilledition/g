@@ -597,7 +597,7 @@ def initialize_compact_carrier_regenie_approximate_firth(
     )
 
 
-@jax.jit(inline=True)
+@jax.jit(inline=jax.Inline.JAX_EARLY)
 def initialize_scalar_approximate_firth_with_active_samples(
     *,
     phenotype_vector: jax.Array,
