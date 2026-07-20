@@ -319,22 +319,28 @@ PYTHON_TELEMETRY_FALLBACK_CALL_PATTERN = re.compile(
 
 ALLOWED_INTERNAL_DEPENDENCIES_BY_PACKAGE: dict[str, set[str]] = {
     "g-compute-cuda": set(),
-    "g-plan": set(),
+    "g-genotype-contracts": set(),
+    "g-genotype-cuda": {"g-genotype-contracts"},
+    "g-genotype": {"g-genotype-contracts"},
+    "g-input": {"g-plan"},
     "g-interface": {"g-plan"},
-    "g-genotype": set(),
-    "g-input": {"g-genotype", "g-plan"},
-    "g-output": {"g-plan"},
-    "g-runtime": {"g-plan"},
-    "g-engine": {"g-genotype", "g-input", "g-output", "g-plan", "g-runtime"},
+    "g-output": {"g-genotype-contracts", "g-plan"},
+    "g-plan": set(),
+    "g-runtime": set(),
+    "g-engine": {"g-genotype", "g-genotype-contracts", "g-input", "g-output", "g-plan", "g-runtime"},
+    "g-runner": {"g-engine", "g-interface", "g-plan", "g-runtime"},
 }
 CRATE_ROOT_BY_PACKAGE: dict[str, Path] = {
     "g-compute-cuda": Path("crates/compute-cuda"),
     "g-engine": Path("crates/engine"),
     "g-genotype": Path("crates/genotype"),
+    "g-genotype-contracts": Path("crates/genotype-contracts"),
+    "g-genotype-cuda": Path("crates/genotype-cuda"),
     "g-input": Path("crates/input"),
     "g-interface": Path("crates/interface"),
     "g-output": Path("crates/output"),
     "g-plan": Path("crates/plan"),
+    "g-runner": Path("crates/runner"),
     "g-runtime": Path("crates/runtime"),
 }
 ALLOWED_PUBLIC_ROOT_MODULES_BY_PACKAGE: dict[str, set[str]] = {}
@@ -498,9 +504,19 @@ def workspace_packages(metadata_payload: dict[str, typing.Any]) -> tuple[dict[st
 
 
 def dependency_names(package_payload: dict[str, typing.Any]) -> tuple[str, ...]:
-    """Return dependency package names from one Cargo metadata package payload."""
+    """Return all dependency names from a Cargo metadata package payload."""
     raw_dependencies = typing.cast("list[dict[str, typing.Any]]", package_payload.get("dependencies", []))
     return tuple(str(dependency_payload.get("name", "")) for dependency_payload in raw_dependencies)
+
+
+def production_dependency_names(package_payload: dict[str, typing.Any]) -> tuple[str, ...]:
+    """Return non-development dependency names from a Cargo metadata package."""
+    raw_dependencies = typing.cast("list[dict[str, typing.Any]]", package_payload.get("dependencies", []))
+    return tuple(
+        str(dependency_payload.get("name", ""))
+        for dependency_payload in raw_dependencies
+        if dependency_payload.get("kind") != "dev"
+    )
 
 
 def collect_rust_architecture_violations(
@@ -517,10 +533,13 @@ def collect_rust_architecture_violations(
 
     for package_payload in package_payloads:
         package_name = str(package_payload.get("name", ""))
-        package_dependency_names = set(dependency_names(package_payload))
+        all_package_dependency_names = set(dependency_names(package_payload))
+        package_dependency_names = set(production_dependency_names(package_payload))
 
         if package_name != ROOT_PACKAGE_NAME:
-            for dependency_name in sorted(package_dependency_names.intersection(RESTRICTED_PYTHON_NATIVE_DEPENDENCIES)):
+            for dependency_name in sorted(
+                all_package_dependency_names.intersection(RESTRICTED_PYTHON_NATIVE_DEPENDENCIES)
+            ):
                 violations.append(
                     RustArchitectureViolation(
                         package_name=package_name,

@@ -175,8 +175,8 @@ class PythonCliShimViolation:
 CLI_SHIM_PATH = Path("cli.py")
 CLI_SHIM_POLICY_NAME = "native_cli_shim_process_owner"
 CLI_SHIM_MESSAGE = (
-    "the public Python CLI entry point must stay thin: dispatch through the native parser, "
-    "route validated configs to g.runner.cli, and avoid legacy bridge or sentinel paths"
+    "the public Python CLI entry point must stay thin: call g._core.cli.run directly, forward its console output, "
+    "and avoid removed Python orchestration or sentinel paths"
 )
 
 PYTHON_IMPORT_POLICIES = (
@@ -283,12 +283,9 @@ PYTHON_IMPORT_POLICIES = (
             "g.engine.run_events",
             "g.engine.shutdown",
             "g.engine.telemetry",
-            "g.runner.events",
-            "g.runner.execution",
-            "g.runner.lifecycle",
-            "g.runner.runtime",
+            "g.runner",
         ),
-        message="CLI shim must route backend lifecycle through g.runner.cli",
+        message="CLI shim must delegate the complete native lifecycle to g._core.cli.run",
     ),
     PythonImportPolicy(
         name="runner_jax_import_boundary",
@@ -1222,53 +1219,36 @@ def collect_python_cli_shim_violations(package_root: Path) -> tuple[PythonCliShi
             break
 
     function_definitions = top_level_function_definitions(tree)
-    run_args_definition = function_definitions.get("run_args")
-    if run_args_definition is None:
-        violations.append(cli_shim_violation(relative_path, 1, 0, "run_args"))
+    run_definition = function_definitions.get("run")
+    if run_definition is None:
+        violations.append(cli_shim_violation(relative_path, 1, 0, "run"))
     else:
-        if not function_contains_call(run_args_definition, "dispatch_cli"):
+        if not function_contains_call(run_definition, "_core.cli.run"):
             violations.append(
                 cli_shim_violation(
                     relative_path,
-                    run_args_definition.lineno,
-                    run_args_definition.col_offset,
-                    "run_args",
-                )
-            )
-        if not function_contains_call(run_args_definition, "run_validated_cli_outcome"):
-            violations.append(
-                cli_shim_violation(
-                    relative_path,
-                    run_args_definition.lineno,
-                    run_args_definition.col_offset,
-                    "run_args",
-                )
-            )
-        if function_contains_call(run_args_definition, "run_native_cli_python_bridge"):
-            violations.append(
-                cli_shim_violation(
-                    relative_path,
-                    run_args_definition.lineno,
-                    run_args_definition.col_offset,
-                    "run_args",
+                    run_definition.lineno,
+                    run_definition.col_offset,
+                    "run",
                 )
             )
 
-    run_args_legacy_definition = function_definitions.get("run_args_legacy")
-    if run_args_legacy_definition is not None:
-        violations.append(
-            cli_shim_violation(
-                relative_path,
-                run_args_legacy_definition.lineno,
-                run_args_legacy_definition.col_offset,
-                "run_args_legacy",
+    for removed_function_name in ("run_args", "run_args_legacy", "run_native_cli_python_bridge"):
+        removed_function_definition = function_definitions.get(removed_function_name)
+        if removed_function_definition is not None:
+            violations.append(
+                cli_shim_violation(
+                    relative_path,
+                    removed_function_definition.lineno,
+                    removed_function_definition.col_offset,
+                    removed_function_name,
+                )
             )
-        )
 
     main_definition = function_definitions.get("main")
     if main_definition is None:
         violations.append(cli_shim_violation(relative_path, 1, 0, "main"))
-    elif not function_contains_call(main_definition, "run_args"):
+    elif not function_contains_call(main_definition, "run"):
         violations.append(cli_shim_violation(relative_path, main_definition.lineno, main_definition.col_offset, "main"))
 
     return tuple(violations)
