@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 use g_genotype::{ChunkComputeStatistics, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
@@ -29,6 +30,7 @@ use crate::preparation::{
 use crate::run::{RunPreparationError, validate_jax_integer_domain};
 
 const TEST_SAMPLE_COUNT: usize = 3;
+const TEST_SYNCHRONIZATION_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_VARIANT_COUNT: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +50,33 @@ struct TestDeviceResult {
     variant_start_index: usize,
     logical_variant_count: usize,
     statistics: ChunkOutputStatistics,
+}
+
+struct ComputeGateRelease {
+    sender: Option<Sender<()>>,
+}
+
+impl ComputeGateRelease {
+    const fn new(sender: Sender<()>) -> Self {
+        Self { sender: Some(sender) }
+    }
+
+    fn release(&mut self) {
+        self.sender
+            .as_ref()
+            .expect("compute gate has not already been released")
+            .send_timeout((), TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("compute gate accepts its release signal before the timeout");
+        self.sender.take();
+    }
+}
+
+impl Drop for ComputeGateRelease {
+    fn drop(&mut self) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.try_send(());
+        }
+    }
 }
 
 struct TestBackend {
@@ -147,13 +176,13 @@ impl AssociationBackend for TestBackend {
             self.compute_started_sender
                 .as_ref()
                 .expect("gated test has a start sender")
-                .send(variant_start_index)
-                .expect("test receives the compute-start notification");
+                .send_timeout(variant_start_index, TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test receives the compute-start notification before the timeout");
             self.compute_gate_receiver
                 .as_ref()
                 .expect("gated test has a receiver")
-                .recv()
-                .expect("test releases the compute gate");
+                .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test releases the compute gate before the timeout");
         }
         let logical_variant_count = input.logical_variant_count;
         let GenotypeBatchPayload::Decoded { statistics, .. } = input.payload else {
@@ -339,6 +368,7 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
     let group = ();
     let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
     pipeline.prepare_chromosome(22).expect("chromosome is prepared");
+    let mut compute_gate_release = ComputeGateRelease::new(compute_gate_sender);
 
     assert!(
         pipeline
@@ -346,7 +376,12 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
             .expect("first batch is submitted")
             .is_none()
     );
-    assert_eq!(compute_started_receiver.recv().expect("first compute starts"), 0);
+    assert_eq!(
+        compute_started_receiver
+            .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("first compute starts before the timeout"),
+        0
+    );
     assert!(
         pipeline
             .try_submit(build_scheduled_batch(2, 2, 2, ActiveTraitSelection::All))
@@ -359,7 +394,7 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
         .expect("third batch is returned before transfer");
     assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 2);
 
-    compute_gate_sender.send(()).expect("first compute is released");
+    compute_gate_release.release();
     let mut completed_batches = Vec::new();
     let mut pending_batch = returned_batch;
     loop {
