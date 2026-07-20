@@ -361,7 +361,7 @@ dev = [
     { name = "pooch", specifier = ">=1.8.2" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "py-cpuinfo", specifier = ">=9.0.0" },
-    { name = "pyan3", specifier = ">=2.6.1" },
+    { name = "pyan3", specifier = ">=2.6.2" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
@@ -1333,14 +1333,14 @@ wheels = [
 
 [[package]]
 name = "pyan3"
-version = "2.6.1"
+version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/06/d812b672bc8eca7fb246cd99963b972944aaa0adad3d3dc137fc22a9a59f/pyan3-2.6.1.tar.gz", hash = "sha256:fa663d9e08e425bf8ec791ea50ae354d13634dd974ddde03c2fd1c5b7ded4d53", size = 101323, upload-time = "2026-06-29T14:39:35.037Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/f4/0fc2023b7971af8ab00e261ed59916be93ff7ae745f9d4e91de40cbf85ff/pyan3-2.6.2.tar.gz", hash = "sha256:ecb63d32ea28ec10caf22aad11310022a341c9bf5e8b9301e9a64ed3fe2edc91", size = 101955, upload-time = "2026-07-14T08:20:53.698Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/f5/2d88d081173b23b9bd02a13eff9633baf86a32f7b9886db8e4996ab80a99/pyan3-2.6.1-py3-none-any.whl", hash = "sha256:1714f9db478fe2e8e5599ac73146f57e295be084f5666f68a2adabcaa7255e48", size = 99126, upload-time = "2026-06-29T14:39:33.499Z" },
+    { url = "https://files.pythonhosted.org/packages/86/b6/6c4aadea4274657b5539c4d0365aba87d44ce12f4cf32556aee616187b80/pyan3-2.6.2-py3-none-any.whl", hash = "sha256:51b3f124286398f983e67bb1569074ca98047e51c420e9055376c56c9232c41e", size = 99491, upload-time = "2026-07-14T08:20:52.487Z" },
 ]
 
 [[package]]
