@@ -1,4 +1,6 @@
-# `g` — GPU-oriented REGENIE Step 2 GWAS engine
+# ✨ g
+
+GWAS engine with GPU acceleration via JAX
 
 [![PR CI](https://github.com/kirilledition/g/actions/workflows/pr-ci.yml/badge.svg)](https://github.com/kirilledition/g/actions/workflows/pr-ci.yml)
 [![Science Monthly](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml/badge.svg)](https://github.com/kirilledition/g/actions/workflows/science-monthly.yml)
