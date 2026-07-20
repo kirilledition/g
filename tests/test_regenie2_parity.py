@@ -195,6 +195,7 @@ def write_native_cli_config(
 ) -> Path:
     """Write one supported native CLI configuration for full parity."""
     options = workflow.g_cli_options
+    trait_type = metadata_string(options, "trait_type")
     phenotype_columns = toml_string(metadata_string(options, "phenotype_column"))
     covariate_columns = ", ".join(toml_string(value) for value in metadata_string_list(options, "covariate_columns"))
     configured_device = configured_workflow_device(workflow)
@@ -209,30 +210,39 @@ def write_native_cli_config(
         f"pred = {toml_string(DATA_DIRECTORY / metadata_string(options, 'prediction_list'))}",
         "",
         "[trait]",
-        f"trait_type = {toml_string(metadata_string(options, 'trait_type'))}",
+        f"trait_type = {toml_string(trait_type)}",
         f"bsize = {metadata_integer(options, 'chunk_size')}",
         "",
-        "[binary]",
-        f"fallback_method = {toml_string(metadata_string(options, 'binary_fallback_method'))}",
-        "p_threshold = 0.05",
-        "firth_se = false",
-        "",
-        "[compute]",
-        f"device = {toml_string(configured_device)}",
-        "firth_batch_size = 512",
-        "firth_candidate_capacity = 1024",
-        f"jax_cache_dir = {toml_string(jax_cache_directory)}",
-        "",
-        "[output]",
-        f"out = {toml_string(output_root)}",
-        f"output_run_directory = {toml_string(output_root)}",
-        f"writer_threads = {metadata_integer(options, 'writer_thread_count')}",
-        "resume = false",
-        "",
-        "[diagnostics]",
-        'telemetry = "off"',
-        "",
     ]
+    if trait_type == "binary":
+        lines.extend(
+            [
+                "[binary]",
+                f"fallback_method = {toml_string(metadata_string(options, 'binary_fallback_method'))}",
+                "p_threshold = 0.05",
+                "firth_se = false",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "[compute]",
+            f"device = {toml_string(configured_device)}",
+            "firth_batch_size = 512",
+            "firth_candidate_capacity = 1024",
+            f"jax_cache_dir = {toml_string(jax_cache_directory)}",
+            "",
+            "[output]",
+            f"out = {toml_string(output_root)}",
+            f"output_run_directory = {toml_string(output_root)}",
+            f"writer_threads = {metadata_integer(options, 'writer_thread_count')}",
+            "resume = false",
+            "",
+            "[diagnostics]",
+            'telemetry = "off"',
+            "",
+        ]
+    )
     config_path = output_root.with_suffix(".toml")
     config_path.write_text("\n".join(lines), encoding="utf-8")
     return config_path

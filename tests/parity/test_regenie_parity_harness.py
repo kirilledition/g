@@ -69,6 +69,30 @@ def test_upstream_golden_workflows_record_commands_hashes_rows_and_tolerances() 
     )
 
 
+def test_native_cli_config_emits_binary_section_only_for_binary_traits(tmp_path: Path) -> None:
+    import tests.test_regenie2_parity
+
+    metadata = tests.parity.harness.load_golden_metadata()
+    quantitative_config_path = tests.test_regenie2_parity.write_native_cli_config(
+        metadata.workflow_by_identifier("quantitative_single_bgen_loco"),
+        output_root=tmp_path / "quantitative-output",
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+    binary_config_path = tests.test_regenie2_parity.write_native_cli_config(
+        metadata.workflow_by_identifier("binary_score_only"),
+        output_root=tmp_path / "binary-output",
+        jax_cache_directory=tmp_path / "jax-cache",
+    )
+
+    quantitative_config = quantitative_config_path.read_text(encoding="utf-8")
+    binary_config = binary_config_path.read_text(encoding="utf-8")
+    assert "\n[binary]\n" not in quantitative_config
+    assert "\n[binary]\n" in binary_config
+    assert 'fallback_method = "score_only"' in binary_config
+    assert "p_threshold = 0.05" in binary_config
+    assert "firth_se = false" in binary_config
+
+
 def test_validation_node_files_and_documentation_exist() -> None:
     metadata = tests.parity.harness.load_golden_metadata()
 

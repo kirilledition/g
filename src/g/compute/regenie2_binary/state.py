@@ -64,17 +64,13 @@ class Regenie2MultiBinaryScoreChromosomeState:
 
     Attributes:
         score_right_hand_matrix: Stacked matrix multiplied by genotype chunks.
-        score_residual_sum: Per-trait score-residual sums.
-        bernoulli_weight_sum: Per-trait Bernoulli-weight sums.
-        score_projection_sum: Per-trait score-projection column sums.
+        bernoulli_weight: Per-trait Bernoulli variance.
         null_logistic_converged: Per-trait null IRLS convergence flags.
 
     """
 
     score_right_hand_matrix: jax.Array
-    score_residual_sum: jax.Array
-    bernoulli_weight_sum: jax.Array
-    score_projection_sum: jax.Array
+    bernoulli_weight: jax.Array
     null_logistic_converged: jax.Array
 
 
@@ -198,12 +194,10 @@ def build_multi_binary_score_chromosome_state_from_traits(
     )
     return Regenie2MultiBinaryScoreChromosomeState(
         score_right_hand_matrix=jnp.concatenate(
-            [flattened_projection_matrix, trait_states.bernoulli_weight, trait_states.score_residual],
+            [flattened_projection_matrix, trait_states.score_residual],
             axis=0,
         ),
-        score_residual_sum=jnp.sum(trait_states.score_residual, axis=1),
-        bernoulli_weight_sum=jnp.sum(trait_states.bernoulli_weight, axis=1),
-        score_projection_sum=jnp.sum(trait_states.score_projection_matrix, axis=2),
+        bernoulli_weight=trait_states.bernoulli_weight,
         null_logistic_converged=trait_states.null_logistic_converged,
     )
 

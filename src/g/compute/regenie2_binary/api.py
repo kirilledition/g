@@ -29,15 +29,19 @@ def compute_regenie2_multi_binary_score_test_chunk_from_chromosome_state_packed8
     genotype_matrix_by_variant = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
         packed_probability_pairs_by_variant
     )
+    genotype_mean = genotype.compute_diploid_genotype_mean(
+        genotype_matrix_by_variant,
+        native_genotype_mean,
+    )
     return regenie2_binary_result.DecodedMultiBinaryScoreChunkResult(
         genotype_matrix_by_variant=genotype_matrix_by_variant,
-        score_result=regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
+        score_result=regenie2_binary_score.compute_multi_binary_score_test_packed8_with_flip_mask(
             chromosome_state=chromosome_state,
-            genotype_matrix_by_variant=genotype_matrix_by_variant,
+            packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+            genotype_flip_mask=genotype_mean > 1.0,
             firth_candidate_p_threshold=firth_candidate_p_threshold,
             minimum_variance=minimum_variance,
             relative_variance_tolerance=relative_variance_tolerance,
-            native_genotype_mean=native_genotype_mean,
         ),
     )
 

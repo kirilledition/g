@@ -1646,6 +1646,85 @@ and documentation build all pass. The `g-genotype` lib-test target has 224
 stale test API errors on both baseline and candidate and is deferred with the
 requested test/tooling phase; it is not used as candidate evidence.
 
+## 2026-07-20 Stable Minor-Allele Score Reduction
+
+The binary score path previously decoded flipped variants by subtracting the
+major-coded dosage from two, then multiplied and reduced the complemented
+matrix. For ultra-rare variants this formed a large nearly constant float32
+term and cancelled it again in the score statistic. The resulting error was
+the cause of the remaining upstream REGENIE score-path beta failures. The
+accepted implementation computes the minor-coded value directly. Packed8
+delivery uses the exact byte numerators `2 * p0 + p1` for flipped variants and
+`510 - 2 * p0 - p1` otherwise. The decoded path reduces 256-sample tiles and
+never materializes the complement. The chromosome state now stores the score
+right-hand matrix and full Bernoulli weight explicitly instead of maintaining
+complement-sum correction terms.
+
+The focused CPU gate ran on an exclusive 40-core Hilbert allocation with fixed
+affinity, NUMA interleave, eight warmups, and 80 position-balanced blocks (160
+measurements per implementation). The production decoded score median falls
+from 43.918273 to 39.144199 milliseconds. Its paired geometric reduction is
+15.558%; 77 of 80 blocks favor the candidate and the block-bootstrap 95%
+interval is 13.586% to 17.461%. Temporary executable memory falls from
+164,626,432 to 26,738,808 bytes, while StableHLO grows from 16,788 to 20,448
+bytes. Full materialization (-26.81%), a fused `vmap` reduction (-17.43%), and
+128- and 512-sample tiles (-18.27% and -19.91%) were rejected. A first
+256-sample campaign was ambiguous, so only the positive fixed-affinity repeat
+supports acceptance.
+
+The exact production packed8 GPU gate ran serially on Landau with eight
+warmups and the same 80-block, 160-measurement geometry. Median synchronized
+time falls from 1.643646 to 1.635858 milliseconds. The paired geometric
+reduction is 0.667%; 55 of 80 blocks favor the candidate and the block-
+bootstrap interval is 0.249% to 1.077%. StableHLO falls from 18,046 to 16,013
+bytes and temporary memory falls from 332,727,080 to 332,415,784 bytes. An
+earlier direct-numerator campaign remained ambiguous after extension: its
+point was +0.054%, with a -1.039% to +0.750% block interval. A packed
+1,252-sample tiled reduction was rejected at -7.070%, with a -7.574% to
+-6.560% interval, despite halving temporary memory. A full materialization
+variant was also rejected after its repeat showed a stable 0.428% regression.
+
+The whole-application gate used ten ABBA blocks, 40 processes, five hot
+lifecycles per process, the production 16,384-variant/512-Firth/1,024-capacity/
+eight-writer configuration, and one populated JAX cache. Baseline and
+candidate medians are 0.615521 and 0.615272 seconds. The 20-process-pair point
+estimate is +0.0117%, with 11 wins, a -1.461% to +1.274% pair-bootstrap
+interval, and a -1.567% to +1.261% block-bootstrap interval. Pair leave-one-out
+values range from -0.216% to +0.525%; block leave-one-out values range from
+-0.297% to +0.637%. Fifty-five of 100 lifecycle pairs favor the candidate.
+Every discarded-warm and headline cache tree is identical, and all measured
+runs use native SHA-256
+`8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c`.
+The application evidence is neutral, so this change is retained as focused-
+only and does not support a whole-application speed claim.
+
+The first attempted gate was stopped before an ABBA summary because native
+DEBUG logging polluted the run. After applying the production logging setup,
+the clean run contains no `DEBUG` or `jax._src` records. After 39 of 40
+measurements, the shared baseline worktree advanced to an unrelated tooling
+commit and the final unmeasured position refused the now-changed cache policy.
+That empty attempt is retained; only the missing position was run from an
+immutable detached worktree at the frozen `6ad69f40` baseline. All 40 measured
+summaries report that exact commit. The production diff and four source-file
+hashes were identical before and after the campaign.
+
+Final correctness uses upstream REGENIE v4.1, not old `g`, as the primary
+oracle. Both full chromosome 22 binary workflows pass 418,943 rows with exact
+keys, sample counts, schema, correction aggregates, and significance
+classifications. Score-only maximum absolute differences are
+`8.72401046753124e-6` beta, `9.53237915035654e-6` standard error,
+`5.738945007305318e-5` chi-square, and `1.5566101074115934e-5` log10p; all are
+strictly below their configured tolerances. Approximate-Firth maxima are
+`8.72401046753124e-6`, `9.53237915035654e-6`,
+`8.694763183569876e-5`, and `1.5566101074115934e-5`, respectively. All 17,938
+expected Firth corrections succeed and score-only reports no corrections.
+
+Focused reports, rejected experiments, the clean application analysis, run
+log, and upstream qualification reports are ignored under
+`results/score-flip-stability` and
+`results/parity/score-flip-stability/final-qualification`. Benchmark scripts
+and generated evidence are not committed.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.
