@@ -45,8 +45,28 @@ pub struct ChromosomePredictionMatrix {
 }
 
 impl<'paths> PredictionSourceLoader<'paths> {
-    pub(crate) fn new(prediction_loco_paths: &'paths [PredictionLocoPath]) -> Self {
-        Self { prediction_loco_paths, file_index_cache: LocoFileIndexCache::default() }
+    pub(crate) fn new(
+        prediction_loco_paths: &'paths [PredictionLocoPath],
+        phenotype_names: &[String],
+    ) -> Result<Self, PredictionError> {
+        if prediction_loco_paths.len() != phenotype_names.len() {
+            return Err(PredictionError::PredictionCatalogLengthMismatch {
+                expected_count: phenotype_names.len(),
+                observed_count: prediction_loco_paths.len(),
+            });
+        }
+        for (phenotype_index, (prediction_loco_path, phenotype_name)) in
+            prediction_loco_paths.iter().zip(phenotype_names).enumerate()
+        {
+            if prediction_loco_path.phenotype_name.as_ref() != phenotype_name {
+                return Err(PredictionError::PredictionCatalogPhenotypeMismatch {
+                    phenotype_index,
+                    expected_name: phenotype_name.clone(),
+                    observed_name: prediction_loco_path.phenotype_name.to_string(),
+                });
+            }
+        }
+        Ok(Self { prediction_loco_paths, file_index_cache: LocoFileIndexCache::default() })
     }
 
     pub(crate) fn load(
@@ -64,7 +84,12 @@ impl<'paths> PredictionSourceLoader<'paths> {
         let mut alignment_cache = LocoAlignmentCache::default();
         let mut trait_sources = Vec::with_capacity(trait_count);
         for phenotype_index in phenotype_indices {
-            let resolved_path = &self.prediction_loco_paths[*phenotype_index];
+            let resolved_path = self.prediction_loco_paths.get(*phenotype_index).ok_or(
+                PredictionError::PredictionCatalogIndexOutOfRange {
+                    phenotype_index: *phenotype_index,
+                    catalog_count: self.prediction_loco_paths.len(),
+                },
+            )?;
             let indexed_file = self.file_index_cache.index(&resolved_path.loco_file_path)?;
             let sample_alignment = alignment_cache.alignment(
                 &indexed_file.file_index,

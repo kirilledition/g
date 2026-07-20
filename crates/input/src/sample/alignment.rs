@@ -13,7 +13,7 @@ pub(super) fn build_aligned_phenotype_group_drafts(
         let phenotype_indices = (0..phenotype_table.phenotype_count).collect::<Vec<_>>();
         let sample_array_indices = complete_case_sample_array_indices(phenotype_table, covariate_table);
         if sample_array_indices.is_empty() {
-            return Err("No aligned samples remain after joining phenotype and covariate tables.".to_string());
+            return Err("No aligned samples remain after joining phenotype and covariate tables.".to_string().into());
         }
         return Ok(vec![build_group_draft(phenotype_table, covariate_table, phenotype_indices, sample_array_indices)]);
     }
@@ -43,7 +43,8 @@ fn build_compatible_sample_group_drafts(
             return Err(format!(
                 "No aligned samples remain after joining phenotype '{}' and covariate tables.",
                 request.phenotype_names[phenotype_index]
-            ));
+            )
+            .into());
         }
         if let Some((_group_order, phenotype_indices)) =
             groups_by_sample_array_indices.get_mut(complete_sample_array_indices.as_slice())

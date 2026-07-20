@@ -7,13 +7,19 @@ use super::PredictionError;
 
 #[derive(Debug)]
 pub(super) struct PredictionList {
-    paths_by_phenotype: HashMap<String, PathBuf>,
+    entries_by_phenotype: HashMap<String, PredictionListEntry>,
+}
+
+#[derive(Debug)]
+struct PredictionListEntry {
+    loco_file_path: PathBuf,
+    line_number: usize,
 }
 
 impl PredictionList {
     pub(super) fn loco_file_path(&self, phenotype_name: &str) -> Result<&Path, PredictionError> {
-        self.paths_by_phenotype.get(phenotype_name).map(PathBuf::as_path).ok_or_else(|| {
-            let mut available_phenotypes = self.paths_by_phenotype.keys().cloned().collect::<Vec<_>>();
+        self.entries_by_phenotype.get(phenotype_name).map(|entry| entry.loco_file_path.as_path()).ok_or_else(|| {
+            let mut available_phenotypes = self.entries_by_phenotype.keys().cloned().collect::<Vec<_>>();
             available_phenotypes.sort_unstable();
             PredictionError::MissingPhenotype { phenotype_name: phenotype_name.to_string(), available_phenotypes }
         })
@@ -27,7 +33,7 @@ pub(super) fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<
 
     let prediction_list_directory = prediction_list_path.parent().unwrap_or_else(|| Path::new(""));
     let file = File::open(prediction_list_path)?;
-    let mut paths_by_phenotype = HashMap::new();
+    let mut entries_by_phenotype: HashMap<String, PredictionListEntry> = HashMap::new();
     for (line_index, line_result) in BufReader::new(file).lines().enumerate() {
         let line_number = line_index + 1;
         let line = line_result?;
@@ -48,11 +54,21 @@ pub(super) fn parse_prediction_list_file(prediction_list_path: &Path) -> Result<
         } else {
             prediction_list_directory.join(raw_loco_file_path)
         };
-        paths_by_phenotype.entry(phenotype_name.to_string()).or_insert(resolved_loco_file_path);
+        if let Some(first_entry) = entries_by_phenotype.get(phenotype_name) {
+            return Err(PredictionError::DuplicatePredictionListPhenotype {
+                phenotype_name: phenotype_name.to_string(),
+                first_line_number: first_entry.line_number,
+                duplicate_line_number: line_number,
+            });
+        }
+        entries_by_phenotype.insert(
+            phenotype_name.to_string(),
+            PredictionListEntry { loco_file_path: resolved_loco_file_path, line_number },
+        );
     }
 
-    if paths_by_phenotype.is_empty() {
+    if entries_by_phenotype.is_empty() {
         return Err(PredictionError::EmptyPredictionList(prediction_list_path.to_path_buf()));
     }
-    Ok(PredictionList { paths_by_phenotype })
+    Ok(PredictionList { entries_by_phenotype })
 }

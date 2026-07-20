@@ -5,5 +5,9 @@ mod api;
 mod error;
 mod regenie;
 mod sample;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tests;
 
 pub use api::*;

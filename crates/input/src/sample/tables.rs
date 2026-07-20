@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use crate::error::InputError;
+
 use super::SampleAlignmentResult;
 use super::keys::{ObservedTableSampleKeys, SampleRowIndicesByKey, duplicate_table_sample_key_error};
 
@@ -87,7 +89,9 @@ pub(super) fn read_multi_phenotype_table(
         validate_nonempty_sample_key(&reader, family_identifier, individual_identifier)?;
         let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
         if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
-            return Err(duplicate_table_sample_key_error("phenotype table", family_identifier, individual_identifier));
+            return Err(
+                duplicate_table_sample_key_error("phenotype table", family_identifier, individual_identifier).into()
+            );
         }
         let Some(sample_array_index) = sample_array_index else {
             continue;
@@ -122,7 +126,7 @@ pub(super) fn load_covariate_table(
         );
     }
     if covariate_names.is_some() {
-        return Err("Covariate names cannot be provided without a covariate table.".to_string());
+        return Err("Covariate names cannot be provided without a covariate table.".to_string().into());
     }
     Ok(empty_covariate_table(sample_count))
 }
@@ -162,12 +166,14 @@ fn read_tabular_header<R: Read>(
     table_path: &Path,
 ) -> SampleAlignmentResult<Vec<String>> {
     if !reader.read_next_record()? {
-        return Err(format!("{} '{}' is empty.", reader.display_source_label(), table_path.display()));
+        return Err(format!("{} '{}' is empty.", reader.display_source_label(), table_path.display()).into());
     }
     let header_record = &reader.current_record;
     let headers = header_record.iter().map(ToString::to_string).collect::<Vec<_>>();
     if headers.is_empty() {
-        return Err(format!("{} '{}' must contain a header row.", reader.display_source_label(), table_path.display()));
+        return Err(
+            format!("{} '{}' must contain a header row.", reader.display_source_label(), table_path.display()).into()
+        );
     }
     Ok(headers)
 }
@@ -240,7 +246,8 @@ fn validate_nonempty_sample_key<R: Read>(
             reader.display_source_label(),
             reader.path_text,
             reader.current_line_number,
-        ));
+        )
+        .into());
     }
     if individual_identifier.is_empty() {
         return Err(format!(
@@ -248,19 +255,20 @@ fn validate_nonempty_sample_key<R: Read>(
             reader.display_source_label(),
             reader.path_text,
             reader.current_line_number,
-        ));
+        )
+        .into());
     }
     Ok(())
 }
 
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> SampleAlignmentResult<usize> {
-    column_index(headers, column_name).ok_or_else(|| {
+    Ok(column_index(headers, column_name).ok_or_else(|| {
         if column_name == "FID" || column_name == "IID" {
             format!("Identifier column '{column_name}' was not found in {table_path}.")
         } else {
             format!("Phenotype column '{column_name}' was not found in {table_path}.")
         }
-    })
+    })?)
 }
 
 fn column_index(headers: &[String], column_name: &str) -> Option<usize> {
@@ -298,7 +306,7 @@ impl TabularColumnSelection {
     ) -> SampleAlignmentResult<()> {
         for selected_column in &self.selected_columns {
             if selected_column.column_index >= record.len() {
-                return Err(reader.missing_selected_column_error(selected_column, record));
+                return Err(reader.missing_selected_column_error(selected_column, record).into());
             }
         }
         Ok(())
@@ -337,7 +345,7 @@ fn select_covariate_names(
             .cloned()
             .collect();
         if !missing_covariates.is_empty() {
-            return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}."));
+            return Err(format!("Covariate columns are missing from {covariate_path}: {missing_covariates:?}.").into());
         }
         return Ok(covariate_names.to_vec());
     }
@@ -347,7 +355,7 @@ fn select_covariate_names(
         .cloned()
         .collect();
     if inferred_covariate_names.is_empty() {
-        return Err("Covariate table must contain at least one non-identifier column.".to_string());
+        return Err("Covariate table must contain at least one non-identifier column.".to_string().into());
     }
     Ok(inferred_covariate_names)
 }
@@ -397,7 +405,9 @@ fn read_covariate_table(
         validate_nonempty_sample_key(&reader, family_identifier, individual_identifier)?;
         let sample_array_index = sample_row_indices_by_key.sample_row_index(family_identifier, individual_identifier);
         if !observed_sample_keys.insert(family_identifier, individual_identifier, sample_array_index) {
-            return Err(duplicate_table_sample_key_error("covariate table", family_identifier, individual_identifier));
+            return Err(
+                duplicate_table_sample_key_error("covariate table", family_identifier, individual_identifier).into()
+            );
         }
         let Some(sample_array_index) = sample_array_index else {
             continue;
@@ -406,14 +416,14 @@ fn read_covariate_table(
             continue;
         }
         let mut row_has_missing_covariates = false;
-        for covariate_index in 0..selected_covariate_count {
+        for (covariate_index, covariate_name) in selected_covariate_names.iter().enumerate() {
             let covariate_value = selection.record_value(record, selection.data_value_indices[covariate_index]);
             if is_tabular_null_value(covariate_value) {
                 row_has_missing_covariates = true;
                 break;
             }
             let value_index = sample_array_index * selected_covariate_count + covariate_index;
-            covariate_values[value_index] = parse_covariate_value(covariate_value)?;
+            covariate_values[value_index] = parse_covariate_value(covariate_value, covariate_name)?;
         }
         if !row_has_missing_covariates {
             covariate_mask[sample_array_index] = true;
@@ -439,6 +449,12 @@ fn parse_phenotype_value(
     let parsed_value = phenotype_value.parse::<f32>().map_err(|error| {
         format!("Failed to parse phenotype column '{phenotype_name}' value '{phenotype_value}': {error}.")
     })?;
+    if !parsed_value.is_finite() {
+        return Err(InputError::NonFinitePhenotypeValue {
+            phenotype_name: phenotype_name.to_string(),
+            value: phenotype_value.to_string(),
+        });
+    }
     if !is_binary_trait {
         return Ok(parsed_value);
     }
@@ -450,11 +466,49 @@ fn parse_phenotype_value(
     if parsed_value.to_bits() == 2.0_f32.to_bits() {
         return Ok(1.0);
     }
-    Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}."))
+    Err(format!("Binary phenotype must contain only values 1 and 2, found value {parsed_value}.").into())
 }
 
-fn parse_covariate_value(covariate_value: &str) -> SampleAlignmentResult<f32> {
-    covariate_value
+fn parse_covariate_value(covariate_value: &str, covariate_name: &str) -> SampleAlignmentResult<f32> {
+    let parsed_value = covariate_value
         .parse::<f32>()
-        .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))
+        .map_err(|error| format!("Failed to parse covariate value '{covariate_value}': {error}."))?;
+    if !parsed_value.is_finite() {
+        return Err(InputError::NonFiniteCovariateValue {
+            covariate_name: covariate_name.to_string(),
+            value: covariate_value.to_string(),
+        });
+    }
+    Ok(parsed_value)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::InputError;
+
+    use super::{TABULAR_MISSING_VALUE_TOKENS, is_tabular_null_value, parse_covariate_value, parse_phenotype_value};
+
+    #[test]
+    fn tabular_missing_tokens_are_exact_and_documented() {
+        for missing_value in TABULAR_MISSING_VALUE_TOKENS {
+            assert!(is_tabular_null_value(missing_value));
+        }
+        for observed_value in ["NAN", "Inf", "-8", " NA "] {
+            assert!(!is_tabular_null_value(observed_value));
+        }
+    }
+
+    #[test]
+    fn quantitative_phenotypes_and_covariates_reject_nonfinite_values() {
+        for nonfinite_value in ["inf", "-inf", "Infinity", "NAN"] {
+            assert!(matches!(
+                parse_phenotype_value(nonfinite_value, "trait-a", false),
+                Err(InputError::NonFinitePhenotypeValue { .. })
+            ));
+            assert!(matches!(
+                parse_covariate_value(nonfinite_value, "age"),
+                Err(InputError::NonFiniteCovariateValue { .. })
+            ));
+        }
+    }
 }
