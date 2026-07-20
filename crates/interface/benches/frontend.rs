@@ -106,20 +106,20 @@ fn benchmark_frontend_dispatch(criterion: &mut Criterion) {
 
     let mut group = criterion.benchmark_group("cli_frontend_dispatch");
     group.bench_function("root_help", |bencher| {
-        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&root_help_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_cli(hint::black_box(&root_help_arguments))));
     });
     group.bench_function("regenie_help", |bencher| {
-        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&regenie_help_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_cli(hint::black_box(&regenie_help_arguments))));
     });
     group.bench_function("parse_error", |bencher| {
-        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&parse_error_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_cli(hint::black_box(&parse_error_arguments))));
     });
     group.bench_function("valid_config_refusal", |bencher| {
-        bencher.iter(|| hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&valid_config_arguments))));
+        bencher.iter(|| hint::black_box(g_interface::dispatch_cli(hint::black_box(&valid_config_arguments))));
     });
     group.bench_function("valid_toml_config_refusal", |bencher| {
         bencher.iter(|| {
-            hint::black_box(g_interface::dispatch_native_cli(hint::black_box(&valid_toml_config_arguments)));
+            hint::black_box(g_interface::dispatch_cli(hint::black_box(&valid_toml_config_arguments)));
         });
     });
     group.finish();

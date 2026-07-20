@@ -404,3 +404,181 @@ fn validate_zlib_header(zlib_header: [u8; ZLIB_HEADER_LENGTH]) -> Result<(), Bge
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::bgen::reader::BgenReaderCore;
+    use crate::common::Packed8Compatibility;
+
+    const PROBABILITY_BLOCK_LENGTH: u32 = 19;
+    const RAW_DEFLATE_FIRST: [u8; 17] = [99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 14, 6, 134, 255, 64, 4, 0];
+    const RAW_DEFLATE_SECOND: [u8; 17] = [99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 255, 12, 12, 64, 4, 0];
+    const RAW_DEFLATE_THIRD: [u8; 18] = [99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 6, 6, 134, 255, 255, 25, 0];
+    const ZLIB_FIRST: [u8; 23] =
+        [120, 1, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 14, 6, 134, 255, 64, 4, 0, 6, 11, 2, 22];
+    const ZLIB_SECOND: [u8; 23] =
+        [120, 218, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 255, 12, 12, 64, 4, 0, 10, 7, 2, 22];
+    const ZLIB_THIRD: [u8; 24] =
+        [120, 156, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 6, 6, 134, 255, 255, 25, 0, 9, 11, 2, 150];
+
+    struct TemporaryBgenFile {
+        path: PathBuf,
+    }
+
+    impl TemporaryBgenFile {
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TemporaryBgenFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+
+    fn temporary_bgen_path() -> PathBuf {
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after unix epoch").as_nanos();
+        std::env::temp_dir().join(format!("g-raw-deflate-{}-{timestamp}.bgen", std::process::id()))
+    }
+
+    fn append_bgen_string(bytes: &mut Vec<u8>, value: &str) {
+        let value_length = u16::try_from(value.len()).expect("BGEN string length should fit u16");
+        bytes.extend_from_slice(&value_length.to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+
+    fn append_zlib_variant(bytes: &mut Vec<u8>, variant_index: usize, zlib_payload: &[u8]) {
+        append_bgen_string(bytes, &format!("var-{variant_index}"));
+        append_bgen_string(bytes, &format!("rs-{variant_index}"));
+        append_bgen_string(bytes, "22");
+        bytes.extend_from_slice(
+            &u32::try_from(variant_index + 1).expect("test variant position should fit u32").to_le_bytes(),
+        );
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(b"A");
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(b"G");
+        let total_block_length =
+            u32::try_from(zlib_payload.len() + size_of::<u32>()).expect("compressed test block length should fit u32");
+        bytes.extend_from_slice(&total_block_length.to_le_bytes());
+        bytes.extend_from_slice(&PROBABILITY_BLOCK_LENGTH.to_le_bytes());
+        bytes.extend_from_slice(zlib_payload);
+    }
+
+    fn write_independent_zlib_bgen() -> TemporaryBgenFile {
+        let path = temporary_bgen_path();
+        let mut bytes = vec![0_u8; 24];
+        bytes[0..4].copy_from_slice(&20_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&20_u32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[12..16].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[16..20].copy_from_slice(b"bgen");
+        bytes[20..24].copy_from_slice(&(1_u32 | (2_u32 << 2)).to_le_bytes());
+        append_zlib_variant(&mut bytes, 0, &ZLIB_FIRST);
+        append_zlib_variant(&mut bytes, 1, &ZLIB_SECOND);
+        append_zlib_variant(&mut bytes, 2, &ZLIB_THIRD);
+        fs::write(&path, bytes).expect("independent zlib BGEN fixture should be written");
+        TemporaryBgenFile { path }
+    }
+
+    #[test]
+    fn zlib_member_parser_validates_independent_headers_framing_and_alignment() {
+        for (zlib_payload, expected_raw_deflate, expected_adler32) in [
+            (ZLIB_FIRST.as_slice(), RAW_DEFLATE_FIRST.as_slice(), 0x060B_0216),
+            (ZLIB_SECOND.as_slice(), RAW_DEFLATE_SECOND.as_slice(), 0x0A07_0216),
+            (ZLIB_THIRD.as_slice(), RAW_DEFLATE_THIRD.as_slice(), 0x090B_0296),
+        ] {
+            let parsed = parse_zlib_member(zlib_payload).expect("independent zlib fixture should parse");
+            assert_eq!(parsed.raw_deflate_bytes, expected_raw_deflate);
+            assert_eq!(parsed.expected_adler32, expected_adler32);
+            validate_zlib_header(parsed.zlib_header.to_ne_bytes()).expect("independent zlib header should validate");
+        }
+
+        assert!(
+            validate_zlib_header([0x79, 0x01])
+                .expect_err("non-DEFLATE method should fail")
+                .to_string()
+                .contains("method")
+        );
+        assert!(
+            validate_zlib_header([0x88, 0x1C])
+                .expect_err("oversized window should fail")
+                .to_string()
+                .contains("window")
+        );
+        assert!(
+            validate_zlib_header([0x78, 0x00]).expect_err("invalid FCHECK should fail").to_string().contains("FCHECK")
+        );
+        assert!(
+            validate_zlib_header([0x78, 0x20])
+                .expect_err("preset dictionary should fail")
+                .to_string()
+                .contains("dictionaries")
+        );
+        let Err(truncation_error) = parse_zlib_member(&[0_u8; 6]) else {
+            panic!("truncated zlib framing should fail");
+        };
+        assert!(truncation_error.to_string().contains("at least"));
+        assert_eq!(align_member_length(1).expect("one byte should align"), 4);
+        assert_eq!(align_member_length(4).expect("four bytes should remain aligned"), 4);
+        assert_eq!(align_member_length(5).expect("five bytes should align"), 8);
+        assert!(align_member_length(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn compressed_packed8_batch_packs_independent_full_tail_and_pooled_members() {
+        let fixture = write_independent_zlib_bgen();
+        let reader = BgenReaderCore::open(fixture.path()).expect("independent zlib BGEN should open");
+        assert_eq!(
+            reader.packed8_compatibility_with_cache().expect("independent zlib BGEN compatibility should validate"),
+            Packed8Compatibility::Compatible
+        );
+        let chunk_specs = [
+            ChunkSpec { variant_start_index: 0, variant_stop_index: 2 },
+            ChunkSpec { variant_start_index: 2, variant_stop_index: 3 },
+        ];
+        let layout = reader
+            .plan_compressed_packed8_batch_layout(&chunk_specs)
+            .expect("compressed packed8 layout should plan")
+            .expect("zlib input should produce a compressed packed8 layout");
+        assert_eq!(layout.slab_byte_count, 40);
+        let session = reader.read_session(&[0, 1, 2]).expect("identity read session should build");
+
+        let full_batch =
+            session.pack_compressed_packed8_batch(&layout, 0, 2).expect("full compressed packed8 batch should pack");
+        assert_eq!(full_batch.member_metadata(), &[0, 17, 0x060B_0216, 20, 17, 0x0A07_0216]);
+        assert_eq!(&full_batch.raw_deflate_slab()[0..17], &RAW_DEFLATE_FIRST);
+        assert_eq!(&full_batch.raw_deflate_slab()[17..20], &[0_u8; 3]);
+        assert_eq!(&full_batch.raw_deflate_slab()[20..37], &RAW_DEFLATE_SECOND);
+        assert_eq!(full_batch.raw_deflate_slab().len(), 40);
+        let pooled_storage_pointer = full_batch.raw_deflate_slab().as_ptr();
+        drop(full_batch);
+
+        let tail_batch =
+            session.pack_compressed_packed8_batch(&layout, 2, 3).expect("tail compressed packed8 batch should pack");
+        assert_eq!(tail_batch.raw_deflate_slab().as_ptr(), pooled_storage_pointer);
+        assert_eq!(tail_batch.member_metadata(), &[0, 18, 0x090B_0296]);
+        assert_eq!(&tail_batch.raw_deflate_slab()[0..18], &RAW_DEFLATE_THIRD);
+        assert_eq!(tail_batch.raw_deflate_slab().len(), 40);
+        drop(tail_batch);
+
+        let pooled_full_batch = session
+            .pack_compressed_packed8_batch(&layout, 0, 2)
+            .expect("pooled full compressed packed8 batch should pack");
+        assert_eq!(pooled_full_batch.raw_deflate_slab().as_ptr(), pooled_storage_pointer);
+        assert_eq!(pooled_full_batch.member_metadata(), &[0, 17, 0x060B_0216, 20, 17, 0x0A07_0216]);
+        assert_eq!(&pooled_full_batch.raw_deflate_slab()[0..17], &RAW_DEFLATE_FIRST);
+        assert_eq!(&pooled_full_batch.raw_deflate_slab()[20..37], &RAW_DEFLATE_SECOND);
+        drop(pooled_full_batch);
+
+        session.finish().expect("compressed packed8 session source should remain stable");
+    }
+}

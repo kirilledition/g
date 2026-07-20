@@ -308,6 +308,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+    use crate::common::{ChunkStatisticsPolicy, GenotypeBatchPayload, OwnedGenotypeBuffer};
+
+    const COMPLETE_STATISTICS_POLICY: ChunkStatisticsPolicy =
+        ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: true };
 
     fn temporary_bgen_path(label: &str) -> PathBuf {
         let timestamp =
@@ -371,42 +375,46 @@ mod tests {
     }
 
     #[test]
-    fn private_reader_optional_stats_collects_row_major_dosage_totals() {
+    fn reader_decodes_variant_major_batches_for_empty_and_selected_samples() {
         let path = temporary_bgen_path("optional-stats");
         write_single_variant_bgen(&path);
-        let reader = BgenReaderCore::open(&path, false).expect("BGEN reader should open");
+        let reader = BgenReaderCore::open(&path).expect("BGEN reader should open");
 
-        let empty_selection = build_sample_selection(reader.sample_count, &[]).expect("empty selection should build");
-        let mut empty_output = Vec::<f32>::new();
-        let empty_totals = reader
-            .read_dosage_f32_into_address_with_selection_and_optional_stats(
-                &empty_selection,
-                0,
-                1,
-                OutputBufferAddress::from_mut_ptr(empty_output.as_mut_ptr()),
-                OutputValueCount::new(0),
-                true,
-            )
-            .expect("empty selected samples should return totals")
-            .expect("totals should be collected");
-        assert_eq!(empty_totals, vec![0.0]);
+        let empty_session = reader.read_session(&[]).expect("empty selection session should build");
+        let empty_batch = empty_session
+            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
+            .expect("empty selected samples should decode");
+        let GenotypeBatchPayload::Decoded { genotypes: empty_genotypes, statistics: empty_statistics } =
+            empty_batch.payload
+        else {
+            panic!("dosage decode should return a decoded payload");
+        };
+        let OwnedGenotypeBuffer::Dosage(empty_values) = empty_genotypes else {
+            panic!("dosage decode should return f32 values");
+        };
+        assert!(empty_values.is_empty());
+        assert_eq!(empty_statistics.output.observation_count, vec![0]);
+        assert_eq!(empty_statistics.compute.genotype_mean, vec![0.0]);
 
-        let sample_selection =
-            build_sample_selection(reader.sample_count, &[0, 2]).expect("non-contiguous selection should build");
-        let mut output = vec![f32::NAN; 2];
-        let totals = reader
-            .read_dosage_f32_into_address_with_selection_and_optional_stats(
-                &sample_selection,
-                0,
-                1,
-                OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
-                OutputValueCount::new(output.len()),
-                true,
-            )
-            .expect("row-major read should collect totals")
-            .expect("totals should be present");
-        assert_eq!(output, vec![2.0, 1.0]);
-        assert_eq!(totals, vec![3.0]);
+        let selected_session = reader.read_session(&[0, 2]).expect("non-contiguous selection session should build");
+        let selected_batch = selected_session
+            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
+            .expect("selected samples should decode");
+        let GenotypeBatchPayload::Decoded { genotypes, statistics } = selected_batch.payload else {
+            panic!("dosage decode should return a decoded payload");
+        };
+        let OwnedGenotypeBuffer::Dosage(output_values) = genotypes else {
+            panic!("dosage decode should return f32 values");
+        };
+        assert_eq!(output_values, vec![2.0, 1.0]);
+        assert_eq!(statistics.output.observation_count, vec![2]);
+        assert_eq!(statistics.output.allele_one_frequency, vec![0.75]);
+        assert_eq!(statistics.compute.genotype_mean, vec![1.5]);
+        assert_eq!(statistics.compute.imputed_dosage_square_sum, Some(vec![5.0]));
+        assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![true]));
+
+        empty_session.finish().expect("empty delivery session source should remain stable");
+        selected_session.finish().expect("selected delivery session source should remain stable");
 
         let _ = fs::remove_file(path);
     }

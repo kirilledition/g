@@ -193,6 +193,9 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
 
 #[cfg(test)]
 mod tests {
+    use super::super::decode::{
+        VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest, decode_variant_major_dosage_tile,
+    };
     use super::super::metadata::VariantRecord;
     use super::super::sample_selection::build_sample_selection;
     use super::*;
@@ -223,16 +226,48 @@ mod tests {
         trusted_probability_block(3, 2, 2, 2, &[2, 2, 2], 0, 8, probability_bytes)
     }
 
-    fn variant_record(offset: usize, length: usize, identifier: &str) -> VariantRecord {
+    fn variant_record(offset: usize, length: usize) -> VariantRecord {
         VariantRecord {
-            probability_payload_offset: offset,
-            probability_payload_length: length,
-            declared_uncompressed_block_length: length,
-            chromosome: "22".to_string(),
-            resolved_variant_identifier: identifier.to_string(),
-            position: 1,
-            counted_allele: "A".to_string(),
-            reference_allele: "G".to_string(),
+            probability_payload_offset: u64::try_from(offset).expect("test probability payload offset should fit u64"),
+            probability_payload_length: u32::try_from(length).expect("test probability payload length should fit u32"),
+            declared_uncompressed_block_length: u32::try_from(length)
+                .expect("test probability block length should fit u32"),
+        }
+    }
+
+    fn dosage_output_with_sentinels(value_count: usize) -> Vec<MaybeUninit<f32>> {
+        vec![MaybeUninit::new(f32::NAN); value_count]
+    }
+
+    fn probability_output_with_sentinels(value_count: usize) -> Vec<MaybeUninit<u8>> {
+        vec![MaybeUninit::new(0xA5); value_count]
+    }
+
+    fn initialized_f32_values(values: Vec<MaybeUninit<f32>>) -> Vec<f32> {
+        values
+            .into_iter()
+            .map(|value| {
+                // SAFETY: every test output slot is initialized with a NaN
+                // sentinel before decode, independently of decoder writes.
+                unsafe { value.assume_init() }
+            })
+            .collect()
+    }
+
+    fn initialized_u8_values(values: Vec<MaybeUninit<u8>>) -> Vec<u8> {
+        values
+            .into_iter()
+            .map(|value| {
+                // SAFETY: every test output slot is initialized with a byte
+                // sentinel before decode, independently of decoder writes.
+                unsafe { value.assume_init() }
+            })
+            .collect()
+    }
+
+    fn expect_decode_success(result: Result<(), VariantDecodeFailure>, message: &str) {
+        if let Err(failure) = result {
+            panic!("{message}: {}", failure.source);
         }
     }
 
@@ -243,282 +278,320 @@ mod tests {
         let second_offset = first_block.len();
         let mut mmap = first_block.clone();
         mmap.extend_from_slice(&second_block);
-        let variant_records = [
-            variant_record(0, first_block.len(), "trusted-first"),
-            variant_record(second_offset, second_block.len(), "trusted-second"),
-        ];
+        let variant_records = [variant_record(0, first_block.len()), variant_record(second_offset, second_block.len())];
         let sample_selection = build_sample_selection(3, &[1, 2]).expect("subset sample selection should build");
-        let mut output = vec![f32::NAN; 4];
+        let mut output = dosage_output_with_sentinels(4);
         let mut thread_scratch = ThreadScratch::default();
         let mut dosage_sum = vec![0.0_f32; 2];
         let mut dosage_square_sum = vec![0.0_f32; 2];
         let mut observation_count = vec![0_i32; 2];
         let mut zero_count = vec![0_i32; 2];
-        let mut nonzero_count = vec![0_i32; 2];
-        let mut homozygous_reference_count = vec![0_i32; 2];
-        let mut heterozygous_count = vec![0_i32; 2];
         let mut homozygous_alternate_count = vec![0_i32; 2];
 
         let mut tile_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
         };
-        let result = decode_trusted_variant_major_dosage_tile(
-            &mmap,
-            CompressionType::None,
-            3,
-            &sample_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(output.as_mut_ptr()),
-            2,
-            0,
-            true,
-            true,
-            &mut tile_stats,
-            &mut thread_scratch,
-        )
-        .expect("trusted variant-major tile should decode");
-        let dosage_lookup = unphased_eight_bit_dosage_lookup();
+        expect_decode_success(
+            decode_variant_major_dosage_tile(
+                VariantMajorTileDecodeRequest {
+                    mmap: &mmap,
+                    compression_type: CompressionType::None,
+                    sample_count: 3,
+                    sample_selection: &sample_selection,
+                    variant_records: &variant_records,
+                    tile_variant_start_index: 0,
+                },
+                &mut output,
+                &mut tile_stats,
+                &mut thread_scratch,
+            ),
+            "trusted variant-major tile should decode",
+        );
+        let output = initialized_f32_values(output);
 
         assert_eq!(observation_count, vec![2, 2]);
-        assert!(!result.has_missing_values);
-        assert_eq!(result.profile_snapshot.variant_decode_count, 2);
-        assert_eq!(result.profile_snapshot.decode_tile_count, 1);
-        assert!((output[0] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
-        assert!((output[1] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs() < f32::EPSILON);
-        assert!((output[2] - dosage_lookup[usize::from(255_u8)]).abs() < f32::EPSILON);
-        assert!((output[3] - dosage_lookup[0]).abs() < f32::EPSILON);
-        assert_eq!(nonzero_count.len(), 2);
-
-        let mut disabled_output = vec![f32::NAN; 4];
-        let mut disabled_dosage_sum = vec![0.0_f32; 2];
-        let mut disabled_dosage_square_sum = vec![0.0_f32; 2];
-        let mut disabled_observation_count = vec![0_i32; 2];
-        let mut disabled_zero_count = vec![0_i32; 2];
-        let mut disabled_nonzero_count = vec![0_i32; 2];
-        let mut disabled_homozygous_reference_count = vec![0_i32; 2];
-        let mut disabled_heterozygous_count = vec![0_i32; 2];
-        let mut disabled_homozygous_alternate_count = vec![0_i32; 2];
-        let mut disabled_tile_stats = VariantMajorTileStatsMut {
-            dosage_sum: &mut disabled_dosage_sum,
-            dosage_square_sum: &mut disabled_dosage_square_sum,
-            observation_count: &mut disabled_observation_count,
-            zero_count: &mut disabled_zero_count,
-            nonzero_count: &mut disabled_nonzero_count,
-            homozygous_reference_count: &mut disabled_homozygous_reference_count,
-            heterozygous_count: &mut disabled_heterozygous_count,
-            homozygous_alternate_count: &mut disabled_homozygous_alternate_count,
-        };
-        let disabled_result = decode_trusted_variant_major_dosage_tile(
-            &mmap,
-            CompressionType::None,
-            3,
-            &sample_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(disabled_output.as_mut_ptr()),
-            2,
-            0,
-            false,
-            true,
-            &mut disabled_tile_stats,
-            &mut thread_scratch,
-        )
-        .expect("trusted variant-major tile should decode without profiling");
-        assert_eq!(disabled_result.profile_snapshot, ThreadLocalProfileSnapshot::default());
-        assert_eq!(disabled_observation_count, vec![2, 2]);
-        assert_eq!(disabled_output, output);
+        assert_eq!(output, vec![0.0, 1.0, 0.0, 2.0]);
+        assert_eq!(zero_count, vec![1, 1]);
+        assert_eq!(homozygous_alternate_count, vec![0, 1]);
     }
 
     #[test]
     fn trusted_variant_major_decode_covers_identity_and_noncontiguous_selected_samples() {
-        let block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
-        let variant_records = [variant_record(0, block.len(), "trusted-single")];
-        let dosage_lookup = unphased_eight_bit_dosage_lookup();
+        let block = trusted_probability_block(4, 2, 2, 2, &[2, 2, 2, 2], 0, 8, &[0, 0, 255, 0, 0, 255, 128, 0]);
+        let variant_records = [variant_record(0, block.len())];
 
-        let identity_selection = build_sample_selection(3, &[0, 1, 2]).expect("identity sample selection should build");
-        let mut identity_output = vec![f32::NAN; 3];
+        let identity_selection =
+            build_sample_selection(4, &[0, 1, 2, 3]).expect("identity sample selection should build");
+        let mut identity_output = dosage_output_with_sentinels(4);
         let mut thread_scratch = ThreadScratch::default();
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
-        let mut nonzero_count = vec![0_i32; 1];
-        let mut homozygous_reference_count = vec![0_i32; 1];
-        let mut heterozygous_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
         let mut identity_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
         };
-        decode_trusted_variant_major_dosage_tile(
-            &block,
-            CompressionType::None,
-            3,
-            &identity_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(identity_output.as_mut_ptr()),
-            3,
-            0,
-            true,
-            true,
-            &mut identity_stats,
-            &mut thread_scratch,
-        )
-        .expect("trusted identity decode should succeed");
-        assert_eq!(observation_count, vec![3]);
-        assert_eq!(identity_output, vec![2.0, 0.0, 1.0]);
+        expect_decode_success(
+            decode_variant_major_dosage_tile(
+                VariantMajorTileDecodeRequest {
+                    mmap: &block,
+                    compression_type: CompressionType::None,
+                    sample_count: 4,
+                    sample_selection: &identity_selection,
+                    variant_records: &variant_records,
+                    tile_variant_start_index: 0,
+                },
+                &mut identity_output,
+                &mut identity_stats,
+                &mut thread_scratch,
+            ),
+            "trusted identity decode should succeed",
+        );
+        let identity_output = initialized_f32_values(identity_output);
+        assert_eq!(observation_count, vec![4]);
+        for (observed_value, expected_value) in identity_output.iter().zip([2.0, 0.0, 1.0, 254.0 / 255.0]) {
+            assert!((observed_value - expected_value).abs() < 1.0e-6);
+        }
 
         let noncontiguous_selection =
-            build_sample_selection(3, &[2, 0]).expect("non-contiguous sample selection should build");
-        let mut noncontiguous_output = vec![f32::NAN; 2];
+            build_sample_selection(4, &[3, 0]).expect("non-contiguous sample selection should build");
+        let mut noncontiguous_output = dosage_output_with_sentinels(2);
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
-        let mut nonzero_count = vec![0_i32; 1];
-        let mut homozygous_reference_count = vec![0_i32; 1];
-        let mut heterozygous_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
         let mut noncontiguous_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
         };
-        decode_trusted_variant_major_dosage_tile(
-            &block,
+        expect_decode_success(
+            decode_variant_major_dosage_tile(
+                VariantMajorTileDecodeRequest {
+                    mmap: &block,
+                    compression_type: CompressionType::None,
+                    sample_count: 4,
+                    sample_selection: &noncontiguous_selection,
+                    variant_records: &variant_records,
+                    tile_variant_start_index: 0,
+                },
+                &mut noncontiguous_output,
+                &mut noncontiguous_stats,
+                &mut thread_scratch,
+            ),
+            "trusted non-contiguous decode should succeed",
+        );
+        let noncontiguous_output = initialized_f32_values(noncontiguous_output);
+        assert_eq!(observation_count, vec![2]);
+        for (observed_value, expected_value) in noncontiguous_output.iter().zip([254.0 / 255.0, 2.0]) {
+            assert!((observed_value - expected_value).abs() < 1.0e-6);
+        }
+        assert!((dosage_sum[0] - (764.0 / 255.0)).abs() < 1.0e-6);
+        assert!((dosage_square_sum[0] - ((254.0_f32.powi(2) + 510.0_f32.powi(2)) / 65_025.0)).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn packed8_compatibility_validation_covers_valid_missing_corrupt_and_truncated_blocks() {
+        let probability_bytes = [0_u8, 0, 255, 0, 0, 255, 128, 0];
+        let block = trusted_probability_block(4, 2, 2, 2, &[2, 2, 2, 2], 0, 8, &probability_bytes);
+        let variant_records = [variant_record(0, block.len())];
+        let mut thread_scratch = ThreadScratch::default();
+        assert_eq!(
+            validate_variant_compatible_with_packed8(
+                &block,
+                CompressionType::None,
+                &variant_records[0],
+                4,
+                &mut thread_scratch,
+            )
+            .expect("valid packed8 block should pass compatibility validation"),
+            Packed8Compatibility::Compatible
+        );
+
+        let missing_block = trusted_probability_block(1, 2, 2, 2, &[0x82], 0, 8, &[0, 0]);
+        assert_eq!(
+            validate_variant_compatible_with_packed8(
+                &missing_block,
+                CompressionType::None,
+                &variant_record(0, missing_block.len()),
+                1,
+                &mut thread_scratch,
+            )
+            .expect("missing packed8 block should remain valid dosage input"),
+            Packed8Compatibility::RequiresDosage
+        );
+
+        let corrupt_block = trusted_probability_block(1, 2, 2, 2, &[2], 0, 8, &[255, 1]);
+        let corrupt_error = validate_variant_compatible_with_packed8(
+            &corrupt_block,
             CompressionType::None,
-            3,
-            &noncontiguous_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(noncontiguous_output.as_mut_ptr()),
-            2,
-            0,
-            true,
-            true,
-            &mut noncontiguous_stats,
+            &variant_record(0, corrupt_block.len()),
+            1,
             &mut thread_scratch,
         )
-        .expect("trusted non-contiguous decode should succeed");
-        assert_eq!(observation_count, vec![2]);
-        assert!(
-            (noncontiguous_output[0] - dosage_lookup[usize::from(0_u8) | (usize::from(255_u8) << 8)]).abs()
-                < f32::EPSILON
-        );
-        assert!((noncontiguous_output[1] - dosage_lookup[0]).abs() < f32::EPSILON);
+        .expect_err("probability pairs above the scale should fail validation");
+        assert!(corrupt_error.to_string().contains("sum above"));
+
+        let mut truncated_block = trusted_probability_block(1, 2, 2, 2, &[2], 0, 8, &[255, 0]);
+        truncated_block.pop();
+        let truncation_error = validate_variant_compatible_with_packed8(
+            &truncated_block,
+            CompressionType::None,
+            &variant_record(0, truncated_block.len()),
+            1,
+            &mut thread_scratch,
+        )
+        .expect_err("truncated packed8 block should fail validation");
+        assert!(truncation_error.to_string().contains("requires exactly"));
     }
 
     #[test]
     fn trusted_packed8_variant_major_decode_covers_identity_and_contiguous_selected_samples() {
         let probability_bytes = [0_u8, 0, 255, 0, 0, 255, 128, 0];
         let block = trusted_probability_block(4, 2, 2, 2, &[2, 2, 2, 2], 0, 8, &probability_bytes);
-        let variant_records = [variant_record(0, block.len(), "trusted-packed8")];
-
-        let identity_selection = build_sample_selection(4, &[0, 1, 2, 3]).expect("identity selection should build");
-        let mut identity_output = vec![0_u8; probability_bytes.len()];
+        let variant_records = [variant_record(0, block.len())];
         let mut thread_scratch = ThreadScratch::default();
+        let identity_selection = build_sample_selection(4, &[0, 1, 2, 3]).expect("identity selection should build");
+        let mut identity_output = probability_output_with_sentinels(probability_bytes.len());
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
-        let mut nonzero_count = vec![0_i32; 1];
-        let mut homozygous_reference_count = vec![0_i32; 1];
-        let mut heterozygous_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
         let mut identity_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
         };
-        decode_trusted_variant_major_packed8_probability_pair_tile(
-            &block,
-            CompressionType::None,
-            4,
-            &identity_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(identity_output.as_mut_ptr()),
-            4,
-            0,
-            true,
-            true,
-            &mut identity_stats,
-            &mut thread_scratch,
-        )
-        .expect("trusted packed8 identity decode should succeed");
+        expect_decode_success(
+            decode_variant_major_probability_pair_tile(
+                &block,
+                CompressionType::None,
+                4,
+                &identity_selection,
+                &variant_records,
+                &mut identity_output,
+                0,
+                &mut identity_stats,
+                &mut thread_scratch,
+            ),
+            "trusted packed8 identity decode should succeed",
+        );
+        let identity_output = initialized_u8_values(identity_output);
 
         assert_eq!(identity_output, probability_bytes);
         assert_eq!(observation_count, vec![4]);
         assert_eq!(zero_count, vec![1]);
-        assert_eq!(nonzero_count, vec![3]);
-        assert_eq!(homozygous_reference_count, vec![1]);
-        assert_eq!(heterozygous_count, vec![2]);
         assert_eq!(homozygous_alternate_count, vec![1]);
 
         let contiguous_selection = build_sample_selection(4, &[1, 2]).expect("contiguous selection should build");
-        let mut contiguous_output = vec![0_u8; 4];
+        let mut contiguous_output = probability_output_with_sentinels(4);
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
-        let mut nonzero_count = vec![0_i32; 1];
-        let mut homozygous_reference_count = vec![0_i32; 1];
-        let mut heterozygous_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
         let mut contiguous_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            zero_count: &mut zero_count,
-            nonzero_count: &mut nonzero_count,
-            homozygous_reference_count: &mut homozygous_reference_count,
-            heterozygous_count: &mut heterozygous_count,
-            homozygous_alternate_count: &mut homozygous_alternate_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
         };
-        decode_trusted_variant_major_packed8_probability_pair_tile(
-            &block,
-            CompressionType::None,
-            4,
-            &contiguous_selection,
-            &variant_records,
-            OutputBufferAddress::from_mut_ptr(contiguous_output.as_mut_ptr()),
-            2,
-            0,
-            true,
-            true,
-            &mut contiguous_stats,
-            &mut thread_scratch,
-        )
-        .expect("trusted packed8 contiguous decode should succeed");
+        expect_decode_success(
+            decode_variant_major_probability_pair_tile(
+                &block,
+                CompressionType::None,
+                4,
+                &contiguous_selection,
+                &variant_records,
+                &mut contiguous_output,
+                0,
+                &mut contiguous_stats,
+                &mut thread_scratch,
+            ),
+            "trusted packed8 contiguous decode should succeed",
+        );
+        let contiguous_output = initialized_u8_values(contiguous_output);
 
         assert_eq!(contiguous_output, vec![255, 0, 0, 255]);
         assert_eq!(observation_count, vec![2]);
         assert_eq!(zero_count, vec![1]);
-        assert_eq!(nonzero_count, vec![1]);
-        assert_eq!(homozygous_reference_count, vec![1]);
-        assert_eq!(heterozygous_count, vec![1]);
         assert_eq!(homozygous_alternate_count, vec![0]);
         assert!((dosage_sum[0] - 1.0).abs() < f32::EPSILON);
         assert!((dosage_square_sum[0] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn trusted_packed8_variant_major_decode_covers_indexed_fractional_samples() {
+        let probability_bytes = [0_u8, 0, 255, 0, 0, 255, 128, 0];
+        let block = trusted_probability_block(4, 2, 2, 2, &[2, 2, 2, 2], 0, 8, &probability_bytes);
+        let variant_records = [variant_record(0, block.len())];
+        let mut thread_scratch = ThreadScratch::default();
+        let indexed_selection = build_sample_selection(4, &[3, 0, 2]).expect("indexed sample selection should build");
+        let mut indexed_output = probability_output_with_sentinels(6);
+        let mut dosage_sum = vec![0.0_f32; 1];
+        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut observation_count = vec![0_i32; 1];
+        let mut zero_count = vec![0_i32; 1];
+        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut indexed_stats = VariantMajorTileStatsMut {
+            dosage_sum: &mut dosage_sum,
+            dosage_square_sum: &mut dosage_square_sum,
+            observation_count: &mut observation_count,
+            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
+                zero_count: &mut zero_count,
+                homozygous_alternate_count: &mut homozygous_alternate_count,
+            }),
+        };
+        expect_decode_success(
+            decode_variant_major_probability_pair_tile(
+                &block,
+                CompressionType::None,
+                4,
+                &indexed_selection,
+                &variant_records,
+                &mut indexed_output,
+                0,
+                &mut indexed_stats,
+                &mut thread_scratch,
+            ),
+            "trusted packed8 indexed decode should succeed",
+        );
+        let indexed_output = initialized_u8_values(indexed_output);
+
+        assert_eq!(indexed_output, vec![128, 0, 0, 0, 0, 255]);
+        assert_eq!(observation_count, vec![3]);
+        assert_eq!(zero_count, vec![0]);
+        assert_eq!(homozygous_alternate_count, vec![1]);
+        assert!((dosage_sum[0] - (1019.0 / 255.0)).abs() < 1.0e-6);
+        assert!(
+            (dosage_square_sum[0] - ((254.0_f32.powi(2) + 510.0_f32.powi(2) + 255.0_f32.powi(2)) / 65_025.0)).abs()
+                < 1.0e-6
+        );
     }
 }
