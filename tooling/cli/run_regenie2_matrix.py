@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import hashlib
 import json
 import logging
 import os
 import shlex
 import subprocess
+import sys
 import time
 import typing
 from pathlib import Path
@@ -17,6 +19,7 @@ from pathlib import Path
 import hydra
 
 import tooling.configuration as tooling_configuration
+from tooling.benchmark import native_lifecycle
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
@@ -37,6 +40,8 @@ MATRIX_MANIFEST_CONTRACT = tooling_reports.VersionedReportContract(
         "created_at_utc",
         "dry_run",
         "configuration",
+        "compatibility_scope",
+        "implementation_provenance",
         "previous_manifest_path",
         "runs",
         "comparisons",
@@ -63,6 +68,15 @@ class ExecutionMode(enum.StrEnum):
     CPU = "cpu"
     GPU = "gpu"
     GPU_CACHED = "gpu_cached"
+
+
+class CacheState(enum.StrEnum):
+    """Persistent-cache state for one matrix run."""
+
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+    COLD = "cold"
+    WARM = "warm"
 
 
 class RunStatus(enum.StrEnum):
@@ -97,32 +111,16 @@ class MatrixArguments:
         dry_run: Whether to only materialize commands and reports.
         validate_inputs: Whether real runs validate required input files first.
         chunk_size: REGENIE bsize.
-        variant_limit: Optional variant cap.
         cpu_threads: Optional REGENIE thread count.
-        staging_depth: Native callback staging depth.
         output_writer_thread_count: Output writer thread count.
-        output_writer_queue_depth: Output writer queue depth.
-        trusted_no_missing_diploid: Whether to use the trusted BGEN path.
-        trusted_bgen_validation_mode: Trusted BGEN validation mode.
-        gpu_genotype_format: GPU genotype transfer format.
         cpu_jax_persistent_cache: Whether CPU runs enable JAX persistent cache.
         gpu_jax_persistent_cache: Whether GPU runs enable JAX persistent cache.
         jax_cache_directory: Base persistent JAX cache directory.
-        jax_persistent_cache_min_entry_size_bytes: Minimum JAX cache entry size.
-        jax_persistent_cache_min_compile_time_seconds: Minimum JAX compile time for cache writes.
-        jax_xla_autotune_cache: Whether to enable XLA autotune caches.
-        binary_firth: Whether binary runs enable Firth fallback.
-        binary_approx: Whether binary runs enable approximate Firth fallback.
+        binary_fallback_method: Binary fallback method.
         binary_p_threshold: Binary fallback p-value threshold.
         binary_firth_batch_size: Optional binary Firth batch size override.
         binary_firth_candidate_capacity: Optional binary Firth candidate capacity override.
-        output_format: g output format.
-        finalize_parquet: Whether to finalize Parquet output.
         telemetry_mode: g telemetry mode.
-        log_filter: g log filter.
-        log_stderr: Whether g writes compact logs to stderr.
-        progress_interval_seconds: Minimum seconds between progress events.
-        progress_interval_chunks: Minimum chunks between progress events.
         runner_prefix: Command prefix used to invoke g regenie.
 
     """
@@ -146,32 +144,16 @@ class MatrixArguments:
     dry_run: bool
     validate_inputs: bool
     chunk_size: int
-    variant_limit: int | None
     cpu_threads: int | None
-    staging_depth: int
     output_writer_thread_count: int
-    output_writer_queue_depth: int
-    trusted_no_missing_diploid: bool
-    trusted_bgen_validation_mode: str
-    gpu_genotype_format: str
     cpu_jax_persistent_cache: bool
     gpu_jax_persistent_cache: bool
     jax_cache_directory: Path
-    jax_persistent_cache_min_entry_size_bytes: int
-    jax_persistent_cache_min_compile_time_seconds: int
-    jax_xla_autotune_cache: bool
-    binary_firth: bool
-    binary_approx: bool
+    binary_fallback_method: tooling_g_regenie.RegenieBinaryFallback
     binary_p_threshold: float
     binary_firth_batch_size: int | None
     binary_firth_candidate_capacity: int | None
-    output_format: str
-    finalize_parquet: bool
-    telemetry_mode: str
-    log_filter: str
-    log_stderr: bool
-    progress_interval_seconds: float
-    progress_interval_chunks: int
+    telemetry_mode: tooling_g_regenie.RegenieTelemetry
     runner_prefix: tuple[str, ...]
 
 
@@ -185,9 +167,11 @@ class RunSpec:
     command_arguments: list[str]
     output_prefix: Path
     output_run_directory: Path
-    stage_timing_path: Path
-    profile_summary_path: Path
-    event_log_path: Path
+    profile_summary_path: Path | None
+    event_log_path: Path | None
+    cache_enabled: bool
+    cache_state: CacheState
+    cache_directory: Path | None
     environment_overrides: dict[str, str]
 
 
@@ -204,15 +188,16 @@ class RunResult:
     command_arguments: list[str]
     output_prefix: str
     output_run_directory: str
-    stage_timing_path: str
-    profile_summary_path: str
-    event_log_path: str
+    profile_summary_path: str | None
+    event_log_path: str | None
+    cache_enabled: bool
+    cache_state: CacheState
+    cache_before: native_lifecycle.CacheSnapshot | None
+    cache_after: native_lifecycle.CacheSnapshot | None
     output_row_count: int | None
     committed_chunk_count: int | None
     output_file_count: int | None
     output_total_bytes: int | None
-    final_parquet_path: str | None
-    final_parquet_bytes: int | None
     stage_seconds: dict[str, float]
 
 
@@ -226,6 +211,14 @@ class MetricComparison:
     previous_value: float | None
     delta: float | None
     ratio: float | None
+
+
+@dataclasses.dataclass(frozen=True)
+class ComparisonIdentity:
+    """Compatibility key and implementation provenance for one matrix campaign."""
+
+    compatibility_scope: dict[str, typing.Any]
+    implementation_provenance: dict[str, typing.Any]
 
 
 def timestamped_output_directory(output_parent: Path, run_directory_prefix: str) -> Path:
@@ -295,34 +288,18 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> MatrixArguments
         dry_run=bool(tool_values["dry_run"]),
         validate_inputs=bool(tool_values["validate_inputs"]),
         chunk_size=int(tool_values["chunk_size"]),
-        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
         cpu_threads=tooling_hydra_arguments.integer_or_none(tool_values.get("cpu_threads")),
-        staging_depth=int(tool_values["staging_depth"]),
         output_writer_thread_count=int(tool_values["output_writer_thread_count"]),
-        output_writer_queue_depth=int(tool_values["output_writer_queue_depth"]),
-        trusted_no_missing_diploid=bool(tool_values["trusted_no_missing_diploid"]),
-        trusted_bgen_validation_mode=str(tool_values["trusted_bgen_validation_mode"]),
-        gpu_genotype_format=str(tool_values["gpu_genotype_format"]),
         cpu_jax_persistent_cache=bool(tool_values["cpu_jax_persistent_cache"]),
         gpu_jax_persistent_cache=bool(tool_values["gpu_jax_persistent_cache"]),
         jax_cache_directory=jax_cache_directory,
-        jax_persistent_cache_min_entry_size_bytes=int(tool_values["jax_persistent_cache_min_entry_size_bytes"]),
-        jax_persistent_cache_min_compile_time_seconds=int(tool_values["jax_persistent_cache_min_compile_time_seconds"]),
-        jax_xla_autotune_cache=bool(tool_values["jax_xla_autotune_cache"]),
-        binary_firth=bool(tool_values["binary_firth"]),
-        binary_approx=bool(tool_values["binary_approx"]),
+        binary_fallback_method=tooling_g_regenie.RegenieBinaryFallback(str(tool_values["binary_fallback_method"])),
         binary_p_threshold=float(tool_values["binary_p_threshold"]),
         binary_firth_batch_size=tooling_hydra_arguments.integer_or_none(tool_values.get("binary_firth_batch_size")),
         binary_firth_candidate_capacity=tooling_hydra_arguments.integer_or_none(
             tool_values.get("binary_firth_candidate_capacity")
         ),
-        output_format=str(tool_values["output_format"]),
-        finalize_parquet=bool(tool_values["finalize_parquet"]),
-        telemetry_mode=str(tool_values["telemetry_mode"]),
-        log_filter=str(tool_values["log_filter"]),
-        log_stderr=bool(tool_values["log_stderr"]),
-        progress_interval_seconds=float(tool_values["progress_interval_seconds"]),
-        progress_interval_chunks=int(tool_values["progress_interval_chunks"]),
+        telemetry_mode=tooling_g_regenie.RegenieTelemetry(str(tool_values["telemetry_mode"])),
         runner_prefix=runner_prefix,
     )
 
@@ -330,18 +307,20 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> MatrixArguments
 def build_arguments_from_overrides(
     overrides: typing.Sequence[str] | None = None,
     *,
-    config_name: str = "run_regenie2_chr10_matrix",
+    config_name: str = "matrix_chr10",
 ) -> MatrixArguments:
     """Build matrix arguments from Hydra overrides."""
     config = tooling_configuration.compose_config(config_name=config_name, overrides=overrides)
     return build_arguments_from_config(config)
 
 
-def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: ExecutionMode) -> Path:
+def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: ExecutionMode, trait: TraitKind) -> Path:
     """Resolve the persistent JAX cache directory for one matrix execution mode."""
     if mode == ExecutionMode.CPU:
-        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(arguments.jax_cache_directory / "cpu")
-    return arguments.jax_cache_directory / "gpu"
+        return tooling_jax_cache.resolve_cpu_feature_aware_cache_directory(
+            arguments.jax_cache_directory / "cpu" / trait.value
+        )
+    return arguments.jax_cache_directory / "gpu" / trait.value
 
 
 def output_run_directory_for_spec(arguments: MatrixArguments, output_prefix: Path, trait: TraitKind) -> Path:
@@ -351,9 +330,6 @@ def output_run_directory_for_spec(arguments: MatrixArguments, output_prefix: Pat
         trait=trait,
         mode=ExecutionMode.CPU,
         output_prefix=output_prefix,
-        stage_timing_path=Path("stage_timings.json"),
-        profile_summary_path=Path("profile_summary.json"),
-        event_log_path=Path("events.jsonl"),
     )
     return tooling_g_regenie.expected_output_run_directory(run_spec)
 
@@ -366,8 +342,6 @@ def build_environment_overrides() -> dict[str, str]:
         python_path_entries.append(existing_python_path)
     return {
         "PYTHONPATH": os.pathsep.join(python_path_entries),
-        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
     }
 
 
@@ -378,11 +352,10 @@ def build_run_command(arguments: MatrixArguments, spec: RunSpec) -> list[str]:
         trait=spec.trait,
         mode=spec.mode,
         output_prefix=spec.output_prefix,
-        stage_timing_path=spec.stage_timing_path,
-        profile_summary_path=spec.profile_summary_path,
-        event_log_path=spec.event_log_path,
     )
-    return tooling_g_regenie.render_g_regenie_cli(regenie_run_spec)
+    config_path = arguments.output_directory / "configs" / f"{spec.name}.toml"
+    tooling_g_regenie.write_regenie_toml(regenie_run_spec, config_path)
+    return tooling_g_regenie.render_g_regenie_command(regenie_run_spec, config_path)
 
 
 def build_regenie_run_spec(
@@ -391,15 +364,12 @@ def build_regenie_run_spec(
     trait: TraitKind,
     mode: ExecutionMode,
     output_prefix: Path,
-    stage_timing_path: Path,
-    profile_summary_path: Path,
-    event_log_path: Path,
 ) -> tooling_g_regenie.RegenieRunSpec:
     """Build the shared REGENIE run spec for one matrix entry."""
     persistent_cache_enabled = (
         arguments.cpu_jax_persistent_cache if mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
     )
-    cache_directory = resolve_jax_cache_directory_for_mode(arguments, mode) if persistent_cache_enabled else None
+    cache_directory = resolve_jax_cache_directory_for_mode(arguments, mode, trait) if persistent_cache_enabled else None
     is_binary_trait = trait == TraitKind.BINARY
     phenotype_path = arguments.binary_phenotype_path if is_binary_trait else arguments.linear_phenotype_path
     phenotype_column = arguments.binary_phenotype_column if is_binary_trait else arguments.linear_phenotype_column
@@ -408,8 +378,7 @@ def build_regenie_run_spec(
     )
     binary_options = (
         tooling_g_regenie.RegenieBinaryOptions(
-            firth=arguments.binary_firth,
-            approx=arguments.binary_approx,
+            fallback_method=arguments.binary_fallback_method,
             firth_se=None,
             p_threshold=arguments.binary_p_threshold,
         )
@@ -440,73 +409,67 @@ def build_regenie_run_spec(
             if mode == ExecutionMode.CPU
             else tooling_g_regenie.RegenieDevice.GPU,
             bsize=arguments.chunk_size,
-            threads=arguments.cpu_threads,
-            staging_depth=arguments.staging_depth,
-            native_callback_batch_size=None,
-            result_in_flight_limit=None,
-            dosage_buffer_limit=None,
-            variant_limit=arguments.variant_limit,
-            trusted_no_missing_diploid=arguments.trusted_no_missing_diploid,
-            trusted_bgen_validation_mode=arguments.trusted_bgen_validation_mode,
-            bgen_decode_tile_variant_count=None,
+            cpu_threads=arguments.cpu_threads,
             firth_batch_size=arguments.binary_firth_batch_size if is_binary_trait else None,
             firth_candidate_capacity=arguments.binary_firth_candidate_capacity if is_binary_trait else None,
-            gpu_genotype_format=arguments.gpu_genotype_format if mode != ExecutionMode.CPU else None,
             jax_cache_dir=cache_directory,
-            jax_persistent_cache=persistent_cache_enabled,
-            jax_persistent_cache_min_entry_size_bytes=(
-                arguments.jax_persistent_cache_min_entry_size_bytes if persistent_cache_enabled else None
-            ),
-            jax_persistent_cache_min_compile_time_seconds=(
-                arguments.jax_persistent_cache_min_compile_time_seconds if persistent_cache_enabled else None
-            ),
-            jax_xla_autotune_cache=arguments.jax_xla_autotune_cache if mode != ExecutionMode.CPU else None,
         ),
         output=tooling_g_regenie.RegenieOutputOptions(
-            output_format=arguments.output_format,
             output_run_directory=None,
             writer_threads=arguments.output_writer_thread_count,
-            writer_queue_depth=arguments.output_writer_queue_depth,
-            chunks_per_arrow_file=None,
-            arrow_compression=None,
-            parquet_compression=None,
-            output_statistic_dtype=None,
-            finalize_parquet=arguments.finalize_parquet,
+            resume=False,
         ),
         diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
             telemetry=arguments.telemetry_mode,
-            log_dir=event_log_path.parent,
-            stage_timings_json=stage_timing_path,
-            profile_summary_json=profile_summary_path,
-            log_file=event_log_path,
-            log_filter=arguments.log_filter,
-            log_stderr=arguments.log_stderr,
-            progress_interval_seconds=arguments.progress_interval_seconds,
-            progress_interval_chunks=arguments.progress_interval_chunks,
         ),
         binary=binary_options,
     )
 
 
 def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
-    """Build the six standard run specs."""
+    """Build the configured CPU/GPU cache comparison run specs."""
     run_specs: list[RunSpec] = []
     environment_overrides = build_environment_overrides()
     for trait in (TraitKind.BINARY, TraitKind.LINEAR):
-        for mode in (ExecutionMode.CPU, ExecutionMode.GPU, ExecutionMode.GPU_CACHED):
+        modes = [ExecutionMode.CPU, ExecutionMode.GPU]
+        if arguments.gpu_jax_persistent_cache:
+            modes.append(ExecutionMode.GPU_CACHED)
+        for mode in modes:
             name = f"{trait.value}_{mode.value}"
             output_prefix = arguments.output_directory / "runs" / name
-            log_directory = arguments.output_directory / "logs" / name
+            output_run_directory = output_run_directory_for_spec(arguments, output_prefix, trait)
+            telemetry_directory = Path(f"{output_prefix}.g") / "logs"
+            cache_enabled = (
+                arguments.cpu_jax_persistent_cache if mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
+            )
+            if mode == ExecutionMode.GPU:
+                cache_state = CacheState.COLD if cache_enabled else CacheState.DISABLED
+            elif mode == ExecutionMode.GPU_CACHED:
+                cache_state = CacheState.WARM
+            else:
+                cache_state = CacheState.ENABLED if cache_enabled else CacheState.DISABLED
             run_spec = RunSpec(
                 name=name,
                 trait=trait,
                 mode=mode,
                 command_arguments=[],
                 output_prefix=output_prefix,
-                output_run_directory=output_run_directory_for_spec(arguments, output_prefix, trait),
-                stage_timing_path=log_directory / "stage_timings.json",
-                profile_summary_path=log_directory / "profile_summary.json",
-                event_log_path=log_directory / "events.jsonl",
+                output_run_directory=output_run_directory,
+                profile_summary_path=(
+                    telemetry_directory / "profile.summary.json"
+                    if arguments.telemetry_mode == tooling_g_regenie.RegenieTelemetry.PROFILE
+                    else None
+                ),
+                event_log_path=(
+                    telemetry_directory / "events.jsonl"
+                    if arguments.telemetry_mode != tooling_g_regenie.RegenieTelemetry.OFF
+                    else None
+                ),
+                cache_enabled=cache_enabled,
+                cache_state=cache_state,
+                cache_directory=(
+                    resolve_jax_cache_directory_for_mode(arguments, mode, trait) if cache_enabled else None
+                ),
                 environment_overrides=environment_overrides,
             )
             run_specs.append(dataclasses.replace(run_spec, command_arguments=build_run_command(arguments, run_spec)))
@@ -561,79 +524,39 @@ def load_json_mapping(path: Path) -> dict[str, typing.Any] | None:
     return typing.cast("dict[str, typing.Any]", json.loads(path.read_text(encoding="utf-8")))
 
 
-def load_stage_seconds(path: Path) -> dict[str, float]:
-    """Load stage totals from a stage-timing JSON file."""
-    payload = load_json_mapping(path)
-    if payload is None:
-        return {}
-    raw_stage_seconds = payload.get("stage_totals_seconds")
-    if not isinstance(raw_stage_seconds, dict):
-        return {}
-    return {str(key): float(value) for key, value in raw_stage_seconds.items()}
-
-
-def measure_output_files(output_run_directory: Path) -> tuple[int, int, Path | None, int | None]:
-    """Measure output file count and byte size."""
-    output_files: list[Path] = []
-    for relative_pattern in ("chunks/*.arrow", "parts/*.parquet", "final.parquet"):
-        output_files.extend(path for path in output_run_directory.glob(relative_pattern) if path.is_file())
-    final_parquet_path = output_run_directory / "final.parquet"
-    final_parquet_bytes = final_parquet_path.stat().st_size if final_parquet_path.is_file() else None
-    return (
-        len(output_files),
-        sum(path.stat().st_size for path in output_files),
-        final_parquet_path if final_parquet_path.is_file() else None,
-        final_parquet_bytes,
-    )
-
-
 def discover_output_run_directory(spec: RunSpec) -> Path:
     """Discover the actual production output run directory for a completed spec."""
-    if spec.output_run_directory.is_dir():
-        return spec.output_run_directory
     output_root = Path(f"{spec.output_prefix}.g")
     association_suffix = "regenie2_binary.run" if spec.trait == TraitKind.BINARY else "regenie2_linear.run"
-    discovered_directories = sorted(
-        path
-        for path in output_root.glob(f"*.{association_suffix}")
-        if path.is_dir() and (path / "run_manifest.json").is_file()
+    return native_lifecycle.discover_completed_run_directory(
+        expected_run_directory=spec.output_run_directory,
+        output_root=output_root,
+        glob_pattern=f"*.{association_suffix}",
+        run_label=spec.name,
     )
-    if len(discovered_directories) == 1:
-        return discovered_directories[0]
-    return spec.output_run_directory
 
 
-def measure_run_outputs(spec: RunSpec) -> dict[str, typing.Any]:
+def measure_run_outputs(arguments: MatrixArguments, spec: RunSpec) -> dict[str, typing.Any]:
     """Measure run-output metadata from manifests and files."""
     output_run_directory = discover_output_run_directory(spec)
-    manifest_payload = load_json_mapping(output_run_directory / "run_manifest.json")
-    committed_chunks = []
-    if manifest_payload is not None:
-        raw_committed_chunks = manifest_payload.get("committed_chunks", [])
-        if isinstance(raw_committed_chunks, list):
-            committed_chunks = raw_committed_chunks
-    output_row_count = 0
-    for chunk_payload in committed_chunks:
-        if isinstance(chunk_payload, dict) and chunk_payload.get("row_count") is not None:
-            output_row_count += int(chunk_payload["row_count"])
-    output_file_count, output_total_bytes, final_parquet_path, final_parquet_bytes = measure_output_files(
-        output_run_directory
+    output_measurement = native_lifecycle.measure_completed_output_run(output_run_directory)
+    diagnostic_evidence = native_lifecycle.collect_diagnostic_evidence(
+        telemetry=arguments.telemetry_mode,
+        telemetry_root=Path(f"{spec.output_prefix}.g"),
+        run_directories=(output_run_directory,),
     )
     return {
         "output_run_directory": str(output_run_directory),
-        "output_row_count": output_row_count if committed_chunks else None,
-        "committed_chunk_count": len(committed_chunks) if committed_chunks else None,
-        "output_file_count": output_file_count,
-        "output_total_bytes": output_total_bytes,
-        "final_parquet_path": str(final_parquet_path) if final_parquet_path is not None else None,
-        "final_parquet_bytes": final_parquet_bytes,
-        "stage_seconds": load_stage_seconds(spec.stage_timing_path),
+        "output_row_count": output_measurement.row_count,
+        "committed_chunk_count": output_measurement.committed_chunk_count,
+        "output_file_count": output_measurement.parquet_file_count,
+        "output_total_bytes": output_measurement.parquet_total_bytes,
+        "stage_seconds": diagnostic_evidence.profile_stage_totals_seconds,
     }
 
 
 def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
     """Run or dry-run one spec."""
-    spec.stage_timing_path.parent.mkdir(parents=True, exist_ok=True)
     if arguments.dry_run:
         logger.info("Dry-run %s: %s", spec.name, shlex.join(spec.command_arguments))
         return RunResult(
@@ -646,22 +569,38 @@ def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
             command_arguments=spec.command_arguments,
             output_prefix=str(spec.output_prefix),
             output_run_directory=str(spec.output_run_directory),
-            stage_timing_path=str(spec.stage_timing_path),
-            profile_summary_path=str(spec.profile_summary_path),
-            event_log_path=str(spec.event_log_path),
+            profile_summary_path=str(spec.profile_summary_path) if spec.profile_summary_path is not None else None,
+            event_log_path=str(spec.event_log_path) if spec.event_log_path is not None else None,
+            cache_enabled=spec.cache_enabled,
+            cache_state=spec.cache_state,
+            cache_before=None,
+            cache_after=None,
             output_row_count=None,
             committed_chunk_count=None,
             output_file_count=None,
             output_total_bytes=None,
-            final_parquet_path=None,
-            final_parquet_bytes=None,
             stage_seconds={},
         )
+    cache_before = native_lifecycle.snapshot_tree(spec.cache_directory) if spec.cache_directory is not None else None
+    if spec.cache_state == CacheState.COLD and cache_before is not None and cache_before.file_count != 0:
+        raise RuntimeError(f"Cold GPU cache is not empty for {spec.name}: {spec.cache_directory}")
+    if spec.cache_state == CacheState.WARM and (cache_before is None or cache_before.file_count == 0):
+        raise RuntimeError(f"Warm GPU cache is empty for {spec.name}: {spec.cache_directory}")
     start_time = time.perf_counter()
     return_code = run_streaming_command(spec)
     wall_time_seconds = time.perf_counter() - start_time
     status = RunStatus.SUCCESS if return_code == 0 else RunStatus.FAILED
-    output_metrics = measure_run_outputs(spec) if status == RunStatus.SUCCESS else {"stage_seconds": {}}
+    cache_after = native_lifecycle.snapshot_tree(spec.cache_directory) if spec.cache_directory is not None else None
+    output_metrics = measure_run_outputs(arguments, spec) if status == RunStatus.SUCCESS else {"stage_seconds": {}}
+    if (
+        status == RunStatus.SUCCESS
+        and spec.cache_state == CacheState.COLD
+        and cache_after is not None
+        and cache_after.file_count == 0
+    ):
+        raise RuntimeError(f"Cold GPU run did not populate its cache for {spec.name}: {spec.cache_directory}")
+    if status == RunStatus.SUCCESS and spec.cache_state == CacheState.WARM and cache_before != cache_after:
+        raise RuntimeError(f"Warm GPU run changed its cache tree for {spec.name}: {spec.cache_directory}")
     logger.info("Finished %s with status=%s elapsed=%.3fs", spec.name, status.value, wall_time_seconds)
     return RunResult(
         name=spec.name,
@@ -678,23 +617,31 @@ def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
                 str(spec.output_run_directory),
             )
         ),
-        stage_timing_path=str(spec.stage_timing_path),
-        profile_summary_path=str(spec.profile_summary_path),
-        event_log_path=str(spec.event_log_path),
+        profile_summary_path=str(spec.profile_summary_path) if spec.profile_summary_path is not None else None,
+        event_log_path=str(spec.event_log_path) if spec.event_log_path is not None else None,
+        cache_enabled=spec.cache_enabled,
+        cache_state=spec.cache_state,
+        cache_before=cache_before,
+        cache_after=cache_after,
         output_row_count=typing.cast("int | None", output_metrics.get("output_row_count")),
         committed_chunk_count=typing.cast("int | None", output_metrics.get("committed_chunk_count")),
         output_file_count=typing.cast("int | None", output_metrics.get("output_file_count")),
         output_total_bytes=typing.cast("int | None", output_metrics.get("output_total_bytes")),
-        final_parquet_path=typing.cast("str | None", output_metrics.get("final_parquet_path")),
-        final_parquet_bytes=typing.cast("int | None", output_metrics.get("final_parquet_bytes")),
         stage_seconds=typing.cast("dict[str, float]", output_metrics["stage_seconds"]),
     )
 
 
-def find_previous_manifest(arguments: MatrixArguments) -> Path | None:
+def find_previous_manifest(
+    arguments: MatrixArguments, compatibility_scope: dict[str, typing.Any] | None
+) -> Path | None:
     """Find the previous matrix manifest for comparison."""
+    if compatibility_scope is None:
+        return None
     if arguments.previous_manifest_path is not None:
-        return arguments.previous_manifest_path if arguments.previous_manifest_path.is_file() else None
+        payload = load_json_mapping(arguments.previous_manifest_path)
+        if payload is not None and manifest_matches_compatibility_scope(compatibility_scope, payload):
+            return arguments.previous_manifest_path
+        return None
     if not arguments.output_parent.is_dir():
         return None
     current_manifest = arguments.output_directory / "manifest.json"
@@ -709,7 +656,7 @@ def find_previous_manifest(arguments: MatrixArguments) -> Path | None:
     )
     for manifest_path in manifest_paths:
         payload = load_json_mapping(manifest_path)
-        if payload is not None and manifest_matches_comparison_scope(arguments, payload):
+        if payload is not None and manifest_matches_compatibility_scope(compatibility_scope, payload):
             return manifest_path
     return None
 
@@ -726,19 +673,28 @@ def run_result_from_json_dict(payload: dict[str, typing.Any]) -> RunResult:
         command_arguments=[str(value) for value in payload.get("command_arguments", [])],
         output_prefix=str(payload["output_prefix"]),
         output_run_directory=str(payload["output_run_directory"]),
-        stage_timing_path=str(payload["stage_timing_path"]),
-        profile_summary_path=str(payload["profile_summary_path"]),
-        event_log_path=str(payload["event_log_path"]),
+        profile_summary_path=(
+            str(payload["profile_summary_path"]) if payload.get("profile_summary_path") is not None else None
+        ),
+        event_log_path=str(payload["event_log_path"]) if payload.get("event_log_path") is not None else None,
+        cache_enabled=bool(payload.get("cache_enabled", False)),
+        cache_state=CacheState(str(payload.get("cache_state", CacheState.DISABLED.value))),
+        cache_before=(
+            native_lifecycle.CacheSnapshot(**typing.cast("dict[str, typing.Any]", payload["cache_before"]))
+            if isinstance(payload.get("cache_before"), dict)
+            else None
+        ),
+        cache_after=(
+            native_lifecycle.CacheSnapshot(**typing.cast("dict[str, typing.Any]", payload["cache_after"]))
+            if isinstance(payload.get("cache_after"), dict)
+            else None
+        ),
         output_row_count=(int(payload["output_row_count"]) if payload["output_row_count"] is not None else None),
         committed_chunk_count=(
             int(payload["committed_chunk_count"]) if payload["committed_chunk_count"] is not None else None
         ),
         output_file_count=(int(payload["output_file_count"]) if payload["output_file_count"] is not None else None),
         output_total_bytes=(int(payload["output_total_bytes"]) if payload["output_total_bytes"] is not None else None),
-        final_parquet_path=(str(payload["final_parquet_path"]) if payload["final_parquet_path"] is not None else None),
-        final_parquet_bytes=(
-            int(payload["final_parquet_bytes"]) if payload["final_parquet_bytes"] is not None else None
-        ),
         stage_seconds={str(key): float(value) for key, value in payload.get("stage_seconds", {}).items()},
     )
 
@@ -757,14 +713,93 @@ def load_previous_run_results(previous_manifest_path: Path | None) -> dict[str, 
     return {run_result.name: run_result for run_result in run_results}
 
 
-def manifest_matches_comparison_scope(arguments: MatrixArguments, payload: dict[str, typing.Any]) -> bool:
+def manifest_matches_compatibility_scope(
+    compatibility_scope: dict[str, typing.Any], payload: dict[str, typing.Any]
+) -> bool:
     """Return whether a previous manifest is comparable to the current run."""
     if payload.get("dry_run") is True:
         return False
-    raw_configuration = payload.get("configuration")
-    if not isinstance(raw_configuration, dict):
-        return True
-    return raw_configuration.get("variant_limit") == arguments.variant_limit
+    return payload.get("compatibility_scope") == compatibility_scope
+
+
+def normalized_runner_protocol(runner_prefix: tuple[str, ...]) -> list[str]:
+    """Normalize path-bearing runner tokens while preserving command semantics."""
+    return [Path(token).name if os.sep in token and not token.startswith("-") else token for token in runner_prefix]
+
+
+def build_comparison_identity(arguments: MatrixArguments) -> ComparisonIdentity:
+    """Build matrix compatibility and implementation evidence."""
+    import g._core
+
+    input_paths = {
+        "bgen": arguments.bgen_path,
+        "sample": arguments.sample_path,
+        "covariate": arguments.covariate_path,
+        "linear_phenotype": arguments.linear_phenotype_path,
+        "linear_prediction_list": arguments.linear_prediction_list_path,
+        "binary_phenotype": arguments.binary_phenotype_path,
+        "binary_prediction_list": arguments.binary_prediction_list_path,
+    }
+    for name, path in native_lifecycle.prediction_dependency_paths(arguments.linear_prediction_list_path).items():
+        input_paths[f"linear_{name}"] = path
+    for name, path in native_lifecycle.prediction_dependency_paths(arguments.binary_prediction_list_path).items():
+        input_paths[f"binary_{name}"] = path
+    native_library_path = Path(g._core.__file__)
+    compatibility_payload: dict[str, typing.Any] = {
+        "input_sha256": {name: native_lifecycle.sha256_file(path) for name, path in input_paths.items()},
+        "rustflags": os.environ.get("RUSTFLAGS"),
+        "rustc": native_lifecycle.command_output(["rustc", "--version", "--verbose"]),
+        "cpu": native_lifecycle.command_output(["lscpu", "--json", "--output=MODELNAME,FLAGS"]),
+        "gpu": native_lifecycle.command_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,uuid,driver_version",
+                "--format=csv,noheader",
+            ]
+        ),
+        "python_version": sys.version,
+        "jax_version": native_lifecycle.distribution_version("jax"),
+        "jaxlib_version": native_lifecycle.distribution_version("jaxlib"),
+        "cuda_runtime_version": native_lifecycle.distribution_version("nvidia-cuda-runtime-cu12"),
+        "nvcomp_version": native_lifecycle.distribution_version("nvidia-libnvcomp-cu12"),
+        "configuration": {
+            "chromosome_label": arguments.chromosome_label,
+            "chunk_size": arguments.chunk_size,
+            "cpu_threads": arguments.cpu_threads,
+            "output_writer_thread_count": arguments.output_writer_thread_count,
+            "cpu_jax_persistent_cache": arguments.cpu_jax_persistent_cache,
+            "gpu_jax_persistent_cache": arguments.gpu_jax_persistent_cache,
+            "binary_fallback_method": arguments.binary_fallback_method.value,
+            "binary_p_threshold": arguments.binary_p_threshold,
+            "binary_firth_batch_size": arguments.binary_firth_batch_size,
+            "binary_firth_candidate_capacity": arguments.binary_firth_candidate_capacity,
+            "telemetry_mode": arguments.telemetry_mode.value,
+            "runner_protocol": normalized_runner_protocol(arguments.runner_prefix),
+        },
+    }
+    canonical_payload = json.dumps(compatibility_payload, sort_keys=True, separators=(",", ":"))
+    compatibility_scope = {
+        "sha256": hashlib.sha256(canonical_payload.encode()).hexdigest(),
+        **compatibility_payload,
+    }
+    source_paths = {
+        "run_regenie2_matrix": Path(__file__),
+        "native_lifecycle": Path(str(native_lifecycle.__file__)),
+        "g_regenie": Path(str(tooling_g_regenie.__file__)),
+    }
+    implementation_provenance = {
+        "git_commit": native_lifecycle.command_output(["git", "-C", str(REPOSITORY_ROOT), "rev-parse", "HEAD"]),
+        "native_library_path": str(native_library_path),
+        "native_library_sha256": native_lifecycle.sha256_file(native_library_path),
+        "dependency_lock_sha256": native_lifecycle.sha256_file(REPOSITORY_ROOT / "uv.lock"),
+        "cargo_lock_sha256": native_lifecycle.sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
+        "runner_prefix": list(arguments.runner_prefix),
+        "python_source_sha256": {name: native_lifecycle.sha256_file(path) for name, path in source_paths.items()},
+    }
+    return ComparisonIdentity(
+        compatibility_scope=compatibility_scope,
+        implementation_provenance=implementation_provenance,
+    )
 
 
 def numeric_result_metrics(run_result: RunResult) -> dict[str, float | None]:
@@ -775,18 +810,10 @@ def numeric_result_metrics(run_result: RunResult) -> dict[str, float | None]:
         "output_total_bytes": (
             float(run_result.output_total_bytes) if run_result.output_total_bytes is not None else None
         ),
-        "stage.python_api_entry": run_result.stage_seconds.get("python_api_entry"),
-        "stage.jax_device_configuration_backend_init": run_result.stage_seconds.get(
-            "jax_device_configuration_backend_init"
-        ),
-        "stage.native_engine_delivery": run_result.stage_seconds.get("native_engine_delivery"),
-        "stage.host_to_device_transfer": run_result.stage_seconds.get("host_to_device_transfer"),
-        "stage.jax_compute": run_result.stage_seconds.get("jax_compute"),
-        "stage.device_to_host_materialization": run_result.stage_seconds.get("device_to_host_materialization"),
-        "stage.output_write": run_result.stage_seconds.get("output_write"),
-        "stage.writer_finish_and_parquet_finalization": run_result.stage_seconds.get(
-            "writer_finish_and_parquet_finalization"
-        ),
+        **{
+            f"stage.{stage_name}": run_result.stage_seconds.get(stage_name)
+            for stage_name in native_lifecycle.NATIVE_PROFILE_STAGE_NAMES
+        },
     }
 
 
@@ -832,28 +859,16 @@ def arguments_to_json_dict(arguments: MatrixArguments) -> dict[str, typing.Any]:
         "output_parent": str(arguments.output_parent),
         "output_directory": str(arguments.output_directory),
         "chunk_size": arguments.chunk_size,
-        "variant_limit": arguments.variant_limit,
         "cpu_threads": arguments.cpu_threads,
-        "staging_depth": arguments.staging_depth,
         "output_writer_thread_count": arguments.output_writer_thread_count,
-        "output_writer_queue_depth": arguments.output_writer_queue_depth,
-        "trusted_no_missing_diploid": arguments.trusted_no_missing_diploid,
-        "trusted_bgen_validation_mode": arguments.trusted_bgen_validation_mode,
-        "gpu_genotype_format": arguments.gpu_genotype_format,
         "cpu_jax_persistent_cache": arguments.cpu_jax_persistent_cache,
         "gpu_jax_persistent_cache": arguments.gpu_jax_persistent_cache,
         "jax_cache_directory": str(arguments.jax_cache_directory),
-        "binary_firth": arguments.binary_firth,
-        "binary_approx": arguments.binary_approx,
+        "binary_fallback_method": arguments.binary_fallback_method.value,
         "binary_p_threshold": arguments.binary_p_threshold,
         "binary_firth_batch_size": arguments.binary_firth_batch_size,
         "binary_firth_candidate_capacity": arguments.binary_firth_candidate_capacity,
-        "output_format": arguments.output_format,
-        "finalize_parquet": arguments.finalize_parquet,
-        "telemetry_mode": arguments.telemetry_mode,
-        "log_filter": arguments.log_filter,
-        "progress_interval_seconds": arguments.progress_interval_seconds,
-        "progress_interval_chunks": arguments.progress_interval_chunks,
+        "telemetry_mode": arguments.telemetry_mode.value,
         "runner_prefix": list(arguments.runner_prefix),
     }
 
@@ -870,15 +885,16 @@ def run_result_to_json_dict(run_result: RunResult) -> dict[str, typing.Any]:
         "command_arguments": run_result.command_arguments,
         "output_prefix": run_result.output_prefix,
         "output_run_directory": run_result.output_run_directory,
-        "stage_timing_path": run_result.stage_timing_path,
         "profile_summary_path": run_result.profile_summary_path,
         "event_log_path": run_result.event_log_path,
+        "cache_enabled": run_result.cache_enabled,
+        "cache_state": run_result.cache_state.value,
+        "cache_before": dataclasses.asdict(run_result.cache_before) if run_result.cache_before is not None else None,
+        "cache_after": dataclasses.asdict(run_result.cache_after) if run_result.cache_after is not None else None,
         "output_row_count": run_result.output_row_count,
         "committed_chunk_count": run_result.committed_chunk_count,
         "output_file_count": run_result.output_file_count,
         "output_total_bytes": run_result.output_total_bytes,
-        "final_parquet_path": run_result.final_parquet_path,
-        "final_parquet_bytes": run_result.final_parquet_bytes,
         "stage_seconds": run_result.stage_seconds,
     }
 
@@ -935,12 +951,10 @@ def build_matrix_metric_dimensions(arguments: MatrixArguments, run_result: RunRe
         "trait_type": run_result.trait.value,
         "mode": run_result.mode.value,
         "device": "cpu" if run_result.mode == ExecutionMode.CPU else "gpu",
-        "jax_persistent_cache": run_result.mode == ExecutionMode.GPU_CACHED,
+        "jax_persistent_cache": run_result.cache_enabled,
+        "cache_state": run_result.cache_state.value,
         "chunk_size": arguments.chunk_size,
-        "variant_limit": arguments.variant_limit,
-        "output_format": arguments.output_format,
-        "finalize_parquet": arguments.finalize_parquet,
-        "gpu_genotype_format": arguments.gpu_genotype_format if run_result.mode != ExecutionMode.CPU else None,
+        "output_format": "parquet_parts",
     }
 
 
@@ -961,9 +975,6 @@ def build_matrix_metrics(
                 ),
                 "committed_chunk_count": (
                     float(run_result.committed_chunk_count) if run_result.committed_chunk_count is not None else None
-                ),
-                "final_parquet_bytes": (
-                    float(run_result.final_parquet_bytes) if run_result.final_parquet_bytes is not None else None
                 ),
             }
         )
@@ -1249,10 +1260,17 @@ def format_optional_integer(value: int | None) -> str:
     return str(value)
 
 
+def format_optional_path(value: str | None) -> str:
+    """Format an optional path for Markdown."""
+    return f"`{value}`" if value is not None else "-"
+
+
 def build_markdown_report(
     *,
     arguments: MatrixArguments,
     run_results: list[RunResult],
+    implementation_provenance: dict[str, typing.Any] | None,
+    previous_implementation_provenance: dict[str, typing.Any] | None,
     previous_manifest_path: Path | None,
     comparisons: list[MetricComparison],
 ) -> str:
@@ -1266,14 +1284,23 @@ def build_markdown_report(
             if previous_manifest_path is not None
             else "- Previous manifest: none"
         ),
+        (
+            f"- Current implementation commit: `{implementation_provenance.get('git_commit')}`"
+            if implementation_provenance is not None
+            else "- Current implementation commit: dry run"
+        ),
+        (
+            f"- Previous implementation commit: `{previous_implementation_provenance.get('git_commit')}`"
+            if previous_implementation_provenance is not None
+            else "- Previous implementation commit: none"
+        ),
         f"- Dry run: `{str(arguments.dry_run).lower()}`",
-        f"- Variant limit: `{arguments.variant_limit}`",
         f"- Chunk size: `{arguments.chunk_size}`",
         f"- JAX cache directory: `{arguments.jax_cache_directory}`",
         "",
         "## Runs",
         "",
-        "| Run | Status | Wall seconds | Rows | Files | Bytes | Stage JSON | Events |",
+        "| Run | Status | Wall seconds | Rows | Files | Bytes | Profile summary | Events |",
         "| --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for run_result in run_results:
@@ -1285,8 +1312,8 @@ def build_markdown_report(
             f"{format_optional_integer(run_result.output_row_count)} | "
             f"{format_optional_integer(run_result.output_file_count)} | "
             f"{format_optional_integer(run_result.output_total_bytes)} | "
-            f"`{run_result.stage_timing_path}` | "
-            f"`{run_result.event_log_path}` |"
+            f"{format_optional_path(run_result.profile_summary_path)} | "
+            f"{format_optional_path(run_result.event_log_path)} |"
         )
     lines.extend(["", "## Previous-Run Comparison", ""])
     if not comparisons:
@@ -1327,6 +1354,7 @@ def write_reports(
     *,
     arguments: MatrixArguments,
     run_results: list[RunResult],
+    comparison_identity: ComparisonIdentity | None,
     previous_manifest_path: Path | None,
     comparisons: list[MetricComparison],
     hydra_config: omegaconf.DictConfig | None = None,
@@ -1334,12 +1362,22 @@ def write_reports(
     """Write JSON and Markdown reports for the matrix run."""
     manifest_path = arguments.output_directory / "manifest.json"
     report_path = arguments.output_directory / "report.md"
+    previous_manifest = load_json_mapping(previous_manifest_path) if previous_manifest_path is not None else None
+    previous_implementation_provenance = (
+        typing.cast("dict[str, typing.Any]", previous_manifest.get("implementation_provenance"))
+        if previous_manifest is not None and isinstance(previous_manifest.get("implementation_provenance"), dict)
+        else None
+    )
     manifest_payload = {
         "schema_version": MATRIX_MANIFEST_SCHEMA_VERSION,
         "tool": "tooling.cli.run_regenie2_matrix",
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "dry_run": arguments.dry_run,
         "configuration": arguments_to_json_dict(arguments),
+        "compatibility_scope": (comparison_identity.compatibility_scope if comparison_identity is not None else None),
+        "implementation_provenance": (
+            comparison_identity.implementation_provenance if comparison_identity is not None else None
+        ),
         "previous_manifest_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
         "runs": [run_result_to_json_dict(run_result) for run_result in run_results],
         "comparisons": [comparison_to_json_dict(comparison) for comparison in comparisons],
@@ -1404,12 +1442,20 @@ def write_reports(
         diagnostics={
             "previous_manifest_path": str(previous_manifest_path) if previous_manifest_path is not None else None,
             "legacy_comparison_count": len(comparisons),
+            "current_implementation_provenance": (
+                comparison_identity.implementation_provenance if comparison_identity is not None else None
+            ),
+            "previous_implementation_provenance": previous_implementation_provenance,
         },
         failures=build_matrix_failure_records(run_results),
     )
     markdown_report = build_markdown_report(
         arguments=arguments,
         run_results=run_results,
+        implementation_provenance=(
+            comparison_identity.implementation_provenance if comparison_identity is not None else None
+        ),
+        previous_implementation_provenance=previous_implementation_provenance,
         previous_manifest_path=previous_manifest_path,
         comparisons=comparisons,
     )
@@ -1440,8 +1486,12 @@ def run_matrix(arguments: MatrixArguments, hydra_config: omegaconf.DictConfig | 
     arguments.output_directory.mkdir(parents=True, exist_ok=True)
     if arguments.validate_inputs and not arguments.dry_run:
         validate_input_paths(arguments)
+    comparison_identity = None if arguments.dry_run else build_comparison_identity(arguments)
     run_specs = build_run_specs(arguments)
-    previous_manifest_path = find_previous_manifest(arguments)
+    previous_manifest_path = find_previous_manifest(
+        arguments,
+        comparison_identity.compatibility_scope if comparison_identity is not None else None,
+    )
     previous_results_by_name = load_previous_run_results(previous_manifest_path)
     logger.info("Output directory: %s", arguments.output_directory)
     logger.info("Previous manifest: %s", previous_manifest_path if previous_manifest_path is not None else "none")
@@ -1460,6 +1510,7 @@ def run_matrix(arguments: MatrixArguments, hydra_config: omegaconf.DictConfig | 
     write_reports(
         arguments=arguments,
         run_results=run_results,
+        comparison_identity=comparison_identity,
         previous_manifest_path=previous_manifest_path,
         comparisons=comparisons,
         hydra_config=hydra_config,
@@ -1470,7 +1521,7 @@ def run_matrix(arguments: MatrixArguments, hydra_config: omegaconf.DictConfig | 
     return run_results
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="run_regenie2_chr10_matrix")
+@hydra.main(version_base=None, config_path="../configs", config_name="matrix_chr10")
 def hydra_main(config: omegaconf.DictConfig) -> None:
     """Hydra entrypoint for the chromosome matrix runner."""
     arguments = build_arguments_from_config(config)

@@ -20,7 +20,7 @@ def write_trial_config(
     diagnostic_options: dict[str, object] | None,
 ) -> Path:
     """Write the supported runtime settings for one native CLI trial."""
-    telemetry = str((diagnostic_options or {}).get("telemetry", "profile"))
+    telemetry = str((diagnostic_options or {}).get("telemetry", "off"))
     if telemetry not in {"off", "progress", "profile"}:
         message = f"Unsupported telemetry mode for the current application: {telemetry!r}."
         raise ValueError(message)
@@ -107,7 +107,6 @@ def build_g_step2_child_command(
     baseline_paths: typing.Any,
     candidate: profile_deep_models.Step2Candidate,
     output_prefix: Path,
-    variant_limit: int | None,
     cache_directory: Path | None = None,
     stage_timing_path: Path | None = None,
     trace_directory: Path | None = None,
@@ -115,12 +114,6 @@ def build_g_step2_child_command(
     diagnostic_options: dict[str, object] | None = None,
 ) -> list[str]:
     """Build an isolated child that profiles the current native CLI boundary."""
-    if variant_limit is not None:
-        message = (
-            "The current application intentionally has no production variant-limit option. "
-            "Profile a prepared bounded BGEN or set tool.variant_limit=null."
-        )
-        raise ValueError(message)
     jax_cache_directory = cache_directory
     config_path = write_trial_config(
         candidate=candidate,
@@ -142,6 +135,7 @@ def build_g_step2_child_command(
         from pathlib import Path
 
         import g.cli
+        from tooling.benchmark import native_lifecycle
 
 
         cli_arguments = json.loads({cli_arguments_payload!r})
@@ -163,22 +157,14 @@ def build_g_step2_child_command(
                 jax_module.profiler.stop_trace()
         if exit_code != 0:
             raise RuntimeError(f"g CLI exited with status {{exit_code}}.")
-        run_directories = sorted(output_root.glob("*.run"))
-        if len(run_directories) != 1:
-            raise RuntimeError(
-                f"Expected exactly one application run below {{output_root}}, "
-                f"found {{len(run_directories)}}."
-            )
-        run_directory = run_directories[0]
-        final_path = run_directory / "final.parquet"
-        if final_path.exists():
-            output_paths = [str(final_path)]
-        else:
-            parquet_paths = sorted((run_directory / "parts").glob("*.parquet"))
-            arrow_paths = sorted((run_directory / "chunks").glob("*.arrow"))
-            output_paths = [str(path) for path in (*parquet_paths, *arrow_paths)]
-        if not output_paths:
-            raise RuntimeError(f"No readable output artifacts were produced below {{run_directory}}.")
+        run_directory = native_lifecycle.discover_completed_run_directory(
+            expected_run_directory=None,
+            output_root=output_root,
+            glob_pattern={run_glob_pattern!r},
+            run_label="deep profile child",
+        )
+        output_evidence = native_lifecycle.measure_completed_output_run(run_directory)
+        output_paths = list(output_evidence.parquet_paths)
         if requested_stage_timing_path is not None:
             source_stage_timing_path = run_directory / "output_stage_timings.json"
             if source_stage_timing_path.exists():
@@ -206,5 +192,6 @@ def build_g_step2_child_command(
         memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
         stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
         jax_cache_directory=str(jax_cache_directory) if jax_cache_directory is not None else None,
+        run_glob_pattern=("*.regenie2_binary.run" if candidate.trait_type == "binary" else "*.regenie2_linear.run"),
     )
     return [sys.executable, "-c", child_code]

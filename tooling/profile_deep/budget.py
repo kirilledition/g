@@ -231,6 +231,11 @@ def build_campaign_budget(
     regenie_headline_run_count = regenie_baseline_trait_count * (
         arguments.regenie_baseline_warmups + arguments.regenie_baseline_trials
     )
+    stage_diagnostic_run_count = (
+        finalist_candidate_count + expected_winner_count
+        if arguments.stage_timing_mode == profile_deep_models.ProfileStageTimingMode.EXACT
+        else 0
+    )
     deep_profiler_mode_count = 0 if arguments.skip_deep_profiles else count_enabled_deep_profiler_modes(arguments)
     deep_profiler_run_count = expected_winner_count * deep_profiler_mode_count
     logging_case_count = 0
@@ -239,15 +244,12 @@ def build_campaign_budget(
             build_logging_perturbation_cases(output_directory=output_directory, smoke=arguments.smoke)
         )
     logging_run_count = expected_winner_count * logging_case_count
-    rust_benchmark_count = 0
-    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
-        rust_benchmark_count = len(parse_string_list(arguments.rust_benchmarks))
     sections = (
         build_campaign_budget_section(
             section_name=profile_deep_models.CampaignBudgetSectionName.THREAD_CANDIDATES,
             candidate_count=thread_candidate_count,
             subprocess_run_count=0,
-            notes="Static Rayon worker-count choices; Criterion owns internal reader profiling.",
+            notes="Static Rayon worker-count choices; crate benchmarks own internal reader profiling.",
         ),
         build_campaign_budget_section(
             section_name=profile_deep_models.CampaignBudgetSectionName.TUNING,
@@ -278,6 +280,16 @@ def build_campaign_budget(
             ),
         ),
         build_campaign_budget_section(
+            section_name=profile_deep_models.CampaignBudgetSectionName.STAGE_DIAGNOSTICS,
+            candidate_count=stage_diagnostic_run_count,
+            subprocess_run_count=stage_diagnostic_run_count,
+            notes=(
+                "Disabled by telemetry.stage_timing_mode=off."
+                if stage_diagnostic_run_count == 0
+                else "Profile-telemetry diagnostics run separately from timed finalist and headline trials."
+            ),
+        ),
+        build_campaign_budget_section(
             section_name=profile_deep_models.CampaignBudgetSectionName.DEEP_PROFILERS,
             candidate_count=deep_profiler_run_count,
             subprocess_run_count=deep_profiler_run_count,
@@ -296,17 +308,6 @@ def build_campaign_budget(
                 "Disabled by tool.enable_logging_perturbation=false."
                 if not arguments.enable_logging_perturbation
                 else f"{logging_case_count} logging case(s) per expected g winner."
-            ),
-        ),
-        build_campaign_budget_section(
-            section_name=profile_deep_models.CampaignBudgetSectionName.RUST_CRITERION,
-            candidate_count=rust_benchmark_count,
-            subprocess_run_count=rust_benchmark_count,
-            major_profiler_run_count=rust_benchmark_count,
-            notes=(
-                "Skipped because Rust Criterion is disabled or tool.skip_deep_profiles=true."
-                if rust_benchmark_count == 0
-                else "Each configured Criterion benchmark is one cargo bench subprocess."
             ),
         ),
     )

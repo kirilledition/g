@@ -120,7 +120,6 @@ class ProfileBuildReport:
         extension_size_bytes: Largest observed native extension artifact size.
         import_timing: Optional native import timing command.
         smoke_timing: Optional smoke command timing.
-        bgen_reader_timing: Optional BGEN reader smoke timing.
         gpu_smoke_timing: Optional GPU smoke timing.
 
     """
@@ -134,7 +133,6 @@ class ProfileBuildReport:
     extension_size_bytes: int | None
     import_timing: CommandTiming | None
     smoke_timing: CommandTiming | None
-    bgen_reader_timing: CommandTiming | None
     gpu_smoke_timing: CommandTiming | None
 
 
@@ -170,8 +168,6 @@ class RustBuildProfilesArguments:
         run_import_timing: Whether to time importing the native extension.
         run_smoke_command: Whether to run the generic smoke command.
         smoke_command: Generic smoke command argument vector.
-        run_bgen_reader_smoke: Whether to run the BGEN reader smoke command.
-        bgen_reader_command: BGEN reader smoke command argument vector.
         run_gpu_smoke: Whether to run the GPU smoke command.
         gpu_smoke_command: GPU smoke command argument vector.
 
@@ -186,8 +182,6 @@ class RustBuildProfilesArguments:
     run_import_timing: bool
     run_smoke_command: bool
     smoke_command: tuple[str, ...]
-    run_bgen_reader_smoke: bool
-    bgen_reader_command: tuple[str, ...]
     run_gpu_smoke: bool
     gpu_smoke_command: tuple[str, ...]
 
@@ -199,14 +193,12 @@ class RuntimeCommandReports:
     Attributes:
         import_timing: Optional native import timing command.
         smoke_timing: Optional smoke command timing.
-        bgen_reader_timing: Optional BGEN reader smoke timing.
         gpu_smoke_timing: Optional GPU smoke timing.
 
     """
 
     import_timing: CommandTiming | None
     smoke_timing: CommandTiming | None
-    bgen_reader_timing: CommandTiming | None
     gpu_smoke_timing: CommandTiming | None
 
 
@@ -282,8 +274,6 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> RustBuildProfil
         run_import_timing=tooling_hydra_arguments.boolean_value(tool_values["run_import_timing"]),
         run_smoke_command=tooling_hydra_arguments.boolean_value(tool_values["run_smoke_command"]),
         smoke_command=parse_command_arguments(tool_values["smoke_command"]),
-        run_bgen_reader_smoke=tooling_hydra_arguments.boolean_value(tool_values["run_bgen_reader_smoke"]),
-        bgen_reader_command=parse_command_arguments(tool_values["bgen_reader_command"]),
         run_gpu_smoke=tooling_hydra_arguments.boolean_value(tool_values["run_gpu_smoke"]),
         gpu_smoke_command=parse_command_arguments(tool_values["gpu_smoke_command"]),
     )
@@ -507,7 +497,6 @@ def build_runtime_command_reports(
     """
     import_timing = None
     smoke_timing = None
-    bgen_reader_timing = None
     gpu_smoke_timing = None
     if arguments.run_import_timing:
         import_timing = run_timed_command(
@@ -534,15 +523,6 @@ def build_runtime_command_reports(
             timeout_seconds=arguments.runtime_timeout_seconds,
             log_directory=log_directory,
         )
-    if arguments.run_bgen_reader_smoke and arguments.bgen_reader_command:
-        bgen_reader_timing = run_timed_command(
-            name="bgen-reader",
-            command_arguments=arguments.bgen_reader_command,
-            repository_root=repository_root,
-            environment=environment,
-            timeout_seconds=arguments.runtime_timeout_seconds,
-            log_directory=log_directory,
-        )
     if arguments.run_gpu_smoke and arguments.gpu_smoke_command:
         gpu_smoke_timing = run_timed_command(
             name="gpu-smoke",
@@ -555,7 +535,6 @@ def build_runtime_command_reports(
     return RuntimeCommandReports(
         import_timing=import_timing,
         smoke_timing=smoke_timing,
-        bgen_reader_timing=bgen_reader_timing,
         gpu_smoke_timing=gpu_smoke_timing,
     )
 
@@ -616,7 +595,6 @@ def benchmark_profile(
             )
     import_timing = None
     smoke_timing = None
-    bgen_reader_timing = None
     gpu_smoke_timing = None
     extension_size_bytes = None
     if clean_build.return_code == 0:
@@ -629,7 +607,6 @@ def benchmark_profile(
         )
         import_timing = runtime_command_reports.import_timing
         smoke_timing = runtime_command_reports.smoke_timing
-        bgen_reader_timing = runtime_command_reports.bgen_reader_timing
         gpu_smoke_timing = runtime_command_reports.gpu_smoke_timing
     return ProfileBuildReport(
         label=spec.label.value,
@@ -641,7 +618,6 @@ def benchmark_profile(
         extension_size_bytes=extension_size_bytes,
         import_timing=import_timing,
         smoke_timing=smoke_timing,
-        bgen_reader_timing=bgen_reader_timing,
         gpu_smoke_timing=gpu_smoke_timing,
     )
 

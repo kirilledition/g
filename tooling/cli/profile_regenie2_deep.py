@@ -23,7 +23,7 @@ from pathlib import Path
 import hydra
 
 from tooling.benchmark import benchmark as baseline_benchmark
-from tooling.benchmark import comparison as comparison_benchmark
+from tooling.benchmark import native_lifecycle
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import logging as tooling_logging
@@ -273,13 +273,6 @@ def build_profiler_tool_status(arguments: ProfileArguments) -> dict[str, Profile
             available=True,
             executable_path=None,
             notes="JAX device memory capture is provided by the installed JAX package.",
-        ),
-        "rust_criterion": ProfilerToolStatus(
-            tool_name="rust_criterion",
-            enabled=arguments.enable_rust_criterion,
-            available=shutil.which("cargo") is not None,
-            executable_path=shutil.which("cargo"),
-            notes="Rust Criterion benches run through cargo.",
         ),
         "scalene": build_uv_injected_profiler_status(
             tool_name="scalene",
@@ -570,7 +563,7 @@ def collect_summary_trial_payloads(summary_payload: dict[str, typing.Any] | None
     for payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("setup_results", [])):
         trial_payloads.append(payload)
     for aggregate_payload in typing.cast("list[dict[str, typing.Any]]", summary_payload.get("headline_results", [])):
-        for field_name in ("warmup_trials", "trials"):
+        for field_name in ("warmup_trials", "trials", "diagnostic_trials"):
             trial_payloads.extend(typing.cast("list[dict[str, typing.Any]]", aggregate_payload.get(field_name, [])))
     deep_profile_results = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
     for profile_payload in typing.cast(
@@ -643,20 +636,6 @@ def build_profile_command_records(
                     run_id=run_id,
                     phase="regenie_baseline",
                     args=[str(value) for value in command_arguments],
-                    output_directory=output_directory,
-                    cwd=REPOSITORY_ROOT,
-                    status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
-                )
-            )
-            next_index += 1
-        for command_arguments in profile_plan.rust_benchmark_commands:
-            command_records.append(
-                tooling_artifact_format.build_command_record(
-                    command_id=profile_command_identifier(f"rust_criterion_{next_index}", next_index),
-                    tool_name="profile_regenie2_deep",
-                    run_id=run_id,
-                    phase="rust_criterion",
-                    args=command_arguments,
                     output_directory=output_directory,
                     cwd=REPOSITORY_ROOT,
                     status=tooling_artifact_format.ToolArtifactStatus.DRY_RUN,
@@ -940,12 +919,7 @@ def profile_summary_artifact_status(
     if "success" not in aggregate_statuses and "partial" not in aggregate_statuses:
         return tooling_artifact_format.ToolArtifactStatus.FAILED
     trial_statuses = {str(payload.get("status", "")) for payload in collect_summary_trial_payloads(summary_payload)}
-    deep_profiles = typing.cast("dict[str, typing.Any]", summary_payload.get("deep_profiles", {}))
-    criterion_failed = any(
-        isinstance(result.get("returncode"), int) and result["returncode"] != 0
-        for result in typing.cast("list[dict[str, typing.Any]]", deep_profiles.get("rust_criterion", []))
-    )
-    if aggregate_statuses != {"success"} or trial_statuses.intersection({"failed", "partial"}) or criterion_failed:
+    if aggregate_statuses != {"success"} or trial_statuses.intersection({"failed", "partial"}):
         return tooling_artifact_format.ToolArtifactStatus.PARTIAL
     return tooling_artifact_format.ToolArtifactStatus.SUCCESS
 
@@ -1234,8 +1208,6 @@ def build_regenie_baseline_scope(
     """Build original REGENIE workload scope for direct paired comparisons."""
     variant_limit = arguments.regenie_baseline_variant_limit
     if variant_limit is None:
-        variant_limit = arguments.variant_limit
-    if variant_limit is None:
         return RegenieBaselineScope(
             status=RegenieBaselineScopeStatus.FULL,
             variant_limit=None,
@@ -1368,18 +1340,20 @@ def build_step2_candidates(
 
 def build_g_trial_environment(
     *,
-    candidate: Step2Candidate,
-    cache_directory: Path,
-    stage_timing_path: Path | None,
+    enable_jax_debug_logging: bool,
 ) -> dict[str, str]:
     """Build child process environment overrides for one g trial."""
-    del cache_directory, stage_timing_path
-    return {
-        "JAX_DEBUG_LOG_MODULES": JAX_DEBUG_LOG_MODULES,
-        "JAX_LOGGING_LEVEL": "DEBUG",
-        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
-    }
+    environment: dict[str, str] = {}
+    if enable_jax_debug_logging:
+        environment.update(
+            {
+                "JAX_DEBUG_LOG_MODULES": JAX_DEBUG_LOG_MODULES,
+                "JAX_LOGGING_LEVEL": "DEBUG",
+                "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
+            }
+        )
+    return environment
 
 
 def build_g_step2_child_command(
@@ -1387,7 +1361,6 @@ def build_g_step2_child_command(
     baseline_paths: typing.Any,
     candidate: Step2Candidate,
     output_prefix: Path,
-    variant_limit: int | None,
     cache_directory: Path | None = None,
     stage_timing_path: Path | None = None,
     trace_directory: Path | None = None,
@@ -1400,7 +1373,6 @@ def build_g_step2_child_command(
         baseline_paths=baseline_paths,
         candidate=candidate,
         output_prefix=output_prefix,
-        variant_limit=variant_limit,
         cache_directory=jax_cache_directory,
         stage_timing_path=stage_timing_path,
         trace_directory=trace_directory,
@@ -1618,7 +1590,6 @@ def build_deep_profiler_child_command(
     baseline_paths: typing.Any,
     candidate: Step2Candidate,
     cache_directory: Path,
-    variant_limit: int | None,
     emit_stage_timings: bool,
 ) -> DeepProfilerChildCommand:
     """Build an isolated child command for one deep profiler implementation."""
@@ -1631,17 +1602,15 @@ def build_deep_profiler_child_command(
         baseline_paths=baseline_paths,
         candidate=candidate,
         output_prefix=run_paths.application_output_prefix,
-        variant_limit=variant_limit,
         cache_directory=cache_directory,
         stage_timing_path=run_paths.stage_timing_path,
+        diagnostic_options={"telemetry": "profile"},
     )
     write_inline_python_profile_script(inline_command_arguments, run_paths.profile_script_path)
     return DeepProfilerChildCommand(
         command_arguments=[sys.executable, str(run_paths.profile_script_path)],
         environment_overrides=build_g_trial_environment(
-            candidate=candidate,
-            cache_directory=cache_directory,
-            stage_timing_path=run_paths.stage_timing_path,
+            enable_jax_debug_logging=True,
         ),
         run_paths=run_paths,
     )
@@ -1703,57 +1672,19 @@ def collect_g_trial_application_metadata(
         raise RuntimeError(message)
     child_payload = child_payload or {}
     raw_run_directory = child_payload.get("application_output_run_directory")
-    if isinstance(raw_run_directory, str):
-        application_run_directory = Path(raw_run_directory)
-    else:
-        discovered_run_directories = sorted(expected_output_root.glob("*.run"))
-        application_run_directory = (
-            discovered_run_directories[0] if len(discovered_run_directories) == 1 else expected_output_root
-        )
+    application_run_directory = Path(raw_run_directory) if isinstance(raw_run_directory, str) else expected_output_root
 
-    run_manifest: dict[str, typing.Any] | None = None
-    run_manifest_path = application_run_directory / "run_manifest.json"
-    if run_manifest_path.exists():
+    completed_output: native_lifecycle.CompletedOutputEvidence | None = None
+    if (application_run_directory / "run_manifest.json").is_file():
         try:
-            raw_run_manifest: object = json.loads(run_manifest_path.read_text(encoding="utf-8"))
-        except OSError, json.JSONDecodeError:
-            raw_run_manifest = None
-        if isinstance(raw_run_manifest, dict):
-            run_manifest = {key: value for key, value in raw_run_manifest.items() if isinstance(key, str)}
-    if run_manifest is None and require_child_artifacts:
-        message = f"Successful g trial did not produce a readable run manifest at {run_manifest_path}."
-        raise RuntimeError(message)
-
-    output_row_count: int | None = None
-    if run_manifest is not None:
-        committed_chunks = run_manifest.get("committed_chunks")
-        if isinstance(committed_chunks, list):
-            row_counts = [
-                chunk.get("row_count")
-                for chunk in committed_chunks
-                if isinstance(chunk, dict)
-                and isinstance(chunk.get("row_count"), int)
-                and not isinstance(chunk.get("row_count"), bool)
-            ]
-            if row_counts:
-                output_row_count = sum(row_counts)
-    if output_row_count is None:
-        raw_output_row_count = child_payload.get("output_row_count")
-        if isinstance(raw_output_row_count, int) and not isinstance(raw_output_row_count, bool):
-            output_row_count = raw_output_row_count
-
-    raw_output_path = child_payload.get("output_path")
-    output_path = raw_output_path if isinstance(raw_output_path, str) else None
-    if output_path is None:
-        final_output_path = application_run_directory / "final.parquet"
-        output_candidates = [
-            *sorted((application_run_directory / "parts").glob("*.parquet")),
-            *sorted((application_run_directory / "chunks").glob("*.arrow")),
-        ]
-        if final_output_path.exists():
-            output_path = str(final_output_path)
-        elif output_candidates:
-            output_path = str(output_candidates[0])
+            completed_output = native_lifecycle.measure_completed_output_run(application_run_directory)
+        except OSError, RuntimeError, ValueError, json.JSONDecodeError:
+            if require_child_artifacts:
+                raise
+    if completed_output is None and require_child_artifacts:
+        raise RuntimeError(f"Successful g trial has no valid production output at {application_run_directory}.")
+    output_row_count = completed_output.row_count if completed_output is not None else None
+    output_path = completed_output.parquet_paths[0] if completed_output is not None else None
 
     raw_profile_summary_path = child_payload.get("profile_summary_path")
     profile_summary_candidates = [
@@ -1767,9 +1698,9 @@ def collect_g_trial_application_metadata(
     )
 
     device_diagnostics: dict[str, typing.Any] | None = None
-    if run_manifest is not None:
-        runtime = run_manifest.get("runtime")
-        execution_plan = run_manifest.get("execution_plan")
+    if completed_output is not None:
+        runtime = completed_output.manifest.get("runtime")
+        execution_plan = completed_output.manifest.get("execution_plan")
         runtime_payload = runtime if isinstance(runtime, dict) else {}
         execution_plan_payload = execution_plan if isinstance(execution_plan, dict) else {}
         association_backend = execution_plan_payload.get("association_backend")
@@ -2017,7 +1948,6 @@ def run_g_trial(
     output_directory: Path,
     log_directory: Path,
     cache_directory: Path,
-    variant_limit: int | None,
     emit_stage_timings: bool,
     trace_directory: Path | None = None,
     memory_profile_path: Path | None = None,
@@ -2032,17 +1962,17 @@ def run_g_trial(
         baseline_paths=baseline_paths,
         candidate=candidate,
         output_prefix=output_prefix,
-        variant_limit=variant_limit,
         cache_directory=cache_directory,
         stage_timing_path=stage_timing_path,
         trace_directory=trace_directory,
         memory_profile_path=memory_profile_path,
         diagnostic_options=diagnostic_options,
     )
+    telemetry_mode = str((diagnostic_options or {}).get("telemetry", "off"))
     environment_overrides = build_g_trial_environment(
-        candidate=candidate,
-        cache_directory=cache_directory,
-        stage_timing_path=stage_timing_path,
+        enable_jax_debug_logging=(
+            telemetry_mode != "off" or trace_directory is not None or memory_profile_path is not None
+        )
     )
     result = run_logged_command(
         name=name,
@@ -2117,7 +2047,7 @@ def run_regenie_trial(
         environment_overrides={"REGENIE_PROFILE_JSON": str(regenie_profile_path)},
         log_directory=log_directory,
     )
-    output_row_count = comparison_benchmark.count_regenie_step2_rows(output_prefix)
+    output_row_count = count_regenie_step2_rows(output_prefix)
     output_suffix = "phenotype_binary" if trait_type == "binary" else "phenotype_continuous"
     output_path = output_prefix.parent / f"{output_prefix.name}_{output_suffix}.regenie"
     return dataclasses.replace(
@@ -2126,6 +2056,18 @@ def run_regenie_trial(
         output_path=str(output_path) if output_path.exists() else None,
         regenie_profile_path=str(regenie_profile_path) if regenie_profile_path.exists() else None,
     )
+
+
+def count_regenie_step2_rows(output_prefix: Path) -> int | None:
+    """Count data rows in an upstream REGENIE step 2 output file."""
+    result_path = output_prefix.with_name(f"{output_prefix.name}_phenotype_continuous.regenie")
+    if not result_path.exists():
+        result_path = output_prefix.with_name(f"{output_prefix.name}_phenotype_binary.regenie")
+    if not result_path.exists():
+        return None
+    with result_path.open(encoding="utf-8") as result_file:
+        line_count = sum(1 for line in result_file if line.strip())
+    return max(0, line_count - 1)
 
 
 def aggregate_trial_results(
@@ -2137,10 +2079,12 @@ def aggregate_trial_results(
     warmup_count: int,
     trial_results: list[TrialResult],
     warmup_trials: list[TrialResult] | None = None,
+    diagnostic_trials: list[TrialResult] | None = None,
     candidate: Step2Candidate | None = None,
 ) -> AggregateResult:
     """Aggregate successful measured trial results."""
     observed_warmup_trials = [] if warmup_trials is None else warmup_trials
+    observed_diagnostic_trials = [] if diagnostic_trials is None else diagnostic_trials
     jax_cold_warm_summary = build_jax_cold_warm_diagnostics(
         warmup_trials=observed_warmup_trials,
         trial_results=trial_results,
@@ -2167,6 +2111,7 @@ def aggregate_trial_results(
             rows_per_second=None,
             trials=trial_results,
             warmup_trials=observed_warmup_trials,
+            diagnostic_trials=observed_diagnostic_trials,
             jax_cold_warm_summary=jax_cold_warm_summary,
             candidate=candidate,
         )
@@ -2194,6 +2139,7 @@ def aggregate_trial_results(
         rows_per_second=rows_per_second,
         trials=trial_results,
         warmup_trials=observed_warmup_trials,
+        diagnostic_trials=observed_diagnostic_trials,
         jax_cold_warm_summary=jax_cold_warm_summary,
         candidate=candidate,
     )
@@ -2207,7 +2153,6 @@ def run_repeated_g_trials(
     output_directory: Path,
     log_directory: Path,
     cache_directory: Path,
-    variant_limit: int | None,
     warmup_count: int,
     trial_count: int,
     emit_stage_timings: bool,
@@ -2223,7 +2168,6 @@ def run_repeated_g_trials(
                 output_directory=output_directory,
                 log_directory=log_directory,
                 cache_directory=cache_directory,
-                variant_limit=variant_limit,
                 emit_stage_timings=False,
             )
         )
@@ -2235,11 +2179,26 @@ def run_repeated_g_trials(
             output_directory=output_directory,
             log_directory=log_directory,
             cache_directory=cache_directory,
-            variant_limit=variant_limit,
-            emit_stage_timings=emit_stage_timings,
+            emit_stage_timings=False,
         )
         for trial_index in range(trial_count)
     ]
+    diagnostic_trials = (
+        [
+            run_g_trial(
+                name=f"{name}_stage_diagnostic",
+                baseline_paths=baseline_paths,
+                candidate=candidate,
+                output_directory=output_directory,
+                log_directory=log_directory,
+                cache_directory=cache_directory,
+                emit_stage_timings=True,
+                diagnostic_options={"telemetry": "profile"},
+            )
+        ]
+        if emit_stage_timings
+        else []
+    )
     return aggregate_trial_results(
         name=name,
         implementation="g",
@@ -2248,6 +2207,7 @@ def run_repeated_g_trials(
         warmup_count=warmup_count,
         trial_results=trial_results,
         warmup_trials=warmup_results,
+        diagnostic_trials=diagnostic_trials,
         candidate=candidate,
     )
 
@@ -2364,7 +2324,6 @@ def run_candidate_tuning(
                 output_directory=output_directory / "tuning_runs",
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 warmup_count=arguments.tuning_warmups,
                 trial_count=arguments.tuning_trials,
                 emit_stage_timings=False,
@@ -2389,7 +2348,6 @@ def run_candidate_tuning(
                     output_directory=output_directory / "finalist_runs",
                     log_directory=output_directory / "logs",
                     cache_directory=cache_directory,
-                    variant_limit=arguments.variant_limit,
                     warmup_count=arguments.finalist_warmups,
                     trial_count=arguments.finalist_trials,
                     emit_stage_timings=emit_stage_timings,
@@ -2494,7 +2452,6 @@ def run_headline_trials(
                 output_directory=output_directory / "headline_runs",
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 warmup_count=arguments.headline_warmups,
                 trial_count=arguments.headline_trials,
                 emit_stage_timings=emit_stage_timings,
@@ -2562,54 +2519,6 @@ def build_runtime_comparison_notes(aggregate_results: list[AggregateResult]) -> 
     return RuntimeComparisonNotes(unsupported=unsupported, failed=failed)
 
 
-REGENIE_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
-    "input_setup": (
-        "input_file_initialization",
-        "phenotype_covariate_load",
-        "prediction_load",
-        "step2_setup",
-        "null_residual_setup",
-    ),
-    "bgen_decode": ("block_read", "bgen_raw_read", "bgen_decode_impute_filter"),
-    "association_compute": (
-        "association_compute",
-        "sparse_check",
-        "covariate_projection",
-        "qt_score",
-        "bt_score",
-        "correction_candidate_check",
-        "firth_correction",
-        "spa_correction",
-    ),
-    "output": ("output_setup", "block_output"),
-}
-
-G_STAGE_GROUPS: dict[str, tuple[str, ...]] = {
-    "input_setup": (
-        "bgen_engine_open_index_setup",
-        "sample_phenotype_covariate_alignment",
-        "prediction_source_load",
-        "preflight_validation",
-        "chromosome_state_preparation",
-        "output_run_preparation",
-        "output_writer_preparation",
-    ),
-    "bgen_decode": ("native_engine_delivery",),
-    "association_compute": (
-        "host_to_device_transfer",
-        "jax_compute",
-        "device_to_host_materialization",
-    ),
-    "output": (
-        "output_write",
-        "single_trait_output_write",
-        "multi_trait_output_write_total",
-        "writer_finish_and_parquet_finalization",
-        "callback_drain",
-    ),
-}
-
-
 def read_json_file(path: str | None) -> dict[str, typing.Any] | None:
     """Read a JSON file when the path exists."""
     if path is None:
@@ -2633,6 +2542,23 @@ def collect_trial_stage_totals(trial: TrialResult) -> dict[str, float]:
                 for stage_name, seconds in stage_payload.get("stage_totals_seconds", {}).items()
             }
         )
+    if trial.implementation == "g" and (trial.stage_timing_path is not None or trial.profile_summary_path is not None):
+        missing_stage_names = [
+            stage_name for stage_name in native_lifecycle.NATIVE_PROFILE_STAGE_NAMES if stage_name not in stage_totals
+        ]
+        if missing_stage_names:
+            raise RuntimeError(f"g trial {trial.name} is missing current native profile stages: {missing_stage_names}")
+    if trial.implementation == "g" and trial.application_output_run_directory is not None:
+        output_stage_path = Path(trial.application_output_run_directory) / "output_stage_timings.json"
+        output_stage_payload = read_json_file(str(output_stage_path))
+        if output_stage_payload is not None:
+            stage_totals.update(
+                {
+                    stage_name: float(seconds)
+                    for stage_name, seconds in output_stage_payload.get("stage_totals_seconds", {}).items()
+                    if str(stage_name).startswith("rust_output_")
+                }
+            )
     return stage_totals
 
 
@@ -2640,128 +2566,11 @@ def collect_stage_totals(aggregate_results: list[AggregateResult]) -> dict[str, 
     """Collect representative stage totals from g and REGENIE trials."""
     stage_totals: dict[str, float] = {}
     for aggregate_result in aggregate_results:
-        for trial in aggregate_result.trials:
+        for trial in (*aggregate_result.trials, *aggregate_result.diagnostic_trials):
             for stage_name, seconds in collect_trial_stage_totals(trial).items():
                 key = f"{aggregate_result.name}:{stage_name}"
                 stage_totals[key] = seconds
     return stage_totals
-
-
-def build_grouped_stage_totals(
-    stage_totals: dict[str, float],
-    stage_groups: dict[str, tuple[str, ...]],
-) -> dict[str, float]:
-    """Map raw stage totals into common comparison groups."""
-    grouped_totals: dict[str, float] = {}
-    for group_name, raw_stage_names in stage_groups.items():
-        grouped_totals[group_name] = sum(stage_totals.get(stage_name, 0.0) for stage_name in raw_stage_names)
-    return grouped_totals
-
-
-def representative_stage_totals(aggregate_result: AggregateResult) -> dict[str, float]:
-    """Return stage totals from the median-ish successful trial for an aggregate."""
-    successful_trials = [
-        trial for trial in aggregate_result.trials if trial.status == "success" and trial.wall_time_seconds is not None
-    ]
-    if not successful_trials:
-        return {}
-    sorted_trials = sorted(successful_trials, key=lambda trial: typing.cast("float", trial.wall_time_seconds))
-    median_index = len(sorted_trials) // 2
-    return collect_trial_stage_totals(sorted_trials[median_index])
-
-
-def build_stage_comparison_rows(aggregate_results: list[AggregateResult]) -> list[dict[str, float | str]]:
-    """Build stage-by-stage REGENIE versus g comparison rows."""
-    rows: list[dict[str, float | str]] = []
-    results_by_trait = {
-        result.trait_type: result
-        for result in aggregate_results
-        if result.implementation == "regenie" and result.median_wall_time_seconds is not None
-    }
-    for regenie_trait_type, regenie_result in results_by_trait.items():
-        regenie_grouped_totals = build_grouped_stage_totals(
-            representative_stage_totals(regenie_result),
-            REGENIE_STAGE_GROUPS,
-        )
-        for g_result in aggregate_results:
-            if (
-                g_result.implementation != "g"
-                or g_result.trait_type != regenie_trait_type
-                or g_result.median_wall_time_seconds is None
-            ):
-                continue
-            g_grouped_totals = build_grouped_stage_totals(representative_stage_totals(g_result), G_STAGE_GROUPS)
-            for stage_group in REGENIE_STAGE_GROUPS:
-                regenie_seconds = regenie_grouped_totals.get(stage_group, 0.0)
-                g_seconds = g_grouped_totals.get(stage_group, 0.0)
-                speedup_ratio = regenie_seconds / g_seconds if g_seconds > 0.0 else 0.0
-                rows.append(
-                    {
-                        "trait_type": regenie_trait_type,
-                        "g_device": g_result.device,
-                        "stage_group": stage_group,
-                        "regenie_seconds": regenie_seconds,
-                        "g_seconds": g_seconds,
-                        "g_speedup_ratio": speedup_ratio,
-                    }
-                )
-    return rows
-
-
-def build_algorithmic_findings(stage_comparison_rows: list[dict[str, float | str]]) -> list[str]:
-    """Explain likely source-level reasons for measured stage gaps."""
-    findings: list[str] = []
-    for row in stage_comparison_rows:
-        stage_group = str(row["stage_group"])
-        speedup_ratio = float(row["g_speedup_ratio"])
-        trait_type = str(row["trait_type"])
-        device = str(row["g_device"])
-        if stage_group == "bgen_decode" and speedup_ratio > 1.0:
-            findings.append(
-                f"{trait_type}/{device}: g is faster in BGEN delivery, consistent with its native buffered decoder "
-                "and larger chunk pipeline versus REGENIE's per-block BGEN read/decode path."
-            )
-        elif stage_group == "association_compute" and speedup_ratio > 1.0:
-            findings.append(
-                f"{trait_type}/{device}: g is faster in association compute, consistent with vectorized chunk scoring "
-                "and GPU/JAX execution when available."
-            )
-        elif stage_group == "output" and speedup_ratio > 1.0:
-            findings.append(
-                f"{trait_type}/{device}: g is faster in output, consistent with chunked Arrow/Parquet writes instead "
-                "of REGENIE's per-variant text formatting loop."
-            )
-        elif stage_group == "bgen_decode" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
-            findings.append(
-                f"{trait_type}/{device}: REGENIE remains faster in measured BGEN delivery; the g timing group maps "
-                "to inclusive native engine delivery, so it can also include downstream compute and correction work. "
-                "Split that timer before attributing the whole gap to decoding."
-            )
-        elif stage_group == "association_compute" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
-            findings.append(
-                f"{trait_type}/{device}: REGENIE remains faster in association compute; likely gaps include "
-                "REGENIE's sparse genotype checks, OpenMP score/correction scheduling, and correction thresholds "
-                "that avoid expensive fallback work on most variants."
-            )
-        elif stage_group == "output" and speedup_ratio > 0.0 and speedup_ratio < 1.0:
-            findings.append(
-                f"{trait_type}/{device}: REGENIE remains faster in output; likely gaps include g callback draining, "
-                "Parquet finalization, and writer queue overhead for this workload."
-            )
-        elif speedup_ratio > 1.0:
-            findings.append(
-                f"{trait_type}/{device}: g is faster in {stage_group}; this points to lower orchestration overhead "
-                "or more compact data movement in the measured g path."
-            )
-        elif speedup_ratio > 0.0 and speedup_ratio < 1.0:
-            findings.append(
-                f"{trait_type}/{device}: REGENIE remains faster in {stage_group}; likely gaps include REGENIE's "
-                "sparse genotype paths, OpenMP scheduling, null-model reuse, correction thresholds, or lower "
-                "formatting overhead for this workload."
-            )
-        elif speedup_ratio == 1.0:
-            findings.append(f"{trait_type}/{device}: {stage_group} is effectively tied between g and REGENIE.")
-    return sorted(set(findings))
 
 
 def numeric_diagnostic_value(raw_value: typing.Any) -> float:
@@ -3173,9 +2982,10 @@ def build_binary_correction_diagnostics_for_aggregate(
     stage_timing_mode: ProfileStageTimingMode,
 ) -> dict[str, typing.Any]:
     """Build aggregate binary correction diagnostics for one g binary result."""
+    diagnostic_source_trials = aggregate_result.diagnostic_trials or aggregate_result.trials
     loaded_payloads = [
         load_binary_diagnostic_trial_payload(stage_timing_mode=stage_timing_mode, trial=trial)
-        for trial in aggregate_result.trials
+        for trial in diagnostic_source_trials
         if trial.status == "success"
     ]
     unavailable_trials: list[dict[str, str | None]] = []
@@ -3244,7 +3054,7 @@ def build_binary_correction_diagnostics_for_aggregate(
     ]
     output_row_count_by_trial = {
         trial.name: trial.output_row_count
-        for trial in aggregate_result.trials
+        for trial in diagnostic_source_trials
         if trial.status == "success" and trial.output_row_count is not None
     }
     available_output_row_count = sum(
@@ -3372,8 +3182,6 @@ def build_summary_markdown(
     aggregate_results: list[AggregateResult],
     comparisons: dict[str, dict[str, float]],
     stage_totals: dict[str, float],
-    stage_comparison_rows: list[dict[str, float | str]],
-    algorithmic_findings: list[str],
     comparison_notes: RuntimeComparisonNotes | None = None,
     regenie_baseline_scope: RegenieBaselineScope | None = None,
     logging_perturbation_results: list[dict[str, typing.Any]] | None = None,
@@ -3468,31 +3276,16 @@ def build_summary_markdown(
         if regenie_baseline_scope.selected_variant_count is not None:
             lines.append(f"- Selected variants: `{regenie_baseline_scope.selected_variant_count}`")
         lines.append(f"- Notes: {regenie_baseline_scope.notes}")
-    lines.extend(["", "## Stage Comparisons", ""])
-    if stage_comparison_rows:
-        lines.append(
-            "_Stage timings are inclusive cumulative seconds from each profiler, so nested stages can overlap and "
-            "can exceed headline wall time._"
-        )
-        lines.append("")
-        lines.append("| trait | g device | stage | REGENIE s | g s | g speedup |")
-        lines.append("| --- | --- | --- | ---: | ---: | ---: |")
-        for row in stage_comparison_rows:
-            lines.append(
-                "| "
-                f"{row['trait_type']} | {row['g_device']} | {row['stage_group']} | "
-                f"{float(row['regenie_seconds']):.6f} | "
-                f"{float(row['g_seconds']):.6f} | "
-                f"{float(row['g_speedup_ratio']):.4f}x |"
-            )
+    lines.extend(["", "## Stage Timings", ""])
+    lines.append(
+        "_Raw profiler stages are reported without mapping g's inclusive native execution timer onto "
+        "REGENIE's finer-grained decode or compute stages._"
+    )
+    if stage_totals:
+        for stage_name, seconds in sorted(stage_totals.items()):
+            lines.append(f"- `{stage_name}`: `{seconds:.6f}` seconds")
     else:
-        lines.append("- No paired stage timing JSON files were available.")
-    lines.extend(["", "## Algorithmic Findings", ""])
-    if algorithmic_findings:
-        for finding in algorithmic_findings:
-            lines.append(f"- {finding}")
-    else:
-        lines.append("- Re-run with successful REGENIE and g profile JSON files to generate source-level findings.")
+        lines.append("- No stage timing JSON files were available.")
     append_binary_correction_diagnostics_markdown(lines, binary_correction_diagnostics or {})
     lines.extend(["", "## Logging And Telemetry Perturbation", ""])
     logging_rows = build_logging_perturbation_rows(logging_perturbation_results or [])
@@ -3768,17 +3561,8 @@ def run_deep_profiles(
     emit_stage_timings = should_emit_stage_timings(arguments)
     results: dict[str, typing.Any] = {
         "profiler_tools": serialize_profiler_tool_status(profiler_tool_status),
-        "rust_criterion": [],
         "sampling_profiles": [],
     }
-    if arguments.enable_rust_criterion and profiler_tool_status["rust_criterion"].available:
-        for benchmark_name in parse_string_list(arguments.rust_benchmarks):
-            logger.info("Running Rust Criterion benchmark %s", benchmark_name)
-            results["rust_criterion"].append(
-                command_output(["cargo", "bench", "-p", "g-genotype", "--bench", benchmark_name])
-            )
-    elif arguments.enable_rust_criterion:
-        results["rust_criterion"].append(dataclasses.asdict(profiler_tool_status["rust_criterion"]))
     for winner_key, winner in sorted(winners.items()):
         if not winner.trials:
             continue
@@ -3797,10 +3581,10 @@ def run_deep_profiles(
                 output_directory=profile_directory,
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
                 trace_directory=trace_directory,
                 memory_profile_path=memory_profile_path,
+                diagnostic_options={"telemetry": "profile"},
             )
             results["sampling_profiles"].append(
                 dataclasses.asdict(
@@ -3821,7 +3605,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             cprofile_result = attach_deep_profiler_metadata(
@@ -3867,7 +3650,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             command_arguments = [
@@ -3916,7 +3698,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
@@ -3955,7 +3736,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
@@ -3995,7 +3775,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
@@ -4042,7 +3821,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             append_logged_profile_result(
@@ -4086,7 +3864,6 @@ def run_deep_profiles(
                 baseline_paths=baseline_paths,
                 candidate=candidate,
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
             )
             command_arguments = [
@@ -4156,7 +3933,6 @@ def run_logging_perturbation_profiles(
                 output_directory=perturbation_directory,
                 log_directory=output_directory / "logs",
                 cache_directory=cache_directory,
-                variant_limit=arguments.variant_limit,
                 emit_stage_timings=emit_stage_timings,
                 diagnostic_options=diagnostic_options,
             )
@@ -4201,12 +3977,6 @@ def build_profile_plan(
     campaign_budget: CampaignBudget,
 ) -> ProfilePlan:
     """Build a dry-run plan for the full profile campaign."""
-    rust_benchmark_commands: list[list[str]] = []
-    if arguments.enable_rust_criterion and not arguments.skip_deep_profiles:
-        rust_benchmark_commands = [
-            ["cargo", "bench", "--bench", benchmark_name]
-            for benchmark_name in parse_string_list(arguments.rust_benchmarks)
-        ]
     profiler_modes = {
         "regenie_baseline": arguments.include_regenie_baseline,
         "jax_trace": arguments.enable_jax_trace,
@@ -4218,7 +3988,6 @@ def build_profile_plan(
         "linux_perf": arguments.enable_linux_perf,
         "nsight_systems": arguments.enable_nsight_systems,
         "nsight_compute": arguments.enable_nsight_compute,
-        "rust_criterion": arguments.enable_rust_criterion and not arguments.skip_deep_profiles,
         "logging_perturbation": arguments.enable_logging_perturbation,
     }
     profiler_tools = serialize_profiler_tool_status(build_profiler_tool_status(arguments))
@@ -4281,7 +4050,6 @@ def build_profile_plan(
         logging_perturbation_cases=logging_perturbation_cases,
         regenie_baseline_scope=regenie_baseline_scope,
         regenie_baseline_commands=regenie_baseline_commands,
-        rust_benchmark_commands=rust_benchmark_commands,
         notes=notes,
     )
 
@@ -4355,12 +4123,6 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
             lines.append(f"- `{command_manifest['name']}`: `{shlex.join(command_arguments)}`")
     else:
         lines.append("- No REGENIE baseline commands are planned.")
-    lines.extend(["", "## Rust Benchmark Commands", ""])
-    if plan.rust_benchmark_commands:
-        for command_arguments in plan.rust_benchmark_commands:
-            lines.append(f"- `{shlex.join(command_arguments)}`")
-    else:
-        lines.append("- Rust Criterion profiling is disabled.")
     lines.extend(["", "## Notes", ""])
     for note in plan.notes:
         lines.append(f"- {note}")
@@ -4370,12 +4132,6 @@ def write_profile_plan(plan: ProfilePlan, output_directory: Path) -> None:
 def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | None = None) -> None:
     """Run the landau deep profiling campaign."""
     arguments = apply_smoke_overrides(arguments)
-    if arguments.variant_limit is not None:
-        message = (
-            "tool.variant_limit is not supported by the current application. "
-            "Use a physically bounded input dataset or set it to null."
-        )
-        raise ValueError(message)
     output_directory = build_output_directory(arguments)
     output_directory.mkdir(parents=True, exist_ok=True)
     log_directory = output_directory / "logs"
@@ -4528,8 +4284,6 @@ def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | N
     comparison_notes = build_runtime_comparison_notes(headline_results)
     jax_cache_diagnostics = collect_jax_cache_diagnostics(headline_results)
     stage_totals = collect_stage_totals(headline_results)
-    stage_comparison_rows = build_stage_comparison_rows(headline_results)
-    algorithmic_findings = build_algorithmic_findings(stage_comparison_rows)
     binary_correction_diagnostics = build_binary_correction_diagnostics(
         headline_results=headline_results,
         finalist_results_by_key=tuning_results.finalist_results_by_key,
@@ -4548,8 +4302,6 @@ def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | N
         "runtime_comparison_notes": dataclasses.asdict(comparison_notes),
         "jax_cache_diagnostics": jax_cache_diagnostics,
         "stage_totals": stage_totals,
-        "stage_comparisons": stage_comparison_rows,
-        "algorithmic_findings": algorithmic_findings,
         "binary_correction_diagnostics": binary_correction_diagnostics,
         "deep_profiles": deep_profile_results,
         "logging_perturbation_results": logging_perturbation_results,
@@ -4561,8 +4313,6 @@ def run_tool(arguments: ProfileArguments, hydra_config: omegaconf.DictConfig | N
         comparison_notes=comparison_notes,
         regenie_baseline_scope=regenie_baseline_scope,
         stage_totals=stage_totals,
-        stage_comparison_rows=stage_comparison_rows,
-        algorithmic_findings=algorithmic_findings,
         logging_perturbation_results=logging_perturbation_results,
         binary_correction_diagnostics=binary_correction_diagnostics,
     )

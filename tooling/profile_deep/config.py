@@ -64,7 +64,6 @@ def apply_smoke_overrides(
         return arguments
     return dataclasses.replace(
         arguments,
-        variant_limit=None,
         chunk_sizes="2048",
         output_writer_thread_counts="1",
         firth_batch_sizes="32",
@@ -116,7 +115,6 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> profile_deep_mo
         regenie_qt_prediction_list_path=resolve_data_path(data_directory, tool_values["linear_prediction_list"]),
         output_dir=explicit_output_directory,
         output_parent=output_parent,
-        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
         dry_run=bool(tool_values["dry_run"]),
         include_regenie_baseline=bool(tool_values["include_regenie_baseline"]),
         regenie_executable=(
@@ -149,9 +147,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> profile_deep_mo
         linux_perf_timeout_seconds=int(tool_values["linux_perf_timeout_seconds"]),
         nsight_systems_timeout_seconds=int(tool_values["nsight_systems_timeout_seconds"]),
         nsight_compute_timeout_seconds=int(tool_values["nsight_compute_timeout_seconds"]),
-        enable_rust_criterion=bool(tool_values["enable_rust_criterion"]),
         enable_logging_perturbation=bool(tool_values["enable_logging_perturbation"]),
-        rust_benchmarks=tooling_hydra_arguments.comma_join(tool_values["rust_benchmarks"]),
         chunk_sizes=tooling_hydra_arguments.comma_join(tool_values["chunk_sizes"]),
         output_writer_thread_counts=tooling_hydra_arguments.comma_join(tool_values["output_writer_thread_counts"]),
         firth_batch_sizes=tooling_hydra_arguments.comma_join(tool_values["firth_batch_sizes"]),

@@ -30,9 +30,6 @@ dev = [
     "ruff>=0.15.16",
     "scalene>=2.3.0",
     "ty>=0.0.61",
-    "radon>=6.0.1",
-    "pyan3>=2.6.2",
-    "vulture>=2.16",
     "skylos>=4.28.0",
 ]
 cuda-format = [

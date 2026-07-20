@@ -22,16 +22,6 @@ tool:
     - python
     - -c
     - "import g; import g._core; print('ok')"
-  run_bgen_reader_smoke: false
-  bgen_reader_command:
-    - uv
-    - run
-    - --no-sync
-    - python
-    - -m
-    - tooling.cli.benchmark_bgen_reader
-    - tool.variant_limit=1000
-    - tool.repeat_count=1
   run_gpu_smoke: false
   gpu_smoke_command: []
 

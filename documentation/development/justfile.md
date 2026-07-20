@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 Justfile command surface | Development maintainers |
+| Pre-release draft | current Justfile command surface | Development maintainers |
 
 The repository `Justfile` is a thin, stable entrypoint layer. It names common
 workflows and delegates workflow truth to saved Hydra configs under
@@ -104,33 +104,29 @@ checkout's gitignored `data/` directory from a temporary worktree.
 
 ```bash
 just matrix-chr10-dry
-just matrix-chr10-smoke
 just slurm-gpu-matrix-chr10
 just matrix-chr22-dry
-just matrix-chr22-smoke
 just slurm-gpu-matrix-chr22
 ```
 
 The `matrix-*` workflows replace direct hand-written `g regenie` recipes. Use
-smoke configs for bounded validation and full matrix configs for parity or
-performance runs.
+dry configs for command/config validation and full matrix configs for parity or
+performance runs. Bounded execution requires a prepared bounded BGEN fixture;
+the production CLI has no variant-limit option.
 
 ## Benchmarks
 
 ```bash
-just bench-bgen-reader
-just bench-callback-overhead
-just bench-callback-overhead-gpu
 just bench-linear-startup-gpu
-just bench-linear-startup-gpu-parquet
 just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
-just bench-output-stages-gpu
+just bench-firth-compute-gpu
 just rust-bench
 just bench-torchgwas-chr22
 just bench-tensorqtl-chr22
 just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
+just slurm-gpu-bench-firth-compute
 just slurm-gpu-bench-torchgwas-chr22
 just slurm-gpu-bench-tensorqtl-chr22
 ```
@@ -146,15 +142,11 @@ isolate native Cargo artifacts under `target/slurm/<node>/`; an explicit
 `CARGO_TARGET_DIR` still takes precedence.
 `RUSTC_WRAPPER` remains an environment-specific choice.
 
-Historical external baseline comparisons remain available under `legacy-*`:
+Historical data-baseline generation remains available under `legacy-*`:
 
 ```bash
 just legacy-baselines
 just legacy-baselines-full
-just legacy-regenie-comparison-cpu
-just legacy-regenie-comparison-gpu
-just legacy-profile-regenie-comparison-cpu
-just legacy-profile-regenie-comparison-gpu
 ```
 
 Use the TorchGWAS chr22 competitor benchmark through SLURM for real GPU
@@ -162,27 +154,26 @@ evidence:
 
 ```bash
 just slurm-gpu-bench-torchgwas-chr22
-just slurm-gpu-bench-torchgwas-chr22 tool.variant_limit=1000
 ```
 
-The benchmark records cold and warm-style repeated runs for single-trait
+The benchmark records first-process and repeat-process runs for single-trait
 quantitative chr22. It is a workflow/runtime comparison, not strict statistical
 parity with REGENIE Step 2 LOCO output. `g` reads the chr22 BGEN plus sample
 file; full TorchGWAS runs read the existing PLINK `.bed/.bim/.fam` triplet
 because the pinned TorchGWAS BGEN path stalls in PLINK2 raw-table parsing at
 chr22 scale. TorchGWAS PLINK runs do not emit a persistent genotype cache, so
 their warm cases reflect repeated process/filesystem-cache behavior.
-Variant-limited smoke runs still use a generated NPY subset.
+Bounded comparisons require a prepared genotype fixture shared by both tools;
+the production `g` CLI does not expose a variant-limit option.
 
 Use the tensorQTL chr22 competitor benchmark through SLURM for real GPU
 evidence:
 
 ```bash
 just slurm-gpu-bench-tensorqtl-chr22
-just slurm-gpu-bench-tensorqtl-chr22 tool.variant_limit=1000
 ```
 
-The benchmark records cold and warm-style repeated runs for single-trait
+The benchmark records first-process and repeat-process runs for single-trait
 quantitative chr22, but the comparison boundary is QTL-shaped: `g` runs REGENIE
 Step 2 with LOCO predictions on BGEN input, while tensorQTL runs dense `trans`
 nominal linear association on generated phenotype/covariate matrices and local
@@ -196,15 +187,13 @@ statistical parity.
 
 ```bash
 just perf-smoke
-just perf-cpu
 just perf-gpu
 just perf-compare results/perf/baseline.json results/perf/new.json
 just perf-jax-runtime
-just perf-tune-regenie2-gpu
 ```
 
-`perf-smoke` and `perf-compare` are login-node-safe. `perf-cpu` and `perf-gpu`
-submit through SLURM and use saved benchmark configs for output locations.
+`perf-smoke` and `perf-compare` are login-node-safe. `perf-gpu` submits through
+SLURM and uses a saved benchmark config for its output location.
 
 ## Profiling
 
@@ -216,16 +205,18 @@ just profile-app-full-dry
 just profile-app-full-smoke
 just profile-app-full
 just profile-chr10-binary-gpu-dry
-just profile-chr10-binary-gpu-smoke
 just profile-chr10-binary-gpu-full
 just profile-chr22-binary-gpu-dry
 just profile-chr22-binary-gpu-full
 ```
 
-The full profile recipes submit GPU work through SLURM. Native Criterion
-profiles use the configured CPU compute node. The focused chr10 and chr22
-binary GPU recipes keep their profiler selection and campaign budgets in saved
-Hydra configs rather than in the Justfile.
+The full profile recipes submit GPU work through SLURM. The bare smoke recipes
+are inner workflows and must run inside a GPU allocation; from the login node,
+use `just slurm-gpu-just profile-deep-smoke` or
+`just slurm-gpu-just profile-app-full-smoke`. Native Criterion profiles use the
+configured CPU compute node. The focused chr10 and chr22 binary GPU recipes
+keep their profiler selection and campaign budgets in saved Hydra configs
+rather than in the Justfile.
 
 ## SLURM Substrates
 

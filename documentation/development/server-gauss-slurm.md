@@ -95,7 +95,7 @@ required local fixtures are present. Do not run full `just check`, full
 node.
 
 `perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
-`perf-cpu`, `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
+`perf-gpu`, full benchmark sweeps, or GPU commands directly on the
 login node.
 
 Prepare benchmark data only after `plink2` is available:
@@ -218,12 +218,8 @@ Run existing repo recipes on the GPU node while keeping `just` as the top-level 
 
 ```bash
 just slurm-gpu-just doctor-jax
-just slurm-gpu-just matrix-chr22-smoke
-just matrix-chr22-smoke
+just slurm-gpu-just bench-binary-hot-gpu-smoke
 just slurm-gpu-just matrix-chr22
-just matrix-chr22
-just slurm-gpu-just legacy-regenie-comparison-gpu
-just slurm-gpu-just legacy-profile-regenie-comparison-gpu
 ```
 
 `slurm-gpu-run` and `slurm-gpu-shell` start in the repository root and call
@@ -234,15 +230,15 @@ GPU allocation's CPU count instead of the repo's otherwise-default 30 jobs.
 Run standard performance harness entrypoints:
 
 ```bash
-just perf-cpu
-just perf-gpu tool.variant_limit=1000
+just perf-gpu
 ```
 
-`perf-cpu` submits the BGEN reader benchmark through a CPU SLURM allocation and
-writes summaries under `results/perf/cpu/`. Override the CPU host with
-`GWAS_ENGINE_CPU_NODE`; set it to an empty string if the scheduler should choose
-the node. `perf-gpu` wraps the existing binary-hot GPU SLURM recipe and writes
-under `results/perf/gpu/`.
+`perf-gpu` wraps the binary-hot GPU SLURM recipe and writes under
+`results/perf/gpu/`.
+
+The production CLI has no variant-limit option. Use a prepared bounded BGEN
+fixture and matching metadata when a full chromosome is too large for a smoke
+run.
 
 ## Timing Notes
 

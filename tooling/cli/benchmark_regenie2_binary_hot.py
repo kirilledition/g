@@ -4,23 +4,18 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import importlib.metadata
 import json
 import os
-import platform
-import subprocess
 import sys
 import time
 import typing
 from pathlib import Path
 
 import hydra
-import pyarrow as pa
-import pyarrow.parquet as pq
 
-import g._core
 import tooling.configuration as tooling_configuration
+from tooling.benchmark import native_lifecycle
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import paths as tooling_paths
@@ -31,23 +26,6 @@ if typing.TYPE_CHECKING:
 REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 SUMMARY_SCHEMA_VERSION = 2
-CHILD_RUN_SOURCE = """
-import json
-import sys
-import time
-
-import g._core
-
-started_at = time.perf_counter()
-result = g._core.cli.run(["regenie", "--config", sys.argv[1]])
-elapsed_seconds = time.perf_counter() - started_at
-print(json.dumps({
-    "elapsed_seconds": elapsed_seconds,
-    "exit_code": result.exit_code,
-    "stdout_chunks": result.stdout_chunks,
-    "stderr_chunks": result.stderr_chunks,
-}))
-"""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,7 +41,7 @@ class BenchmarkArguments:
     phenotype_column: str
     covariate_columns: tuple[str, ...]
     output_directory: Path
-    device: str
+    device: tooling_g_regenie.RegenieDevice
     chunk_size: int
     firth_batch_size: int
     firth_candidate_capacity: int
@@ -79,89 +57,19 @@ class BenchmarkArguments:
 
 
 @dataclasses.dataclass(frozen=True)
-class CacheSnapshot:
-    """Content snapshot of a persistent JAX cache tree."""
-
-    file_count: int
-    total_size_bytes: int
-    sha256: str
-
-
-@dataclasses.dataclass(frozen=True)
-class NativeRunResult:
-    """Result returned by one native CLI lifecycle."""
-
-    elapsed_seconds: float
-    process_elapsed_seconds: float | None
-    exit_code: int
-    stdout_chunks: tuple[str, ...]
-    stderr_chunks: tuple[str, ...]
-
-
-@dataclasses.dataclass(frozen=True)
-class OutputEvidence:
-    """Correctness evidence collected from one production output."""
-
-    output_root: str
-    run_directory: str
-    parquet_file_count: int
-    parquet_size_bytes: int
-    parquet_sha256: str
-    row_count: int
-    schema: str
-    schema_metadata: dict[str, str]
-    parquet_metadata: tuple[dict[str, str], ...]
-    manifest_sha256: str
-    manifest: dict[str, typing.Any]
-
-
-@dataclasses.dataclass(frozen=True)
 class TrialResult:
     """Measurement and evidence for one complete lifecycle."""
 
     name: str
     role: str
     headline: bool
-    telemetry: str
-    native: NativeRunResult
-    output: OutputEvidence
-    cache_before: CacheSnapshot
-    cache_after: CacheSnapshot
+    telemetry: tooling_g_regenie.RegenieTelemetry
+    native: native_lifecycle.NativeRunResult
+    output: native_lifecycle.CompletedOutputEvidence
+    diagnostics: native_lifecycle.DiagnosticEvidence
+    cache_before: native_lifecycle.CacheSnapshot
+    cache_after: native_lifecycle.CacheSnapshot
     cache_state: str
-
-
-def sha256_file(path: Path) -> str:
-    """Return the SHA-256 digest of one file."""
-    with path.open("rb") as file_handle:
-        return hashlib.file_digest(file_handle, "sha256").hexdigest()
-
-
-def snapshot_tree(path: Path) -> CacheSnapshot:
-    """Hash regular files below a directory in stable relative-path order."""
-    digest = hashlib.sha256()
-    file_count = 0
-    total_size_bytes = 0
-    if path.exists():
-        for file_path in sorted(candidate for candidate in path.rglob("*") if candidate.is_file()):
-            relative_path = file_path.relative_to(path).as_posix()
-            file_size = file_path.stat().st_size
-            digest.update(relative_path.encode())
-            digest.update(b"\0")
-            digest.update(bytes.fromhex(sha256_file(file_path)))
-            file_count += 1
-            total_size_bytes += file_size
-    return CacheSnapshot(file_count=file_count, total_size_bytes=total_size_bytes, sha256=digest.hexdigest())
-
-
-def cache_state(before: CacheSnapshot, after: CacheSnapshot) -> str:
-    """Describe cache reuse without claiming an unobservable runtime hit."""
-    if before == after and before.file_count > 0:
-        return "populated_tree_unchanged"
-    if before.file_count == 0 and after.file_count > 0:
-        return "cache_populated"
-    if before != after:
-        return "cache_tree_changed"
-    return "empty_tree_unchanged"
 
 
 def resolve_data_path(data_directory: Path, value: typing.Any) -> Path:
@@ -175,164 +83,76 @@ def default_output_directory() -> Path:
     return DEFAULT_OUTPUT_PARENT / f"regenie2_binary_hot_{timestamp}_{os.getpid()}"
 
 
-def toml_string(value: str | Path) -> str:
-    """Encode a string as a TOML-compatible quoted value."""
-    return json.dumps(str(value))
+def build_run_spec(
+    arguments: BenchmarkArguments,
+    *,
+    output_root: Path,
+    telemetry: tooling_g_regenie.RegenieTelemetry,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build one current production binary run specification."""
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=tooling_g_regenie.RegenieTraitKind.BINARY,
+        command_prefix=("g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=arguments.bgen_path,
+            sample_path=arguments.sample_path,
+            phenotype_path=arguments.phenotype_path,
+            phenotype_columns=(arguments.phenotype_column,),
+            covariate_path=arguments.covariate_path,
+            covariate_columns=arguments.covariate_columns,
+            prediction_list_path=arguments.prediction_list_path,
+            output_prefix=output_root,
+        ),
+        compute=tooling_g_regenie.RegenieComputeOptions(
+            device=arguments.device,
+            bsize=arguments.chunk_size,
+            firth_batch_size=arguments.firth_batch_size,
+            firth_candidate_capacity=arguments.firth_candidate_capacity,
+            jax_cache_dir=arguments.jax_cache_directory,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            output_run_directory=output_root,
+            writer_threads=arguments.writer_thread_count,
+            resume=False,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(telemetry=telemetry),
+        binary=tooling_g_regenie.RegenieBinaryOptions(
+            fallback_method=tooling_g_regenie.RegenieBinaryFallback.FIRTH_APPROXIMATE,
+            p_threshold=arguments.p_threshold,
+            firth_se=False,
+        ),
+    )
 
 
 def write_native_config(
     arguments: BenchmarkArguments,
     *,
     output_root: Path,
-    telemetry: str,
+    telemetry: tooling_g_regenie.RegenieTelemetry,
 ) -> Path:
     """Write one native CLI config with a distinct production output root."""
-    phenotype_columns = ", ".join(toml_string(value) for value in (arguments.phenotype_column,))
-    covariate_columns = ", ".join(toml_string(value) for value in arguments.covariate_columns)
-    lines = [
-        "[input]",
-        f"bgen = {toml_string(arguments.bgen_path)}",
-        f"sample = {toml_string(arguments.sample_path)}",
-        f"pheno_file = {toml_string(arguments.phenotype_path)}",
-        f"pheno_columns = [{phenotype_columns}]",
-        f"covar_file = {toml_string(arguments.covariate_path)}",
-        f"covar_columns = [{covariate_columns}]",
-        f"pred = {toml_string(arguments.prediction_list_path)}",
-        "",
-        "[trait]",
-        'trait_type = "binary"',
-        f"bsize = {arguments.chunk_size}",
-        "",
-        "[binary]",
-        'fallback_method = "firth_approximate"',
-        f"p_threshold = {arguments.p_threshold}",
-        "firth_se = false",
-        "",
-        "[compute]",
-        f"device = {toml_string(arguments.device)}",
-        f"firth_batch_size = {arguments.firth_batch_size}",
-        f"firth_candidate_capacity = {arguments.firth_candidate_capacity}",
-        f"jax_cache_dir = {toml_string(arguments.jax_cache_directory)}",
-        "",
-        "[output]",
-        f"out = {toml_string(output_root)}",
-        f"output_run_directory = {toml_string(output_root)}",
-        f"writer_threads = {arguments.writer_thread_count}",
-        "resume = false",
-        "",
-        "[diagnostics]",
-        f"telemetry = {toml_string(telemetry)}",
-        "",
-    ]
     config_path = Path(f"{output_root}.toml")
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("\n".join(lines), encoding="utf-8")
-    return config_path
-
-
-def native_result_from_binding(result: typing.Any, elapsed_seconds: float) -> NativeRunResult:
-    """Convert the extension result to an immutable benchmark record."""
-    return NativeRunResult(
-        elapsed_seconds=elapsed_seconds,
-        process_elapsed_seconds=None,
-        exit_code=int(result.exit_code),
-        stdout_chunks=tuple(str(value) for value in result.stdout_chunks),
-        stderr_chunks=tuple(str(value) for value in result.stderr_chunks),
+    return tooling_g_regenie.write_regenie_toml(
+        build_run_spec(arguments, output_root=output_root, telemetry=telemetry),
+        config_path,
     )
 
 
-def run_same_process(config_path: Path) -> NativeRunResult:
-    """Run one lifecycle through the supported in-process native boundary."""
-    started_at = time.perf_counter()
-    result = g._core.cli.run(["regenie", "--config", str(config_path)])
-    elapsed_seconds = time.perf_counter() - started_at
-    return native_result_from_binding(result, elapsed_seconds)
-
-
-def run_fresh_process(arguments: BenchmarkArguments, config_path: Path) -> NativeRunResult:
-    """Run one lifecycle inside a newly started Python process."""
-    started_at = time.perf_counter()
-    completed = subprocess.run(
-        [arguments.python_executable, "-c", CHILD_RUN_SOURCE, str(config_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    process_elapsed_seconds = time.perf_counter() - started_at
-    payload = json.loads(completed.stdout)
-    return NativeRunResult(
-        elapsed_seconds=float(payload["elapsed_seconds"]),
-        process_elapsed_seconds=process_elapsed_seconds,
-        exit_code=int(payload["exit_code"]),
-        stdout_chunks=tuple(str(value) for value in payload["stdout_chunks"]),
-        stderr_chunks=tuple(str(value) for value in payload["stderr_chunks"]),
-    )
-
-
-def decode_metadata(metadata: dict[bytes, bytes] | None) -> dict[str, str]:
-    """Decode Arrow or Parquet key-value metadata for JSON output."""
-    if metadata is None:
-        return {}
-    return {
-        key.decode("utf-8", errors="replace"): value.decode("utf-8", errors="replace")
-        for key, value in sorted(metadata.items())
-    }
-
-
-def hash_paths(paths: list[Path], root: Path) -> str:
-    """Hash relative paths and file contents in a stable order."""
-    digest = hashlib.sha256()
-    for path in paths:
-        digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(b"\0")
-        digest.update(bytes.fromhex(sha256_file(path)))
-    return digest.hexdigest()
-
-
-def collect_output_evidence(output_root: Path, expected_variant_count: int | None) -> OutputEvidence:
+def collect_output_evidence(
+    output_root: Path, expected_variant_count: int | None
+) -> native_lifecycle.CompletedOutputEvidence:
     """Validate direct Parquet parts and collect deterministic evidence."""
-    run_directories = sorted(path for path in output_root.rglob("*.run") if path.is_dir())
-    if len(run_directories) != 1:
-        message = f"Expected one phenotype run below {output_root}, found {len(run_directories)}."
-        raise RuntimeError(message)
-    run_directory = run_directories[0]
-    parquet_paths = sorted((run_directory / "parts").glob("*.parquet"))
-    if not parquet_paths:
-        message = f"No direct Parquet parts found below {run_directory}."
-        raise RuntimeError(message)
-    row_count = 0
-    schema: pa.Schema | None = None
-    parquet_metadata: list[dict[str, str]] = []
-    for parquet_path in parquet_paths:
-        parquet_file = pq.ParquetFile(parquet_path)
-        row_count += parquet_file.metadata.num_rows
-        candidate_schema = parquet_file.schema_arrow
-        if schema is None:
-            schema = candidate_schema
-        elif not schema.equals(candidate_schema, check_metadata=True):
-            message = f"Parquet schema changed within {run_directory}."
-            raise RuntimeError(message)
-        parquet_metadata.append(decode_metadata(parquet_file.metadata.metadata))
-    if expected_variant_count is not None and row_count != expected_variant_count:
-        message = f"Expected {expected_variant_count} output rows, observed {row_count}."
-        raise RuntimeError(message)
-    if schema is None:
-        raise RuntimeError("Output schema was not observed.")
-    manifest_path = run_directory / "run_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    return OutputEvidence(
-        output_root=str(output_root),
-        run_directory=str(run_directory),
-        parquet_file_count=len(parquet_paths),
-        parquet_size_bytes=sum(path.stat().st_size for path in parquet_paths),
-        parquet_sha256=hash_paths(parquet_paths, run_directory),
-        row_count=row_count,
-        schema=str(schema),
-        schema_metadata=decode_metadata(schema.metadata),
-        parquet_metadata=tuple(parquet_metadata),
-        manifest_sha256=sha256_file(manifest_path),
-        manifest=typing.cast("dict[str, typing.Any]", manifest),
+    run_directory = native_lifecycle.discover_completed_run_directory(
+        expected_run_directory=None,
+        output_root=output_root,
+        glob_pattern="*.regenie2_binary.run",
+        run_label="binary lifecycle",
     )
+    output_evidence = native_lifecycle.measure_completed_output_run(run_directory)
+    if expected_variant_count is not None and output_evidence.row_count != expected_variant_count:
+        message = f"Expected {expected_variant_count} output rows, observed {output_evidence.row_count}."
+        raise RuntimeError(message)
+    return output_evidence
 
 
 def run_trial(
@@ -341,86 +161,39 @@ def run_trial(
     name: str,
     role: str,
     headline: bool,
-    telemetry: str,
+    telemetry: tooling_g_regenie.RegenieTelemetry,
     fresh_process: bool,
 ) -> TrialResult:
     """Run and validate one lifecycle."""
     output_root = arguments.output_directory / "runs" / name
     config_path = write_native_config(arguments, output_root=output_root, telemetry=telemetry)
-    before = snapshot_tree(arguments.jax_cache_directory)
-    native = run_fresh_process(arguments, config_path) if fresh_process else run_same_process(config_path)
+    before = native_lifecycle.snapshot_tree(arguments.jax_cache_directory)
+    native = (
+        native_lifecycle.run_fresh_process(arguments.python_executable, config_path)
+        if fresh_process
+        else native_lifecycle.run_same_process(config_path)
+    )
     if native.exit_code != 0:
         message = "".join((*native.stderr_chunks, *native.stdout_chunks))
         raise RuntimeError(f"Native CLI failed for {name}: {message}")
-    after = snapshot_tree(arguments.jax_cache_directory)
+    after = native_lifecycle.snapshot_tree(arguments.jax_cache_directory)
+    output = collect_output_evidence(output_root, arguments.expected_variant_count)
     return TrialResult(
         name=name,
         role=role,
         headline=headline,
         telemetry=telemetry,
         native=native,
-        output=collect_output_evidence(output_root, arguments.expected_variant_count),
+        output=output,
+        diagnostics=native_lifecycle.collect_diagnostic_evidence(
+            telemetry=telemetry,
+            telemetry_root=output_root,
+            run_directories=(Path(output.run_directory),),
+        ),
         cache_before=before,
         cache_after=after,
-        cache_state=cache_state(before, after),
+        cache_state=native_lifecycle.cache_state(before, after),
     )
-
-
-def command_output(command: list[str]) -> str | None:
-    """Return bounded diagnostic command output when the command is available."""
-    try:
-        completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=15)
-    except OSError, subprocess.TimeoutExpired:
-        return None
-    output = completed.stdout.strip() or completed.stderr.strip()
-    return output[:20_000] if output else None
-
-
-def distribution_version(name: str) -> str | None:
-    """Return an installed distribution version without importing it."""
-    try:
-        return importlib.metadata.version(name)
-    except importlib.metadata.PackageNotFoundError:
-        return None
-
-
-def collect_environment(arguments: BenchmarkArguments) -> dict[str, typing.Any]:
-    """Collect the reproducibility envelope outside measured lifecycles."""
-    native_library_path = Path(g._core.__file__)
-    input_paths = {
-        "bgen": arguments.bgen_path,
-        "sample": arguments.sample_path,
-        "phenotype": arguments.phenotype_path,
-        "covariate": arguments.covariate_path,
-        "prediction_list": arguments.prediction_list_path,
-    }
-    return {
-        "baseline_commit": command_output(["git", "rev-parse", "HEAD"]),
-        "dependency_lock_sha256": sha256_file(REPOSITORY_ROOT / "uv.lock"),
-        "cargo_lock_sha256": sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
-        "native_library_path": str(native_library_path),
-        "native_library_sha256": sha256_file(native_library_path),
-        "rustflags": os.environ.get("RUSTFLAGS"),
-        "python": sys.version,
-        "platform": platform.platform(),
-        "cpu": command_output(["lscpu"]),
-        "numa": command_output(["numactl", "--show"]),
-        "affinity": command_output(["taskset", "-pc", str(os.getpid())]),
-        "gpu": command_output(
-            [
-                "nvidia-smi",
-                "--query-gpu=name,uuid,driver_version,pstate,clocks.current.graphics,clocks.current.memory",
-                "--format=csv,noheader",
-            ]
-        ),
-        "cuda": command_output(["nvcc", "--version"]),
-        "jax_version": distribution_version("jax"),
-        "jaxlib_version": distribution_version("jaxlib"),
-        "nvidia_cuda_runtime_version": distribution_version("nvidia-cuda-runtime-cu12"),
-        "nvcomp_linkage": command_output(["ldd", str(native_library_path)]),
-        "input_sha256": {name: sha256_file(path) for name, path in input_paths.items()},
-        "configuration": dataclasses.asdict(arguments),
-    }
 
 
 def verify_hot_contract(trials: list[TrialResult]) -> None:
@@ -430,8 +203,8 @@ def verify_hot_contract(trials: list[TrialResult]) -> None:
         raise RuntimeError("At least one headline hot trial is required.")
     reference = headline_trials[0].output
     for trial in headline_trials:
-        if trial.cache_before != trial.cache_after:
-            message = f"JAX cache changed during headline trial {trial.name}."
+        if trial.cache_before != trial.cache_after or trial.cache_before.file_count == 0:
+            message = f"JAX cache was not populated and unchanged during headline trial {trial.name}."
             raise RuntimeError(message)
         output = trial.output
         if (
@@ -445,57 +218,82 @@ def verify_hot_contract(trials: list[TrialResult]) -> None:
             raise RuntimeError(message)
 
 
+def build_trial_plans(arguments: BenchmarkArguments) -> list[native_lifecycle.TrialPlan]:
+    """Build lifecycle plans without mixing incompatible native telemetry policy."""
+    plans = [
+        native_lifecycle.TrialPlan(
+            name="discarded_warm",
+            role="discarded_compile_warmup",
+            headline=False,
+            telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+            fresh_process=False,
+        )
+    ]
+    plans.extend(
+        native_lifecycle.TrialPlan(
+            name=f"hot_{run_index + 1:02d}",
+            role="same_process_hot_production",
+            headline=True,
+            telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+            fresh_process=False,
+        )
+        for run_index in range(arguments.hot_run_count)
+    )
+    if arguments.include_fresh_process:
+        plans.append(
+            native_lifecycle.TrialPlan(
+                name="fresh_process",
+                role="fresh_process_diagnostic",
+                headline=False,
+                telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+                fresh_process=True,
+            )
+        )
+    plans.extend(
+        native_lifecycle.TrialPlan(
+            name=f"stage_timing_diagnostic_{run_index + 1:02d}",
+            role="instrumented_diagnostic",
+            headline=False,
+            telemetry=tooling_g_regenie.RegenieTelemetry.PROFILE,
+            fresh_process=True,
+        )
+        for run_index in range(arguments.diagnostic_run_count)
+    )
+    return plans
+
+
 def run_benchmark(arguments: BenchmarkArguments) -> dict[str, typing.Any]:
     """Run fresh, warm, hot, and isolated diagnostic lifecycles."""
     if arguments.hot_run_count <= 0:
         raise ValueError("hot_run_count must be positive.")
     arguments.output_directory.mkdir(parents=True, exist_ok=False)
     arguments.jax_cache_directory.mkdir(parents=True, exist_ok=True)
-    environment = collect_environment(arguments)
-    trials: list[TrialResult] = []
-    trials.append(
+    initial_cache = native_lifecycle.snapshot_tree(arguments.jax_cache_directory)
+    if initial_cache.file_count != 0:
+        raise RuntimeError(f"Lifecycle benchmark requires an empty campaign cache: {arguments.jax_cache_directory}")
+    environment = native_lifecycle.collect_environment(
+        repository_root=REPOSITORY_ROOT,
+        input_paths={
+            "bgen": arguments.bgen_path,
+            "sample": arguments.sample_path,
+            "phenotype": arguments.phenotype_path,
+            "covariate": arguments.covariate_path,
+            "prediction_list": arguments.prediction_list_path,
+        },
+        configuration=dataclasses.asdict(arguments),
+        jax_cache_directory=arguments.jax_cache_directory,
+    )
+    trials = [
         run_trial(
             arguments,
-            name="discarded_warm",
-            role="discarded_compile_warmup",
-            headline=False,
-            telemetry="off",
-            fresh_process=False,
+            name=plan.name,
+            role=plan.role,
+            headline=plan.headline,
+            telemetry=plan.telemetry,
+            fresh_process=plan.fresh_process,
         )
-    )
-    for run_index in range(arguments.hot_run_count):
-        trials.append(
-            run_trial(
-                arguments,
-                name=f"hot_{run_index + 1:02d}",
-                role="same_process_hot_production",
-                headline=True,
-                telemetry="off",
-                fresh_process=False,
-            )
-        )
-    if arguments.include_fresh_process:
-        trials.append(
-            run_trial(
-                arguments,
-                name="fresh_process",
-                role="fresh_process_diagnostic",
-                headline=False,
-                telemetry="off",
-                fresh_process=True,
-            )
-        )
-    for run_index in range(arguments.diagnostic_run_count):
-        trials.append(
-            run_trial(
-                arguments,
-                name=f"stage_timing_diagnostic_{run_index + 1:02d}",
-                role="instrumented_diagnostic",
-                headline=False,
-                telemetry="profile",
-                fresh_process=False,
-            )
-        )
+        for plan in build_trial_plans(arguments)
+    ]
     verify_hot_contract(trials)
     headline_seconds = [trial.native.elapsed_seconds for trial in trials if trial.headline]
     return {
@@ -518,7 +316,13 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
     output_directory = tooling_hydra_arguments.path_or_none(values.get("output_dir"))
     if output_directory is not None:
         output_directory = tooling_paths.resolve_repo_relative_path(output_directory, REPOSITORY_ROOT)
-    cache_directory = tooling_paths.resolve_repo_relative_path(Path(str(values["jax_cache_dir"])), REPOSITORY_ROOT)
+    resolved_output_directory = output_directory or default_output_directory()
+    configured_cache = tooling_hydra_arguments.path_or_none(values.get("jax_cache_dir"))
+    cache_directory = (
+        resolved_output_directory / "jax-cache"
+        if configured_cache is None
+        else tooling_paths.resolve_repo_relative_path(configured_cache, REPOSITORY_ROOT)
+    )
     python_executable = values.get("python_executable")
     configured_summary_path = tooling_hydra_arguments.path_or_none(values.get("summary_path"))
     return BenchmarkArguments(
@@ -530,8 +334,8 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         prediction_list_path=resolve_data_path(data_directory, values["prediction_list"]),
         phenotype_column=str(values["phenotype_column"]),
         covariate_columns=tuple(str(value) for value in values["covariate_columns"]),
-        output_directory=output_directory or default_output_directory(),
-        device=str(values["device"]),
+        output_directory=resolved_output_directory,
+        device=tooling_g_regenie.RegenieDevice(str(values["device"])),
         chunk_size=int(values["chunk_size"]),
         firth_batch_size=int(values["firth_batch_size"]),
         firth_candidate_capacity=int(values["firth_candidate_capacity"]),

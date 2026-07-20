@@ -28,9 +28,6 @@ if typing.TYPE_CHECKING:
 class DebugToolName(enum.StrEnum):
     """Available grouped debug tools."""
 
-    BINARY_FIRTH = "binary_firth"
-    BINARY_REGENIE_PARITY = "binary_regenie_parity"
-    LINEAR_REGENIE_PARITY = "linear_regenie_parity"
     CHECK_CUDA_NATIVE = "check_cuda_native"
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
@@ -46,48 +43,6 @@ def build_no_arguments(config: omegaconf.DictConfig) -> None:
     """Build an empty argument payload for fixed guardrail tools."""
     del config
     return
-
-
-def build_binary_firth_arguments(config: omegaconf.DictConfig) -> typing.Any:
-    """Build binary Firth arguments without importing native-facing modules at startup."""
-    from tooling.debug import binary_firth
-
-    return binary_firth.build_arguments_from_config(config)
-
-
-def run_binary_firth(arguments: typing.Any) -> None:
-    """Run the binary Firth debug tool."""
-    from tooling.debug import binary_firth
-
-    binary_firth.run_tool(arguments)
-
-
-def build_binary_regenie_parity_arguments(config: omegaconf.DictConfig) -> typing.Any:
-    """Build binary parity arguments without importing native-facing modules at startup."""
-    from tooling.debug import binary_regenie_parity
-
-    return binary_regenie_parity.build_arguments_from_config(config)
-
-
-def run_binary_regenie_parity(arguments: typing.Any) -> None:
-    """Run the binary REGENIE parity debug tool."""
-    from tooling.debug import binary_regenie_parity
-
-    binary_regenie_parity.run_tool(arguments)
-
-
-def build_linear_regenie_parity_arguments(config: omegaconf.DictConfig) -> typing.Any:
-    """Build linear parity arguments without importing native-facing modules at startup."""
-    from tooling.debug import linear_regenie_parity
-
-    return linear_regenie_parity.build_arguments_from_config(config)
-
-
-def run_linear_regenie_parity(arguments: typing.Any) -> None:
-    """Run the linear REGENIE parity debug tool."""
-    from tooling.debug import linear_regenie_parity
-
-    linear_regenie_parity.run_tool(arguments)
 
 
 def run_check_pyo3_stub(arguments: None) -> None:
@@ -152,75 +107,39 @@ def run_check_python_architecture(arguments: None) -> None:
 
 
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
-    DebugToolName.BINARY_FIRTH.value: tooling_registry.ToolSpec(
-        name=DebugToolName.BINARY_FIRTH.value,
-        config_name="debug_binary_firth",
-        build_arguments=build_binary_firth_arguments,
-        run=run_binary_firth,
-    ),
-    DebugToolName.BINARY_REGENIE_PARITY.value: tooling_registry.ToolSpec(
-        name=DebugToolName.BINARY_REGENIE_PARITY.value,
-        config_name="debug_binary_regenie_parity",
-        build_arguments=build_binary_regenie_parity_arguments,
-        run=run_binary_regenie_parity,
-    ),
-    DebugToolName.LINEAR_REGENIE_PARITY.value: tooling_registry.ToolSpec(
-        name=DebugToolName.LINEAR_REGENIE_PARITY.value,
-        config_name="debug_linear_regenie_parity",
-        build_arguments=build_linear_regenie_parity_arguments,
-        run=run_linear_regenie_parity,
-    ),
     DebugToolName.CHECK_CUDA_NATIVE.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_CUDA_NATIVE.value,
-        config_name="debug_check_cuda_native",
         build_arguments=check_cuda_native.build_arguments_from_config,
         run=run_check_cuda_native,
     ),
     DebugToolName.CHECK_PYO3_STUB.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_PYO3_STUB.value,
-        config_name="debug_check_pyo3_stub",
         build_arguments=build_no_arguments,
         run=run_check_pyo3_stub,
     ),
     DebugToolName.CHECK_INTERNAL_DEFAULTS.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_INTERNAL_DEFAULTS.value,
-        config_name="debug_check_internal_defaults",
         build_arguments=build_no_arguments,
         run=run_check_internal_defaults,
     ),
     DebugToolName.CHECK_INTERNAL_INIT_EXPORTS.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_INTERNAL_INIT_EXPORTS.value,
-        config_name="debug_check_internal_init_exports",
         build_arguments=build_no_arguments,
         run=run_check_internal_init_exports,
     ),
     DebugToolName.CHECK_JUSTFILE.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_JUSTFILE.value,
-        config_name="debug_check_justfile",
         build_arguments=check_justfile.build_arguments_from_config,
         run=run_check_justfile,
     ),
     DebugToolName.CHECK_NATIVE_CLI_FRONTEND.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_NATIVE_CLI_FRONTEND.value,
-        config_name="debug_check_native_cli_frontend",
         build_arguments=check_native_cli_frontend.build_arguments_from_config,
         run=run_check_native_cli_frontend,
     ),
     DebugToolName.CHECK_RUST_ARCHITECTURE.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_RUST_ARCHITECTURE.value,
-        config_name="debug_check_rust_architecture",
         build_arguments=build_no_arguments,
         run=run_check_rust_architecture,
     ),
     DebugToolName.CHECK_PYTHON_ARCHITECTURE.value: tooling_registry.ToolSpec(
-        name=DebugToolName.CHECK_PYTHON_ARCHITECTURE.value,
-        config_name="debug_check_python_architecture",
         build_arguments=build_no_arguments,
         run=run_check_python_architecture,
     ),
     DebugToolName.SCHEMA_CHECK.value: tooling_registry.ToolSpec(
-        name=DebugToolName.SCHEMA_CHECK.value,
-        config_name="debug_schema_check",
         build_arguments=schema_check.build_arguments_from_config,
         run=schema_check.run_tool,
     ),

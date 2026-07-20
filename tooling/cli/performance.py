@@ -26,20 +26,14 @@ class PerformanceToolName(enum.StrEnum):
 
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
     PerformanceToolName.SMOKE.value: tooling_registry.ToolSpec(
-        name=PerformanceToolName.SMOKE.value,
-        config_name="performance_smoke",
         build_arguments=performance_smoke.build_arguments_from_config,
         run=performance_smoke.run_tool,
     ),
     PerformanceToolName.COMPARE.value: tooling_registry.ToolSpec(
-        name=PerformanceToolName.COMPARE.value,
-        config_name="performance_compare",
         build_arguments=performance_compare.build_arguments_from_config,
         run=performance_compare.run_tool,
     ),
     PerformanceToolName.JAX_RUNTIME.value: tooling_registry.ToolSpec(
-        name=PerformanceToolName.JAX_RUNTIME.value,
-        config_name="performance_jax_runtime",
         build_arguments=jax_runtime.build_arguments_from_config,
         run=jax_runtime.run_tool,
     ),

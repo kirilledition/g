@@ -11,7 +11,6 @@ tool:
   data_dir: ${dataset.data_directory}
   bgen: ${dataset.bgen_file}
   sample: ${dataset.sample_file}
-  bim: 1kg_chr22_full.bim
   torchgwas_full_genotype: 1kg_chr22_full.bed
   torchgwas_full_genotype_format: plink
   torchgwas_full_bim: 1kg_chr22_full.bim
@@ -25,7 +24,6 @@ tool:
   output_dir: null
   dry_run: false
   validate_inputs: true
-  variant_limit: null
   chunk_size: ${workload.chunk_size}
   cpu_threads: ${machine.cpus_per_task}
   torchgwas_repository_url: https://github.com/ZhiGroup/TorchGWAS.git

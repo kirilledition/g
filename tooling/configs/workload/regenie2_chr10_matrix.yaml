@@ -1,7 +1,3 @@
 name: regenie2_chr10_matrix
 chunk_size: 16384
-variant_limit: null
-repeat_count: 1
-staging_depth: 1
 output_writer_thread_count: 8
-output_writer_queue_depth: 8

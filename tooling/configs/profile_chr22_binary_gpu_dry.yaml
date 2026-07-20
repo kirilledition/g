@@ -3,7 +3,6 @@ defaults:
   - machine: landau_gpu
   - workload: regenie2_binary_hot
   - telemetry: local
-  - sweep: regenie2_binary_hot_default
   - _self_
 
 tool:
@@ -20,7 +19,6 @@ tool:
   linear_prediction_list: baselines/regenie_step1_qt_pred.list
   output_parent: data/profiles
   output_dir: null
-  variant_limit: null
   dry_run: true
   include_regenie_baseline: false
   regenie_executable: null
@@ -51,10 +49,7 @@ tool:
   linux_perf_timeout_seconds: 1200
   nsight_systems_timeout_seconds: 1800
   nsight_compute_timeout_seconds: 1800
-  enable_rust_criterion: false
   enable_logging_perturbation: false
-  rust_benchmarks:
-    - bgen_read
   chunk_sizes:
     - 16384
   output_writer_thread_counts:

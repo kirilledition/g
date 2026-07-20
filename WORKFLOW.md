@@ -137,7 +137,7 @@ section, and labels before choosing commands:
   `--g-device gpu`, JAX CUDA probes, GPU benchmarks, or GPU profiling. Never run
   these directly on the login node. Use `landau` and the repo's SLURM wrappers,
   for example `just slurm-gpu-just <recipe>`, `just
-  slurm-gpu-just matrix-chr22-smoke`, `just
+  slurm-gpu-just bench-binary-hot-gpu-smoke`, `just
   slurm-gpu-bench-binary-hot`, or the issue's explicit
   `just slurm-*` command.
 - Benchmark-heavy: labels such as `benchmark`, `optimization`, or `simd`, or

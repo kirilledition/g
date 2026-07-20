@@ -1,7 +1,0 @@
-name: bgen_reader
-chunk_size: 8192
-variant_limit: 16384
-repeat_count: 5
-staging_depth: 1
-output_writer_thread_count: 8
-output_writer_queue_depth: 8

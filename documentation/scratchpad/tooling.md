@@ -24,7 +24,7 @@ Justfile recipes select the workflow.
 ## Keep
 
 - Hydra saved configs for repeatable workflows.
-- Shared command/path/report/sweep/logging helpers.
+- Shared command, path, cache, report, and logging helpers.
 - Versioned machine-readable benchmark/profile reports.
 - Markdown summary = reading layer, not truth.
 - Justfile = thin menu.
@@ -43,12 +43,11 @@ Justfile recipes select the workflow.
 Useful shared pieces:
 
 ```text
-ToolContext
 ToolSpec
 typed tool config dataclasses
 RegenieRunSpec
 render_g_regenie_cli()
-render_python_api_options()
+render_regenie_config()
 expected_output_run_directory()
 versioned report models
 artifact manifest helpers

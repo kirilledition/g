@@ -14,15 +14,11 @@ class ToolSpec[ArgumentsT]:
     """Registered grouped tool implementation.
 
     Attributes:
-        name: Stable tool name from ``tool.name``.
-        config_name: Saved Hydra config name used by the standalone module.
         build_arguments: Function that converts a composed config to arguments.
         run: Function that executes the tool.
 
     """
 
-    name: str
-    config_name: str
     build_arguments: typing.Callable[[omegaconf.DictConfig], ArgumentsT]
     run: typing.Callable[[ArgumentsT], None]
 
