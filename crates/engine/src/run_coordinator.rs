@@ -344,3 +344,121 @@ fn record_stage_duration(recorder: Option<&mut StageTimingRecorder>, stage_name:
         recorder.add_stage_duration(stage_name, start_time.elapsed().as_secs_f64());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Eq, PartialEq, thiserror::Error)]
+    #[error("test backend failure")]
+    struct TestBackendError;
+
+    #[derive(Debug, Eq, PartialEq, thiserror::Error)]
+    #[error("test interruption")]
+    struct TestInterruption;
+
+    #[test]
+    fn error_boundary_preserves_interruptions_and_renders_other_failures() {
+        let interruption = engine_run_error_from_detail::<TestBackendError, TestInterruption>(
+            CoordinatedRunDetailError::Execution(RunExecutionError::Interrupted(TestInterruption)),
+        );
+        assert!(matches!(interruption, EngineRunError::Interrupted(TestInterruption)));
+
+        let failure = engine_run_error_from_detail::<TestBackendError, TestInterruption>(
+            CoordinatedRunDetailError::MissingPhenotypeOutput,
+        );
+        assert!(matches!(
+            failure,
+            EngineRunError::Failure { message }
+                if message == "Native run completed without a phenotype output."
+        ));
+    }
+
+    #[test]
+    fn artifact_completion_preserves_output_order_and_validates_single_output() {
+        let telemetry_session = TelemetryRunSession::default();
+        let outputs = vec![
+            g_output::CompletedOutputRun { run_directory: "run-a".into(), parts_directory: "run-a/parts".into() },
+            g_output::CompletedOutputRun { run_directory: "run-b".into(), parts_directory: "run-b/parts".into() },
+        ];
+        let artifacts = complete_artifacts::<TestBackendError, TestInterruption>(
+            outputs,
+            &telemetry_session,
+            "test-thread",
+            g_plan::AssociationMode::Regenie2Binary,
+            2,
+            None,
+        )
+        .expect("multi-phenotype artifacts complete");
+        assert_eq!(
+            artifacts,
+            vec![
+                PhenotypeRunArtifact {
+                    output_run_directory: "run-a".to_string(),
+                    parquet_dataset_directory: "run-a/parts".to_string(),
+                },
+                PhenotypeRunArtifact {
+                    output_run_directory: "run-b".to_string(),
+                    parquet_dataset_directory: "run-b/parts".to_string(),
+                },
+            ]
+        );
+
+        assert!(matches!(
+            complete_artifacts::<TestBackendError, TestInterruption>(
+                Vec::new(),
+                &telemetry_session,
+                "test-thread",
+                g_plan::AssociationMode::Regenie2Linear,
+                1,
+                Some("trait"),
+            ),
+            Err(CoordinatedRunDetailError::MissingPhenotypeOutput)
+        ));
+
+        let single_artifact = complete_artifacts::<TestBackendError, TestInterruption>(
+            vec![g_output::CompletedOutputRun {
+                run_directory: "run-single".into(),
+                parts_directory: "run-single/parts".into(),
+            }],
+            &telemetry_session,
+            "test-thread",
+            g_plan::AssociationMode::Regenie2Linear,
+            1,
+            Some("trait"),
+        )
+        .expect("single-phenotype artifact completes");
+        assert_eq!(single_artifact[0].output_run_directory, "run-single");
+    }
+
+    #[test]
+    fn delivery_report_observation_handles_warnings_and_count_overflow() {
+        record_delivery_reports::<TestBackendError, TestInterruption>(&[AssociationDeliveryReport {
+            processed_chunk_count: 2,
+            warnings: vec![crate::delivery_execution::DeliveryWarning {
+                chromosome: "22".to_string(),
+                message: "test warning".to_string(),
+                nonconverged_count: 1,
+                total_fit_count: 3,
+            }],
+        }])
+        .expect("bounded report counters are observed");
+
+        assert!(matches!(
+            record_delivery_reports::<TestBackendError, TestInterruption>(&[AssociationDeliveryReport {
+                processed_chunk_count: usize::MAX,
+                warnings: Vec::new(),
+            }]),
+            Err(CoordinatedRunDetailError::ProcessedChunkCountOutOfRange)
+        ));
+    }
+
+    #[test]
+    fn stage_duration_recording_is_optional_and_mutates_enabled_recorder() {
+        let mut recorder = StageTimingRecorder::default();
+        assert_eq!(recorder, StageTimingRecorder::default());
+        record_stage_duration(Some(&mut recorder), "test-stage", Instant::now());
+        assert_ne!(recorder, StageTimingRecorder::default());
+        record_stage_duration(None, "ignored-stage", Instant::now());
+    }
+}

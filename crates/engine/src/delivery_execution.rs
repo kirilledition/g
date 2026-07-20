@@ -475,3 +475,71 @@ fn write_completed_batch<BackendError, InterruptionError>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Eq, PartialEq, thiserror::Error)]
+    #[error("test backend failure")]
+    struct TestBackendError;
+
+    #[derive(Debug, Eq, PartialEq, thiserror::Error)]
+    #[error("test interruption")]
+    struct TestInterruption;
+
+    #[test]
+    fn delivery_policy_continues_when_every_null_model_converges() {
+        let mut warnings = Vec::new();
+        enforce_null_logistic_policy::<TestBackendError, TestInterruption>(
+            "22",
+            &[true, true],
+            &["trait-a".to_string(), "trait-b".to_string()],
+            g_plan::NullLogisticNonconvergencePolicy::Fail,
+            &mut warnings,
+        )
+        .expect("converged models continue");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn delivery_policy_records_structured_warning_counts() {
+        let mut warnings = Vec::new();
+        enforce_null_logistic_policy::<TestBackendError, TestInterruption>(
+            "7",
+            &[false, true, false],
+            &["trait-a".to_string(), "trait-b".to_string(), "trait-c".to_string()],
+            g_plan::NullLogisticNonconvergencePolicy::Warn,
+            &mut warnings,
+        )
+        .expect("warning policy continues");
+        assert_eq!(
+            warnings,
+            vec![DeliveryWarning {
+                chromosome: "7".to_string(),
+                message: "Binary null logistic model did not converge for chromosome 7: trait-a, trait-c. Continuing because --null_logistic_nonconvergence_policy=warn.".to_string(),
+                nonconverged_count: 2,
+                total_fit_count: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn delivery_policy_stops_without_recording_a_warning_under_fail_policy() {
+        let mut warnings = Vec::new();
+        let error = enforce_null_logistic_policy::<TestBackendError, TestInterruption>(
+            "1",
+            &[true, false],
+            &["trait-a".to_string(), "trait-b".to_string()],
+            g_plan::NullLogisticNonconvergencePolicy::Fail,
+            &mut warnings,
+        )
+        .expect_err("fail policy stops the delivery");
+        assert!(matches!(
+            error,
+            DeliveryError::NullLogisticNonconvergence(message)
+                if message.contains("chromosome 1: trait-b")
+        ));
+        assert!(warnings.is_empty());
+    }
+}

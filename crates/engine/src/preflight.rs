@@ -137,6 +137,9 @@ fn validate_binary_phenotype(values: &[f32]) -> Result<(), PreflightError> {
 }
 
 fn validate_covariate_matrix_rank(row_count: usize, column_count: usize, values: &[f32]) -> Result<(), PreflightError> {
+    if column_count == 0 {
+        return Ok(());
+    }
     let dimension_count = i32::try_from(row_count.max(column_count))
         .map(f64::from)
         .map_err(|_| PreflightError::JaxIndexCapacityExceeded { label: "covariate matrix dimension" })?;
