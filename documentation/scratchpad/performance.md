@@ -1564,6 +1564,88 @@ evidence is under
 `data/profiles/raw_cuda_firth_production_final_abba_analysis.json` and
 `data/profiles/raw_cuda_firth_production_final_abba`.
 
+## 2026-07-20 Production Hygiene And CUDA Driver Ownership
+
+The frozen baseline is `d80447fa1725305d81ebfa2203601382b13bc8a7`; the
+candidate is `3cd8f6b6` on `refactor/production-hygiene`. The Cargo and uv lock
+hashes are `50a2a94bd901b5ddab5cf86bba946c404c976e676765d98c2abf5da0dbfc49a9`
+and `5e5bb29ff46eb578847412fb92950a14dffa44aedacf95b20f65ed3de43dec4b`.
+The cleanup gives the duplicated CUDA Driver ABI and loader one private owner
+in `native/cuda-driver/cuda_driver.h`, while crate-local adapters preserve the
+existing status, XLA error, and module-unload contracts. No Cargo dependency or
+public re-export was added. The maintained Firth and packed8 CUDA sources remain
+unchanged at hashes `1d15fd1aad609023c849942478764c8d2c67a74ff5acd0909652f2dfa180fce0`
+and `673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d`;
+their PTX remains unchanged at `a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f`
+and `a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088`.
+The candidate extension is 50,370,872 bytes versus 50,465,240 bytes for the
+baseline (-0.187%), a diagnostic size result rather than a causal claim.
+
+One Clippy-driven packed8 API experiment is rejected. Replacing its flat hot
+tile boundary with a by-value request aggregate changed the Hilbert Criterion
+median from an opening baseline of 7.4892 milliseconds
+`[7.4813, 7.5013]` to candidate repeats of 7.6586
+`[7.6467, 7.6739]` and 7.6867 `[7.6727, 7.7039]`; the closing baseline was
+7.5093 `[7.4985, 7.5210]`. The roughly 2.31% regression caused the wrapper to
+be removed. The flat boundary and one locally documented
+`clippy::too_many_arguments` allowance remain; the revised candidate is neutral
+at 7.5171 `[7.5083, 7.5279]` against the adjacent closing baseline.
+
+The dosage tile request struct is retained as an architecture and lint cleanup,
+not a speed optimization. Its opening baseline was 35.784 milliseconds
+`[35.475, 36.151]`; candidate repeats were 35.432 `[34.976, 35.810]` and
+35.549 `[35.254, 35.867]`; the closing baseline was 36.107
+`[35.944, 36.275]`; and the final candidate was 35.681
+`[35.469, 35.902]`. Focused commands used the `g-genotype` `bgen_read` bench
+with the `bgen_variant_major_{packed8,dosage}_full_samples/16384` filters on an
+exclusive 40-CPU Hilbert allocation. Preserved final Criterion data is under
+`data/profiles/production_hygiene_20260720/cpu`; the alternating campaign
+values above were captured before Criterion overwrote its same-name result.
+
+The bounded whole-application smoke used serial Landau jobs 45798, 45802,
+45803, and 45805 in BCCB order against one shared populated JAX cache. The
+cache remained byte-identical at nine files, 1,135,968 bytes, and SHA-256
+`b5193d5d97fa1b7492eae31d2058735cea75eea50dd576b17b5d0d8aa6229500`
+during every discarded warm and hot lifecycle. Hot times were 0.709150 seconds
+for B1, 0.617234 for C1, 0.587186 for C2, and 0.609534 for B2. The two pair
+directions are +12.96% and +3.67%, and the geometric point direction is +8.43%,
+but two one-lifecycle pairs are only a non-regression smoke and do not support
+an application speed claim. The baseline and candidate native hashes are
+`4d2f06edfc9312fbccf44ac9df6ec9e41672af0d140c893eb1523d886238df68`
+and `17c872bc09c72153933536cb8f06e69c60fdeb7c6919e59b67c52c6bdd975409`.
+
+All runs produced 418,943 rows in four parts. The primary numerical oracle is
+the matching upstream REGENIE v4.1 approximate-Firth output, SHA-256
+`0b9dc124525b6fec63e1b0d3f446263c05f690862235bd84f51b1b3c77b6ed72`.
+Variant order, coordinates, identifiers, alleles, and sample counts match.
+Against the existing external binary tolerances, standard error, chi-square,
+and log10p pass all rows: their maximum absolute differences are 0.000518,
+0.002375, and 0.000658. Beta has four score-path rows outside `1e-3`, with a
+maximum difference of 0.001475; this is a pre-existing upstream parity gap, not
+a candidate change. Both `p < 0.05` and `p < 5e-8` classifications match, all
+candidate corrections succeed, and the 17,938 corrected-row count matches the
+upstream log.
+
+The old-`g` comparison is retained only as a secondary regression oracle.
+`abs(baseline - candidate)` must be less than `5e-7` for beta, `2.5e-7` for
+standard error, `2e-6` for chi-square, and `5e-7` for log10p. Its observed
+maximum is zero for every field; correction method/status and both significance
+classifications are identical. Parquet hashes are diagnostic only. The BGEN,
+sample, covariate, phenotype, and prediction-list input hashes were
+`bd3f1a8095ca7738878d997910744d33887f087a4127fca3c098cc195b5c1c21`,
+`3e165ce47ed36cc3e6d4a8ae422053544f7e64a1b0d7536bd7f4ba70fae20e80`,
+`5fa448aa3e8ec96825c62560f29212d7c7c67a98903cf341199499cdc69604e5`,
+`1d63186de717b2f9b723fa4949fca59fc87fcf6afa7428f52860dbf2eabebc24`,
+and `9f1c44ba25aadb8d1397d3ad39f214f1ae1295cd00c52b0d60dff38451982f26`.
+Full summaries and the saved numeric oracles are under
+`data/profiles/production_hygiene_20260720`.
+
+Production Clippy with `-D warnings`, Ruff format/check, ty, cargo-machete,
+Skylos, CUDA format/lint, CUDA crate checks, relocatable link/ODR inspection,
+and documentation build all pass. The `g-genotype` lib-test target has 224
+stale test API errors on both baseline and candidate and is deferred with the
+requested test/tooling phase; it is not used as candidate evidence.
+
 ## Output Performance
 
 Historical profiling: output cost dominated by Rust Arrow writer + optional Parquet finalization, not Python/JAX handoff.

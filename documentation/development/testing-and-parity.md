@@ -58,6 +58,15 @@ Parity checks must compare equivalent statistical modes:
 - same phenotype, covariates, Step 1 predictions, `(FID, IID)` sample set, and
   genotype source.
 
+Use matching upstream REGENIE output as the primary numerical oracle whenever
+it is available. Comparing a candidate only with an earlier `g` build is a
+secondary regression check: it can attribute a change to the candidate, but it
+cannot establish external correctness when both builds share the same error.
+Compare statistic values with documented absolute tolerances and separately
+check correction decisions and significance classifications. Output-file byte
+equality may be retained as a reproducibility diagnostic, but it is not a
+numerical parity gate.
+
 Do not treat differences caused by different complete-case sample sets as kernel
 bugs until input alignment has been verified.
 
