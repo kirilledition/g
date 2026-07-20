@@ -65,3 +65,65 @@ fn lines_to_chunks(lines: Vec<String>) -> Vec<String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use g_engine::PhenotypeRunArtifact;
+
+    use super::{
+        CliRunResult, non_empty_text_chunk, render_completed_lines, render_failed_lines, render_interrupted_lines,
+    };
+
+    #[test]
+    fn frontend_output_preserves_only_nonempty_streams() {
+        assert_eq!(
+            CliRunResult::from_frontend_output(0, "help\n", ""),
+            CliRunResult { exit_code: 0, stdout_chunks: vec!["help\n".to_string()], stderr_chunks: Vec::new() }
+        );
+        assert!(non_empty_text_chunk("").is_empty());
+    }
+
+    #[test]
+    fn line_output_appends_newlines_and_terminal_status() {
+        let mut output = CliRunResult::from_lines(0, vec!["first".to_string()], Vec::new());
+        output.append(CliRunResult::from_lines(7, Vec::new(), vec!["second".to_string()]));
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.stdout_chunks, ["first\n"]);
+        assert_eq!(output.stderr_chunks, ["second\n"]);
+    }
+
+    #[test]
+    fn completion_lines_describe_each_artifact_or_empty_success() {
+        assert_eq!(render_completed_lines(&[]), ["Success. Run completed."]);
+        let artifacts = [
+            PhenotypeRunArtifact {
+                output_run_directory: "run-a".to_string(),
+                parquet_dataset_directory: "run-a/parquet".to_string(),
+            },
+            PhenotypeRunArtifact {
+                output_run_directory: "run-b".to_string(),
+                parquet_dataset_directory: "run-b/parquet".to_string(),
+            },
+        ];
+        assert_eq!(
+            render_completed_lines(&artifacts),
+            [
+                "Success. Run saved to run-a",
+                "Parquet dataset saved to run-a/parquet",
+                "Success. Run saved to run-b",
+                "Parquet dataset saved to run-b/parquet",
+            ]
+        );
+    }
+
+    #[test]
+    fn interruption_and_failure_lines_preserve_resume_meaning() {
+        assert_eq!(render_interrupted_lines("SIGINT", false), ["Interrupted by SIGINT."]);
+        assert_eq!(
+            render_interrupted_lines("SIGTERM", true),
+            ["Interrupted by SIGTERM. Flushed queued chunks and saved committed output for resume."]
+        );
+        assert_eq!(render_failed_lines("ConfigurationError", ""), ["Error: ConfigurationError"]);
+        assert_eq!(render_failed_lines("ConfigurationError", "invalid input"), ["Error: invalid input"]);
+    }
+}

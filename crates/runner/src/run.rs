@@ -582,3 +582,273 @@ fn record_terminal_lines(lines: &[String], level: &str, event_name: &str, messag
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use g_engine::RunHooks;
+    use g_interface::CompiledCliRun;
+
+    use super::{
+        HostRunHooks, RunnerProcessRuntimeState, check_interruption, completed_terminal_result, configure_jax_runtime,
+        failed_terminal_result, interrupted_terminal_result, lock_runtime_state, preflight_compiled_runs, run_cli,
+        run_compiled_cli, run_compiled_runs, runtime_close_failure_result, terminal_result_from_error,
+    };
+    use crate::jax_runtime::{JaxRuntimeSetupSession, build_jax_runtime_policy};
+    use crate::test_support::{BackendPlanKind, TemporaryRunFixture, TestErrorKind, TestHostError, TestNativeRunHost};
+    use crate::{CliRunResult, NativeRunInterruption};
+
+    static LIFECYCLE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn compiled_run(run_plan: g_plan::RunPlan) -> CompiledCliRun {
+        CompiledCliRun { run_plan, effective_config_toml: "[test]\nfixture = true\n".to_string() }
+    }
+
+    #[test]
+    fn frontend_exit_bypasses_native_host() {
+        let mut host = TestNativeRunHost::default();
+        let output = run_cli(&["--help".to_string()], &mut host).expect("help dispatch should succeed");
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout_chunks.concat().contains("Usage: g"));
+        assert!(output.stderr_chunks.is_empty());
+        assert!(host.calls.is_empty());
+
+        let missing_command_output = run_cli(&[], &mut host).expect("missing command dispatch should succeed");
+        assert_eq!(missing_command_output.exit_code, 2);
+        assert!(missing_command_output.stdout_chunks.concat().contains("Usage: g"));
+        assert!(host.calls.is_empty());
+    }
+
+    #[test]
+    fn preflight_rejects_empty_run_collection() {
+        let mut host = TestNativeRunHost::default();
+        let error = preflight_compiled_runs(&[], &mut host).expect_err("empty batch should fail");
+        assert_eq!(error.message, "Execution requires at least one compiled run.");
+    }
+
+    #[test]
+    fn preflight_rejects_process_global_thread_and_logging_conflicts() {
+        let first_plan = crate::test_support::run_plan(Path::new("first-run"), g_plan::AssociationMode::Regenie2Linear);
+        let mut second_plan =
+            crate::test_support::run_plan(Path::new("second-run"), g_plan::AssociationMode::Regenie2Linear);
+        second_plan.compute.cpu_thread_count = Some(4);
+        let mut host = TestNativeRunHost::default();
+        let thread_error = preflight_compiled_runs(&[compiled_run(first_plan), compiled_run(second_plan)], &mut host)
+            .expect_err("thread conflict should fail");
+        assert!(thread_error.message.contains("Run 1 requested Rayon threads=automatic"));
+        assert!(thread_error.message.contains("run 2 requested Rayon threads=4"));
+
+        let first_plan = crate::test_support::run_plan(Path::new("first-run"), g_plan::AssociationMode::Regenie2Linear);
+        let mut second_plan =
+            crate::test_support::run_plan(Path::new("second-run"), g_plan::AssociationMode::Regenie2Linear);
+        second_plan.telemetry = g_plan::TelemetryMode::Profile;
+        let logging_error = preflight_compiled_runs(&[compiled_run(first_plan), compiled_run(second_plan)], &mut host)
+            .expect_err("logging conflict should fail");
+        assert!(logging_error.message.contains("Process-global logging policies differ"));
+    }
+
+    #[test]
+    fn preflight_rejects_process_global_jax_conflicts() {
+        let mut first_plan =
+            crate::test_support::run_plan(Path::new("first-run"), g_plan::AssociationMode::Regenie2Linear);
+        first_plan.compute.jax_cache_directory = Some("first-cache".to_string());
+        let mut second_plan =
+            crate::test_support::run_plan(Path::new("second-run"), g_plan::AssociationMode::Regenie2Linear);
+        second_plan.compute.jax_cache_directory = Some("second-cache".to_string());
+        let mut host = TestNativeRunHost::default();
+        let cache_error = preflight_compiled_runs(&[compiled_run(first_plan), compiled_run(second_plan)], &mut host)
+            .expect_err("cache conflict should fail");
+        assert!(cache_error.message.contains("incompatible process-global JAX settings"));
+        assert!(cache_error.message.contains("Run 1 and run 2"));
+
+        let first_plan = crate::test_support::run_plan(Path::new("first-run"), g_plan::AssociationMode::Regenie2Linear);
+        let mut second_plan =
+            crate::test_support::run_plan(Path::new("second-run"), g_plan::AssociationMode::Regenie2Linear);
+        second_plan.compute.device = g_plan::Device::Gpu;
+        let device_error = preflight_compiled_runs(&[compiled_run(first_plan), compiled_run(second_plan)], &mut host)
+            .expect_err("device conflict should fail");
+        assert!(device_error.message.contains("device=cpu"));
+        assert!(device_error.message.contains("device=gpu"));
+    }
+
+    #[test]
+    fn compiled_run_collection_reports_preflight_failure_as_terminal_output() {
+        let mut host = TestNativeRunHost::default();
+        let output = run_compiled_runs(Vec::new(), &mut host).expect("preflight failure should become CLI output");
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.stderr_chunks, ["Error: Execution requires at least one compiled run.\n"]);
+    }
+
+    #[test]
+    fn host_hooks_forward_interruption_and_signal_classification() {
+        let interruption = TestHostError::sigint("stop");
+        let mut host = TestNativeRunHost {
+            interruption_results: [Err(interruption.clone())].into(),
+            ..TestNativeRunHost::default()
+        };
+        let mut hooks = HostRunHooks { host: &mut host };
+        assert_eq!(hooks.check_interruption(), Err(interruption.clone()));
+        assert_eq!(
+            <HostRunHooks<'_, TestNativeRunHost> as RunHooks>::interruption_signal_name(&interruption),
+            Some("SIGINT")
+        );
+        assert_eq!(host.calls, ["check_interruption"]);
+    }
+
+    #[test]
+    fn direct_interruption_check_preserves_host_error() {
+        let interruption = TestHostError::sigint("pending signal");
+        let mut host = TestNativeRunHost {
+            interruption_results: [Err(interruption.clone())].into(),
+            ..TestNativeRunHost::default()
+        };
+        assert_eq!(check_interruption(&mut host), Err(interruption));
+    }
+
+    #[test]
+    fn terminal_results_distinguish_success_failure_and_interruptions() {
+        let mut host = TestNativeRunHost::default();
+        let completion = completed_terminal_result(
+            &mut host,
+            &[g_engine::PhenotypeRunArtifact {
+                output_run_directory: "run".to_string(),
+                parquet_dataset_directory: "run/parquet".to_string(),
+            }],
+        )
+        .expect("completion output should render");
+        assert_eq!(completion.exit_code, 0);
+        assert_eq!(
+            completion.stdout_chunks,
+            ["Success. Run saved to run\n", "Parquet dataset saved to run/parquet\n",]
+        );
+
+        let failure = TestHostError::failure("backend failed");
+        assert_eq!(
+            failed_terminal_result(&mut host, None, &failure, None),
+            CliRunResult {
+                exit_code: 1,
+                stdout_chunks: Vec::new(),
+                stderr_chunks: vec!["Error: backend failed\n".to_string()],
+            }
+        );
+        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &failure).exit_code, 1);
+
+        for (interruption, expected_exit_code, expected_resume_text) in [
+            (NativeRunInterruption::Sigint, 130, false),
+            (NativeRunInterruption::FlushedSigint, 130, true),
+            (NativeRunInterruption::Sigterm, 143, true),
+        ] {
+            let output = interrupted_terminal_result(interruption);
+            assert_eq!(output.exit_code, expected_exit_code);
+            assert_eq!(
+                output.stderr_chunks.concat().contains("saved committed output for resume"),
+                expected_resume_text
+            );
+        }
+
+        let sigint_error = TestHostError::sigint("interrupted");
+        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &sigint_error).exit_code, 130);
+    }
+
+    #[test]
+    fn runtime_close_failure_never_overwrites_an_existing_failure() {
+        let close_failure = runtime_close_failure_result(0, "TelemetryRunError", "flush failed");
+        assert_eq!(close_failure.exit_code, 1);
+        assert_eq!(close_failure.stderr_chunks, ["Error: flush failed\n"]);
+        assert_eq!(
+            runtime_close_failure_result(130, "TelemetryRunError", "flush failed"),
+            CliRunResult { exit_code: 130, ..CliRunResult::default() }
+        );
+    }
+
+    #[test]
+    fn jax_configuration_skips_reconfiguration_and_applies_cpu_policy_once() {
+        let mut run_plan =
+            crate::test_support::run_plan(Path::new("jax-configuration"), g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.jax_cache_directory = Some("runner-cache".to_string());
+        let policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
+        let mut host = TestNativeRunHost::default();
+        let mut skipped_session = JaxRuntimeSetupSession::new(false, &policy);
+        configure_jax_runtime(
+            &mut host,
+            &mut skipped_session,
+            &g_runtime::TelemetryRunSession::default(),
+            "test-thread",
+        )
+        .expect("configured runtime should be reused");
+        assert!(host.calls.is_empty());
+
+        let mut setup_session = JaxRuntimeSetupSession::new(true, &policy);
+        configure_jax_runtime(&mut host, &mut setup_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
+            .expect("CPU runtime should configure");
+        assert_eq!(host.calls, ["apply_jax_config_updates"]);
+        assert_eq!(host.config_update_names.len(), 7);
+    }
+
+    #[test]
+    fn invalid_bgen_lifecycle_configures_fake_backend_and_translates_engine_failure() {
+        let lifecycle_lock = LIFECYCLE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock should open");
+        let fixture = TemporaryRunFixture::new();
+        let mut run_plan = fixture.run_plan(g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.jax_cache_directory = Some(fixture.root_path().join("jax-cache").display().to_string());
+        let mut host = TestNativeRunHost::default();
+        let output = run_compiled_cli(run_plan, "[test]\nfixture = true\n".to_string(), &mut host)
+            .expect("engine failure should become terminal output");
+        drop(lifecycle_lock);
+
+        assert_eq!(output.exit_code, 1);
+        let error_text = output.stderr_chunks.concat();
+        assert!(error_text.contains("Unexpected end of file while reading BGEN bytes"));
+        assert_eq!(host.backend_plan_kinds, [BackendPlanKind::Linear]);
+        assert_eq!(host.config_update_names.len(), 7);
+        assert!(host.calls.starts_with(&[
+            "current_thread_name",
+            "install_python_logging",
+            "apply_jax_config_updates",
+            "create_backend",
+        ]));
+        assert_eq!(host.calls.last(), Some(&"check_interruption"));
+        assert!(!host.calls.contains(&"observe_jax_devices"));
+    }
+
+    #[test]
+    fn thread_name_failure_escapes_before_runtime_or_backend_setup() {
+        let lifecycle_lock = LIFECYCLE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock should open");
+        let fixture = TemporaryRunFixture::new();
+        let expected_error = TestHostError::failure("thread unavailable");
+        let mut host =
+            TestNativeRunHost { current_thread_error: Some(expected_error.clone()), ..TestNativeRunHost::default() };
+        let result =
+            run_compiled_cli(fixture.run_plan(g_plan::AssociationMode::Regenie2Linear), String::new(), &mut host);
+        drop(lifecycle_lock);
+        assert_eq!(result, Err(expected_error));
+        assert_eq!(host.calls, ["current_thread_name"]);
+    }
+
+    #[test]
+    fn poisoned_runtime_mutex_is_reported_without_panicking() {
+        let runtime_state = Arc::new(Mutex::new(RunnerProcessRuntimeState::default()));
+        let poisoned_state = Arc::clone(&runtime_state);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned_state.lock().expect("test mutex should initially lock");
+            panic!("poison runner test mutex");
+        })
+        .join();
+        let error = match lock_runtime_state(&runtime_state) {
+            Ok(_guard) => panic!("poisoned mutex should fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error, "Runtime state mutex was poisoned.");
+    }
+
+    #[test]
+    fn host_error_classification_covers_all_error_kinds() {
+        let mut host = TestNativeRunHost::default();
+        let sigterm_error = TestHostError { kind: TestErrorKind::Sigterm, message: "term".to_string() };
+        let flushed_error = TestHostError { kind: TestErrorKind::FlushedSigint, message: "flushed".to_string() };
+        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &sigterm_error).exit_code, 143);
+        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &flushed_error).exit_code, 130);
+    }
+}

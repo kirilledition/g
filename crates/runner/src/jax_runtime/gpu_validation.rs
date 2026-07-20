@@ -60,3 +60,59 @@ pub(crate) fn plan_jax_gpu_validation(
     message.push('.');
     JaxGpuValidationPlan { status: JaxGpuValidationStatus::Failed, message: Cow::Owned(message) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::plan_jax_gpu_validation;
+    use crate::jax_runtime::{JaxDevice, JaxGpuValidationStatus};
+
+    #[test]
+    fn validation_rejects_invisible_driver_before_device_discovery() {
+        let plan = plan_jax_gpu_validation(
+            false,
+            true,
+            &[JaxDevice { platform: "gpu".to_string(), description: "ignored".to_string() }],
+        );
+        assert_eq!(plan.status, JaxGpuValidationStatus::Failed);
+        assert!(plan.message.contains("cannot see the NVIDIA driver"));
+    }
+
+    #[test]
+    fn validation_distinguishes_backend_initialization_failure() {
+        let plan = plan_jax_gpu_validation(true, true, &[]);
+        assert_eq!(plan.status, JaxGpuValidationStatus::Failed);
+        assert!(plan.message.contains("no CUDA-enabled JAX backend could be initialized"));
+    }
+
+    #[test]
+    fn validation_accepts_any_reported_gpu_device() {
+        let plan = plan_jax_gpu_validation(
+            true,
+            false,
+            &[
+                JaxDevice { platform: "cpu".to_string(), description: "CPU".to_string() },
+                JaxDevice { platform: "gpu".to_string(), description: "NVIDIA GPU".to_string() },
+            ],
+        );
+        assert_eq!(plan.status, JaxGpuValidationStatus::Succeeded);
+        assert_eq!(plan.message, "JAX reported at least one GPU device.");
+    }
+
+    #[test]
+    fn validation_reports_empty_and_non_gpu_observations() {
+        let empty_plan = plan_jax_gpu_validation(true, false, &[]);
+        assert_eq!(empty_plan.status, JaxGpuValidationStatus::Failed);
+        assert!(empty_plan.message.ends_with("Observed devices: none."));
+
+        let cpu_plan = plan_jax_gpu_validation(
+            true,
+            false,
+            &[
+                JaxDevice { platform: "cpu".to_string(), description: "CPU 0".to_string() },
+                JaxDevice { platform: "tpu".to_string(), description: "TPU 0".to_string() },
+            ],
+        );
+        assert_eq!(cpu_plan.status, JaxGpuValidationStatus::Failed);
+        assert!(cpu_plan.message.ends_with("Observed devices: CPU 0, TPU 0."));
+    }
+}

@@ -149,3 +149,32 @@ where
     g_runtime::emit_diagnostic_event(level, event_name, message, fields)
         .map_err(|error| format!("Failed to serialize JAX runtime diagnostic event fields: {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::path::PathBuf;
+
+    use super::emit_jax_runtime_setup_diagnostics;
+    use crate::jax_runtime::{JaxCacheDirectory, JaxGpuValidationStatus, JaxRuntimePolicy, JaxRuntimeSetupSession};
+
+    #[test]
+    fn diagnostics_serialize_cpu_and_failed_gpu_setup_states() {
+        let cpu_policy = JaxRuntimePolicy {
+            device: g_plan::Device::Cpu,
+            cache_directory: JaxCacheDirectory::Explicit(PathBuf::from("cpu-cache")),
+        };
+        let cpu_session = JaxRuntimeSetupSession::new(true, &cpu_policy);
+        emit_jax_runtime_setup_diagnostics(&cpu_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
+            .expect("CPU diagnostics should serialize");
+
+        let gpu_policy = JaxRuntimePolicy {
+            device: g_plan::Device::Gpu,
+            cache_directory: JaxCacheDirectory::Explicit(PathBuf::from("gpu-cache")),
+        };
+        let mut gpu_session = JaxRuntimeSetupSession::new(true, &gpu_policy);
+        gpu_session.complete_gpu_validation(JaxGpuValidationStatus::Failed, Cow::Borrowed("no device"));
+        emit_jax_runtime_setup_diagnostics(&gpu_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
+            .expect("GPU failure diagnostics should serialize");
+    }
+}
