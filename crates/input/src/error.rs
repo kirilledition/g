@@ -6,6 +6,10 @@ use crate::regenie::PredictionError;
 pub enum InputError {
     #[error(transparent)]
     Prediction(#[from] PredictionError),
+    #[error("Phenotype '{phenotype_name}' value '{value}' is not finite.")]
+    NonFinitePhenotypeValue { phenotype_name: String, value: String },
+    #[error("Covariate '{covariate_name}' value '{value}' is not finite.")]
+    NonFiniteCovariateValue { covariate_name: String, value: String },
     #[error("{0}")]
     SampleAlignment(String),
 }

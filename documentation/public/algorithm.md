@@ -87,6 +87,10 @@ Matching always uses non-empty, unique `(FID, IID)` pairs; there is no public
 IID-only mode. Rows with missing selected phenotype or covariate values are
 excluded for that phenotype. Binary phenotypes use REGENIE coding in the input
 file (`1 = control`, `2 = case`) and are recoded internally to `0/1`.
+The exact missing-value tokens are an empty field, `NA`, `NaN`, `nan`, and
+`-9`; every other selected quantitative phenotype or covariate value must
+parse to a finite float. Prediction lists must name each phenotype at most
+once, and every requested phenotype must resolve to exactly one LOCO file.
 
 This sample set is part of the scientific analysis. Changing it changes `N`, covariate adjustment, LOCO alignment, and all downstream statistics.
 

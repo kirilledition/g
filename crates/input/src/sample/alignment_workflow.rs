@@ -21,6 +21,8 @@ pub fn load_aligned_phenotype_groups(
     if request.phenotype_names.is_empty() {
         return Err("At least one phenotype is required for alignment.".to_string().into());
     }
+    let mut prediction_source_loader =
+        PredictionSourceLoader::new(request.prediction_loco_paths, request.phenotype_names)?;
     let group_drafts = {
         let sample_row_indices_by_key = build_sample_row_indices_by_key(
             request.sample_identifiers.family_identifiers.as_slice(),
@@ -43,8 +45,6 @@ pub fn load_aligned_phenotype_groups(
         )?;
         build_aligned_phenotype_group_drafts(request, &phenotype_table, &covariate_table)?
     };
-    let mut prediction_source_loader = PredictionSourceLoader::new(request.prediction_loco_paths);
-
     group_drafts
         .into_iter()
         .map(|draft| build_aligned_phenotype_group(request, draft, &mut prediction_source_loader))

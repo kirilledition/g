@@ -13,6 +13,10 @@ pub enum PredictionError {
     #[error("Prediction list line {line_number}: expected 2 space-delimited fields, found {field_count}.")]
     InvalidPredictionListLine { line_number: usize, field_count: usize },
     #[error(
+        "Prediction list phenotype '{phenotype_name}' is duplicated on line {duplicate_line_number}; it was first defined on line {first_line_number}."
+    )]
+    DuplicatePredictionListPhenotype { phenotype_name: String, first_line_number: usize, duplicate_line_number: usize },
+    #[error(
         "Phenotype '{phenotype_name}' not found in prediction list. Available phenotypes: {available_phenotypes:?}"
     )]
     MissingPhenotype { phenotype_name: String, available_phenotypes: Vec<String> },
@@ -46,6 +50,16 @@ pub enum PredictionError {
     MissingChromosome { chromosome: String, normalized_chromosome: String, available_chromosomes: Vec<String> },
     #[error("LOCO prediction matrix shape {trait_count} traits x {sample_count} samples exceeds native capacity.")]
     PredictionMatrixShapeOverflow { trait_count: usize, sample_count: usize },
+    #[error(
+        "Prediction catalog contains {observed_count} entries, but the phenotype request contains {expected_count} entries."
+    )]
+    PredictionCatalogLengthMismatch { expected_count: usize, observed_count: usize },
+    #[error(
+        "Prediction catalog entry {phenotype_index} names phenotype '{observed_name}', expected '{expected_name}'."
+    )]
+    PredictionCatalogPhenotypeMismatch { phenotype_index: usize, expected_name: String, observed_name: String },
+    #[error("Prediction catalog index {phenotype_index} is outside its {catalog_count} entries.")]
+    PredictionCatalogIndexOutOfRange { phenotype_index: usize, catalog_count: usize },
     #[error("Failed to parse LOCO prediction value '{value}' on line {line_number}: {source}")]
     InvalidPredictionValue { line_number: usize, value: String, source: std::num::ParseFloatError },
     #[error("LOCO prediction value '{value}' on line {line_number} is not finite.")]
