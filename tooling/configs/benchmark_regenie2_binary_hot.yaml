@@ -23,7 +23,7 @@ tool:
   writer_thread_count: 8
   p_threshold: 0.05
   expected_variant_count: 418943
-  jax_cache_dir: data/profiles/jax-binary-hot-cache
+  jax_cache_dir: null
   include_fresh_process: true
   hot_run_count: 5
   diagnostic_run_count: 0

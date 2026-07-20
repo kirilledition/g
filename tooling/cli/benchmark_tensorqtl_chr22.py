@@ -17,6 +17,7 @@ import hydra
 import pyarrow.parquet
 
 import tooling.configuration as tooling_configuration
+from tooling.benchmark import native_lifecycle
 from tooling.common import artifact_format as tooling_artifact_format
 from tooling.common import commands as tooling_commands
 from tooling.common import g_regenie as tooling_g_regenie
@@ -27,8 +28,6 @@ from tooling.common import paths as tooling_paths
 from tooling.common import reports as tooling_reports
 
 if typing.TYPE_CHECKING:
-    import collections.abc
-
     import omegaconf
 
 
@@ -53,6 +52,8 @@ class CacheState(enum.StrEnum):
 
     COLD = "cold"
     WARM = "warm"
+    FIRST_PROCESS = "first_process"
+    REPEAT_PROCESS = "repeat_process"
 
 
 class RunStatus(enum.StrEnum):
@@ -87,7 +88,6 @@ class BenchmarkArguments:
         output_directory: Output directory for this benchmark run.
         dry_run: Whether to render commands without executing them.
         validate_inputs: Whether to validate required local input paths.
-        variant_limit: Optional first-N variant cap used for smoke runs.
         chunk_size: Variant chunk size passed to g.
         cpu_threads: Optional thread count passed to g.
         tensorqtl_batch_size: GPU batch size passed to tensorQTL trans mode.
@@ -97,7 +97,6 @@ class BenchmarkArguments:
         tensorqtl_python: Python executable used to create the tensorQTL venv.
         torch_package: Torch package spec installed for tensorQTL.
         torch_package_index_url: Optional package index URL for the Torch package.
-        plink2_binary: plink2 executable used by subset preparation.
         command_timeout_seconds: Optional timeout for each executed command.
         g_runner_prefix: Command prefix used to invoke g.
 
@@ -120,7 +119,6 @@ class BenchmarkArguments:
     output_directory: Path
     dry_run: bool
     validate_inputs: bool
-    variant_limit: int | None
     chunk_size: int
     cpu_threads: int | None
     tensorqtl_batch_size: int
@@ -130,7 +128,6 @@ class BenchmarkArguments:
     tensorqtl_python: str
     torch_package: str
     torch_package_index_url: str | None
-    plink2_binary: str | None
     command_timeout_seconds: float | None
     g_runner_prefix: tuple[str, ...]
 
@@ -199,6 +196,8 @@ class CaseResult:
     output_row_count: int | None
     output_total_bytes: int | None
     cache_total_bytes: int | None
+    cache_before: native_lifecycle.CacheSnapshot | None
+    cache_after: native_lifecycle.CacheSnapshot | None
     stage_seconds: dict[str, float]
 
 
@@ -270,7 +269,6 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
         output_directory=output_directory,
         dry_run=bool(tool_values["dry_run"]),
         validate_inputs=bool(tool_values["validate_inputs"]),
-        variant_limit=tooling_hydra_arguments.integer_or_none(tool_values.get("variant_limit")),
         chunk_size=int(tool_values["chunk_size"]),
         cpu_threads=tooling_hydra_arguments.integer_or_none(tool_values.get("cpu_threads")),
         tensorqtl_batch_size=int(tool_values["tensorqtl_batch_size"]),
@@ -284,7 +282,6 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
             if tool_values.get("torch_package_index_url") is not None
             else None
         ),
-        plink2_binary=(str(tool_values["plink2_binary"]) if tool_values.get("plink2_binary") is not None else None),
         command_timeout_seconds=optional_float(tool_values.get("command_timeout_seconds")),
         g_runner_prefix=runner_prefix,
     )
@@ -315,7 +312,6 @@ def arguments_to_json_dict(arguments: BenchmarkArguments) -> dict[str, object]:
         "output_parent": str(arguments.output_parent),
         "output_directory": str(arguments.output_directory),
         "dry_run": arguments.dry_run,
-        "variant_limit": arguments.variant_limit,
         "chunk_size": arguments.chunk_size,
         "cpu_threads": arguments.cpu_threads,
         "tensorqtl_batch_size": arguments.tensorqtl_batch_size,
@@ -325,7 +321,6 @@ def arguments_to_json_dict(arguments: BenchmarkArguments) -> dict[str, object]:
         "tensorqtl_python": arguments.tensorqtl_python,
         "torch_package": arguments.torch_package,
         "torch_package_index_url": arguments.torch_package_index_url,
-        "plink2_binary": arguments.plink2_binary,
         "command_timeout_seconds": arguments.command_timeout_seconds,
         "g_runner_prefix": list(arguments.g_runner_prefix),
     }
@@ -516,12 +511,17 @@ def write_matrix_rows(
 def prepare_tensorqtl_matrices(
     *,
     arguments: BenchmarkArguments,
-    command_results: list[TimedCommandResult],
 ) -> TensorqtlInputSpec:
     """Prepare tensorQTL phenotype and covariate matrices."""
     prepared_directory = arguments.output_directory / "tensorqtl_inputs"
     phenotype_matrix_path = prepared_directory / "phenotypes.tsv"
     covariate_matrix_path = prepared_directory / "covariates.tsv"
+    if arguments.dry_run:
+        return TensorqtlInputSpec(
+            genotype_prefix_path=prepare_full_plink_alias_prefix(arguments),
+            phenotype_matrix_path=phenotype_matrix_path,
+            covariate_matrix_path=covariate_matrix_path,
+        )
     sample_identifiers = read_fam_sample_identifiers(arguments.fam_path)
     phenotype_rows = read_table_by_iid(arguments.phenotype_path)
     covariate_rows = read_table_by_iid(arguments.covariate_path)
@@ -542,35 +542,10 @@ def prepare_tensorqtl_matrices(
     )
     write_matrix_rows(covariate_matrix_path, "covariate_id", sample_identifiers, covariate_matrix_rows)
     return TensorqtlInputSpec(
-        genotype_prefix_path=prepare_variant_limited_plink_prefix(
-            arguments=arguments,
-            command_results=command_results,
-        ),
+        genotype_prefix_path=prepare_full_plink_alias_prefix(arguments),
         phenotype_matrix_path=phenotype_matrix_path,
         covariate_matrix_path=covariate_matrix_path,
     )
-
-
-def read_first_bim_marker_identifiers(bim_path: Path, variant_limit: int) -> list[str]:
-    """Read the first ``variant_limit`` marker IDs from a BIM file."""
-    marker_identifiers: list[str] = []
-    with bim_path.open("r", encoding="utf-8") as bim_file:
-        for line in bim_file:
-            fields = line.split()
-            if len(fields) >= 2:
-                marker_identifiers.append(fields[1])
-            if len(marker_identifiers) >= variant_limit:
-                break
-    if len(marker_identifiers) < variant_limit:
-        message = f"BIM file {bim_path} contains only {len(marker_identifiers)} markers, requested {variant_limit}."
-        raise ValueError(message)
-    return marker_identifiers
-
-
-def write_lines(path: Path, values: collections.abc.Sequence[object]) -> None:
-    """Write one value per line."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(str(value) for value in values) + "\n", encoding="utf-8")
 
 
 def link_plink_file(source_path: Path, alias_path: Path) -> None:
@@ -596,50 +571,6 @@ def prepare_full_plink_alias_prefix(arguments: BenchmarkArguments) -> Path:
     return alias_prefix
 
 
-def prepare_variant_limited_plink_prefix(
-    *,
-    arguments: BenchmarkArguments,
-    command_results: list[TimedCommandResult],
-) -> Path:
-    """Prepare a bounded PLINK subset when a smoke variant limit is requested."""
-    if arguments.variant_limit is None:
-        return prepare_full_plink_alias_prefix(arguments)
-    subset_prefix = arguments.output_directory / "tensorqtl_subset" / "genotypes"
-    subset_bed_path, subset_bim_path, subset_fam_path = plink_triplet_from_prefix(subset_prefix)
-    if arguments.dry_run:
-        return subset_prefix
-    if subset_bed_path.is_file() and subset_bim_path.is_file() and subset_fam_path.is_file():
-        return subset_prefix
-    marker_list_path = subset_prefix.parent / "extract_variants.txt"
-    write_lines(marker_list_path, read_first_bim_marker_identifiers(arguments.bim_path, arguments.variant_limit))
-    plink2_binary = arguments.plink2_binary or "plink2"
-    plink2_command = [
-        plink2_binary,
-        "--bfile",
-        str(arguments.plink_prefix_path),
-        "--extract",
-        str(marker_list_path),
-        "--make-bed",
-        "--out",
-        str(subset_prefix),
-    ]
-    subset_log_directory = arguments.output_directory / "logs" / "setup"
-    spec = tooling_commands.build_command_spec(
-        plink2_command,
-        cwd=REPOSITORY_ROOT,
-        timeout_seconds=arguments.command_timeout_seconds,
-        stdout_path=subset_log_directory / "tensorqtl_subset_plink2.stdout.log",
-        stderr_path=subset_log_directory / "tensorqtl_subset_plink2.stderr.log",
-        stream=True,
-    )
-    timed_result = run_timed_command("tensorqtl_subset_plink2", "setup", spec)
-    command_results.append(timed_result)
-    if timed_result.result.return_code != 0:
-        message = "Failed to prepare tensorQTL variant-limited PLINK subset with plink2."
-        raise RuntimeError(message)
-    return subset_prefix
-
-
 def build_environment_overrides() -> dict[str, str]:
     """Build child-process environment overrides."""
     python_path_entries = [str(REPOSITORY_ROOT)]
@@ -648,8 +579,6 @@ def build_environment_overrides() -> dict[str, str]:
         python_path_entries.append(existing_python_path)
     return {
         "PYTHONPATH": os.pathsep.join(python_path_entries),
-        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-        "XLA_PYTHON_CLIENT_MEM_FRACTION": ".50",
     }
 
 
@@ -665,7 +594,6 @@ def build_g_command(
     output_prefix: Path,
 ) -> list[str]:
     """Build the g quantitative chr22 command."""
-    log_directory = arguments.output_directory / "logs" / case_id
     run_spec = tooling_g_regenie.RegenieRunSpec(
         trait_kind=tooling_g_regenie.RegenieTraitKind.QUANTITATIVE,
         command_prefix=arguments.g_runner_prefix,
@@ -682,49 +610,20 @@ def build_g_command(
         compute=tooling_g_regenie.RegenieComputeOptions(
             device=tooling_g_regenie.RegenieDevice.GPU,
             bsize=arguments.chunk_size,
-            threads=arguments.cpu_threads,
-            staging_depth=1,
-            native_callback_batch_size=None,
-            result_in_flight_limit=None,
-            dosage_buffer_limit=None,
-            variant_limit=arguments.variant_limit,
-            trusted_no_missing_diploid=True,
-            trusted_bgen_validation_mode="cache_on_miss",
-            bgen_decode_tile_variant_count=None,
-            firth_batch_size=None,
-            firth_candidate_capacity=None,
-            gpu_genotype_format="dosage",
+            cpu_threads=arguments.cpu_threads,
             jax_cache_dir=cache_directory,
-            jax_persistent_cache=True,
-            jax_persistent_cache_min_entry_size_bytes=-1,
-            jax_persistent_cache_min_compile_time_seconds=0,
-            jax_xla_autotune_cache=False,
         ),
         output=tooling_g_regenie.RegenieOutputOptions(
-            output_format="parquet",
             output_run_directory=None,
             writer_threads=8,
-            writer_queue_depth=8,
-            chunks_per_arrow_file=None,
-            arrow_compression=None,
-            parquet_compression=None,
-            output_statistic_dtype=None,
-            finalize_parquet=False,
+            resume=False,
         ),
-        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(
-            telemetry="progress",
-            log_dir=log_directory,
-            stage_timings_json=log_directory / "stage_timings.json",
-            profile_summary_json=log_directory / "profile_summary.json",
-            log_file=log_directory / "events.jsonl",
-            log_filter="info",
-            log_stderr=True,
-            progress_interval_seconds=5.0,
-            progress_interval_chunks=10,
-        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(telemetry=tooling_g_regenie.RegenieTelemetry.OFF),
         binary=None,
     )
-    return tooling_g_regenie.render_g_regenie_cli(run_spec)
+    config_path = arguments.output_directory / "configs" / f"{case_id}.toml"
+    tooling_g_regenie.write_regenie_toml(run_spec, config_path)
+    return tooling_g_regenie.render_g_regenie_command(run_spec, config_path)
 
 
 def build_tensorqtl_command(
@@ -753,13 +652,17 @@ def build_tensorqtl_command(
 
 
 def build_cases(arguments: BenchmarkArguments, input_spec: TensorqtlInputSpec) -> list[BenchmarkCase]:
-    """Build the cold and warm benchmark cases."""
+    """Build cache-qualified g cases and repeated-process tensorQTL cases."""
     cases: list[BenchmarkCase] = []
     environment_overrides = build_environment_overrides()
     g_cache_directory = arguments.output_directory / "caches" / "g"
     tensorqtl_cache_directory = arguments.output_directory / "caches" / "tensorqtl"
-    for cache_state in (CacheState.COLD, CacheState.WARM):
-        g_case_id = f"g_linear_gpu_{cache_state.value}"
+    paired_states = (
+        (CacheState.COLD, CacheState.FIRST_PROCESS),
+        (CacheState.WARM, CacheState.REPEAT_PROCESS),
+    )
+    for g_cache_state, tensorqtl_process_state in paired_states:
+        g_case_id = f"g_linear_gpu_{g_cache_state.value}"
         g_output_directory = arguments.output_directory / "runs" / g_case_id
         g_output_prefix = g_output_directory / "linear"
         g_log_directory = arguments.output_directory / "logs" / g_case_id
@@ -767,25 +670,25 @@ def build_cases(arguments: BenchmarkArguments, input_spec: TensorqtlInputSpec) -
             BenchmarkCase(
                 case_id=g_case_id,
                 tool=BenchmarkTool.G,
-                cache_state=cache_state,
+                cache_state=g_cache_state,
                 command_arguments=tuple(build_g_command(arguments, g_case_id, g_cache_directory, g_output_prefix)),
                 output_directory=g_output_directory,
                 cache_directory=g_cache_directory,
                 stdout_path=g_log_directory / "stdout.log",
                 stderr_path=g_log_directory / "stderr.log",
-                stage_timing_path=g_log_directory / "stage_timings.json",
-                profile_summary_path=g_log_directory / "profile_summary.json",
+                stage_timing_path=None,
+                profile_summary_path=None,
                 environment_overrides=environment_overrides,
             )
         )
-        tensorqtl_case_id = f"tensorqtl_trans_dense_gpu_{cache_state.value}"
+        tensorqtl_case_id = f"tensorqtl_trans_dense_gpu_{tensorqtl_process_state.value}"
         tensorqtl_output_directory = arguments.output_directory / "runs" / tensorqtl_case_id
         tensorqtl_log_directory = arguments.output_directory / "logs" / tensorqtl_case_id
         cases.append(
             BenchmarkCase(
                 case_id=tensorqtl_case_id,
                 tool=BenchmarkTool.TENSORQTL,
-                cache_state=cache_state,
+                cache_state=tensorqtl_process_state,
                 command_arguments=tuple(
                     build_tensorqtl_command(
                         arguments=arguments,
@@ -866,39 +769,33 @@ def load_stage_seconds(path: Path | None) -> dict[str, float]:
 def discover_g_output_run_directory(case: BenchmarkCase) -> Path:
     """Discover the g output run directory for one completed case."""
     expected_root = Path(f"{case.output_directory / 'linear'}.g")
-    discovered_directories = sorted(
-        path
-        for path in expected_root.glob("*.regenie2_linear.run")
-        if path.is_dir() and (path / "run_manifest.json").is_file()
+    return native_lifecycle.discover_completed_run_directory(
+        expected_run_directory=None,
+        output_root=expected_root,
+        glob_pattern="*.regenie2_linear.run",
+        run_label=case.case_id,
     )
-    if len(discovered_directories) == 1:
-        return discovered_directories[0]
-    return expected_root
 
 
 def measure_g_outputs(case: BenchmarkCase) -> OutputMeasurement:
     """Measure g output rows and bytes."""
     output_run_directory = discover_g_output_run_directory(case)
-    manifest_payload = load_json_mapping(output_run_directory / "run_manifest.json")
-    committed_chunks = []
-    if manifest_payload is not None and isinstance(manifest_payload.get("committed_chunks"), list):
-        committed_chunks = typing.cast("list[typing.Any]", manifest_payload["committed_chunks"])
-    output_row_count = 0
-    for chunk_payload in committed_chunks:
-        if isinstance(chunk_payload, dict) and chunk_payload.get("row_count") is not None:
-            output_row_count += int(chunk_payload["row_count"])
+    output_measurement = native_lifecycle.measure_completed_output_run(output_run_directory)
     return OutputMeasurement(
-        row_count=output_row_count if committed_chunks else None,
+        row_count=output_measurement.row_count,
         total_bytes=directory_size_bytes(output_run_directory),
         stage_seconds=load_stage_seconds(case.stage_timing_path),
     )
 
 
-def parquet_row_count(path: Path) -> int | None:
-    """Read Parquet row count from metadata."""
+def parquet_row_count(path: Path) -> int:
+    """Read the positive row count from required Parquet metadata."""
     if not path.is_file():
-        return None
-    return pyarrow.parquet.ParquetFile(path).metadata.num_rows
+        raise RuntimeError(f"Completed tensorQTL run has no p-value output: {path}")
+    row_count = pyarrow.parquet.ParquetFile(path).metadata.num_rows
+    if row_count == 0:
+        raise RuntimeError(f"Completed tensorQTL run has an empty p-value output: {path}")
+    return row_count
 
 
 def measure_tensorqtl_outputs(case: BenchmarkCase) -> OutputMeasurement:
@@ -936,6 +833,8 @@ def run_one_case(arguments: BenchmarkArguments, case: BenchmarkCase) -> tuple[Ca
                 output_row_count=None,
                 output_total_bytes=None,
                 cache_total_bytes=None,
+                cache_before=None,
+                cache_after=None,
                 stage_seconds={},
             ),
             None,
@@ -950,13 +849,30 @@ def run_one_case(arguments: BenchmarkArguments, case: BenchmarkCase) -> tuple[Ca
         stream=True,
     )
     case.output_directory.mkdir(parents=True, exist_ok=True)
-    case.cache_directory.mkdir(parents=True, exist_ok=True)
+    uses_persistent_cache = case.cache_state in {CacheState.COLD, CacheState.WARM}
+    cache_before = native_lifecycle.snapshot_tree(case.cache_directory) if uses_persistent_cache else None
+    if case.cache_state == CacheState.COLD and cache_before is not None and cache_before.file_count != 0:
+        raise RuntimeError(f"Cold benchmark cache is not empty for {case.case_id}: {case.cache_directory}")
+    if case.cache_state == CacheState.WARM and (cache_before is None or cache_before.file_count == 0):
+        raise RuntimeError(f"Warm benchmark cache is empty for {case.case_id}: {case.cache_directory}")
+    if uses_persistent_cache:
+        case.cache_directory.mkdir(parents=True, exist_ok=True)
     case.stdout_path.parent.mkdir(parents=True, exist_ok=True)
     timed_result = run_timed_command(case.case_id, "benchmark", command_spec)
     status = case_status_from_command_result(timed_result.result)
     measurement = OutputMeasurement(row_count=None, total_bytes=None, stage_seconds={})
     if status == RunStatus.SUCCESS:
         measurement = measure_case_outputs(case)
+    cache_after = native_lifecycle.snapshot_tree(case.cache_directory) if uses_persistent_cache else None
+    if (
+        status == RunStatus.SUCCESS
+        and case.cache_state == CacheState.COLD
+        and cache_after is not None
+        and cache_after.file_count == 0
+    ):
+        raise RuntimeError(f"Cold benchmark did not populate its cache for {case.case_id}")
+    if status == RunStatus.SUCCESS and case.cache_state == CacheState.WARM and cache_before != cache_after:
+        raise RuntimeError(f"Warm benchmark changed its cache tree for {case.case_id}")
     case_result = CaseResult(
         case_id=case.case_id,
         tool=case.tool,
@@ -969,7 +885,9 @@ def run_one_case(arguments: BenchmarkArguments, case: BenchmarkCase) -> tuple[Ca
         cache_directory=str(case.cache_directory),
         output_row_count=measurement.row_count,
         output_total_bytes=measurement.total_bytes,
-        cache_total_bytes=directory_size_bytes(case.cache_directory),
+        cache_total_bytes=directory_size_bytes(case.cache_directory) if uses_persistent_cache else None,
+        cache_before=cache_before,
+        cache_after=cache_after,
         stage_seconds=measurement.stage_seconds,
     )
     logger.info("Finished %s with status=%s.", case.case_id, status.value)
@@ -991,6 +909,8 @@ def case_result_to_json_dict(case_result: CaseResult) -> dict[str, typing.Any]:
         "output_row_count": case_result.output_row_count,
         "output_total_bytes": case_result.output_total_bytes,
         "cache_total_bytes": case_result.cache_total_bytes,
+        "cache_before": dataclasses.asdict(case_result.cache_before) if case_result.cache_before is not None else None,
+        "cache_after": dataclasses.asdict(case_result.cache_after) if case_result.cache_after is not None else None,
         "stage_seconds": case_result.stage_seconds,
     }
 
@@ -1029,7 +949,6 @@ def build_metric_dimensions(arguments: BenchmarkArguments, case_result: CaseResu
         "cache_state": case_result.cache_state.value,
         "device": "gpu",
         "chunk_size": arguments.chunk_size,
-        "variant_limit": arguments.variant_limit,
         "tensorqtl_commit": arguments.tensorqtl_commit if case_result.tool == BenchmarkTool.TENSORQTL else None,
         "comparison_scope": "nominal_linear_workflow_runtime_not_statistical_parity",
     }
@@ -1188,7 +1107,8 @@ def build_agent_summary(case_results: list[CaseResult]) -> dict[str, object]:
         "key_observations": key_observations,
         "risks": [
             "tensorQTL trans dense is nominal QTL-style linear association, not REGENIE Step 2 LOCO output.",
-            "tensorQTL warm cases are repeated-process measurements with possible filesystem cache effects.",
+            "tensorQTL first/repeat cases are process-lifecycle measurements with possible filesystem cache effects; "
+            "they do not claim a persistent application-cache state.",
         ],
         "next_actions": [],
     }
@@ -1201,7 +1121,6 @@ def build_markdown_report(arguments: BenchmarkArguments, case_results: list[Case
         "",
         f"- Output directory: `{arguments.output_directory}`",
         f"- tensorQTL commit: `{arguments.tensorqtl_commit}`",
-        f"- Variant limit: `{arguments.variant_limit}`",
         f"- `g` genotype input: `{arguments.bgen_path}` (`bgen`)",
         f"- tensorQTL genotype input: `{arguments.plink_prefix_path}` (`bed/bim/fam`)",
         "",
@@ -1352,7 +1271,7 @@ def run_benchmark(
     if arguments.validate_inputs and not arguments.dry_run:
         validate_input_paths(arguments)
     timed_results = run_setup(arguments)
-    input_spec = prepare_tensorqtl_matrices(arguments=arguments, command_results=timed_results)
+    input_spec = prepare_tensorqtl_matrices(arguments=arguments)
     case_results: list[CaseResult] = []
     for case in build_cases(arguments, input_spec):
         case_result, timed_result = run_one_case(arguments, case)

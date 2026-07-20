@@ -15,7 +15,6 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from tooling.common import context as tooling_context
 from tooling.common import reports as tooling_reports
 
 if typing.TYPE_CHECKING:
@@ -139,11 +138,8 @@ class ToolContextSnapshot:
     """Resolved context included in durable tooling reports."""
 
     repository_root: str
-    data_directory: str | None
     output_directory: str
     cwd: str
-    hydra_chdir: bool | None
-    machine_profile: str | None
     hostname: str
     slurm_job_id: str | None
 
@@ -447,27 +443,12 @@ def build_context_snapshot(
     *,
     output_directory: Path,
     repository_root: Path,
-    tool_context: tooling_context.ToolContext | None = None,
 ) -> ToolContextSnapshot:
-    """Build a context snapshot from a tool context or local environment."""
-    if tool_context is not None:
-        return ToolContextSnapshot(
-            repository_root=str(tool_context.repository_root),
-            data_directory=str(tool_context.data_directory),
-            output_directory=str(output_directory),
-            cwd=str(tool_context.current_working_directory),
-            hydra_chdir=tool_context.hydra_chdir,
-            machine_profile=tool_context.machine.name,
-            hostname=platform.node(),
-            slurm_job_id=os.environ.get("SLURM_JOB_ID"),
-        )
+    """Build a context snapshot from the local environment."""
     return ToolContextSnapshot(
         repository_root=str(repository_root),
-        data_directory=None,
         output_directory=str(output_directory),
         cwd=str(Path.cwd().resolve()),
-        hydra_chdir=None,
-        machine_profile=None,
         hostname=platform.node(),
         slurm_job_id=os.environ.get("SLURM_JOB_ID"),
     )
@@ -772,7 +753,7 @@ def build_summary_markdown(report: ReportEnvelope) -> str:
         f"- Status: `{report.run.status.value}`",
         f"- Run ID: `{report.run.run_id}`",
         f"- Commit: `{report.producer.git_head}`",
-        f"- Machine: `{report.context.machine_profile or report.context.hostname}`",
+        f"- Machine: `{report.context.hostname}`",
         f"- Output: `{report.run.output_directory}`",
         "",
         "## Executive Summary",

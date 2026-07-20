@@ -1,34 +1,35 @@
 #!/usr/bin/env python3
-"""Benchmark REGENIE step 2 in fresh Python processes."""
+"""Benchmark fresh, warm, and hot native quantitative REGENIE lifecycles."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
 import os
-import statistics
-import subprocess
 import sys
-import textwrap
 import time
 import typing
-from dataclasses import dataclass
 from pathlib import Path
 
 import hydra
 
+import tooling.configuration as tooling_configuration
+from tooling.benchmark import native_lifecycle
+from tooling.common import g_regenie as tooling_g_regenie
 from tooling.common import hydra_arguments as tooling_hydra_arguments
 from tooling.common import hydra_compat as tooling_hydra_compat
+from tooling.common import paths as tooling_paths
 
 if typing.TYPE_CHECKING:
     import omegaconf
 
-DEFAULT_DATA_DIRECTORY = Path("data")
-DEFAULT_OUTPUT_DIRECTORY = Path("data/benchmarks/regenie2_linear_fresh_process")
+REPOSITORY_ROOT = tooling_paths.find_repository_root(Path(__file__))
+DEFAULT_OUTPUT_PARENT = Path("data/benchmarks")
 SINGLE_PHENOTYPE_NAME = "phenotype_continuous"
+SUMMARY_SCHEMA_VERSION = 0
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class BenchmarkInputs:
     """Input paths and phenotype columns used by the benchmark."""
 
@@ -40,868 +41,470 @@ class BenchmarkInputs:
     prediction_list_path: Path
 
 
-@dataclass(frozen=True)
-class TrialResult:
-    """One fresh-process benchmark trial result."""
-
-    trial_index: int
-    wall_time_seconds: float
-    output_path: str
-    output_row_count: int
-    chunk_file_count: int
-    chunk_bytes: int
-    final_parquet_bytes: int | None
-    mode: str = "fresh_process"
-    phenotype_count: int = 1
-    child_wall_time_seconds: float | None = None
-    stage_timing_path: str | None = None
-    output_paths: list[str] | None = None
-
-
-@dataclass(frozen=True)
-class BenchmarkSummary:
-    """Aggregate summary for one fresh-process benchmark run."""
-
-    device: str
-    chunk_size: int
-    finalize_parquet: bool
-    output_writer_thread_count: int
-    trial_count: int
-    warmup_count: int
-    mean_wall_time_seconds: float
-    median_wall_time_seconds: float
-    min_wall_time_seconds: float
-    max_wall_time_seconds: float
-    mean_rows_per_second: float
-    mean_chunk_file_count: float
-    mean_chunk_bytes: float
-    mean_final_parquet_bytes: float | None
-    trial_results: list[TrialResult]
-    mode: str = "fresh_process"
-    phenotype_count: int = 1
-    mean_child_wall_time_seconds: float | None = None
-    stage_timing_paths: list[str] = dataclasses.field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class BenchmarkReport:
-    """Combined fresh-process and same-process benchmark report."""
-
-    fresh_process: BenchmarkSummary
-    same_process: BenchmarkSummary
-    comparisons: dict[str, float]
-
-
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class LinearStartupArguments:
-    """Resolved fresh-process benchmark parameters.
+    """Resolved quantitative lifecycle benchmark parameters."""
 
-    Attributes:
-        device: Execution device.
-        chunk_size: Variants per chunk.
-        finalize_parquet: Whether each trial finalizes Parquet output.
-        output_writer_thread_count: Background writer thread count.
-        trials: Measured fresh-process trial count.
-        warmup_trials: Unreported fresh-process warmup count.
-        same_process_trials: Measured same-process trial count.
-        same_process_warmup_trials: Unreported same-process warmup count.
-        multi_phenotype_count: Number of cloned quantitative phenotypes.
-        multi_phenotype_sample_mode: Multi-trait sample handling mode.
-        emit_stage_timings: Whether measured trials write stage timing JSON.
-        data_dir: Input data directory.
-        output_dir: Benchmark output directory.
-        json_summary_path: Optional explicit JSON summary path.
-
-    """
-
-    device: str
+    device: tooling_g_regenie.RegenieDevice
     chunk_size: int
-    finalize_parquet: bool
+    cpu_threads: int | None
     output_writer_thread_count: int
-    trials: int
-    warmup_trials: int
-    same_process_trials: int
-    same_process_warmup_trials: int
+    include_fresh_process: bool
+    hot_run_count: int
+    diagnostic_run_count: int
     multi_phenotype_count: int
-    multi_phenotype_sample_mode: str
-    emit_stage_timings: bool
+    multi_phenotype_sample_mode: tooling_g_regenie.RegenieMultiPhenotypeSampleMode
+    expected_variant_count: int | None
     data_dir: Path
     output_dir: Path
+    jax_cache_dir: Path
+    python_executable: str
     json_summary_path: Path | None
 
 
-def prepare_benchmark_inputs(
-    *,
-    data_directory: Path,
-    output_directory: Path,
-    phenotype_count: int,
-) -> BenchmarkInputs:
-    """Resolve benchmark inputs, generating cloned phenotype files when requested."""
-    if phenotype_count < 1:
-        message = "--multi-phenotype-count must be at least 1."
-        raise ValueError(message)
-    bgen_path = data_directory / "1kg_chr22_full.bgen"
-    sample_path = data_directory / "1kg_chr22_full.sample"
-    phenotype_path = data_directory / "pheno_cont.txt"
-    covariate_path = data_directory / "covariates.txt"
-    prediction_list_path = data_directory / "baselines/regenie_step1_qt_pred.list"
-    if phenotype_count == 1:
-        return BenchmarkInputs(
-            bgen_path=bgen_path,
-            sample_path=sample_path,
-            phenotype_path=phenotype_path,
-            phenotype_names=(SINGLE_PHENOTYPE_NAME,),
-            covariate_path=covariate_path,
-            prediction_list_path=prediction_list_path,
-        )
+@dataclasses.dataclass(frozen=True)
+class OutputEvidence:
+    """Direct-Parquet evidence for one lifecycle."""
 
-    generated_directory = output_directory / "generated_inputs"
-    generated_directory.mkdir(parents=True, exist_ok=True)
-    phenotype_names = tuple(
-        f"{SINGLE_PHENOTYPE_NAME}_{phenotype_index + 1}" for phenotype_index in range(phenotype_count)
-    )
-    generated_phenotype_path = generated_directory / f"pheno_cont_{phenotype_count}_traits.txt"
-    write_cloned_phenotype_table(
-        source_phenotype_path=phenotype_path,
-        generated_phenotype_path=generated_phenotype_path,
-        phenotype_names=phenotype_names,
-    )
-    generated_prediction_list_path = generated_directory / f"regenie_step1_qt_{phenotype_count}_traits_pred.list"
-    write_cloned_prediction_list(
-        source_prediction_list_path=prediction_list_path,
-        generated_prediction_list_path=generated_prediction_list_path,
-        phenotype_names=phenotype_names,
-    )
-    return BenchmarkInputs(
-        bgen_path=bgen_path,
-        sample_path=sample_path,
-        phenotype_path=generated_phenotype_path,
-        phenotype_names=phenotype_names,
-        covariate_path=covariate_path,
-        prediction_list_path=generated_prediction_list_path,
-    )
+    runs: tuple[native_lifecycle.CompletedOutputEvidence, ...]
+    run_directories: tuple[str, ...]
+    parquet_file_count: int
+    parquet_total_bytes: int
+    parquet_sha256: str
+    row_count: int
+    schema: str
+    schema_metadata: dict[str, str]
+    parquet_metadata: tuple[dict[str, str], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class TrialResult:
+    """Measurement and output evidence for one lifecycle."""
+
+    name: str
+    role: str
+    headline: bool
+    telemetry: tooling_g_regenie.RegenieTelemetry
+    native: native_lifecycle.NativeRunResult
+    output: OutputEvidence
+    diagnostics: native_lifecycle.DiagnosticEvidence
+    cache_before: native_lifecycle.CacheSnapshot
+    cache_after: native_lifecycle.CacheSnapshot
+    cache_state: str
+
+
+def default_output_directory() -> Path:
+    """Return a timestamped ignored benchmark directory."""
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    return DEFAULT_OUTPUT_PARENT / f"regenie2_linear_lifecycle_{timestamp}_{os.getpid()}"
 
 
 def write_cloned_phenotype_table(
-    *,
-    source_phenotype_path: Path,
-    generated_phenotype_path: Path,
-    phenotype_names: tuple[str, ...],
+    *, source_path: Path, destination_path: Path, phenotype_names: tuple[str, ...]
 ) -> None:
-    """Write a quantitative phenotype table with cloned trait columns."""
-    source_lines = source_phenotype_path.read_text(encoding="utf-8").splitlines()
+    """Write a phenotype table containing cloned quantitative traits."""
+    source_lines = source_path.read_text(encoding="utf-8").splitlines()
     if not source_lines:
-        message = f"Phenotype file is empty: {source_phenotype_path}"
-        raise ValueError(message)
-    header_values = source_lines[0].split("\t")
+        raise ValueError(f"Phenotype file is empty: {source_path}")
+    header = source_lines[0].split("\t")
     try:
-        family_identifier_index = header_values.index("FID")
-        individual_identifier_index = header_values.index("IID")
-        phenotype_index = header_values.index(SINGLE_PHENOTYPE_NAME)
+        family_index = header.index("FID")
+        individual_index = header.index("IID")
+        phenotype_index = header.index(SINGLE_PHENOTYPE_NAME)
     except ValueError as error:
-        message = f"Phenotype file must contain FID, IID, and {SINGLE_PHENOTYPE_NAME}: {source_phenotype_path}"
+        message = f"Phenotype file must contain FID, IID, and {SINGLE_PHENOTYPE_NAME}: {source_path}"
         raise ValueError(message) from error
-
-    generated_lines = ["\t".join(("FID", "IID", *phenotype_names))]
+    destination_lines = ["\t".join(("FID", "IID", *phenotype_names))]
     for line_number, source_line in enumerate(source_lines[1:], start=2):
         if not source_line:
             continue
-        row_values = source_line.split("\t")
-        required_index = max(family_identifier_index, individual_identifier_index, phenotype_index)
-        if len(row_values) <= required_index:
-            message = f"Phenotype file line {line_number} has fewer columns than the header."
-            raise ValueError(message)
-        phenotype_value = row_values[phenotype_index]
-        generated_lines.append(
+        values = source_line.split("\t")
+        if len(values) <= max(family_index, individual_index, phenotype_index):
+            raise ValueError(f"Phenotype file line {line_number} has fewer columns than its header.")
+        destination_lines.append(
             "\t".join(
                 (
-                    row_values[family_identifier_index],
-                    row_values[individual_identifier_index],
-                    *(phenotype_value for _ in phenotype_names),
+                    values[family_index],
+                    values[individual_index],
+                    *(values[phenotype_index] for _ in phenotype_names),
                 )
             )
         )
-    generated_phenotype_path.write_text("\n".join(generated_lines) + "\n", encoding="utf-8")
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.write_text("\n".join(destination_lines) + "\n", encoding="utf-8")
 
 
 def write_cloned_prediction_list(
-    *,
-    source_prediction_list_path: Path,
-    generated_prediction_list_path: Path,
-    phenotype_names: tuple[str, ...],
+    *, source_path: Path, destination_path: Path, phenotype_names: tuple[str, ...]
 ) -> None:
-    """Write a prediction list that maps cloned traits to the source LOCO file."""
-    source_lines = [
-        source_line
-        for source_line in source_prediction_list_path.read_text(encoding="utf-8").splitlines()
-        if source_line.strip()
-    ]
-    if not source_lines:
-        message = f"Prediction list is empty: {source_prediction_list_path}"
-        raise ValueError(message)
-    first_line_fields = source_lines[0].split()
-    if len(first_line_fields) != 2:
-        message = f"Prediction list line must contain phenotype and LOCO path: {source_prediction_list_path}"
-        raise ValueError(message)
-    raw_loco_path = Path(first_line_fields[1])
-    loco_path = raw_loco_path if raw_loco_path.is_absolute() else source_prediction_list_path.parent / raw_loco_path
-    generated_prediction_list_path.write_text(
+    """Write prediction-list entries for cloned quantitative traits."""
+    matching_paths: list[Path] = []
+    for line_number, line in enumerate(source_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        fields = line.split()
+        if len(fields) != 2:
+            raise ValueError(f"Prediction-list row {line_number} must contain a phenotype and LOCO path.")
+        if fields[0] == SINGLE_PHENOTYPE_NAME:
+            matching_paths.append(Path(fields[1]))
+    if len(matching_paths) != 1:
+        raise ValueError(f"Prediction list must contain exactly one {SINGLE_PHENOTYPE_NAME!r} row: {source_path}")
+    raw_loco_path = matching_paths[0]
+    loco_path = raw_loco_path if raw_loco_path.is_absolute() else (source_path.parent / raw_loco_path).resolve()
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.write_text(
         "".join(f"{phenotype_name} {loco_path}\n" for phenotype_name in phenotype_names),
         encoding="utf-8",
     )
 
 
-def build_regenie_options(
-    *,
-    benchmark_inputs: BenchmarkInputs,
-    output_path: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    stage_timing_path: Path | None,
-    multi_phenotype_sample_mode: str,
-    disable_telemetry: bool,
-) -> dict[str, object]:
-    """Build g API options for one benchmark trial."""
-    compute_options: dict[str, object] = {"device": device}
-    output_options: dict[str, object] = {
-        "format": "parquet" if finalize_parquet else "arrow",
-        "writer_threads": output_writer_thread_count,
-    }
-    diagnostics_options: dict[str, object] = {}
-    regenie_options: dict[str, object] = {
-        "step": 2,
-        "qt": True,
-        "bgen": str(benchmark_inputs.bgen_path),
-        "sample": str(benchmark_inputs.sample_path),
-        "phenoFile": str(benchmark_inputs.phenotype_path),
-        "out": str(output_path),
-        "covarFile": str(benchmark_inputs.covariate_path),
-        "covarColList": "age,sex",
-        "pred": str(benchmark_inputs.prediction_list_path),
-        "bsize": chunk_size,
-        "compute": compute_options,
-        "output": output_options,
-        "diagnostics": diagnostics_options,
-    }
-    if len(benchmark_inputs.phenotype_names) == 1:
-        regenie_options["phenoCol"] = benchmark_inputs.phenotype_names[0]
-    else:
-        regenie_options["phenoColList"] = ",".join(benchmark_inputs.phenotype_names)
-        compute_options["multi_phenotype_sample_mode"] = multi_phenotype_sample_mode
-    if stage_timing_path is not None:
-        diagnostics_options["stage_timings_json"] = str(stage_timing_path)
-    if disable_telemetry:
-        diagnostics_options["telemetry"] = "off"
-    return regenie_options
-
-
-def build_child_metrics_code() -> str:
-    """Return inline child helper code for collecting output metrics."""
-    return textwrap.dedent(
-        """
-        def collect_artifact_metrics(artifacts):
-            artifact_values = artifacts.phenotype_artifacts or (artifacts,)
-            output_paths = []
-            output_row_count = 0
-            chunk_file_count = 0
-            chunk_bytes = 0
-            final_parquet_bytes = 0
-            for artifact in artifact_values:
-                if artifact.final_parquet is not None:
-                    output_paths.append(str(artifact.final_parquet))
-                    output_row_count += pl.scan_parquet(artifact.final_parquet).select(pl.len()).collect().item()
-                    final_parquet_bytes += artifact.final_parquet.stat().st_size
-                if artifact.output_run_directory is None:
-                    continue
-                output_run_directory = Path(artifact.output_run_directory)
-                chunk_file_paths = sorted((output_run_directory / "chunks").glob("*.arrow"))
-                part_file_paths = sorted((output_run_directory / "parts").glob("*.parquet"))
-                chunk_file_count += len(chunk_file_paths)
-                chunk_bytes += sum(chunk_file_path.stat().st_size for chunk_file_path in chunk_file_paths)
-                for chunk_file_path in chunk_file_paths:
-                    if artifact.final_parquet is None:
-                        output_paths.append(str(chunk_file_path))
-                        output_row_count += pl.scan_ipc(chunk_file_path).select(pl.len()).collect().item()
-                for part_file_path in part_file_paths:
-                    output_paths.append(str(part_file_path))
-                    output_row_count += pl.scan_parquet(part_file_path).select(pl.len()).collect().item()
-                    final_parquet_bytes += part_file_path.stat().st_size
-            if not output_paths:
-                raise RuntimeError("No readable output artifacts were produced.")
-            return {
-                "output_path": output_paths[0],
-                "output_paths": output_paths,
-                "output_row_count": int(output_row_count),
-                "chunk_file_count": int(chunk_file_count),
-                "chunk_bytes": int(chunk_bytes),
-                "final_parquet_bytes": int(final_parquet_bytes) if final_parquet_bytes else None,
-            }
-        """
+def prepare_benchmark_inputs(arguments: LinearStartupArguments) -> BenchmarkInputs:
+    """Resolve source inputs and generate cloned traits when requested."""
+    if arguments.multi_phenotype_count < 1:
+        raise ValueError("multi_phenotype_count must be positive.")
+    phenotype_path = arguments.data_dir / "pheno_cont.txt"
+    prediction_list_path = arguments.data_dir / "baselines/regenie_step1_qt_pred.list"
+    phenotype_names = tuple(
+        SINGLE_PHENOTYPE_NAME if arguments.multi_phenotype_count == 1 else f"{SINGLE_PHENOTYPE_NAME}_{index + 1}"
+        for index in range(arguments.multi_phenotype_count)
     )
-
-
-def collect_artifact_metrics(artifacts: typing.Any) -> dict[str, object]:
-    """Collect row and byte metrics from single- or multi-phenotype artifacts."""
-    import polars as pl
-
-    def count_rows(lazy_frame: typing.Any) -> int:
-        collected_frame = lazy_frame.select(pl.len()).collect()
-        return int(collected_frame.item())
-
-    artifact_values = artifacts.phenotype_artifacts or (artifacts,)
-    output_paths: list[str] = []
-    output_row_count = 0
-    chunk_file_count = 0
-    chunk_bytes = 0
-    final_parquet_bytes = 0
-    for artifact in artifact_values:
-        if artifact.final_parquet is not None:
-            output_paths.append(str(artifact.final_parquet))
-            output_row_count += count_rows(pl.scan_parquet(artifact.final_parquet))
-            final_parquet_bytes += artifact.final_parquet.stat().st_size
-        if artifact.output_run_directory is None:
-            continue
-        output_run_directory = Path(artifact.output_run_directory)
-        chunk_file_paths = sorted((output_run_directory / "chunks").glob("*.arrow"))
-        part_file_paths = sorted((output_run_directory / "parts").glob("*.parquet"))
-        chunk_file_count += len(chunk_file_paths)
-        chunk_bytes += sum(chunk_file_path.stat().st_size for chunk_file_path in chunk_file_paths)
-        for chunk_file_path in chunk_file_paths:
-            if artifact.final_parquet is None:
-                output_paths.append(str(chunk_file_path))
-                output_row_count += count_rows(pl.scan_ipc(chunk_file_path))
-        for part_file_path in part_file_paths:
-            output_paths.append(str(part_file_path))
-            output_row_count += count_rows(pl.scan_parquet(part_file_path))
-            final_parquet_bytes += part_file_path.stat().st_size
-    if not output_paths:
-        message = "No readable output artifacts were produced."
-        raise RuntimeError(message)
-    return {
-        "output_path": output_paths[0],
-        "output_paths": output_paths,
-        "output_row_count": int(output_row_count),
-        "chunk_file_count": int(chunk_file_count),
-        "chunk_bytes": int(chunk_bytes),
-        "final_parquet_bytes": int(final_parquet_bytes) if final_parquet_bytes else None,
-    }
-
-
-def payload_int(payload: dict[str, object], key: str) -> int:
-    """Read an integer-compatible payload field."""
-    value = payload[key]
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
-        message = f"Expected numeric payload field: {key}"
-        raise TypeError(message)
-    return int(value)
-
-
-def payload_optional_int(payload: dict[str, object], key: str) -> int | None:
-    """Read an optional integer-compatible payload field."""
-    value = payload[key]
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
-        message = f"Expected optional numeric payload field: {key}"
-        raise TypeError(message)
-    return int(value)
-
-
-def payload_string_list(payload: dict[str, object], key: str) -> list[str]:
-    """Read a list of strings from a payload field."""
-    value = payload.get(key, [])
-    if not isinstance(value, list):
-        message = f"Expected list payload field: {key}"
-        raise TypeError(message)
-    return [str(item) for item in value]
-
-
-def build_child_command(
-    *,
-    benchmark_inputs: BenchmarkInputs,
-    output_path: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    stage_timing_path: Path | None = None,
-    multi_phenotype_sample_mode: str = "complete-case",
-) -> list[str]:
-    """Build the child Python command for one isolated trial."""
-    regenie_options = build_regenie_options(
-        benchmark_inputs=benchmark_inputs,
-        output_path=output_path,
-        device=device,
-        chunk_size=chunk_size,
-        finalize_parquet=finalize_parquet,
-        output_writer_thread_count=output_writer_thread_count,
-        stage_timing_path=stage_timing_path,
-        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        disable_telemetry=False,
-    )
-    child_imports_code = textwrap.dedent(
-        """
-        import json
-        import time
-        from pathlib import Path
-
-        import polars as pl
-
-        from g import api
-        """
-    )
-    child_run_code = textwrap.dedent(
-        f"""
-        start_time = time.perf_counter()
-        artifacts = api.regenie.from_options({regenie_options!r})
-        child_wall_time_seconds = time.perf_counter() - start_time
-        metrics = collect_artifact_metrics(artifacts)
-        metrics["child_wall_time_seconds"] = child_wall_time_seconds
-        print(json.dumps(metrics))
-        """
-    )
-    child_code = "\n".join(
-        (
-            child_imports_code,
-            build_child_metrics_code(),
-            child_run_code,
+    if arguments.multi_phenotype_count > 1:
+        generated_directory = arguments.output_dir / "generated_inputs"
+        phenotype_path = generated_directory / "phenotypes.tsv"
+        prediction_list_path = generated_directory / "predictions.list"
+        write_cloned_phenotype_table(
+            source_path=arguments.data_dir / "pheno_cont.txt",
+            destination_path=phenotype_path,
+            phenotype_names=phenotype_names,
         )
+        write_cloned_prediction_list(
+            source_path=arguments.data_dir / "baselines/regenie_step1_qt_pred.list",
+            destination_path=prediction_list_path,
+            phenotype_names=phenotype_names,
+        )
+    return BenchmarkInputs(
+        bgen_path=arguments.data_dir / "1kg_chr22_full.bgen",
+        sample_path=arguments.data_dir / "1kg_chr22_full.sample",
+        phenotype_path=phenotype_path,
+        phenotype_names=phenotype_names,
+        covariate_path=arguments.data_dir / "covariates.txt",
+        prediction_list_path=prediction_list_path,
     )
-    return [sys.executable, "-c", child_code]
 
 
-def run_fresh_process_trial(
-    *,
-    trial_index: int,
+def build_run_spec(
+    arguments: LinearStartupArguments,
     benchmark_inputs: BenchmarkInputs,
-    output_directory: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    emit_stage_timings: bool = False,
-    multi_phenotype_sample_mode: str = "complete-case",
-) -> TrialResult:
-    """Run one isolated fresh-process trial."""
-    stage_timing_path = build_stage_timing_path(
-        output_directory=output_directory,
-        mode="fresh_process",
-        device=device,
-        trial_index=trial_index,
-        emit_stage_timings=emit_stage_timings,
-    )
-    output_prefix = output_directory / (
-        f"{device}_finalize{int(finalize_parquet)}_"
-        f"chunk{chunk_size}_"
-        f"writer{output_writer_thread_count}_"
-        f"phenotypes{len(benchmark_inputs.phenotype_names)}_"
-        f"trial{trial_index:02d}"
-    )
-    command_arguments = build_child_command(
-        benchmark_inputs=benchmark_inputs,
-        output_path=output_prefix,
-        device=device,
-        chunk_size=chunk_size,
-        finalize_parquet=finalize_parquet,
-        output_writer_thread_count=output_writer_thread_count,
-        stage_timing_path=stage_timing_path,
-        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-    )
-    child_environment = os.environ.copy()
-    child_environment.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-    child_environment.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", ".50")
-    start_time = time.perf_counter()
-    completed_process = subprocess.run(
-        command_arguments,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=child_environment,
-    )
-    wall_time_seconds = time.perf_counter() - start_time
-    result_line = completed_process.stdout.strip().splitlines()[-1]
-    result_payload = json.loads(result_line)
-    return TrialResult(
-        trial_index=trial_index,
-        wall_time_seconds=wall_time_seconds,
-        output_path=str(result_payload["output_path"]),
-        output_row_count=int(result_payload["output_row_count"]),
-        chunk_file_count=int(result_payload["chunk_file_count"]),
-        chunk_bytes=int(result_payload["chunk_bytes"]),
-        final_parquet_bytes=(
-            int(result_payload["final_parquet_bytes"]) if result_payload["final_parquet_bytes"] is not None else None
+    *,
+    output_root: Path,
+    telemetry: tooling_g_regenie.RegenieTelemetry,
+) -> tooling_g_regenie.RegenieRunSpec:
+    """Build one current production run specification."""
+    return tooling_g_regenie.RegenieRunSpec(
+        trait_kind=tooling_g_regenie.RegenieTraitKind.QUANTITATIVE,
+        command_prefix=("g", "regenie"),
+        inputs=tooling_g_regenie.RegenieInputSpec(
+            bgen_path=benchmark_inputs.bgen_path,
+            sample_path=benchmark_inputs.sample_path,
+            phenotype_path=benchmark_inputs.phenotype_path,
+            phenotype_columns=benchmark_inputs.phenotype_names,
+            covariate_path=benchmark_inputs.covariate_path,
+            covariate_columns=("age", "sex"),
+            prediction_list_path=benchmark_inputs.prediction_list_path,
+            output_prefix=output_root,
         ),
-        mode="fresh_process",
-        phenotype_count=len(benchmark_inputs.phenotype_names),
-        child_wall_time_seconds=float(result_payload["child_wall_time_seconds"]),
-        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
-        output_paths=[str(output_path) for output_path in result_payload.get("output_paths", [])],
-    )
-
-
-def build_stage_timing_path(
-    *,
-    output_directory: Path,
-    mode: str,
-    device: str,
-    trial_index: int,
-    emit_stage_timings: bool,
-) -> Path | None:
-    """Build a measured-trial stage timing path when requested."""
-    if not emit_stage_timings or trial_index < 0:
-        return None
-    stage_timing_directory = output_directory / "stage_timings"
-    stage_timing_directory.mkdir(parents=True, exist_ok=True)
-    return stage_timing_directory / f"{mode}_{device}_trial{trial_index:02d}.json"
-
-
-def run_same_process_trial(
-    *,
-    api_module: typing.Any,
-    trial_index: int,
-    benchmark_inputs: BenchmarkInputs,
-    output_directory: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    emit_stage_timings: bool = False,
-    multi_phenotype_sample_mode: str = "complete-case",
-) -> TrialResult:
-    """Run one repeated trial inside the current Python process."""
-    stage_timing_path = build_stage_timing_path(
-        output_directory=output_directory,
-        mode="same_process",
-        device=device,
-        trial_index=trial_index,
-        emit_stage_timings=emit_stage_timings,
-    )
-    output_prefix = output_directory / (
-        f"same_process_{device}_finalize{int(finalize_parquet)}_"
-        f"chunk{chunk_size}_"
-        f"writer{output_writer_thread_count}_"
-        f"phenotypes{len(benchmark_inputs.phenotype_names)}_"
-        f"trial{trial_index:02d}"
-    )
-    regenie_options = build_regenie_options(
-        benchmark_inputs=benchmark_inputs,
-        output_path=output_prefix,
-        device=device,
-        chunk_size=chunk_size,
-        finalize_parquet=finalize_parquet,
-        output_writer_thread_count=output_writer_thread_count,
-        stage_timing_path=stage_timing_path,
-        multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        disable_telemetry=True,
-    )
-    start_time = time.perf_counter()
-    artifacts = api_module.regenie.from_options(regenie_options)
-    wall_time_seconds = time.perf_counter() - start_time
-    result_payload = collect_artifact_metrics(artifacts)
-    return TrialResult(
-        trial_index=trial_index,
-        wall_time_seconds=wall_time_seconds,
-        output_path=str(result_payload["output_path"]),
-        output_row_count=payload_int(result_payload, "output_row_count"),
-        chunk_file_count=payload_int(result_payload, "chunk_file_count"),
-        chunk_bytes=payload_int(result_payload, "chunk_bytes"),
-        final_parquet_bytes=payload_optional_int(result_payload, "final_parquet_bytes"),
-        mode="same_process",
-        phenotype_count=len(benchmark_inputs.phenotype_names),
-        child_wall_time_seconds=None,
-        stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
-        output_paths=payload_string_list(result_payload, "output_paths"),
-    )
-
-
-def run_same_process_trials(
-    *,
-    benchmark_inputs: BenchmarkInputs,
-    output_directory: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    warmup_count: int,
-    trial_count: int,
-    emit_stage_timings: bool = False,
-    multi_phenotype_sample_mode: str = "complete-case",
-) -> list[TrialResult]:
-    """Run warm and measured trials inside one Python process."""
-    from g import api as g_api
-
-    for warmup_index in range(warmup_count):
-        run_same_process_trial(
-            api_module=g_api,
-            trial_index=-(warmup_index + 1),
-            benchmark_inputs=benchmark_inputs,
-            output_directory=output_directory,
-            device=device,
-            chunk_size=chunk_size,
-            finalize_parquet=finalize_parquet,
-            output_writer_thread_count=output_writer_thread_count,
-            emit_stage_timings=False,
-            multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        )
-    return [
-        run_same_process_trial(
-            api_module=g_api,
-            trial_index=trial_index,
-            benchmark_inputs=benchmark_inputs,
-            output_directory=output_directory,
-            device=device,
-            chunk_size=chunk_size,
-            finalize_parquet=finalize_parquet,
-            output_writer_thread_count=output_writer_thread_count,
-            emit_stage_timings=emit_stage_timings,
-            multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        )
-        for trial_index in range(trial_count)
-    ]
-
-
-def run_fresh_process_trials(
-    *,
-    benchmark_inputs: BenchmarkInputs,
-    output_directory: Path,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    warmup_count: int,
-    trial_count: int,
-    emit_stage_timings: bool = False,
-    multi_phenotype_sample_mode: str = "complete-case",
-) -> list[TrialResult]:
-    """Run warm and measured trials in isolated Python child processes."""
-    for warmup_index in range(warmup_count):
-        run_fresh_process_trial(
-            trial_index=-(warmup_index + 1),
-            benchmark_inputs=benchmark_inputs,
-            output_directory=output_directory,
-            device=device,
-            chunk_size=chunk_size,
-            finalize_parquet=finalize_parquet,
-            output_writer_thread_count=output_writer_thread_count,
-            emit_stage_timings=False,
-            multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        )
-    return [
-        run_fresh_process_trial(
-            trial_index=trial_index,
-            benchmark_inputs=benchmark_inputs,
-            output_directory=output_directory,
-            device=device,
-            chunk_size=chunk_size,
-            finalize_parquet=finalize_parquet,
-            output_writer_thread_count=output_writer_thread_count,
-            emit_stage_timings=emit_stage_timings,
-            multi_phenotype_sample_mode=multi_phenotype_sample_mode,
-        )
-        for trial_index in range(trial_count)
-    ]
-
-
-def require_positive_count(argument_name: str, argument_value: int) -> None:
-    """Reject non-positive trial or phenotype counts."""
-    if argument_value < 1:
-        message = f"{argument_name} must be at least 1."
-        raise ValueError(message)
-
-
-def require_non_negative_count(argument_name: str, argument_value: int) -> None:
-    """Reject negative counts."""
-    if argument_value < 0:
-        message = f"{argument_name} must be non-negative."
-        raise ValueError(message)
-
-
-def build_summary(
-    *,
-    device: str,
-    chunk_size: int,
-    finalize_parquet: bool,
-    output_writer_thread_count: int,
-    warmup_count: int,
-    trial_results: list[TrialResult],
-    mode: str = "fresh_process",
-    phenotype_count: int = 1,
-) -> BenchmarkSummary:
-    """Build an aggregate summary from measured trials."""
-    if not trial_results:
-        message = f"No measured {mode} trials were provided."
-        raise ValueError(message)
-    wall_time_values = [trial_result.wall_time_seconds for trial_result in trial_results]
-    row_rate_values = [trial_result.output_row_count / trial_result.wall_time_seconds for trial_result in trial_results]
-    final_parquet_byte_values = [
-        trial_result.final_parquet_bytes
-        for trial_result in trial_results
-        if trial_result.final_parquet_bytes is not None
-    ]
-    child_wall_time_values = [
-        trial_result.child_wall_time_seconds
-        for trial_result in trial_results
-        if trial_result.child_wall_time_seconds is not None
-    ]
-    stage_timing_paths = [
-        trial_result.stage_timing_path for trial_result in trial_results if trial_result.stage_timing_path is not None
-    ]
-    return BenchmarkSummary(
-        device=device,
-        chunk_size=chunk_size,
-        finalize_parquet=finalize_parquet,
-        output_writer_thread_count=output_writer_thread_count,
-        trial_count=len(trial_results),
-        warmup_count=warmup_count,
-        mean_wall_time_seconds=statistics.fmean(wall_time_values),
-        median_wall_time_seconds=statistics.median(wall_time_values),
-        min_wall_time_seconds=min(wall_time_values),
-        max_wall_time_seconds=max(wall_time_values),
-        mean_rows_per_second=statistics.fmean(row_rate_values),
-        mean_chunk_file_count=statistics.fmean([trial_result.chunk_file_count for trial_result in trial_results]),
-        mean_chunk_bytes=statistics.fmean([trial_result.chunk_bytes for trial_result in trial_results]),
-        mean_final_parquet_bytes=(statistics.fmean(final_parquet_byte_values) if final_parquet_byte_values else None),
-        trial_results=trial_results,
-        mode=mode,
-        phenotype_count=phenotype_count,
-        mean_child_wall_time_seconds=(statistics.fmean(child_wall_time_values) if child_wall_time_values else None),
-        stage_timing_paths=stage_timing_paths,
-    )
-
-
-def build_benchmark_report(
-    *,
-    fresh_process_summary: BenchmarkSummary,
-    same_process_summary: BenchmarkSummary,
-) -> BenchmarkReport:
-    """Build a combined fresh versus same-process report."""
-    speedup_ratio = fresh_process_summary.median_wall_time_seconds / same_process_summary.median_wall_time_seconds
-    return BenchmarkReport(
-        fresh_process=fresh_process_summary,
-        same_process=same_process_summary,
-        comparisons={
-            "fresh_process_to_same_process_median_speedup_ratio": speedup_ratio,
-            "fresh_process_minus_same_process_median_seconds": (
-                fresh_process_summary.median_wall_time_seconds - same_process_summary.median_wall_time_seconds
-            ),
-        },
-    )
-
-
-def run_tool(arguments: LinearStartupArguments) -> None:
-    """Run the fresh-process benchmark."""
-    arguments.output_dir.mkdir(parents=True, exist_ok=True)
-
-    require_positive_count("tool.trials", arguments.trials)
-    require_non_negative_count("tool.warmup_trials", arguments.warmup_trials)
-    require_non_negative_count("tool.same_process_trials", arguments.same_process_trials)
-    require_non_negative_count("tool.same_process_warmup_trials", arguments.same_process_warmup_trials)
-    require_positive_count("tool.multi_phenotype_count", arguments.multi_phenotype_count)
-    benchmark_inputs = prepare_benchmark_inputs(
-        data_directory=arguments.data_dir,
-        output_directory=arguments.output_dir,
-        phenotype_count=arguments.multi_phenotype_count,
-    )
-
-    measured_trial_results = run_fresh_process_trials(
-        benchmark_inputs=benchmark_inputs,
-        output_directory=arguments.output_dir,
-        device=arguments.device,
-        chunk_size=arguments.chunk_size,
-        finalize_parquet=arguments.finalize_parquet,
-        output_writer_thread_count=arguments.output_writer_thread_count,
-        warmup_count=arguments.warmup_trials,
-        trial_count=arguments.trials,
-        emit_stage_timings=arguments.emit_stage_timings,
-        multi_phenotype_sample_mode=arguments.multi_phenotype_sample_mode,
-    )
-
-    benchmark_summary = build_summary(
-        device=arguments.device,
-        chunk_size=arguments.chunk_size,
-        finalize_parquet=arguments.finalize_parquet,
-        output_writer_thread_count=arguments.output_writer_thread_count,
-        warmup_count=arguments.warmup_trials,
-        trial_results=measured_trial_results,
-        mode="fresh_process",
-        phenotype_count=len(benchmark_inputs.phenotype_names),
-    )
-    output_payload: dict[str, object]
-    if arguments.same_process_trials:
-        same_process_trial_results = run_same_process_trials(
-            benchmark_inputs=benchmark_inputs,
-            output_directory=arguments.output_dir,
+        compute=tooling_g_regenie.RegenieComputeOptions(
             device=arguments.device,
-            chunk_size=arguments.chunk_size,
-            finalize_parquet=arguments.finalize_parquet,
-            output_writer_thread_count=arguments.output_writer_thread_count,
-            warmup_count=arguments.same_process_warmup_trials,
-            trial_count=arguments.same_process_trials,
-            emit_stage_timings=arguments.emit_stage_timings,
+            bsize=arguments.chunk_size,
+            cpu_threads=arguments.cpu_threads,
             multi_phenotype_sample_mode=arguments.multi_phenotype_sample_mode,
+            jax_cache_dir=arguments.jax_cache_dir,
+        ),
+        output=tooling_g_regenie.RegenieOutputOptions(
+            writer_threads=arguments.output_writer_thread_count,
+            resume=False,
+        ),
+        diagnostics=tooling_g_regenie.RegenieDiagnosticsOptions(telemetry=telemetry),
+        binary=None,
+    )
+
+
+def collect_output_evidence(
+    output_root: Path,
+    *,
+    expected_phenotype_count: int,
+    expected_variant_count: int | None,
+) -> OutputEvidence:
+    """Validate direct Parquet parts and collect output evidence."""
+    production_root = Path(f"{output_root}.g")
+    run_directories = sorted(path for path in production_root.glob("*.run") if path.is_dir())
+    if len(run_directories) != expected_phenotype_count:
+        raise RuntimeError(
+            f"Expected {expected_phenotype_count} phenotype runs below {production_root}, found {len(run_directories)}."
         )
-        same_process_summary = build_summary(
-            device=arguments.device,
-            chunk_size=arguments.chunk_size,
-            finalize_parquet=arguments.finalize_parquet,
-            output_writer_thread_count=arguments.output_writer_thread_count,
-            warmup_count=arguments.same_process_warmup_trials,
-            trial_results=same_process_trial_results,
-            mode="same_process",
-            phenotype_count=len(benchmark_inputs.phenotype_names),
+    run_evidence: list[native_lifecycle.CompletedOutputEvidence] = []
+    parquet_paths: list[Path] = []
+    parquet_metadata: list[dict[str, str]] = []
+    row_count = 0
+    schema: str | None = None
+    schema_metadata: dict[str, str] | None = None
+    for run_directory in run_directories:
+        completed_output = native_lifecycle.measure_completed_output_run(run_directory)
+        if expected_variant_count is not None and completed_output.row_count != expected_variant_count:
+            raise RuntimeError(
+                f"Expected {expected_variant_count} rows for {run_directory.name}, "
+                f"observed {completed_output.row_count}."
+            )
+        if schema is None:
+            schema = completed_output.schema
+            schema_metadata = completed_output.schema_metadata
+        elif schema != completed_output.schema or schema_metadata != completed_output.schema_metadata:
+            raise RuntimeError("Parquet schema changed within one benchmark lifecycle.")
+        row_count += completed_output.row_count
+        parquet_paths.extend(Path(path) for path in completed_output.parquet_paths)
+        parquet_metadata.extend(completed_output.parquet_metadata)
+        run_evidence.append(completed_output)
+    if schema is None or schema_metadata is None:
+        raise RuntimeError("Output schema was not observed.")
+    return OutputEvidence(
+        runs=tuple(run_evidence),
+        run_directories=tuple(str(path) for path in run_directories),
+        parquet_file_count=len(parquet_paths),
+        parquet_total_bytes=sum(path.stat().st_size for path in parquet_paths),
+        parquet_sha256=native_lifecycle.hash_paths(parquet_paths, production_root),
+        row_count=row_count,
+        schema=schema,
+        schema_metadata=schema_metadata,
+        parquet_metadata=tuple(parquet_metadata),
+    )
+
+
+def run_trial(
+    arguments: LinearStartupArguments,
+    benchmark_inputs: BenchmarkInputs,
+    *,
+    name: str,
+    role: str,
+    headline: bool,
+    telemetry: tooling_g_regenie.RegenieTelemetry,
+    fresh_process: bool,
+) -> TrialResult:
+    """Run and validate one complete lifecycle."""
+    output_root = arguments.output_dir / "runs" / name
+    run_spec = build_run_spec(arguments, benchmark_inputs, output_root=output_root, telemetry=telemetry)
+    config_path = tooling_g_regenie.write_regenie_toml(run_spec, arguments.output_dir / "configs" / f"{name}.toml")
+    before = native_lifecycle.snapshot_tree(arguments.jax_cache_dir)
+    native = (
+        native_lifecycle.run_fresh_process(arguments.python_executable, config_path)
+        if fresh_process
+        else native_lifecycle.run_same_process(config_path)
+    )
+    if native.exit_code != 0:
+        details = "".join((*native.stderr_chunks, *native.stdout_chunks))
+        raise RuntimeError(f"Native CLI failed for {name}: {details}")
+    after = native_lifecycle.snapshot_tree(arguments.jax_cache_dir)
+    output = collect_output_evidence(
+        output_root,
+        expected_phenotype_count=len(benchmark_inputs.phenotype_names),
+        expected_variant_count=arguments.expected_variant_count,
+    )
+    return TrialResult(
+        name=name,
+        role=role,
+        headline=headline,
+        telemetry=telemetry,
+        native=native,
+        output=output,
+        diagnostics=native_lifecycle.collect_diagnostic_evidence(
+            telemetry=telemetry,
+            telemetry_root=Path(f"{output_root}.g"),
+            run_directories=tuple(Path(path) for path in output.run_directories),
+        ),
+        cache_before=before,
+        cache_after=after,
+        cache_state=native_lifecycle.cache_state(before, after),
+    )
+
+
+def verify_hot_outputs(trials: list[TrialResult]) -> None:
+    """Require stable cache and output contracts across headline runs."""
+    headline_trials = [trial for trial in trials if trial.headline]
+    if not headline_trials:
+        raise RuntimeError("At least one headline hot run is required.")
+    reference = headline_trials[0].output
+    for trial in headline_trials:
+        if trial.cache_before != trial.cache_after or trial.cache_before.file_count == 0:
+            raise RuntimeError(f"JAX cache was not populated and unchanged during headline trial {trial.name}.")
+        if (
+            trial.output.parquet_sha256 != reference.parquet_sha256
+            or trial.output.row_count != reference.row_count
+            or trial.output.schema != reference.schema
+            or trial.output.schema_metadata != reference.schema_metadata
+            or trial.output.parquet_metadata != reference.parquet_metadata
+        ):
+            raise RuntimeError(f"Output contract differs for headline trial {trial.name}.")
+
+
+def build_trial_plans(arguments: LinearStartupArguments) -> list[native_lifecycle.TrialPlan]:
+    """Build lifecycle plans without mixing incompatible native telemetry policy."""
+    plans = [
+        native_lifecycle.TrialPlan(
+            name="discarded_warm",
+            role="discarded_compile_warmup",
+            headline=False,
+            telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+            fresh_process=False,
         )
-        output_payload = dataclasses.asdict(
-            build_benchmark_report(
-                fresh_process_summary=benchmark_summary,
-                same_process_summary=same_process_summary,
+    ]
+    plans.extend(
+        native_lifecycle.TrialPlan(
+            name=f"hot_{run_index + 1:02d}",
+            role="same_process_hot_production",
+            headline=True,
+            telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+            fresh_process=False,
+        )
+        for run_index in range(arguments.hot_run_count)
+    )
+    if arguments.include_fresh_process:
+        plans.append(
+            native_lifecycle.TrialPlan(
+                name="fresh_process",
+                role="fresh_process_diagnostic",
+                headline=False,
+                telemetry=tooling_g_regenie.RegenieTelemetry.OFF,
+                fresh_process=True,
             )
         )
-    else:
-        output_payload = dataclasses.asdict(benchmark_summary)
-
-    default_summary_filename = (
-        f"{arguments.device}_finalize{int(arguments.finalize_parquet)}_"
-        f"chunk{arguments.chunk_size}_"
-        f"writer{arguments.output_writer_thread_count}_"
-        f"phenotypes{len(benchmark_inputs.phenotype_names)}"
-        f"{'_with_same_process' if arguments.same_process_trials else ''}.json"
+    plans.extend(
+        native_lifecycle.TrialPlan(
+            name=f"profile_diagnostic_{run_index + 1:02d}",
+            role="instrumented_diagnostic",
+            headline=False,
+            telemetry=tooling_g_regenie.RegenieTelemetry.PROFILE,
+            fresh_process=True,
+        )
+        for run_index in range(arguments.diagnostic_run_count)
     )
-    json_summary_path = arguments.json_summary_path or (arguments.output_dir / default_summary_filename)
-    json_summary_path.write_text(json.dumps(output_payload, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(output_payload, indent=2))
+    return plans
+
+
+def run_benchmark(arguments: LinearStartupArguments) -> dict[str, typing.Any]:
+    """Run one discarded warmup, hot headlines, and optional diagnostics."""
+    if arguments.hot_run_count <= 0:
+        raise ValueError("hot_run_count must be positive.")
+    arguments.output_dir.mkdir(parents=True, exist_ok=False)
+    arguments.jax_cache_dir.mkdir(parents=True, exist_ok=True)
+    initial_cache = native_lifecycle.snapshot_tree(arguments.jax_cache_dir)
+    if initial_cache.file_count != 0:
+        raise RuntimeError(f"Lifecycle benchmark requires an empty campaign cache: {arguments.jax_cache_dir}")
+    benchmark_inputs = prepare_benchmark_inputs(arguments)
+    environment = native_lifecycle.collect_environment(
+        repository_root=REPOSITORY_ROOT,
+        input_paths={
+            "bgen": benchmark_inputs.bgen_path,
+            "sample": benchmark_inputs.sample_path,
+            "phenotype": benchmark_inputs.phenotype_path,
+            "covariate": benchmark_inputs.covariate_path,
+            "prediction_list": benchmark_inputs.prediction_list_path,
+        },
+        configuration=dataclasses.asdict(arguments),
+        jax_cache_directory=arguments.jax_cache_dir,
+    )
+    trials = [
+        run_trial(
+            arguments,
+            benchmark_inputs,
+            name=plan.name,
+            role=plan.role,
+            headline=plan.headline,
+            telemetry=plan.telemetry,
+            fresh_process=plan.fresh_process,
+        )
+        for plan in build_trial_plans(arguments)
+    ]
+    verify_hot_outputs(trials)
+    headline_seconds = [trial.native.elapsed_seconds for trial in trials if trial.headline]
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "environment": environment,
+        "headline": {
+            "metric": "same_process_hot_production_elapsed_seconds",
+            "telemetry": "off",
+            "run_count": len(headline_seconds),
+            "elapsed_seconds": headline_seconds,
+        },
+        "configuration": dataclasses.asdict(arguments),
+        "trials": [dataclasses.asdict(trial) for trial in trials],
+    }
 
 
 def build_arguments_from_config(config: omegaconf.DictConfig) -> LinearStartupArguments:
-    """Resolve fresh-process benchmark parameters from Hydra config."""
-    tool_values = tooling_hydra_arguments.tool_config_to_dictionary(config)
-    return LinearStartupArguments(
-        device=str(tool_values["device"]),
-        chunk_size=int(tool_values["chunk_size"]),
-        finalize_parquet=tooling_hydra_arguments.boolean_value(tool_values["finalize_parquet"]),
-        output_writer_thread_count=int(tool_values["output_writer_thread_count"]),
-        trials=int(tool_values["trials"]),
-        warmup_trials=int(tool_values["warmup_trials"]),
-        same_process_trials=int(tool_values["same_process_trials"]),
-        same_process_warmup_trials=int(tool_values["same_process_warmup_trials"]),
-        multi_phenotype_count=int(tool_values["multi_phenotype_count"]),
-        multi_phenotype_sample_mode=str(tool_values["multi_phenotype_sample_mode"]),
-        emit_stage_timings=tooling_hydra_arguments.boolean_value(tool_values["emit_stage_timings"]),
-        data_dir=tooling_hydra_arguments.path_or_none(tool_values["data_dir"]) or DEFAULT_DATA_DIRECTORY,
-        output_dir=tooling_hydra_arguments.path_or_none(tool_values["output_dir"]) or DEFAULT_OUTPUT_DIRECTORY,
-        json_summary_path=tooling_hydra_arguments.path_or_none(tool_values["json_summary_path"]),
+    """Build benchmark arguments from Hydra configuration."""
+    values = tooling_hydra_arguments.tool_config_to_dictionary(config)
+    data_directory = tooling_paths.resolve_repo_relative_path(Path(str(values["data_dir"])), REPOSITORY_ROOT)
+    configured_output = tooling_hydra_arguments.path_or_none(values.get("output_dir"))
+    output_directory = (
+        default_output_directory()
+        if configured_output is None
+        else tooling_paths.resolve_repo_relative_path(configured_output, REPOSITORY_ROOT)
     )
+    configured_cache = tooling_hydra_arguments.path_or_none(values.get("jax_cache_dir"))
+    cache_directory = (
+        output_directory / "jax-cache"
+        if configured_cache is None
+        else tooling_paths.resolve_repo_relative_path(configured_cache, REPOSITORY_ROOT)
+    )
+    configured_summary = tooling_hydra_arguments.path_or_none(values.get("json_summary_path"))
+    python_executable = values.get("python_executable")
+    return LinearStartupArguments(
+        device=tooling_g_regenie.RegenieDevice(str(values["device"])),
+        chunk_size=int(values["chunk_size"]),
+        cpu_threads=tooling_hydra_arguments.integer_or_none(values.get("cpu_threads")),
+        output_writer_thread_count=int(values["output_writer_thread_count"]),
+        include_fresh_process=bool(values["include_fresh_process"]),
+        hot_run_count=int(values["hot_run_count"]),
+        diagnostic_run_count=int(values["diagnostic_run_count"]),
+        multi_phenotype_count=int(values["multi_phenotype_count"]),
+        multi_phenotype_sample_mode=tooling_g_regenie.RegenieMultiPhenotypeSampleMode(
+            str(values["multi_phenotype_sample_mode"])
+        ),
+        expected_variant_count=tooling_hydra_arguments.integer_or_none(values.get("expected_variant_count")),
+        data_dir=data_directory,
+        output_dir=output_directory,
+        jax_cache_dir=cache_directory,
+        python_executable=sys.executable if python_executable is None else str(python_executable),
+        json_summary_path=(
+            None
+            if configured_summary is None
+            else tooling_paths.resolve_repo_relative_path(configured_summary, REPOSITORY_ROOT)
+        ),
+    )
+
+
+def build_arguments_from_overrides(overrides: typing.Sequence[str] | None = None) -> LinearStartupArguments:
+    """Compose the benchmark configuration and return resolved arguments."""
+    config = tooling_configuration.compose_config(config_name="benchmark_linear_startup", overrides=overrides)
+    return build_arguments_from_config(config)
+
+
+def run_tool(arguments: LinearStartupArguments) -> None:
+    """Run the benchmark and write its evidence summary."""
+    report = run_benchmark(arguments)
+    summary_path = arguments.json_summary_path or arguments.output_dir / "summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(report, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    print(f"Wrote benchmark evidence: {summary_path}")
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="benchmark_linear_startup")
 def hydra_main(config: omegaconf.DictConfig) -> None:
-    """Run the fresh-process benchmark from Hydra configuration."""
+    """Run the benchmark through Hydra."""
     run_tool(build_arguments_from_config(config))
 
 
 def main() -> None:
-    """Run the fresh-process benchmark from default Hydra configuration."""
+    """Run the quantitative lifecycle benchmark."""
     tooling_hydra_compat.apply_argparse_help_patch()
     hydra_main()
 

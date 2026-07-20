@@ -265,13 +265,13 @@ Path:
 
 ```text
 crates/genotype/src/preprocess.rs
-crates/genotype/benches/preprocess.rs
 ```
 
 The variant-major summarizer now uses AVX2 masks over contiguous `f32` rows to compute sums, square sums, observation
 counts, and dosage threshold counts. Scalar fallback remains for non-AVX2 platforms and row tails.
 
-Focused `preprocess_variant_major_summary` benchmark over dense no-missing `f32` rows:
+Historical focused `preprocess_variant_major_summary` measurements over dense
+no-missing `f32` rows (the standalone preprocess Criterion target is retired):
 
 | sample count | scalar median | AVX2 median | time change |
 | --- | ---: | ---: | ---: |

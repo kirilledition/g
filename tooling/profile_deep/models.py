@@ -65,9 +65,9 @@ class CampaignBudgetSectionName(enum.StrEnum):
     TUNING = "tuning"
     FINALISTS = "finalists"
     HEADLINE_TRIALS = "headline_trials"
+    STAGE_DIAGNOSTICS = "stage_diagnostics"
     DEEP_PROFILERS = "deep_profilers"
     LOGGING_PERTURBATION = "logging_perturbation"
-    RUST_CRITERION = "rust_criterion"
 
 
 CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
@@ -75,9 +75,9 @@ CAMPAIGN_BUDGET_SECTION_DISPLAY_NAMES: dict[CampaignBudgetSectionName, str] = {
     CampaignBudgetSectionName.TUNING: "Tuning",
     CampaignBudgetSectionName.FINALISTS: "Finalists",
     CampaignBudgetSectionName.HEADLINE_TRIALS: "Headline trials",
+    CampaignBudgetSectionName.STAGE_DIAGNOSTICS: "Stage diagnostics",
     CampaignBudgetSectionName.DEEP_PROFILERS: "Deep profilers",
     CampaignBudgetSectionName.LOGGING_PERTURBATION: "Logging perturbation",
-    CampaignBudgetSectionName.RUST_CRITERION: "Rust Criterion",
 }
 
 
@@ -99,12 +99,11 @@ class ProfileArguments:
         regenie_qt_prediction_list_path: Quantitative step 1 prediction list.
         output_dir: Optional explicit output directory.
         output_parent: Parent directory for timestamped output directories.
-        variant_limit: Optional variant cap for smoke runs.
         dry_run: Whether to write a profile plan without running workloads.
         include_regenie_baseline: Whether headline trials include original REGENIE.
         regenie_executable: Optional original or patched REGENIE executable for baseline runs.
         regenie_baseline_trait_types: Comma-separated REGENIE baseline trait types.
-        regenie_baseline_variant_limit: Optional baseline variant cap. Defaults to variant_limit when unset.
+        regenie_baseline_variant_limit: Optional original-REGENIE baseline variant cap.
         regenie_baseline_warmups: Warmup count for original REGENIE baseline trials.
         regenie_baseline_trials: Measured count for original REGENIE baseline trials.
         workload_keys: Comma-separated trait/device workloads to include.
@@ -128,9 +127,7 @@ class ProfileArguments:
         linux_perf_timeout_seconds: Timeout seconds for optional Linux perf execution.
         nsight_systems_timeout_seconds: Timeout seconds for optional Nsight Systems execution.
         nsight_compute_timeout_seconds: Timeout seconds for optional Nsight Compute execution.
-        enable_rust_criterion: Whether deep profiles run Rust Criterion benches.
         enable_logging_perturbation: Whether the profile runs telemetry/logging perturbation trials.
-        rust_benchmarks: Comma-separated Rust Criterion benchmark names.
         chunk_sizes: Comma-separated step 2 chunk-size values.
         output_writer_thread_counts: Comma-separated writer thread-count values.
         firth_batch_sizes: Comma-separated binary Firth batch sizes.
@@ -159,7 +156,6 @@ class ProfileArguments:
     regenie_qt_prediction_list_path: Path
     output_dir: Path | None
     output_parent: Path
-    variant_limit: int | None
     dry_run: bool
     include_regenie_baseline: bool
     regenie_executable: str | None
@@ -188,9 +184,7 @@ class ProfileArguments:
     linux_perf_timeout_seconds: int
     nsight_systems_timeout_seconds: int
     nsight_compute_timeout_seconds: int
-    enable_rust_criterion: bool
     enable_logging_perturbation: bool
-    rust_benchmarks: str
     chunk_sizes: str
     output_writer_thread_counts: str
     firth_batch_sizes: str
@@ -511,6 +505,7 @@ class AggregateResult:
     rows_per_second: float | None
     trials: list[TrialResult]
     warmup_trials: list[TrialResult] = dataclasses.field(default_factory=list)
+    diagnostic_trials: list[TrialResult] = dataclasses.field(default_factory=list)
     jax_cold_warm_summary: JaxColdWarmDiagnostics | None = None
     candidate: Step2Candidate | None = None
 
@@ -562,7 +557,6 @@ class ProfilePlan:
         logging_perturbation_cases: Planned telemetry/logging perturbation cases.
         regenie_baseline_scope: Planned original REGENIE baseline scope.
         regenie_baseline_commands: Planned original REGENIE baseline commands.
-        rust_benchmark_commands: Rust Criterion benchmark commands.
         notes: Human-readable plan notes.
 
     """
@@ -577,7 +571,6 @@ class ProfilePlan:
     logging_perturbation_cases: list[dict[str, object]]
     regenie_baseline_scope: dict[str, object] | None
     regenie_baseline_commands: list[dict[str, object]]
-    rust_benchmark_commands: list[list[str]]
     notes: list[str]
 
 

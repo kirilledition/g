@@ -21,7 +21,6 @@ tool:
   output_dir: null
   dry_run: false
   validate_inputs: true
-  variant_limit: null
   chunk_size: ${workload.chunk_size}
   cpu_threads: ${machine.cpus_per_task}
   tensorqtl_batch_size: 20000
@@ -31,7 +30,6 @@ tool:
   tensorqtl_python: "3.12"
   torch_package: torch==2.5.1+cu121
   torch_package_index_url: https://download.pytorch.org/whl/cu121
-  plink2_binary: null
   command_timeout_seconds: null
   g_runner_prefix:
     - uv

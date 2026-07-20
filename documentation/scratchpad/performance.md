@@ -1662,7 +1662,7 @@ Next:
 - Refresh evidence before changing defaults.
 - Re-test direct Parquet: current Arrow-then-Parquet writes Arrow chunks, reopens, reads, writes Parquet.
 - Re-test wide multi-trait layout if per-trait metadata/file work dominates.
-- Use `tooling.cli.benchmark_output_stages` for current measurements.
+- Use `cargo bench --package g-output --bench writer` for current measurements.
 
 ## Rust Build Profiles
 

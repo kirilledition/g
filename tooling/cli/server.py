@@ -24,14 +24,10 @@ class ServerToolName(enum.StrEnum):
 
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
     ServerToolName.BOOTSTRAP_TOOLS.value: tooling_registry.ToolSpec(
-        name=ServerToolName.BOOTSTRAP_TOOLS.value,
-        config_name="server_bootstrap_tools",
         build_arguments=bootstrap_tools.build_arguments_from_config,
         run=bootstrap_tools.run_tool,
     ),
     ServerToolName.NSIGHT_TOOLS.value: tooling_registry.ToolSpec(
-        name=ServerToolName.NSIGHT_TOOLS.value,
-        config_name="server_nsight_tools",
         build_arguments=nsight_tools.build_arguments_from_config,
         run=nsight_tools.run_tool,
     ),

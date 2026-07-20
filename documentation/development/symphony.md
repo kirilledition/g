@@ -95,7 +95,7 @@ execution:
 Labels: symphony, gpu, benchmark, data
 Validation:
 - just data-verify-binary-gpu-inputs
-- GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-gpu-just matrix-chr22-smoke
+- GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-gpu-just bench-binary-hot-gpu-smoke
 Expected output:
 - data/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run/parts/*.parquet
 ```
@@ -422,7 +422,7 @@ uv run pytest <focused-tests>
 GPU work should use existing SLURM recipes such as:
 
 ```bash
-just slurm-gpu-just matrix-chr22-smoke
+just slurm-gpu-just bench-binary-hot-gpu-smoke
 just slurm-gpu-bench-binary-hot
 ```
 

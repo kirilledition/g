@@ -508,10 +508,6 @@ matrix-chr10-dry *overrides:
 matrix-chr10 *overrides: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr10 {{ overrides }}
 
-# Run a small chr10 matrix smoke
-matrix-chr10-smoke *overrides: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr10_smoke {{ overrides }}
-
 # Submit the standard chr10 matrix through SLURM on the configured GPU node
 slurm-gpu-matrix-chr10 *overrides:
     {{ server_env }} && just slurm-gpu-just matrix-chr10 {{ overrides }}
@@ -523,10 +519,6 @@ matrix-chr22-dry *overrides:
 # Run the standard chr22 binary/linear CPU/GPU/cache step 2 matrix
 matrix-chr22 *overrides: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr22 {{ overrides }}
-
-# Run a small chr22 matrix smoke
-matrix-chr22-smoke *overrides: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.run_regenie2_matrix --config-name matrix_chr22_smoke {{ overrides }}
 
 # Submit the standard chr22 matrix through SLURM on the configured GPU node
 slurm-gpu-matrix-chr22 *overrides:
@@ -542,57 +534,21 @@ legacy-baselines: data-prepare
 legacy-baselines-full: data-prepare
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_baselines tool.include_hail=true
 
-# Compare original regenie vs g quantitative step2 on CPU
-legacy-regenie-comparison-cpu: data-prepare dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison
-
-# Compare original regenie vs g quantitative step2 with GPU enabled
-legacy-regenie-comparison-gpu: data-prepare dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_regenie_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true
-
-# Profile historical regenie comparison on CPU
-legacy-profile-regenie-comparison-cpu: data-prepare dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_profile_comparison
-
-# Profile historical regenie comparison with GPU enabled
-legacy-profile-regenie-comparison-gpu: data-prepare dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_profile_comparison machine=landau_gpu tool.cpu_only=false tool.include_gpu=true
-
-# Benchmark BGEN float32 read paths
-bench-bgen-reader *overrides: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --config-name bench_bgen_reader {{ overrides }}
-
-# Benchmark Python callback overhead without BGEN decode work
-bench-callback-overhead *overrides:
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead --config-name bench_callback_overhead {{ overrides }}
-
-# Benchmark Python callback overhead on the configured GPU machine profile
-bench-callback-overhead-gpu *overrides: dev-install-gpu-dependencies
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_callback_overhead --config-name bench_callback_overhead_gpu {{ overrides }}
-
 # Benchmark the already-compiled approximate-Firth executable
 bench-firth-compute-gpu *overrides:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_firth_compute --config-name benchmark_firth_compute {{ overrides }}
 
-# Benchmark REGENIE step 2 in fresh Python processes
+# Benchmark quantitative REGENIE step 2 across fresh, discarded-warm, and hot lifecycles
 bench-linear-startup-gpu: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name bench_linear_startup_gpu
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_linear_startup
 
-# Benchmark REGENIE step 2 fresh process startup with Parquet finalization
-bench-linear-startup-gpu-parquet: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name bench_linear_startup_gpu_parquet
-
-# Benchmark binary REGENIE step 2 with cold, hot, chunk-only, and finalized timings
+# Benchmark binary REGENIE step 2 with fresh, discarded-warm, and hot lifecycles
 bench-binary-hot-gpu *overrides: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name bench_binary_hot_gpu {{ overrides }}
 
 # Smoke test the binary REGENIE step 2 benchmark harness
 bench-binary-hot-gpu-smoke *overrides: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_regenie2_binary_hot --config-name bench_binary_hot_gpu_smoke {{ overrides }}
-
-# Benchmark output-stage timings across finalization, phenotype count, and bsize
-bench-output-stages-gpu *overrides: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_output_stages --config-name bench_output_stages_gpu {{ overrides }}
 
 # Benchmark single-trait chr22 linear GWAS against TorchGWAS
 bench-torchgwas-chr22 *overrides: dev-install-gpu-dependencies dev-install-release
@@ -614,14 +570,6 @@ slurm-gpu-bench-torchgwas-chr22 *overrides:
 slurm-gpu-bench-tensorqtl-chr22 *overrides:
     {{ server_env }} && just slurm-gpu-just bench-tensorqtl-chr22 {{ overrides }}
 
-# Submit callback overhead microbenchmark to the configured CPU node
-slurm-cpu-bench-callback-overhead *overrides:
-    {{ server_env }} && just slurm-cpu-just bench-callback-overhead {{ overrides }}
-
-# Submit callback overhead microbenchmark to the configured GPU node
-slurm-gpu-bench-callback-overhead *overrides:
-    {{ server_env }} && just slurm-gpu-just bench-callback-overhead-gpu {{ overrides }}
-
 # Submit the focused approximate-Firth executable benchmark to the configured GPU node
 slurm-gpu-bench-firth-compute *overrides:
     {{ server_env }} && just slurm-gpu-just bench-firth-compute-gpu {{ overrides }}
@@ -631,10 +579,6 @@ slurm-gpu-bench-firth-compute *overrides:
 # Run the login-node-safe performance harness smoke benchmark
 perf-smoke *arguments:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.performance --config-name performance_smoke {{ arguments }}
-
-# Submit the standard CPU performance benchmark through the configured CPU SLURM node
-perf-cpu *overrides:
-    {{ server_env }} && just slurm-cpu-run '{{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_bgen_reader --config-name perf_cpu {{ overrides }}'
 
 # Submit the standard GPU performance benchmark through the configured GPU SLURM node
 perf-gpu *overrides:
@@ -648,10 +592,6 @@ perf-compare baseline_json new_json:
 perf-jax-runtime:
     {{ server_env }} && uv sync --group dev --frozen --no-install-project --inexact
     {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.performance --config-name performance_jax_runtime
-
-# Sequentially tune GPU REGENIE step 2 and active BGEN reader knobs
-perf-tune-regenie2-gpu *overrides: dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.tune_regenie2_gpu --config-name tune_regenie2_gpu {{ overrides }}
 
 # Compare native extension build profiles and write timing reports
 bench-rust-build-profiles *overrides:
@@ -673,7 +613,7 @@ profile-deep-dry *overrides:
 
 # Smoke test the deep REGENIE step 2 profiling harness on the current host
 profile-deep-smoke *overrides: dev-install-gpu-dependencies dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_regenie2_deep tool.smoke=true tool.skip_deep_profiles=true tool.enable_rust_criterion=false {{ overrides }}
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_regenie2_deep tool.smoke=true tool.skip_deep_profiles=true {{ overrides }}
 
 # Write the full app profiling plan without running workloads
 profile-app-full-dry *overrides:
@@ -697,10 +637,6 @@ profile-app-full *overrides:
 # Dry-run the chr10 GPU binary profiling campaign
 profile-chr10-binary-gpu-dry *overrides:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_chr10_binary_gpu_dry {{ overrides }}
-
-# Smoke test the chr10 GPU binary profiling campaign
-profile-chr10-binary-gpu-smoke *overrides: dev-install-gpu-dependencies dev-install-release
-    {{ server_env }} && uv run --no-sync python -m tooling.cli.profile_regenie2_deep --config-name profile_chr10_binary_gpu_smoke {{ overrides }}
 
 # Submit the chr10 GPU binary full profiling campaign through SLURM
 profile-chr10-binary-gpu-full *overrides:

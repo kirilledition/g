@@ -1,8 +1,9 @@
-"""Typed command and Python API renderers for ``g regenie`` tooling runs."""
+"""Typed TOML and command rendering for supported ``g regenie`` runs."""
 
 from __future__ import annotations
 
 import enum
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,30 +16,40 @@ class RegenieTraitKind(enum.StrEnum):
 
 
 class RegenieDevice(enum.StrEnum):
-    """Supported tooling execution devices."""
+    """Supported execution devices."""
 
     CPU = "cpu"
     GPU = "gpu"
 
 
+class RegenieBinaryFallback(enum.StrEnum):
+    """Supported binary fallback methods."""
+
+    SCORE_ONLY = "score_only"
+    FIRTH_APPROXIMATE = "firth_approximate"
+
+
+class RegenieMultiPhenotypeSampleMode(enum.StrEnum):
+    """Supported multi-phenotype sample policies."""
+
+    PER_PHENOTYPE = "per-phenotype"
+    COMPLETE_CASE = "complete-case"
+
+
+class RegenieTelemetry(enum.StrEnum):
+    """Supported runtime telemetry modes."""
+
+    OFF = "off"
+    PROGRESS = "progress"
+    PROFILE = "profile"
+
+
 @dataclass(frozen=True)
 class RegenieInputSpec:
-    """Input and output paths for one REGENIE step 2 run.
-
-    Attributes:
-        bgen_path: Input BGEN path.
-        sample_path: Optional sample path.
-        phenotype_path: Phenotype file path.
-        phenotype_columns: Phenotype column names.
-        covariate_path: Optional covariate file path.
-        covariate_columns: Covariate column names.
-        prediction_list_path: REGENIE step 1 prediction-list path.
-        output_prefix: Output prefix passed to ``--out``.
-
-    """
+    """Scientific inputs for one REGENIE step 2 run."""
 
     bgen_path: Path
-    sample_path: Path | None
+    sample_path: Path
     phenotype_path: Path
     phenotype_columns: tuple[str, ...]
     covariate_path: Path | None
@@ -49,140 +60,45 @@ class RegenieInputSpec:
 
 @dataclass(frozen=True)
 class RegenieComputeOptions:
-    """Compute options shared by CLI and Python API renderers.
-
-    Attributes:
-        device: Execution device.
-        bsize: Variant block size.
-        threads: Optional CPU/Rayon thread count.
-        staging_depth: Optional native callback staging depth.
-        native_callback_batch_size: Optional native callback batch size.
-        result_in_flight_limit: Optional output result in-flight limit.
-        dosage_buffer_limit: Optional dosage buffer limit.
-        variant_limit: Optional variant cap.
-        trusted_no_missing_diploid: Optional trusted BGEN fast-path setting.
-        trusted_bgen_validation_mode: Optional trusted BGEN validation mode.
-        bgen_decode_tile_variant_count: Optional BGEN decode tile size.
-        firth_batch_size: Optional Firth batch size.
-        firth_candidate_capacity: Optional Firth candidate capacity.
-        gpu_genotype_format: Optional GPU genotype representation.
-        jax_cache_dir: Optional persistent-cache directory.
-        jax_persistent_cache: Optional persistent-cache toggle.
-        jax_persistent_cache_min_entry_size_bytes: Optional persistent-cache entry threshold.
-        jax_persistent_cache_min_compile_time_seconds: Optional persistent-cache compile-time threshold.
-        jax_xla_autotune_cache: Optional XLA autotune-cache toggle.
-
-    """
+    """Runtime options exposed by the current TOML contract."""
 
     device: RegenieDevice
     bsize: int
-    threads: int | None
-    staging_depth: int | None
-    native_callback_batch_size: int | None
-    result_in_flight_limit: int | None
-    dosage_buffer_limit: int | None
-    variant_limit: int | None
-    trusted_no_missing_diploid: bool | None
-    trusted_bgen_validation_mode: str | None
-    bgen_decode_tile_variant_count: int | None
-    firth_batch_size: int | None
-    firth_candidate_capacity: int | None
-    gpu_genotype_format: str | None
-    jax_cache_dir: Path | None
-    jax_persistent_cache: bool | None
-    jax_persistent_cache_min_entry_size_bytes: int | None
-    jax_persistent_cache_min_compile_time_seconds: int | None
-    jax_xla_autotune_cache: bool | None
+    cpu_threads: int | None = None
+    multi_phenotype_sample_mode: RegenieMultiPhenotypeSampleMode | None = None
+    firth_batch_size: int | None = None
+    firth_candidate_capacity: int | None = None
+    jax_cache_dir: Path | None = None
 
 
 @dataclass(frozen=True)
 class RegenieOutputOptions:
-    """Output options shared by CLI and Python API renderers.
+    """Output options exposed by the current TOML contract."""
 
-    Attributes:
-        output_format: Optional output format.
-        output_run_directory: Optional explicit output run directory.
-        writer_threads: Optional output writer thread count.
-        writer_queue_depth: Optional output writer queue depth.
-        chunks_per_arrow_file: Optional Arrow chunk grouping.
-        arrow_compression: Optional Arrow compression codec.
-        parquet_compression: Optional Parquet compression codec.
-        output_statistic_dtype: Optional output statistic dtype.
-        finalize_parquet: Optional finalization toggle.
-
-    """
-
-    output_format: str | None
-    output_run_directory: Path | None
-    writer_threads: int | None
-    writer_queue_depth: int | None
-    chunks_per_arrow_file: int | None
-    arrow_compression: str | None
-    parquet_compression: str | None
-    output_statistic_dtype: str | None
-    finalize_parquet: bool | None
+    output_run_directory: Path | None = None
+    writer_threads: int | None = None
+    resume: bool = False
 
 
 @dataclass(frozen=True)
 class RegenieDiagnosticsOptions:
-    """Diagnostics options shared by CLI and Python API renderers.
+    """Diagnostics options exposed by the current TOML contract."""
 
-    Attributes:
-        telemetry: Optional telemetry mode.
-        log_dir: Optional log directory.
-        stage_timings_json: Optional stage timing JSON path.
-        profile_summary_json: Optional profile summary JSON path.
-        log_file: Optional structured log file path.
-        log_filter: Optional log filter.
-        log_stderr: Optional stderr logging toggle.
-        progress_interval_seconds: Optional progress interval.
-        progress_interval_chunks: Optional progress chunk interval.
-
-    """
-
-    telemetry: str | None
-    log_dir: Path | None
-    stage_timings_json: Path | None
-    profile_summary_json: Path | None
-    log_file: Path | None
-    log_filter: str | None
-    log_stderr: bool | None
-    progress_interval_seconds: float | None
-    progress_interval_chunks: int | None
+    telemetry: RegenieTelemetry = RegenieTelemetry.OFF
 
 
 @dataclass(frozen=True)
 class RegenieBinaryOptions:
-    """Binary-trait options for one REGENIE step 2 run.
+    """Binary-trait options for one REGENIE step 2 run."""
 
-    Attributes:
-        firth: Whether to enable Firth correction.
-        approx: Whether to enable approximate Firth.
-        firth_se: Optional Firth standard-error toggle.
-        p_threshold: Optional binary p-value threshold.
-
-    """
-
-    firth: bool
-    approx: bool
-    firth_se: bool | None
-    p_threshold: float | None
+    fallback_method: RegenieBinaryFallback
+    p_threshold: float | None = None
+    firth_se: bool | None = None
 
 
 @dataclass(frozen=True)
 class RegenieRunSpec:
-    """Complete REGENIE run specification for tooling.
-
-    Attributes:
-        trait_kind: Trait kind.
-        command_prefix: Command prefix for CLI rendering, for example ``("g", "regenie")``.
-        inputs: Input and output paths.
-        compute: Compute options.
-        output: Output options.
-        diagnostics: Diagnostics options.
-        binary: Binary options when ``trait_kind`` is binary.
-
-    """
+    """Complete supported REGENIE run specification for tooling."""
 
     trait_kind: RegenieTraitKind
     command_prefix: tuple[str, ...]
@@ -193,469 +109,130 @@ class RegenieRunSpec:
     binary: RegenieBinaryOptions | None
 
 
-def render_g_regenie_cli(spec: RegenieRunSpec) -> list[str]:
-    """Render a run spec as shell-free ``g regenie`` CLI arguments.
-
-    Args:
-        spec: REGENIE run specification.
-
-    Returns:
-        Command argument vector.
-
-    Raises:
-        ValueError: If the spec is inconsistent.
-
-    """
-    validate_regenie_run_spec(spec)
-    command_arguments = list(spec.command_prefix)
-    append_option(command_arguments, "--step", 2)
-    append_option(command_arguments, "--bgen", spec.inputs.bgen_path)
-    append_optional_option(command_arguments, "--sample", spec.inputs.sample_path)
-    append_option(command_arguments, "--phenoFile", spec.inputs.phenotype_path)
-    append_column_options(command_arguments, "--phenoCol", "--phenoColList", spec.inputs.phenotype_columns)
-    append_optional_option(command_arguments, "--covarFile", spec.inputs.covariate_path)
-    if spec.inputs.covariate_columns:
-        append_option(command_arguments, "--covarColList", ",".join(spec.inputs.covariate_columns))
-    append_option(command_arguments, "--pred", spec.inputs.prediction_list_path)
-    append_option(command_arguments, "--out", spec.inputs.output_prefix)
-    append_option(command_arguments, "--device", spec.compute.device.value)
-    append_option(command_arguments, "--bsize", spec.compute.bsize)
-    append_trait_cli_arguments(command_arguments, spec)
-    append_compute_cli_arguments(command_arguments, spec.compute)
-    append_output_cli_arguments(command_arguments, spec.output)
-    append_diagnostics_cli_arguments(command_arguments, spec.diagnostics)
-    return command_arguments
+def toml_string(value: str | Path) -> str:
+    """Encode one TOML basic string."""
+    return json.dumps(str(value))
 
 
-def render_python_api_options(spec: RegenieRunSpec) -> dict[str, object]:
-    """Render a run spec as ``api.regenie.from_options`` payload.
-
-    Args:
-        spec: REGENIE run specification.
-
-    Returns:
-        Python options dictionary.
-
-    Raises:
-        ValueError: If the spec is inconsistent.
-
-    """
-    validate_regenie_run_spec(spec)
-    options: dict[str, object] = {
-        "step": 2,
-        "bgen": spec.inputs.bgen_path,
-        "phenoFile": spec.inputs.phenotype_path,
-        "pred": spec.inputs.prediction_list_path,
-        "out": spec.inputs.output_prefix,
-        "bsize": spec.compute.bsize,
-        "compute": build_compute_options(spec.compute),
-        "output": build_output_options(spec.output),
-        "diagnostics": build_diagnostics_options(spec.diagnostics),
-    }
-    if spec.inputs.sample_path is not None:
-        options["sample"] = spec.inputs.sample_path
-    if spec.inputs.covariate_path is not None:
-        options["covarFile"] = spec.inputs.covariate_path
-    if spec.inputs.covariate_columns:
-        options["covarColList"] = ",".join(spec.inputs.covariate_columns)
-    if len(spec.inputs.phenotype_columns) == 1:
-        options["phenoCol"] = spec.inputs.phenotype_columns[0]
-    else:
-        options["phenoColList"] = ",".join(spec.inputs.phenotype_columns)
-    if spec.compute.threads is not None:
-        options["threads"] = spec.compute.threads
-    if spec.trait_kind == RegenieTraitKind.BINARY:
-        options["bt"] = True
-        if spec.binary is not None:
-            options.update(build_binary_options(spec.binary))
-    else:
-        options["qt"] = True
-    return options
+def toml_string_array(values: tuple[str, ...]) -> str:
+    """Encode one TOML string array."""
+    return "[" + ", ".join(toml_string(value) for value in values) + "]"
 
 
 def validate_regenie_run_spec(spec: RegenieRunSpec) -> None:
-    """Validate basic run-spec invariants.
-
-    Args:
-        spec: REGENIE run specification.
-
-    Raises:
-        ValueError: If the spec is inconsistent.
-
-    """
+    """Validate invariants shared by TOML and command rendering."""
     if not spec.command_prefix:
-        message = "REGENIE CLI command_prefix must not be empty."
-        raise ValueError(message)
+        raise ValueError("REGENIE command_prefix must not be empty.")
     if not spec.inputs.phenotype_columns:
-        message = "REGENIE run spec must include at least one phenotype column."
-        raise ValueError(message)
-    if any(not phenotype_column.strip() for phenotype_column in spec.inputs.phenotype_columns):
-        message = "REGENIE phenotype columns must not contain empty values."
-        raise ValueError(message)
+        raise ValueError("REGENIE run spec must include at least one phenotype column.")
+    if any(not column.strip() for column in spec.inputs.phenotype_columns):
+        raise ValueError("REGENIE phenotype columns must not contain empty values.")
+    if any(not column.strip() for column in spec.inputs.covariate_columns):
+        raise ValueError("REGENIE covariate columns must not contain empty values.")
+    if spec.inputs.covariate_path is None and spec.inputs.covariate_columns:
+        raise ValueError("REGENIE covariate columns require a covariate file.")
+    if spec.compute.bsize <= 0:
+        raise ValueError("REGENIE bsize must be positive.")
+    if spec.compute.cpu_threads is not None and spec.compute.cpu_threads <= 0:
+        raise ValueError("REGENIE cpu_threads must be positive when provided.")
+    if spec.output.writer_threads is not None and spec.output.writer_threads <= 0:
+        raise ValueError("REGENIE writer_threads must be positive when provided.")
     if spec.trait_kind == RegenieTraitKind.BINARY and spec.binary is None:
-        message = "Binary REGENIE run spec requires binary options."
-        raise ValueError(message)
+        raise ValueError("Binary REGENIE run spec requires binary options.")
     if spec.trait_kind == RegenieTraitKind.QUANTITATIVE and spec.binary is not None:
-        message = "Quantitative REGENIE run spec must not include binary options."
-        raise ValueError(message)
+        raise ValueError("Quantitative REGENIE run spec must not include binary options.")
+    if (
+        spec.binary is not None
+        and spec.binary.fallback_method == RegenieBinaryFallback.SCORE_ONLY
+        and spec.binary.firth_se is True
+    ):
+        raise ValueError("Score-only binary runs cannot request Firth standard errors.")
 
 
-def append_option(command_arguments: list[str], option_name: str, value: object) -> None:
-    """Append an option and value.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        option_name: Option name.
-        value: Option value.
-
-    """
-    command_arguments.extend([option_name, str(value)])
-
-
-def append_optional_option(command_arguments: list[str], option_name: str, value: object | None) -> None:
-    """Append an option only when a value is present.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        option_name: Option name.
-        value: Optional option value.
-
-    """
-    if value is not None:
-        append_option(command_arguments, option_name, value)
-
-
-def append_optional_boolean_flag(
-    command_arguments: list[str],
-    *,
-    value: bool | None,
-    enabled_flag: str,
-    disabled_flag: str | None,
-) -> None:
-    """Append an explicit boolean flag when a value is present.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        value: Optional boolean value.
-        enabled_flag: Flag for ``True``.
-        disabled_flag: Optional flag for ``False``.
-
-    """
-    if value is None:
-        return
-    if value:
-        command_arguments.append(enabled_flag)
-    elif disabled_flag is not None:
-        command_arguments.append(disabled_flag)
-
-
-def append_column_options(
-    command_arguments: list[str],
-    single_option_name: str,
-    list_option_name: str,
-    columns: tuple[str, ...],
-) -> None:
-    """Append single-column or list-column options.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        single_option_name: Option for one column.
-        list_option_name: Option for many columns.
-        columns: Column names.
-
-    """
-    if len(columns) == 1:
-        append_option(command_arguments, single_option_name, columns[0])
-        return
-    append_option(command_arguments, list_option_name, ",".join(columns))
-
-
-def append_trait_cli_arguments(command_arguments: list[str], spec: RegenieRunSpec) -> None:
-    """Append trait-specific CLI arguments.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        spec: REGENIE run specification.
-
-    """
-    if spec.trait_kind == RegenieTraitKind.BINARY:
-        command_arguments.append("--bt")
-        if spec.binary is not None:
-            append_optional_boolean_flag(
-                command_arguments,
-                value=spec.binary.firth,
-                enabled_flag="--firth",
-                disabled_flag=None,
-            )
-            append_optional_boolean_flag(
-                command_arguments,
-                value=spec.binary.approx,
-                enabled_flag="--approx",
-                disabled_flag=None,
-            )
-            append_optional_boolean_flag(
-                command_arguments,
-                value=spec.binary.firth_se,
-                enabled_flag="--firth-se",
-                disabled_flag="--no-firth-se",
-            )
-            append_optional_option(command_arguments, "--pThresh", spec.binary.p_threshold)
-        return
-    command_arguments.append("--qt")
-
-
-def append_compute_cli_arguments(command_arguments: list[str], compute_options: RegenieComputeOptions) -> None:
-    """Append compute CLI arguments.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        compute_options: Compute options.
-
-    """
-    append_optional_option(command_arguments, "--threads", compute_options.threads)
-    append_optional_option(command_arguments, "--staging_depth", compute_options.staging_depth)
-    append_optional_option(
-        command_arguments, "--native_callback_batch_size", compute_options.native_callback_batch_size
+def render_regenie_toml(spec: RegenieRunSpec) -> str:
+    """Render a run spec using the current production TOML schema."""
+    validate_regenie_run_spec(spec)
+    lines = [
+        "[input]",
+        f"bgen = {toml_string(spec.inputs.bgen_path)}",
+        f"sample = {toml_string(spec.inputs.sample_path)}",
+        f"pheno_file = {toml_string(spec.inputs.phenotype_path)}",
+        f"pheno_columns = {toml_string_array(spec.inputs.phenotype_columns)}",
+    ]
+    if spec.inputs.covariate_path is not None:
+        lines.append(f"covar_file = {toml_string(spec.inputs.covariate_path)}")
+    if spec.inputs.covariate_columns:
+        lines.append(f"covar_columns = {toml_string_array(spec.inputs.covariate_columns)}")
+    lines.extend(
+        [
+            f"pred = {toml_string(spec.inputs.prediction_list_path)}",
+            "",
+            "[trait]",
+            f"trait_type = {toml_string(spec.trait_kind.value)}",
+            f"bsize = {spec.compute.bsize}",
+        ]
     )
-    append_optional_option(command_arguments, "--result_in_flight_limit", compute_options.result_in_flight_limit)
-    append_optional_option(command_arguments, "--dosage_buffer_limit", compute_options.dosage_buffer_limit)
-    append_optional_option(command_arguments, "--variant_limit", compute_options.variant_limit)
-    append_optional_boolean_flag(
-        command_arguments,
-        value=compute_options.trusted_no_missing_diploid,
-        enabled_flag="--trusted_no_missing_diploid",
-        disabled_flag="--no-trusted_no_missing_diploid",
-    )
-    append_optional_option(
-        command_arguments,
-        "--trusted_bgen_validation_mode",
-        compute_options.trusted_bgen_validation_mode,
-    )
-    append_optional_option(
-        command_arguments,
-        "--bgen_decode_tile_variant_count",
-        compute_options.bgen_decode_tile_variant_count,
-    )
-    append_optional_option(command_arguments, "--firth_batch_size", compute_options.firth_batch_size)
-    append_optional_option(command_arguments, "--firth_candidate_capacity", compute_options.firth_candidate_capacity)
-    append_optional_option(command_arguments, "--gpu_genotype_format", compute_options.gpu_genotype_format)
-    append_optional_boolean_flag(
-        command_arguments,
-        value=compute_options.jax_persistent_cache,
-        enabled_flag="--jax_persistent_cache",
-        disabled_flag="--no-jax_persistent_cache",
-    )
-    append_optional_option(command_arguments, "--jax_cache_dir", compute_options.jax_cache_dir)
-    append_optional_option(
-        command_arguments,
-        "--jax_persistent_cache_min_entry_size_bytes",
-        compute_options.jax_persistent_cache_min_entry_size_bytes,
-    )
-    append_optional_option(
-        command_arguments,
-        "--jax_persistent_cache_min_compile_time_seconds",
-        compute_options.jax_persistent_cache_min_compile_time_seconds,
-    )
-    append_optional_boolean_flag(
-        command_arguments,
-        value=compute_options.jax_xla_autotune_cache,
-        enabled_flag="--jax_xla_autotune_cache",
-        disabled_flag="--no-jax_xla_autotune_cache",
-    )
+    if spec.binary is not None:
+        lines.extend(["", "[binary]", f"fallback_method = {toml_string(spec.binary.fallback_method.value)}"])
+        if spec.binary.p_threshold is not None:
+            lines.append(f"p_threshold = {spec.binary.p_threshold!r}")
+        if spec.binary.firth_se is not None:
+            lines.append(f"firth_se = {str(spec.binary.firth_se).lower()}")
+    lines.extend(["", "[compute]", f"device = {toml_string(spec.compute.device.value)}"])
+    if spec.compute.cpu_threads is not None:
+        lines.append(f"cpu_threads = {spec.compute.cpu_threads}")
+    if spec.compute.multi_phenotype_sample_mode is not None:
+        lines.append(f"multi_phenotype_sample_mode = {toml_string(spec.compute.multi_phenotype_sample_mode.value)}")
+    if spec.compute.firth_batch_size is not None:
+        lines.append(f"firth_batch_size = {spec.compute.firth_batch_size}")
+    if spec.compute.firth_candidate_capacity is not None:
+        lines.append(f"firth_candidate_capacity = {spec.compute.firth_candidate_capacity}")
+    if spec.compute.jax_cache_dir is not None:
+        lines.append(f"jax_cache_dir = {toml_string(spec.compute.jax_cache_dir)}")
+    lines.extend(["", "[output]", f"out = {toml_string(spec.inputs.output_prefix)}"])
+    if spec.output.output_run_directory is not None:
+        lines.append(f"output_run_directory = {toml_string(spec.output.output_run_directory)}")
+    if spec.output.writer_threads is not None:
+        lines.append(f"writer_threads = {spec.output.writer_threads}")
+    lines.append(f"resume = {str(spec.output.resume).lower()}")
+    lines.extend(["", "[diagnostics]", f"telemetry = {toml_string(spec.diagnostics.telemetry.value)}", ""])
+    return "\n".join(lines)
 
 
-def append_output_cli_arguments(command_arguments: list[str], output_options: RegenieOutputOptions) -> None:
-    """Append output CLI arguments.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        output_options: Output options.
-
-    """
-    append_optional_option(command_arguments, "--format", output_options.output_format)
-    append_optional_option(command_arguments, "--output_run_directory", output_options.output_run_directory)
-    append_optional_option(command_arguments, "--writer_threads", output_options.writer_threads)
-    append_optional_option(command_arguments, "--writer_queue_depth", output_options.writer_queue_depth)
-    append_optional_option(command_arguments, "--chunks_per_arrow_file", output_options.chunks_per_arrow_file)
-    append_optional_option(command_arguments, "--arrow_compression", output_options.arrow_compression)
-    append_optional_option(command_arguments, "--parquet_compression", output_options.parquet_compression)
-    append_optional_option(command_arguments, "--output_statistic_dtype", output_options.output_statistic_dtype)
-    append_optional_boolean_flag(
-        command_arguments,
-        value=output_options.finalize_parquet,
-        enabled_flag="--finalize_parquet",
-        disabled_flag="--no-finalize_parquet",
-    )
+def write_regenie_toml(spec: RegenieRunSpec, config_path: Path) -> Path:
+    """Write a supported REGENIE TOML config and return its path."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(render_regenie_toml(spec), encoding="utf-8")
+    return config_path
 
 
-def append_diagnostics_cli_arguments(
-    command_arguments: list[str],
-    diagnostics_options: RegenieDiagnosticsOptions,
-) -> None:
-    """Append diagnostics CLI arguments.
-
-    Args:
-        command_arguments: Command argument vector to mutate.
-        diagnostics_options: Diagnostics options.
-
-    """
-    append_optional_option(command_arguments, "--telemetry", diagnostics_options.telemetry)
-    append_optional_option(command_arguments, "--log_dir", diagnostics_options.log_dir)
-    append_optional_option(command_arguments, "--stage_timings_json", diagnostics_options.stage_timings_json)
-    append_optional_option(command_arguments, "--profile_summary_json", diagnostics_options.profile_summary_json)
-    append_optional_option(command_arguments, "--log_file", diagnostics_options.log_file)
-    append_optional_option(command_arguments, "--log_filter", diagnostics_options.log_filter)
-    append_optional_boolean_flag(
-        command_arguments,
-        value=diagnostics_options.log_stderr,
-        enabled_flag="--log_stderr",
-        disabled_flag="--no-log_stderr",
-    )
-    append_optional_option(
-        command_arguments,
-        "--progress_interval_seconds",
-        diagnostics_options.progress_interval_seconds,
-    )
-    append_optional_option(
-        command_arguments,
-        "--progress_interval_chunks",
-        diagnostics_options.progress_interval_chunks,
-    )
+def render_g_regenie_command(spec: RegenieRunSpec, config_path: Path) -> list[str]:
+    """Render the current shell-free CLI command for a written config."""
+    validate_regenie_run_spec(spec)
+    return [*spec.command_prefix, "--config", str(config_path)]
 
 
-def build_compute_options(compute_options: RegenieComputeOptions) -> dict[str, object]:
-    """Build Python API compute options.
-
-    Args:
-        compute_options: Compute options.
-
-    Returns:
-        Python options mapping.
-
-    """
-    options: dict[str, object] = {"device": compute_options.device.value}
-    add_optional_option(options, "staging_depth", compute_options.staging_depth)
-    add_optional_option(options, "native_callback_batch_size", compute_options.native_callback_batch_size)
-    add_optional_option(options, "result_in_flight_limit", compute_options.result_in_flight_limit)
-    add_optional_option(options, "dosage_buffer_limit", compute_options.dosage_buffer_limit)
-    add_optional_option(options, "variant_limit", compute_options.variant_limit)
-    add_optional_option(options, "trusted_no_missing_diploid", compute_options.trusted_no_missing_diploid)
-    add_optional_option(options, "trusted_bgen_validation_mode", compute_options.trusted_bgen_validation_mode)
-    add_optional_option(options, "bgen_decode_tile_variant_count", compute_options.bgen_decode_tile_variant_count)
-    add_optional_option(options, "firth_batch_size", compute_options.firth_batch_size)
-    add_optional_option(options, "firth_candidate_capacity", compute_options.firth_candidate_capacity)
-    add_optional_option(options, "gpu_genotype_format", compute_options.gpu_genotype_format)
-    add_optional_option(options, "jax_cache_dir", compute_options.jax_cache_dir)
-    add_optional_option(options, "jax_persistent_cache", compute_options.jax_persistent_cache)
-    add_optional_option(
-        options,
-        "jax_persistent_cache_min_entry_size_bytes",
-        compute_options.jax_persistent_cache_min_entry_size_bytes,
-    )
-    add_optional_option(
-        options,
-        "jax_persistent_cache_min_compile_time_seconds",
-        compute_options.jax_persistent_cache_min_compile_time_seconds,
-    )
-    add_optional_option(options, "jax_xla_autotune_cache", compute_options.jax_xla_autotune_cache)
-    return options
-
-
-def build_output_options(output_options: RegenieOutputOptions) -> dict[str, object]:
-    """Build Python API output options.
-
-    Args:
-        output_options: Output options.
-
-    Returns:
-        Python options mapping.
-
-    """
-    options: dict[str, object] = {}
-    add_optional_option(options, "format", output_options.output_format)
-    add_optional_option(options, "output_run_directory", output_options.output_run_directory)
-    add_optional_option(options, "writer_threads", output_options.writer_threads)
-    add_optional_option(options, "writer_queue_depth", output_options.writer_queue_depth)
-    add_optional_option(options, "chunks_per_arrow_file", output_options.chunks_per_arrow_file)
-    add_optional_option(options, "arrow_compression", output_options.arrow_compression)
-    add_optional_option(options, "parquet_compression", output_options.parquet_compression)
-    add_optional_option(options, "output_statistic_dtype", output_options.output_statistic_dtype)
-    add_optional_option(options, "finalize_parquet", output_options.finalize_parquet)
-    return options
-
-
-def build_diagnostics_options(diagnostics_options: RegenieDiagnosticsOptions) -> dict[str, object]:
-    """Build Python API diagnostics options.
-
-    Args:
-        diagnostics_options: Diagnostics options.
-
-    Returns:
-        Python options mapping.
-
-    """
-    options: dict[str, object] = {}
-    add_optional_option(options, "telemetry", diagnostics_options.telemetry)
-    add_optional_option(options, "log_dir", diagnostics_options.log_dir)
-    add_optional_option(options, "stage_timings_json", diagnostics_options.stage_timings_json)
-    add_optional_option(options, "profile_summary_json", diagnostics_options.profile_summary_json)
-    add_optional_option(options, "log_file", diagnostics_options.log_file)
-    add_optional_option(options, "log_filter", diagnostics_options.log_filter)
-    add_optional_option(options, "log_stderr", diagnostics_options.log_stderr)
-    add_optional_option(options, "progress_interval_seconds", diagnostics_options.progress_interval_seconds)
-    add_optional_option(options, "progress_interval_chunks", diagnostics_options.progress_interval_chunks)
-    return options
-
-
-def build_binary_options(binary_options: RegenieBinaryOptions) -> dict[str, object]:
-    """Build Python API binary options.
-
-    Args:
-        binary_options: Binary options.
-
-    Returns:
-        Python options mapping.
-
-    """
-    options: dict[str, object] = {
-        "firth": binary_options.firth,
-        "approx": binary_options.approx,
-    }
-    add_optional_option(options, "firth_se", binary_options.firth_se)
-    add_optional_option(options, "pThresh", binary_options.p_threshold)
-    return options
-
-
-def add_optional_option(options: dict[str, object], option_name: str, value: object | None) -> None:
-    """Add one Python API option when present.
-
-    Args:
-        options: Options mapping to mutate.
-        option_name: Option name.
-        value: Optional option value.
-
-    """
-    if value is not None:
-        options[option_name] = value
+def render_native_cli_arguments(config_path: Path) -> list[str]:
+    """Render arguments accepted by ``g._core.cli.run``."""
+    return ["regenie", "--config", str(config_path)]
 
 
 def expected_output_run_directory(spec: RegenieRunSpec) -> Path:
-    """Infer the default single-trait output run directory.
-
-    Args:
-        spec: REGENIE run specification.
-
-    Returns:
-        Expected output run directory.
-
-    Raises:
-        ValueError: If the spec has multiple phenotypes.
-
-    """
-    if spec.output.output_run_directory is not None:
-        return spec.output.output_run_directory
+    """Infer the output directory for a single-phenotype run."""
     if len(spec.inputs.phenotype_columns) != 1:
-        message = "Default output run directory inference only supports one phenotype column."
-        raise ValueError(message)
+        raise ValueError("Default output run directory inference only supports one phenotype column.")
+    output_root = spec.output.output_run_directory or Path(f"{spec.inputs.output_prefix}.g")
+    phenotype_name = spec.inputs.phenotype_columns[0]
+    sanitized_characters: list[str] = []
+    previous_character_was_replaced = False
+    for character in phenotype_name:
+        if character.isascii() and (character.isalnum() or character in "._-"):
+            sanitized_characters.append(character)
+            previous_character_was_replaced = False
+        elif not previous_character_was_replaced:
+            sanitized_characters.append("_")
+            previous_character_was_replaced = True
+    phenotype_slug = "".join(sanitized_characters).strip("._-") or "phenotype"
+    phenotype_directory = f"trait_0001_{phenotype_slug[:80]}"
     association_mode = "regenie2_binary" if spec.trait_kind == RegenieTraitKind.BINARY else "regenie2_linear"
-    return Path(f"{spec.inputs.output_prefix}.g") / f"{spec.inputs.phenotype_columns[0]}.{association_mode}.run"
+    return output_root / f"{phenotype_directory}.{association_mode}.run"

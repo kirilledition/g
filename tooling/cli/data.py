@@ -27,20 +27,14 @@ class DataToolName(enum.StrEnum):
 
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
     DataToolName.FETCH.value: tooling_registry.ToolSpec(
-        name=DataToolName.FETCH.value,
-        config_name="data_fetch",
         build_arguments=data_fetch.build_arguments_from_config,
         run=data_fetch.run_tool,
     ),
     DataToolName.SIMULATE.value: tooling_registry.ToolSpec(
-        name=DataToolName.SIMULATE.value,
-        config_name="data_simulate",
         build_arguments=data_simulate.build_arguments_from_config,
         run=data_simulate.run_tool,
     ),
     DataToolName.REGENIE_BASELINE.value: tooling_registry.ToolSpec(
-        name=DataToolName.REGENIE_BASELINE.value,
-        config_name="data_regenie_baseline",
         build_arguments=regenie_baseline.build_arguments_from_config,
         run=regenie_baseline.run_tool,
     ),

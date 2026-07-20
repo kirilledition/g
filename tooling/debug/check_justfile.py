@@ -100,9 +100,6 @@ LEGACY_RECIPE_NAMES = {
 }
 HYDRA_TOOLING_MODULES = (
     "tooling.cli.benchmark ",
-    "tooling.cli.benchmark_bgen_reader ",
-    "tooling.cli.benchmark_callback_overhead ",
-    "tooling.cli.benchmark_output_stages ",
     "tooling.cli.benchmark_regenie2_binary_hot ",
     "tooling.cli.data ",
     "tooling.cli.debug ",
@@ -112,7 +109,6 @@ HYDRA_TOOLING_MODULES = (
     "tooling.cli.rust_build_profiles ",
     "tooling.cli.schema_check ",
     "tooling.cli.server ",
-    "tooling.cli.tune_regenie2_gpu ",
 )
 HYDRA_OVERRIDE_PATTERN = re.compile(r"(?:^|\s)(?:dataset|machine|sweep|telemetry|tool|workload)(?:\.[A-Za-z0-9_]+)?=")
 RECIPE_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]*)(?:\s+[^:=].*)?:")

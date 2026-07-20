@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development protocol | main branch as of 2026-06-30 benchmark and profiling workflows | Performance maintainers |
+| Pre-release draft; development protocol | current benchmark and profiling workflows | Performance maintainers |
 
 This page defines development benchmark categories and evidence expectations.
 Public tuning guidance lives in [Performance Guide](../public/performance-guide.md).
@@ -12,13 +12,13 @@ Public tuning guidance lives in [Performance Guide](../public/performance-guide.
 | Category | Purpose | Typical entry points |
 | --- | --- | --- |
 | Smoke | Verify a benchmark harness and output schema quickly. | `just perf-smoke`, smoke variants of benchmark recipes. |
-| BGEN reader | Isolate native decode, sample selection, trusted paths, and Rayon effects. | `tooling.cli.benchmark_bgen_reader`, `just benchmark-bgen-reader`. |
-| Callback overhead | Isolate Python callback queue handoff and optional host-to-device transfer without BGEN decode. | `tooling.cli.benchmark_callback_overhead`, `just benchmark-callback-overhead`. |
-| Output stages | Isolate writer threads, queue depth, compression, grouping, and finalization. | `tooling.cli.benchmark_output_stages`, `just benchmark-output-stages-*`. |
+| BGEN reader | Isolate native open/index, decode, sample selection, packing, and allocation effects. | `cargo bench --package g-genotype --bench bgen_read`. |
+| Engine scheduling | Isolate current channel, ownership, and backpressure behavior. | `cargo bench --package g-engine --bench scheduler`. |
+| Output stages | Isolate current direct-Parquet writer geometry and paced finish. | `cargo bench --package g-output --bench writer`. |
 | Binary hot path | Measure already-compiled binary Step 2 score/Firth production lifecycles with direct Parquet output. | `tooling.cli.benchmark_regenie2_binary_hot`. |
 | Matrix comparisons | Compare CPU/GPU/cache combinations for standard workloads. | `tooling.cli.run_regenie2_matrix`. |
 | Deep profiling | Run multi-tool profiling campaigns with JAX and native evidence. | `tooling.cli.profile_regenie2_deep`. |
-| External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `-m tooling.cli.benchmark tool.name=regenie_comparison`. |
+| External comparison | Compare `g` with upstream or patched REGENIE under equivalent modes. | `tooling.cli.profile_regenie2_deep` with `tool.include_regenie_baseline=true`. |
 | Competitor comparison | Compare `g` against a published competing implementation with explicit model caveats. | `tooling.cli.benchmark_torchgwas_chr22`, `tooling.cli.benchmark_tensorqtl_chr22`, `just slurm-gpu-bench-torchgwas-chr22`, `just slurm-gpu-bench-tensorqtl-chr22`. |
 
 See [Tooling](tooling.md) and [Justfile Command Reference](justfile.md) for
@@ -45,6 +45,7 @@ focused comparison:
 
 ```bash
 cargo bench --package g-genotype --bench bgen_read
+cargo bench --package g-engine --bench scheduler
 cargo bench --package g-output --bench writer
 just slurm-gpu-bench-firth-compute
 ```
@@ -148,37 +149,9 @@ Separate these effects before proposing an optimization:
 For startup findings, include a same-process or multi-phenotype measurement
 before optimizing import/runtime boundaries.
 
-For native BGEN to JAX callback findings, start with the callback-overhead
-microbenchmark before running an end-to-end BGEN profile:
-
-```bash
-just benchmark-callback-overhead \
-  tool.chunk_count=10000 \
-  tool.trials=5 \
-  'tool.stage_timing_modes=[off,aggregate]' \
-  'tool.workload_modes=[queue_only,host_to_device]'
-```
-
-Use SLURM for CPU/GPU evidence:
-
-```bash
-just slurm-benchmark-callback-overhead-cpu \
-  tool.chunk_count=1000 \
-  tool.trials=1 \
-  'tool.stage_timing_modes=[off,aggregate]' \
-  'tool.workload_modes=[queue_only,host_to_device]'
-
-just slurm-benchmark-callback-overhead-gpu \
-  tool.chunk_count=1000 \
-  tool.trials=1 \
-  'tool.stage_timing_modes=[off,aggregate]' \
-  'tool.workload_modes=[queue_only,host_to_device]'
-```
-
-`tool.stage_timing_modes=[off]` represents the production default when no stage
-timing JSON path or forced recorder is configured. `aggregate` and `exact` are
-diagnostic modes; they intentionally perturb the hot path by collecting queue,
-stage, transfer, and optional blocking observations.
+For native genotype-delivery findings, combine the `g-genotype` and `g-engine`
+Criterion targets with an end-to-end profile. The removed Python callback path
+is not a production boundary and must not be restored for benchmarking.
 
 ## Performance Discovery
 
