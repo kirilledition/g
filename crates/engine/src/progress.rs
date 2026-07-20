@@ -207,3 +207,78 @@ impl ProgressTotals {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(start: usize, stop: usize) -> ChunkSpec {
+        ChunkSpec { variant_start_index: start, variant_stop_index: stop }
+    }
+
+    fn reporter() -> Arc<RunProgressReporter> {
+        Arc::new(RunProgressReporter::new(
+            TelemetryRunSession::default(),
+            "test-thread".to_string(),
+            g_plan::AssociationMode::Regenie2Binary,
+        ))
+    }
+
+    #[test]
+    fn totals_accumulate_exact_chunk_and_variant_counts() {
+        let totals = ProgressTotals::from_chunk_specs(&[chunk(0, 4), chunk(4, 9), chunk(12, 12)])
+            .expect("valid chunk totals are computed");
+        assert_eq!(totals.chunk_count, 3);
+        assert_eq!(totals.variant_count, 9);
+        assert!(matches!(ProgressTotals::from_chunk_specs(&[chunk(5, 4)]), Err(RunProgressError::CounterOverflow)));
+    }
+
+    #[test]
+    fn delivery_progress_accounts_for_resumed_chunks_and_writer_acceptance() {
+        let reporter = reporter();
+        let totals =
+            ProgressTotals::from_chunk_specs(&[chunk(0, 4), chunk(4, 6)]).expect("full delivery totals are valid");
+        let delivery = reporter.register_delivery("trait".to_string(), totals).expect("delivery registration succeeds");
+        assert!(matches!(
+            delivery.record_writer_accepted(1),
+            Err(RunProgressError::UninitializedGroup { group_name }) if group_name == "trait"
+        ));
+
+        delivery.initialize(&[chunk(4, 6)]).expect("resume-aware progress initializes");
+        {
+            let progress = delivery.group.progress.lock().expect("test progress lock is available");
+            let progress = progress.as_ref().expect("progress is initialized");
+            assert_eq!(progress.completed_chunk_count, 1);
+            assert_eq!(progress.completed_variant_count, 4);
+            assert!(progress.last_emit_at.is_some());
+        }
+        delivery.record_writer_accepted(2).expect("writer acceptance advances progress");
+        {
+            let progress = delivery.group.progress.lock().expect("test progress lock is available");
+            let progress = progress.as_ref().expect("progress remains initialized");
+            assert_eq!(progress.completed_chunk_count, 2);
+            assert_eq!(progress.completed_variant_count, 6);
+        }
+        reporter.finish().expect("final progress update succeeds");
+    }
+
+    #[test]
+    fn delivery_progress_rejects_pending_totals_above_the_registered_total() {
+        let reporter = reporter();
+        let totals = ProgressTotals::from_chunk_specs(&[chunk(0, 2)]).expect("full totals are valid");
+        let delivery = reporter.register_delivery("trait".to_string(), totals).expect("delivery registration succeeds");
+        assert!(matches!(delivery.initialize(&[chunk(0, 3)]), Err(RunProgressError::CounterOverflow)));
+        assert!(
+            matches!(reporter.finish(), Err(RunProgressError::UninitializedGroup { group_name }) if group_name == "trait")
+        );
+    }
+
+    #[test]
+    fn delivery_progress_detects_counter_overflow() {
+        let reporter = reporter();
+        let totals = ProgressTotals { chunk_count: u64::MAX, variant_count: u64::MAX };
+        let delivery = reporter.register_delivery("trait".to_string(), totals).expect("delivery registration succeeds");
+        delivery.initialize(&[]).expect("zero pending chunks initialize completed progress");
+        assert!(matches!(delivery.record_writer_accepted(1), Err(RunProgressError::CounterOverflow)));
+    }
+}

@@ -17,4 +17,7 @@ mod progress;
 mod run;
 mod run_coordinator;
 
+#[cfg(test)]
+mod tests;
+
 pub use api::*;
