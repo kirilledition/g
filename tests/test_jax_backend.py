@@ -15,7 +15,7 @@ import tests.test_compressed_genotype
 import tests.test_regenie2_binary
 import tests.test_regenie2_binary_pipeline
 import tests.test_regenie2_linear
-from g import jax_backend
+from g import jax_backend, types
 from g.compute.common import compressed_genotype
 from g.compute.common import result as association_result
 
@@ -29,6 +29,12 @@ if typing.TYPE_CHECKING:
 # float64 oracle is 3.17e-7; this exclusive bound remains below the 5e-7
 # application correctness limit.
 BACKEND_LINEAR_BETA_ABSOLUTE_TOLERANCE = 5.0e-7
+# Keep materialization assertions aligned with the campaign's exclusive,
+# statistic-specific whole-application acceptance ceilings.
+MATERIALIZED_BETA_ABSOLUTE_TOLERANCE = 5.0e-7
+MATERIALIZED_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.5e-7
+MATERIALIZED_CHI_SQUARED_ABSOLUTE_TOLERANCE = 2.0e-6
+MATERIALIZED_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 5.0e-7
 
 
 class CompressedTestBackend(jax_backend.JaxBackendBase):
@@ -100,6 +106,41 @@ def build_raw_statistics() -> compressed_genotype.Packed8RawStatistics[jax.Array
         statuses=jnp.asarray([0, 1, 2, 7], dtype=jnp.uint32),
         selected_sample_count=8,
     )
+
+
+def assert_host_association_statistics(
+    association: jax_backend.HostAssociationResult,
+    *,
+    beta: npt.NDArray[np.float32],
+    standard_error: npt.NDArray[np.float32],
+    chi_squared: npt.NDArray[np.float32],
+    log10_p_value: npt.NDArray[np.float32],
+) -> None:
+    """Assert every host statistic with its strict application tolerance."""
+    tests.numerical.assert_absolute_difference_less_than(
+        association.beta,
+        beta,
+        MATERIALIZED_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        association.standard_error,
+        standard_error,
+        MATERIALIZED_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        association.chi_squared,
+        chi_squared,
+        MATERIALIZED_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        association.log10_p_value,
+        log10_p_value,
+        MATERIALIZED_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+    assert association.beta.dtype == np.dtype(np.float32)
+    assert association.standard_error.dtype == np.dtype(np.float32)
+    assert association.chi_squared.dtype == np.dtype(np.float32)
+    assert association.log10_p_value.dtype == np.dtype(np.float32)
 
 
 def test_resolve_contiguous_compressed_selection_accepts_exact_tail() -> None:
@@ -307,13 +348,17 @@ def test_transfer_compressed_batch_requires_prepared_selection() -> None:
         CompressedTestBackend().transfer_compressed_batch(
             group_state=group_state,
             compressed_slab=np.asarray([1], dtype=np.uint8),
-            compressed_metadata=np.asarray([[0, 1, 1, 1]], dtype=np.uint32),
+            compressed_metadata=np.asarray([[0, 1, 1]], dtype=np.uint32),
             compute_variant_count=1,
         )
 
 
-def test_transfer_compressed_batch_maps_decoded_outputs(monkeypatch: pytest.MonkeyPatch) -> None:
-    tests.test_compressed_genotype.install_fake_packed8_ffi(monkeypatch)
+def test_transfer_compressed_batch_maps_indexed_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    tests.test_compressed_genotype.install_fake_packed8_ffi(
+        monkeypatch,
+        expected_selected_sample_indices=np.arange(100, dtype=np.uint32),
+        expected_selection_start=-1,
+    )
     selection = jax_backend.prepare_compressed_transfer_selection(
         source_sample_count=120,
         selected_sample_count=100,
@@ -329,8 +374,8 @@ def test_transfer_compressed_batch_maps_decoded_outputs(monkeypatch: pytest.Monk
     with jax.disable_jit():
         observed = CompressedTestBackend().transfer_compressed_batch(
             group_state=group_state,
-            compressed_slab=np.asarray([9, 8, 7], dtype=np.uint8),
-            compressed_metadata=np.asarray([[0, 3, 4, 5]], dtype=np.uint32),
+            compressed_slab=tests.test_compressed_genotype.build_compressed_slab(),
+            compressed_metadata=tests.test_compressed_genotype.build_compressed_metadata(),
             compute_variant_count=4,
         )
 
@@ -350,6 +395,41 @@ def test_transfer_compressed_batch_maps_decoded_outputs(monkeypatch: pytest.Monk
     )
 
 
+def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected_selected_sample_indices = np.empty((0,), dtype=np.uint32)
+    tests.test_compressed_genotype.install_fake_packed8_ffi(
+        monkeypatch,
+        expected_selected_sample_indices=expected_selected_sample_indices,
+        expected_selection_start=10,
+    )
+    selection = jax_backend.prepare_compressed_transfer_selection(
+        source_sample_count=120,
+        selected_sample_count=100,
+        selection_start=10,
+        selected_sample_indices=None,
+    )
+    assert selection is not None
+    assert selection.selection_start == 10
+    assert selection.selected_sample_indices.shape == (0,)
+    group_state = jax_backend.DeviceGroupState(
+        association_state=object(),
+        compressed_transfer_selection=selection,
+    )
+
+    with jax.disable_jit():
+        observed = CompressedTestBackend().transfer_compressed_batch(
+            group_state=group_state,
+            compressed_slab=tests.test_compressed_genotype.build_compressed_slab(),
+            compressed_metadata=tests.test_compressed_genotype.build_compressed_metadata(),
+            compute_variant_count=4,
+        )
+
+    assert observed.packed8
+    assert observed.genotype_values.shape == (4, 100, 2)
+    assert observed.raw_packed8_statistics is not None
+    assert observed.raw_packed8_statistics.selected_sample_count == 100
+
+
 def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> None:
     device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
         association=build_device_association(include_correction_codes=True),
@@ -364,30 +444,13 @@ def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> No
         logical_variant_count=3,
     )
 
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.beta,
-        np.asarray([[2.1, 2.2, 2.3], [0.1, 0.2, 0.3]], dtype=np.float32),
-        1.0e-6,
+    assert_host_association_statistics(
+        observed.association,
+        beta=np.asarray([[2.1, 2.2, 2.3], [0.1, 0.2, 0.3]], dtype=np.float32),
+        standard_error=np.asarray([[0.21, 0.22, 0.23], [0.01, 0.02, 0.03]], dtype=np.float32),
+        chi_squared=np.asarray([[21.0, 22.0, 23.0], [1.0, 2.0, 3.0]], dtype=np.float32),
+        log10_p_value=np.asarray([[2.5, 2.6, 2.7], [0.5, 0.6, 0.7]], dtype=np.float32),
     )
-    assert observed.association.beta.dtype == np.dtype(np.float32)
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.standard_error,
-        np.asarray([[0.21, 0.22, 0.23], [0.01, 0.02, 0.03]], dtype=np.float32),
-        1.0e-6,
-    )
-    assert observed.association.standard_error.dtype == np.dtype(np.float32)
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.chi_squared,
-        np.asarray([[21.0, 22.0, 23.0], [1.0, 2.0, 3.0]], dtype=np.float32),
-        1.0e-6,
-    )
-    assert observed.association.chi_squared.dtype == np.dtype(np.float32)
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.log10_p_value,
-        np.asarray([[2.5, 2.6, 2.7], [0.5, 0.6, 0.7]], dtype=np.float32),
-        1.0e-6,
-    )
-    assert observed.association.log10_p_value.dtype == np.dtype(np.float32)
     assert observed.association.correction_code is not None
     assert observed.association.correction_code.dtype == np.dtype(np.uint8)
     np.testing.assert_array_equal(
@@ -429,11 +492,59 @@ def test_materialize_batch_supports_uncorrected_full_batch() -> None:
         logical_variant_count=4,
     )
 
-    assert observed.association.beta.shape == (3, 4)
-    assert observed.association.beta.dtype == np.dtype(np.float32)
+    assert_host_association_statistics(
+        observed.association,
+        beta=np.asarray(
+            [
+                [0.1, 0.2, 0.3, 9.0],
+                [1.1, 1.2, 1.3, 9.0],
+                [2.1, 2.2, 2.3, 9.0],
+            ],
+            dtype=np.float32,
+        ),
+        standard_error=np.asarray(
+            [
+                [0.01, 0.02, 0.03, 9.0],
+                [0.11, 0.12, 0.13, 9.0],
+                [0.21, 0.22, 0.23, 9.0],
+            ],
+            dtype=np.float32,
+        ),
+        chi_squared=np.asarray(
+            [
+                [1.0, 2.0, 3.0, 9.0],
+                [11.0, 12.0, 13.0, 9.0],
+                [21.0, 22.0, 23.0, 9.0],
+            ],
+            dtype=np.float32,
+        ),
+        log10_p_value=np.asarray(
+            [
+                [0.5, 0.6, 0.7, 9.0],
+                [1.5, 1.6, 1.7, 9.0],
+                [2.5, 2.6, 2.7, 9.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
     assert observed.association.correction_code is None
     assert observed.raw_packed8_statistics is not None
-    assert observed.raw_packed8_statistics.statuses.shape == (4,)
+    assert observed.raw_packed8_statistics.dosage_sums.dtype == np.dtype(np.uint64)
+    assert observed.raw_packed8_statistics.dosage_square_sums.dtype == np.dtype(np.uint64)
+    assert observed.raw_packed8_statistics.statuses.dtype == np.dtype(np.uint32)
+    np.testing.assert_array_equal(
+        observed.raw_packed8_statistics.dosage_sums,
+        np.asarray([100, 200, 300, 999], dtype=np.uint64),
+    )
+    np.testing.assert_array_equal(
+        observed.raw_packed8_statistics.dosage_square_sums,
+        np.asarray([1_000, 2_000, 3_000, 999], dtype=np.uint64),
+    )
+    np.testing.assert_array_equal(
+        observed.raw_packed8_statistics.statuses,
+        np.asarray([0, 1, 2, 7], dtype=np.uint32),
+    )
+    assert observed.raw_packed8_statistics.selected_sample_count == 8
     assert observed.firth_candidate_count is None
     assert observed.firth_candidate_capacity is None
 
@@ -452,9 +563,17 @@ def test_materialize_batch_truncates_uncorrected_association_without_raw_statist
         logical_variant_count=2,
     )
 
-    assert observed.association.beta.shape == (3, 2)
+    assert_host_association_statistics(
+        observed.association,
+        beta=np.asarray([[0.1, 0.2], [1.1, 1.2], [2.1, 2.2]], dtype=np.float32),
+        standard_error=np.asarray([[0.01, 0.02], [0.11, 0.12], [0.21, 0.22]], dtype=np.float32),
+        chi_squared=np.asarray([[1.0, 2.0], [11.0, 12.0], [21.0, 22.0]], dtype=np.float32),
+        log10_p_value=np.asarray([[0.5, 0.6], [1.5, 1.6], [2.5, 2.6]], dtype=np.float32),
+    )
     assert observed.association.correction_code is None
     assert observed.raw_packed8_statistics is None
+    assert observed.firth_candidate_count is None
+    assert observed.firth_candidate_capacity is None
 
 
 @pytest.mark.parametrize(
@@ -899,6 +1018,12 @@ def test_firth_backend_matches_independent_dense_and_sparse_oracles(*, packed8: 
 
     assert int(np.asarray(observed.firth_candidate_count)) == 2
     assert observed.firth_candidate_capacity == 2
+    assert observed.association.correction_code is not None
+    assert observed.association.correction_code.dtype == jnp.uint8
+    np.testing.assert_array_equal(
+        np.asarray(observed.association.correction_code),
+        np.full((1, 2), types.BinaryCorrectionCode.FIRTH_SUCCESS.value, dtype=np.uint8),
+    )
     tests.test_regenie2_binary_pipeline.assert_firth_association_matches_references(
         typing.cast("regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult", observed.association),
         references,
