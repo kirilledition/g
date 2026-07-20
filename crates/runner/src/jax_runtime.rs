@@ -127,3 +127,39 @@ impl JaxGpuValidationStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{JaxCacheDirectory, JaxGpuValidationStatus, JaxRuntimePolicy};
+
+    #[test]
+    fn default_cache_identity_ignores_ambient_path_but_explicit_identity_does_not() {
+        assert!(
+            JaxCacheDirectory::Default(PathBuf::from("first")) == JaxCacheDirectory::Default(PathBuf::from("second"))
+        );
+        assert!(
+            JaxCacheDirectory::Default(PathBuf::from("same")) != JaxCacheDirectory::Explicit(PathBuf::from("same"))
+        );
+        assert!(
+            JaxCacheDirectory::Explicit(PathBuf::from("first")) != JaxCacheDirectory::Explicit(PathBuf::from("second"))
+        );
+    }
+
+    #[test]
+    fn platform_and_validation_names_are_stable() {
+        let cpu_policy = JaxRuntimePolicy {
+            device: g_plan::Device::Cpu,
+            cache_directory: JaxCacheDirectory::Explicit(PathBuf::from("cache")),
+        };
+        let gpu_policy =
+            JaxRuntimePolicy { device: g_plan::Device::Gpu, cache_directory: cpu_policy.cache_directory.clone() };
+        assert_eq!(cpu_policy.platform_name(), "cpu");
+        assert_eq!(gpu_policy.platform_name(), "cuda");
+        assert_eq!(JaxGpuValidationStatus::Pending.as_str(), "pending");
+        assert_eq!(JaxGpuValidationStatus::Skipped.as_str(), "skipped");
+        assert_eq!(JaxGpuValidationStatus::Succeeded.as_str(), "succeeded");
+        assert_eq!(JaxGpuValidationStatus::Failed.as_str(), "failed");
+    }
+}

@@ -841,6 +841,8 @@ name = "g-runner"
 version = "0.1.0"
 dependencies = [
  "g-engine",
+ "g-genotype",
+ "g-input",
  "g-interface",
  "g-plan",
  "g-runtime",

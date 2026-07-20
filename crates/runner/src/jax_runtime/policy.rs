@@ -176,3 +176,126 @@ fn describe_jax_runtime_policy(policy: &JaxRuntimePolicy) -> String {
     };
     format!("device={}, jax-cache-directory={cache_directory}", policy.device.as_str())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        JaxRuntimeConfiguration, JaxRuntimeState, build_jax_runtime_policy, describe_jax_runtime_policy,
+        expand_home_directory,
+    };
+    use crate::jax_runtime::{JaxCacheDirectory, JaxGpuValidationStatus, JaxRuntimePolicy};
+
+    fn policy(device: g_plan::Device, cache_directory: &str) -> JaxRuntimePolicy {
+        JaxRuntimePolicy { device, cache_directory: JaxCacheDirectory::Explicit(PathBuf::from(cache_directory)) }
+    }
+
+    #[test]
+    fn run_plan_policy_preserves_device_and_expands_explicit_home() {
+        let mut run_plan =
+            crate::test_support::run_plan(Path::new("runner-jax-policy"), g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.device = g_plan::Device::Gpu;
+        run_plan.compute.jax_cache_directory = Some("/cache/explicit".to_string());
+        let explicit_policy = build_jax_runtime_policy(&run_plan).expect("explicit policy should build");
+        assert_eq!(explicit_policy.device, g_plan::Device::Gpu);
+        assert_eq!(explicit_policy.cache_directory.path(), Path::new("/cache/explicit"));
+
+        run_plan.compute.jax_cache_directory = None;
+        let default_policy = build_jax_runtime_policy(&run_plan).expect("default policy should build");
+        assert!(default_policy.cache_directory.path().ends_with("g-jax-cache"));
+
+        if let Some(home_directory) = std::env::var_os("HOME") {
+            assert_eq!(
+                expand_home_directory("~/jax-cache").expect("home-relative cache should expand"),
+                PathBuf::from(home_directory.clone()).join("jax-cache")
+            );
+            assert_eq!(expand_home_directory("~").expect("home cache should expand"), PathBuf::from(home_directory));
+        }
+        assert_eq!(
+            expand_home_directory("relative/cache").expect("ordinary paths should pass through"),
+            PathBuf::from("relative/cache")
+        );
+    }
+
+    #[test]
+    fn mutually_compatible_policy_check_accepts_empty_and_identical_sets() {
+        assert!(JaxRuntimeState::require_mutually_compatible(std::iter::empty()).is_ok());
+        let first_policy = policy(g_plan::Device::Cpu, "cache");
+        let second_policy = policy(g_plan::Device::Cpu, "cache");
+        assert!(JaxRuntimeState::require_mutually_compatible([&first_policy, &second_policy]).is_ok());
+    }
+
+    #[test]
+    fn mutually_compatible_policy_check_names_first_conflicting_run() {
+        let first_policy = policy(g_plan::Device::Cpu, "first-cache");
+        let second_policy = policy(g_plan::Device::Cpu, "first-cache");
+        let third_policy = policy(g_plan::Device::Gpu, "second-cache");
+        let error = JaxRuntimeState::require_mutually_compatible([&first_policy, &second_policy, &third_policy])
+            .expect_err("incompatible policy should fail");
+        let message = error.to_string();
+        assert!(message.contains("Run 1 and run 3"));
+        assert!(message.contains("device=cpu"));
+        assert!(message.contains("device=gpu"));
+    }
+
+    #[test]
+    fn runtime_state_reserves_completes_and_reuses_one_policy() {
+        let requested_policy = policy(g_plan::Device::Cpu, "cache");
+        let mut state = JaxRuntimeState::default();
+        assert!(state.require_compatible(&requested_policy).is_ok());
+        assert!(state.setup_preparation_required(&requested_policy).expect("setup query should succeed"));
+        let setup_session = state.reserve_setup(&requested_policy).expect("setup should reserve");
+        assert!(setup_session.should_configure);
+        assert!(state.require_compatible(&requested_policy).is_err());
+        state
+            .complete_setup(requested_policy.clone(), JaxGpuValidationStatus::Skipped)
+            .expect("completed setup should be recorded");
+        assert!(state.require_compatible(&requested_policy).is_ok());
+        assert!(!state.setup_preparation_required(&requested_policy).expect("configured setup query should succeed"));
+        let reused_session = state.reserve_setup(&requested_policy).expect("configured policy should be reusable");
+        assert!(!reused_session.should_configure);
+    }
+
+    #[test]
+    fn runtime_state_rejects_pending_failed_mismatched_and_duplicate_completion() {
+        let requested_policy = policy(g_plan::Device::Cpu, "cache");
+        let conflicting_policy = policy(g_plan::Device::Gpu, "other-cache");
+
+        let mut pending_state = JaxRuntimeState::default();
+        pending_state.reserve_setup(&requested_policy).expect("setup should reserve");
+        assert!(pending_state.complete_setup(requested_policy.clone(), JaxGpuValidationStatus::Pending).is_err());
+
+        let mut failed_state = JaxRuntimeState::default();
+        failed_state.reserve_setup(&requested_policy).expect("setup should reserve");
+        assert!(failed_state.complete_setup(requested_policy.clone(), JaxGpuValidationStatus::Failed).is_err());
+
+        let mut mismatched_state = JaxRuntimeState::default();
+        mismatched_state.reserve_setup(&requested_policy).expect("setup should reserve");
+        assert!(mismatched_state.complete_setup(conflicting_policy.clone(), JaxGpuValidationStatus::Skipped).is_err());
+
+        let mut unconfigured_state = JaxRuntimeState::default();
+        assert!(unconfigured_state.complete_setup(requested_policy.clone(), JaxGpuValidationStatus::Skipped).is_err());
+
+        let mut configured_state =
+            JaxRuntimeState { configuration: JaxRuntimeConfiguration::Configured(requested_policy.clone()) };
+        assert!(configured_state.complete_setup(requested_policy.clone(), JaxGpuValidationStatus::Skipped).is_err());
+        let incompatible_error = configured_state
+            .require_compatible(&conflicting_policy)
+            .expect_err("configured state should reject a conflicting policy");
+        assert!(incompatible_error.to_string().contains("process-global"));
+    }
+
+    #[test]
+    fn policy_description_hides_default_path_and_displays_explicit_path() {
+        let default_policy = JaxRuntimePolicy {
+            device: g_plan::Device::Cpu,
+            cache_directory: JaxCacheDirectory::Default(PathBuf::from("/ambient/default")),
+        };
+        assert_eq!(describe_jax_runtime_policy(&default_policy), "device=cpu, jax-cache-directory=<default>");
+        assert_eq!(
+            describe_jax_runtime_policy(&policy(g_plan::Device::Gpu, "/explicit/cache")),
+            "device=gpu, jax-cache-directory=/explicit/cache"
+        );
+    }
+}

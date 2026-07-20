@@ -12,5 +12,9 @@ g-plan = { workspace = true }
 g-runtime = { workspace = true }
 serde = { workspace = true }
 
+[dev-dependencies]
+g-genotype = { workspace = true }
+g-input = { workspace = true }
+
 [lints]
 workspace = true

@@ -7,4 +7,7 @@ mod jax_runtime;
 mod native_session_policy;
 mod run;
 
+#[cfg(test)]
+mod test_support;
+
 pub use api::*;
