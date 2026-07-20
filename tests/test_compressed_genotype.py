@@ -7,6 +7,7 @@ import typing
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 import tests.numerical
@@ -63,7 +64,30 @@ def build_foreign_outputs() -> Packed8ForeignOutputs:
     )
 
 
-def install_fake_packed8_ffi(monkeypatch: pytest.MonkeyPatch) -> None:
+def build_compressed_slab() -> npt.NDArray[np.uint8]:
+    """Build one deterministic slab spanning four logical members."""
+    return np.arange(12, dtype=np.uint8)
+
+
+def build_compressed_metadata() -> npt.NDArray[np.uint32]:
+    """Build production-shaped rows of offset, size, and Adler checksum."""
+    return np.asarray(
+        [
+            [0, 3, 11],
+            [3, 2, 12],
+            [5, 4, 13],
+            [9, 3, 14],
+        ],
+        dtype=np.uint32,
+    )
+
+
+def install_fake_packed8_ffi(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    expected_selected_sample_indices: npt.NDArray[np.uint32],
+    expected_selection_start: int,
+) -> None:
     """Replace only the external JAX FFI boundary with deterministic outputs."""
     expected_outputs = build_foreign_outputs()
 
@@ -99,23 +123,23 @@ def install_fake_packed8_ffi(monkeypatch: pytest.MonkeyPatch) -> None:
             source_sample_count: int,
             selection_start: int,
         ) -> Packed8ForeignOutputs:
-            assert compressed_slab.shape == (3,)
+            assert compressed_slab.shape == (12,)
             assert compressed_slab.dtype == jnp.uint8
-            assert compressed_metadata.shape == (1, 4)
+            assert compressed_metadata.shape == (4, 3)
             assert compressed_metadata.dtype == jnp.uint32
-            assert selected_sample_indices.shape == (100,)
+            assert selected_sample_indices.shape == expected_selected_sample_indices.shape
             assert selected_sample_indices.dtype == jnp.uint32
-            np.testing.assert_array_equal(np.asarray(compressed_slab), np.asarray([9, 8, 7], dtype=np.uint8))
+            np.testing.assert_array_equal(np.asarray(compressed_slab), build_compressed_slab())
             np.testing.assert_array_equal(
                 np.asarray(compressed_metadata),
-                np.asarray([[0, 3, 4, 5]], dtype=np.uint32),
+                build_compressed_metadata(),
             )
             np.testing.assert_array_equal(
                 np.asarray(selected_sample_indices),
-                np.arange(100, dtype=np.uint32),
+                expected_selected_sample_indices,
             )
             assert source_sample_count == 120
-            assert selection_start == -1
+            assert selection_start == expected_selection_start
             return expected_outputs
 
         return foreign_call
@@ -125,7 +149,7 @@ def install_fake_packed8_ffi(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     ("retain_square_sum", "collect_sparse_mask"),
-    [(False, False), (True, True)],
+    [(False, False), (False, True), (True, False), (True, True)],
 )
 def test_decode_packed8_deflate_batch_derives_optional_outputs(
     monkeypatch: pytest.MonkeyPatch,
@@ -134,12 +158,16 @@ def test_decode_packed8_deflate_batch_derives_optional_outputs(
     collect_sparse_mask: bool,
 ) -> None:
     """Derive floating moments and exact REGENIE sparse decisions from native counts."""
-    install_fake_packed8_ffi(monkeypatch)
+    install_fake_packed8_ffi(
+        monkeypatch,
+        expected_selected_sample_indices=np.arange(100, dtype=np.uint32),
+        expected_selection_start=-1,
+    )
 
     with jax.disable_jit():
         observed = compressed_genotype.decode_packed8_deflate_batch(
-            compressed_slab=jnp.asarray([9, 8, 7], dtype=jnp.uint8),
-            compressed_metadata=jnp.asarray([[0, 3, 4, 5]], dtype=jnp.uint32),
+            compressed_slab=jnp.asarray(build_compressed_slab()),
+            compressed_metadata=jnp.asarray(build_compressed_metadata()),
             selected_sample_indices=jnp.arange(100, dtype=jnp.uint32),
             source_sample_count=120,
             selected_sample_count=100,
