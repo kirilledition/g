@@ -586,7 +586,7 @@ fn record_terminal_lines(lines: &[String], level: &str, event_name: &str, messag
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex};
 
     use g_engine::RunHooks;
     use g_interface::CompiledCliRun;
@@ -597,10 +597,11 @@ mod tests {
         run_compiled_cli, run_compiled_runs, runtime_close_failure_result, terminal_result_from_error,
     };
     use crate::jax_runtime::{JaxRuntimeSetupSession, build_jax_runtime_policy};
-    use crate::test_support::{BackendPlanKind, TemporaryRunFixture, TestErrorKind, TestHostError, TestNativeRunHost};
+    use crate::test_support::{
+        BackendPlanKind, TemporaryRunFixture, TestErrorKind, TestHostError, TestNativeRunHost,
+        execute_isolated_test_body,
+    };
     use crate::{CliRunResult, NativeRunInterruption};
-
-    static LIFECYCLE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn compiled_run(run_plan: g_plan::RunPlan) -> CompiledCliRun {
         CompiledCliRun { run_plan, effective_config_toml: "[test]\nfixture = true\n".to_string() }
@@ -789,14 +790,18 @@ mod tests {
 
     #[test]
     fn invalid_bgen_lifecycle_configures_fake_backend_and_translates_engine_failure() {
-        let lifecycle_lock = LIFECYCLE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock should open");
+        if !execute_isolated_test_body(
+            "run::tests::invalid_bgen_lifecycle_configures_fake_backend_and_translates_engine_failure",
+            "G_RUNNER_INVALID_BGEN_LIFECYCLE_TEST_CHILD",
+        ) {
+            return;
+        }
         let fixture = TemporaryRunFixture::new();
         let mut run_plan = fixture.run_plan(g_plan::AssociationMode::Regenie2Linear);
         run_plan.compute.jax_cache_directory = Some(fixture.root_path().join("jax-cache").display().to_string());
         let mut host = TestNativeRunHost::default();
         let output = run_compiled_cli(run_plan, "[test]\nfixture = true\n".to_string(), &mut host)
             .expect("engine failure should become terminal output");
-        drop(lifecycle_lock);
 
         assert_eq!(output.exit_code, 1);
         let error_text = output.stderr_chunks.concat();
@@ -815,14 +820,18 @@ mod tests {
 
     #[test]
     fn thread_name_failure_escapes_before_runtime_or_backend_setup() {
-        let lifecycle_lock = LIFECYCLE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock should open");
+        if !execute_isolated_test_body(
+            "run::tests::thread_name_failure_escapes_before_runtime_or_backend_setup",
+            "G_RUNNER_THREAD_NAME_FAILURE_TEST_CHILD",
+        ) {
+            return;
+        }
         let fixture = TemporaryRunFixture::new();
         let expected_error = TestHostError::failure("thread unavailable");
         let mut host =
             TestNativeRunHost { current_thread_error: Some(expected_error.clone()), ..TestNativeRunHost::default() };
         let result =
             run_compiled_cli(fixture.run_plan(g_plan::AssociationMode::Regenie2Linear), String::new(), &mut host);
-        drop(lifecycle_lock);
         assert_eq!(result, Err(expected_error));
         assert_eq!(host.calls, ["current_thread_name"]);
     }

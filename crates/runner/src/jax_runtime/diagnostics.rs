@@ -157,15 +157,41 @@ mod tests {
 
     use super::emit_jax_runtime_setup_diagnostics;
     use crate::jax_runtime::{JaxCacheDirectory, JaxGpuValidationStatus, JaxRuntimePolicy, JaxRuntimeSetupSession};
+    use crate::test_support::{TemporaryRunFixture, execute_isolated_test_body};
 
     #[test]
     fn diagnostics_serialize_cpu_and_failed_gpu_setup_states() {
+        if !execute_isolated_test_body(
+            "jax_runtime::diagnostics::tests::diagnostics_serialize_cpu_and_failed_gpu_setup_states",
+            "G_RUNNER_JAX_DIAGNOSTICS_TEST_CHILD",
+        ) {
+            return;
+        }
+        let fixture = TemporaryRunFixture::new();
+        let telemetry_path = fixture.root_path().join("telemetry/events.jsonl");
+        let policy = g_runtime::NativeRunSessionPolicy {
+            log_filter: "info".to_string(),
+            log_stderr: false,
+            log_file: None,
+            telemetry_stream_file: Some(telemetry_path.clone()),
+            stage_timing_file: None,
+            profile_summary_file: None,
+            queue_size: 32,
+            lossy: false,
+            include_source_location: false,
+            include_span_events: false,
+        };
+        let mut process_runtime_state = g_runtime::ProcessRuntimeState::default();
+        let mut native_session = g_runtime::NativeRunSession::new(&mut process_runtime_state, policy)
+            .expect("enabled telemetry session should open");
+        let telemetry_session = native_session.telemetry_session().clone();
+
         let cpu_policy = JaxRuntimePolicy {
             device: g_plan::Device::Cpu,
             cache_directory: JaxCacheDirectory::Explicit(PathBuf::from("cpu-cache")),
         };
         let cpu_session = JaxRuntimeSetupSession::new(true, &cpu_policy);
-        emit_jax_runtime_setup_diagnostics(&cpu_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
+        emit_jax_runtime_setup_diagnostics(&cpu_session, &telemetry_session, "test-thread")
             .expect("CPU diagnostics should serialize");
 
         let gpu_policy = JaxRuntimePolicy {
@@ -174,7 +200,42 @@ mod tests {
         };
         let mut gpu_session = JaxRuntimeSetupSession::new(true, &gpu_policy);
         gpu_session.complete_gpu_validation(JaxGpuValidationStatus::Failed, Cow::Borrowed("no device"));
-        emit_jax_runtime_setup_diagnostics(&gpu_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
+        emit_jax_runtime_setup_diagnostics(&gpu_session, &telemetry_session, "test-thread")
             .expect("GPU failure diagnostics should serialize");
+        telemetry_session.finish("test-thread").expect("telemetry session should finish");
+        native_session.finish_logging().expect("logging session should finish");
+        drop(native_session);
+
+        let telemetry_text = std::fs::read_to_string(&telemetry_path).expect("telemetry output should be readable");
+        let records = telemetry_text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("telemetry line should be valid JSON"))
+            .collect::<Vec<_>>();
+        let jax_records = records
+            .iter()
+            .filter(|record| record["event"].as_str().is_some_and(|event| event.starts_with("jax_")))
+            .collect::<Vec<_>>();
+        assert_eq!(jax_records.len(), 10);
+        let cpu_platform = jax_records
+            .iter()
+            .find(|record| record["event"] == "jax_platform_selected" && record["requested_device"] == "cpu")
+            .expect("CPU platform diagnostic should be present");
+        assert_eq!(cpu_platform["platform"], "cpu");
+        let gpu_platform = jax_records
+            .iter()
+            .find(|record| record["event"] == "jax_platform_selected" && record["requested_device"] == "gpu")
+            .expect("GPU platform diagnostic should be present");
+        assert_eq!(gpu_platform["platform"], "cuda");
+        let skipped_validation = jax_records
+            .iter()
+            .find(|record| record["event"] == "jax_gpu_validation" && record["status"] == "skipped")
+            .expect("skipped validation diagnostic should be present");
+        assert_eq!(skipped_validation["message"], "CPU runtime requested; GPU validation skipped.");
+        let failed_validation = jax_records
+            .iter()
+            .find(|record| record["event"] == "jax_gpu_validation" && record["status"] == "failed")
+            .expect("failed validation diagnostic should be present");
+        assert_eq!(failed_validation["message"], "no device");
+        assert_eq!(records.iter().filter(|record| record["event"] == "telemetry_session_closed").count(), 1);
     }
 }

@@ -847,6 +847,7 @@ dependencies = [
  "g-plan",
  "g-runtime",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
