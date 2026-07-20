@@ -47,6 +47,29 @@ impl TemporaryRunFixture {
     }
 }
 
+pub(crate) fn execute_isolated_test_body(test_name: &str, child_environment_variable: &str) -> bool {
+    if let Some(handshake_path) = std::env::var_os(child_environment_variable) {
+        std::fs::write(handshake_path, test_name).expect("isolated runner test child should record its handshake");
+        return true;
+    }
+    let fixture_identifier = NEXT_FIXTURE_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
+    let handshake_path = std::env::temp_dir()
+        .join(format!("g-runner-isolated-test-{}-{fixture_identifier}.handshake", std::process::id()));
+    let test_executable = std::env::current_exe().expect("current runner test executable should be available");
+    let status = std::process::Command::new(test_executable)
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env(child_environment_variable, &handshake_path)
+        .status()
+        .expect("isolated runner test subprocess should start");
+    let handshake = std::fs::read_to_string(&handshake_path);
+    let _ = std::fs::remove_file(&handshake_path);
+    assert!(status.success(), "isolated runner test subprocess should succeed: {status}");
+    assert_eq!(handshake.expect("isolated runner test child should write its handshake"), test_name);
+    false
+}
+
 impl Drop for TemporaryRunFixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root_path);
