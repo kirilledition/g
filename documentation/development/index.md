@@ -44,8 +44,11 @@ just typecheck
 
 CI checks the README code-size summary but does not push refresh commits to
 protected `main`. After changing tracked files under `crates/`, `src/`, or
-`README.md`, run `scripts/update_readme_code_summary.py` with `cloc` available
-and commit the updated README in the same branch.
+`README.md`, run `scripts/update_readme_code_summary.py` with `cloc` 2.10 and
+commit the updated README in the same branch. The immutable source commit and
+checksum in `.github/workflows/readme-code-size.yml` are the canonical tool pin;
+pass a downloaded copy with `--cloc-command "perl /path/to/cloc"` when the
+system `cloc` is a different version.
 
 Full CPU validation, GPU validation, large test suites, and native builds should
 run through the appropriate local or SLURM workflow for the current host. See

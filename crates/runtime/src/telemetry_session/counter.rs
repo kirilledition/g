@@ -27,7 +27,7 @@ impl TelemetryEventCounterState {
         if event_count > 0 {
             let _result = self
                 .accepted_event_count
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| Some(value.saturating_add(event_count)));
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| Some(value.saturating_add(event_count)));
         }
     }
 

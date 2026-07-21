@@ -27,6 +27,9 @@ permissions:
   contents: read
 
 env:
+  CLOC_COMMIT: eb5cef64db2b2d4380f501568cc584b7cab4ba50
+  CLOC_SHA256: bf59272455172108072a0a106379f7509fd4349bdcfd85203bac038ccd286d83
+  CLOC_VERSION: "2.10"
   PYTHON_VERSION: "3.14"
 
 jobs:
@@ -47,8 +50,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/AlDanial/cloc/master/cloc -o "${RUNNER_TEMP}/cloc"
-          perl "${RUNNER_TEMP}/cloc" --version
+          curl -fsSL "https://raw.githubusercontent.com/AlDanial/cloc/${CLOC_COMMIT}/cloc" -o "${RUNNER_TEMP}/cloc"
+          printf '%s  %s\n' "${CLOC_SHA256}" "${RUNNER_TEMP}/cloc" | sha256sum --check --strict
+          reported_cloc_version="$(perl "${RUNNER_TEMP}/cloc" --version)"
+          printf 'cloc version: %s\n' "${reported_cloc_version}"
+          test "${reported_cloc_version}" = "${CLOC_VERSION}"
 
       - name: Check README code-size summary
         shell: bash
