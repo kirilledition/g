@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development contract | Rust I/O and output runtime as of 2026-07-10 | Native runtime maintainers |
+| Pre-release draft; development contract | Rust I/O and output runtime as of 2026-07-22 | Native runtime maintainers |
 
 Native I/O owns the parts of the hot path that should not depend on Python
 DataFrame libraries: BGEN decode, sample/covariate/phenotype alignment, chunk
@@ -37,6 +37,13 @@ zlib, and BGEN v1.3 Zstandard variant blocks. Native code owns:
 
 Python/JAX kernels should receive already aligned dosage or validated packed8
 chunks and metadata, not parse file formats.
+
+The BGEN index publishes variant metadata only through the validated
+`g-genotype-contracts` constructors. Store construction performs one-time,
+linear, always-on validation of parallel columns, identifier offsets, UTF-8
+boundaries, and dictionary codes. Chunk slicing then performs only constant-time range
+validation. A parser-created invariant failure is surfaced as contextual
+`BgenError::InvalidFormat`; there is no public unchecked metadata constructor.
 
 Optional `.bgi` input is deliberately deferred. The current runtime must remain
 fully functional without an external index; future support is tracked in the

@@ -79,6 +79,11 @@ selection is represented as a zero-start contiguous range.
 Batch geometry exists only on `GenotypeBatch`; compressed storage contains only
 the slab and member metadata it owns.
 
+BGEN indexing constructs shared metadata through the always-on contracts
+validator once. A parser-created invariant failure is reported contextually as
+`BgenError::InvalidFormat`; successful chunk access retains the existing shared
+store and performs only constant-time range validation.
+
 ## Allowed downstream users
 
 `g-engine` and the private root PyO3 `AssociationBackend` adapter. The adapter

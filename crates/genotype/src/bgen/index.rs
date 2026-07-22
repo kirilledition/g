@@ -221,15 +221,20 @@ pub(super) fn parse_variant_index(
     chromosome_boundary_indices.push(variant_count);
     Ok(ParsedVariantIndex {
         variant_records,
-        variant_metadata: Arc::new(VariantMetadataStore::from_parts(
-            metadata_text_dictionary.values.into_boxed_slice(),
-            chromosome_codes.into_boxed_slice(),
-            variant_identifier_text.into_boxed_str(),
-            variant_identifier_offsets.into_boxed_slice(),
-            position.into_boxed_slice(),
-            allele_one_codes.into_boxed_slice(),
-            allele_two_codes.into_boxed_slice(),
-        )),
+        variant_metadata: Arc::new(
+            VariantMetadataStore::from_parts(
+                metadata_text_dictionary.values.into_boxed_slice(),
+                chromosome_codes.into_boxed_slice(),
+                variant_identifier_text.into_boxed_str(),
+                variant_identifier_offsets.into_boxed_slice(),
+                position.into_boxed_slice(),
+                allele_one_codes.into_boxed_slice(),
+                allele_two_codes.into_boxed_slice(),
+            )
+            .map_err(|error| {
+                BgenError::InvalidFormat(format!("Parsed BGEN variant metadata violates its invariants: {error}"))
+            })?,
+        ),
         chromosome_boundary_indices,
     })
 }

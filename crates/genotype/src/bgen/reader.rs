@@ -236,7 +236,9 @@ impl BgenReaderCore {
     ) -> Result<VariantMetadataColumns, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
-        Ok(VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop))
+        VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop).map_err(|error| {
+            BgenError::InvalidFormat(format!("Indexed BGEN variant metadata violates its invariants: {error}"))
+        })
     }
 
     pub(super) fn validate_packed8_probability_pair_preconditions(&self) -> Result<(), BgenError> {

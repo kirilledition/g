@@ -112,16 +112,19 @@ fn build_metadata() -> VariantMetadataColumns {
         .into_boxed_slice();
     let allele_one_codes = vec![1_u32; VARIANT_COUNT].into_boxed_slice();
     let allele_two_codes = vec![2_u32; VARIANT_COUNT].into_boxed_slice();
-    let store = Arc::new(VariantMetadataStore::from_parts(
-        dictionary,
-        chromosome_codes,
-        variant_identifier_text,
-        variant_identifier_offsets,
-        positions,
-        allele_one_codes,
-        allele_two_codes,
-    ));
-    VariantMetadataColumns::new(store, 0..VARIANT_COUNT)
+    let store = Arc::new(
+        VariantMetadataStore::from_parts(
+            dictionary,
+            chromosome_codes,
+            variant_identifier_text,
+            variant_identifier_offsets,
+            positions,
+            allele_one_codes,
+            allele_two_codes,
+        )
+        .expect("benchmark metadata store should satisfy its invariants"),
+    );
+    VariantMetadataColumns::new(store, 0..VARIANT_COUNT).expect("benchmark metadata range should be valid")
 }
 
 fn build_batch(metadata: &VariantMetadataColumns, batch_index: usize) -> ScheduledAssociationBatch {

@@ -239,16 +239,19 @@ fn build_metadata(variant_count: usize, chromosome: &str) -> VariantMetadataColu
         .map(|index| i64::try_from(index + 1).expect("test position fits i64"))
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let store = Arc::new(VariantMetadataStore::from_parts(
-        text_dictionary,
-        vec![0_u32; variant_count].into_boxed_slice(),
-        variant_identifier_text.into_boxed_str(),
-        variant_identifier_offsets,
-        positions,
-        vec![1_u32; variant_count].into_boxed_slice(),
-        vec![2_u32; variant_count].into_boxed_slice(),
-    ));
-    VariantMetadataColumns::new(store, 0..variant_count)
+    let store = Arc::new(
+        VariantMetadataStore::from_parts(
+            text_dictionary,
+            vec![0_u32; variant_count].into_boxed_slice(),
+            variant_identifier_text.into_boxed_str(),
+            variant_identifier_offsets,
+            positions,
+            vec![1_u32; variant_count].into_boxed_slice(),
+            vec![2_u32; variant_count].into_boxed_slice(),
+        )
+        .expect("test metadata store should satisfy its invariants"),
+    );
+    VariantMetadataColumns::new(store, 0..variant_count).expect("test metadata range should be valid")
 }
 
 fn build_scheduled_batch(

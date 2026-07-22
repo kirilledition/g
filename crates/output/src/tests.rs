@@ -203,24 +203,28 @@ fn metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
         write!(&mut identifier_text, "rs{variant_index}").expect("test identifier writes");
         identifier_offsets.push(u32::try_from(identifier_text.len()).expect("test identifiers fit uint32"));
     }
-    Arc::new(VariantMetadataStore::from_parts(
-        dictionary,
-        vec![0_u32; variant_count].into_boxed_slice(),
-        identifier_text.into_boxed_str(),
-        identifier_offsets.into_boxed_slice(),
-        (0..variant_count)
-            .map(|index| 1_000_i64 + i64::try_from(index).expect("test index fits int64"))
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-        vec![1_u32; variant_count].into_boxed_slice(),
-        vec![2_u32; variant_count].into_boxed_slice(),
-    ))
+    Arc::new(
+        VariantMetadataStore::from_parts(
+            dictionary,
+            vec![0_u32; variant_count].into_boxed_slice(),
+            identifier_text.into_boxed_str(),
+            identifier_offsets.into_boxed_slice(),
+            (0..variant_count)
+                .map(|index| 1_000_i64 + i64::try_from(index).expect("test index fits int64"))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            vec![1_u32; variant_count].into_boxed_slice(),
+            vec![2_u32; variant_count].into_boxed_slice(),
+        )
+        .expect("test metadata store should satisfy its invariants"),
+    )
 }
 
 fn test_chunk(store: &Arc<VariantMetadataStore>, chunk_range: Range<usize>, trait_count: usize) -> TestChunk {
     let row_count = chunk_range.len();
     let chunk_identifier = i64::try_from(chunk_range.start).expect("test chunk identifier fits int64");
-    let metadata = VariantMetadataColumns::new(Arc::clone(store), chunk_range.clone());
+    let metadata = VariantMetadataColumns::new(Arc::clone(store), chunk_range.clone())
+        .expect("test metadata range should be valid");
     let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata).expect("test metadata is valid");
     let mut info_score = NullableFloat32Column {
         values: Vec::with_capacity(row_count),

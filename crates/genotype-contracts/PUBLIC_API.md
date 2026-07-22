@@ -10,6 +10,10 @@ genotype producers, the engine, and output consumers.
 The exact opened BGEN source identity, compact shared variant metadata storage
 and slices, output-facing chunk statistics, packed nullable `f32` columns, and
 the canonical raw-DEFLATE member alignment used by slab producers and consumers.
+`VariantMetadataInvariantError` is the dependency-free typed construction error
+for malformed parallel columns, identifier offsets, dictionary codes, and slice
+ranges. `VariantMetadataStore::from_parts` and `VariantMetadataColumns::new`
+return `Result`; there is no public unchecked construction path.
 
 ## This crate must not expose
 
@@ -21,7 +25,9 @@ Parquet writers, engine scheduling, runtime policy, or Python bindings.
 Metadata slices retain one immutable dictionary-coded store through
 `Arc` plus a range. Nullable columns retain dense values and an Arrow-compatible
 packed validity bitmap. Consumers must move or share these allocations; they
-must not introduce row-wise mirrors or crate-boundary copies.
+must not introduce row-wise mirrors or crate-boundary copies. Store construction
+performs one-time linear validation before publication. Range construction is
+constant-time, and accessors do not repeat invariant checks on the hot path.
 
 ## Allowed downstream users
 

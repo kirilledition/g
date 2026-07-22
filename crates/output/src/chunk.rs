@@ -186,19 +186,22 @@ mod tests {
             identifier_text.push_str(identifier);
             identifier_offsets.push(u32::try_from(identifier_text.len()).expect("test identifiers fit uint32"));
         }
-        let store = Arc::new(VariantMetadataStore::from_parts(
-            dictionary,
-            vec![0_u32; row_count].into_boxed_slice(),
-            identifier_text.into_boxed_str(),
-            identifier_offsets.into_boxed_slice(),
-            (0..row_count)
-                .map(|index| 100_i64 + i64::try_from(index).expect("test position fits int64"))
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-            vec![1_u32; row_count].into_boxed_slice(),
-            vec![2_u32; row_count].into_boxed_slice(),
-        ));
-        VariantMetadataColumns::new(store, 0..row_count)
+        let store = Arc::new(
+            VariantMetadataStore::from_parts(
+                dictionary,
+                vec![0_u32; row_count].into_boxed_slice(),
+                identifier_text.into_boxed_str(),
+                identifier_offsets.into_boxed_slice(),
+                (0..row_count)
+                    .map(|index| 100_i64 + i64::try_from(index).expect("test position fits int64"))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                vec![1_u32; row_count].into_boxed_slice(),
+                vec![2_u32; row_count].into_boxed_slice(),
+            )
+            .expect("test metadata store should satisfy its invariants"),
+        );
+        VariantMetadataColumns::new(store, 0..row_count).expect("test metadata range should be valid")
     }
 
     fn statistics(

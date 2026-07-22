@@ -235,15 +235,18 @@ fn benchmark_metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
         variant_identifier_offsets
             .push(u32::try_from(variant_identifier_text.len()).expect("benchmark identifier text should fit uint32"));
     }
-    Arc::new(VariantMetadataStore::from_parts(
-        text_dictionary,
-        chromosome_codes,
-        variant_identifier_text.into_boxed_str(),
-        variant_identifier_offsets.into_boxed_slice(),
-        position,
-        allele_one_codes,
-        allele_two_codes,
-    ))
+    Arc::new(
+        VariantMetadataStore::from_parts(
+            text_dictionary,
+            chromosome_codes,
+            variant_identifier_text.into_boxed_str(),
+            variant_identifier_offsets.into_boxed_slice(),
+            position,
+            allele_one_codes,
+            allele_two_codes,
+        )
+        .expect("benchmark metadata store should satisfy its invariants"),
+    )
 }
 
 fn benchmark_chunk(
@@ -254,7 +257,8 @@ fn benchmark_chunk(
     let chunk_range = benchmark_chunk_range(chunk_index);
     let variant_start_index = chunk_range.start;
     let row_count = chunk_range.len();
-    let metadata = VariantMetadataColumns::new(Arc::clone(metadata_store), chunk_range);
+    let metadata = VariantMetadataColumns::new(Arc::clone(metadata_store), chunk_range)
+        .expect("benchmark metadata range should be valid");
     let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata)
         .expect("benchmark native metadata handle should be constructed");
     let statistics = benchmark_chunk_statistics(variant_start_index, row_count);
