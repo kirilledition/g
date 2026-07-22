@@ -48,6 +48,13 @@ its expected-variance denominator is undefined.
 The manifest is the resume authority. It is intentionally stricter than a file
 name check.
 
+Completing or interrupting a run first closes each output writer to new chunks,
+flushes every admitted batch, and waits for all part writers before publishing
+the terminal manifest status. Aborting rejects new chunks and waits for any
+batch that was already detached for writing, but discards the not-yet-detached
+tail and leaves the manifest status as `running` for strict resume repair. No
+writer can publish another part after its terminal operation returns.
+
 Sample identity is always the non-empty `(FID, IID)` pair, so there is no
 identity-mode field in the execution plan. Sample-file fingerprints and aligned
 sample-set fingerprints cover the concrete identity data used by the run.

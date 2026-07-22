@@ -119,3 +119,10 @@ Native I/O changes usually need tests in:
 
 Output contract changes also require [Output Files](../public/output-files.md)
 and [Resume and Manifest](../public/resume-and-manifest.md) updates.
+
+Output writer closure uses one session-state mutex to order chunk admission
+against complete, interrupt, and abort. The coordinator reserves an RAII
+completion ticket under that mutex before detaching a full or tail batch, and a
+terminal operation waits for all such tickets before it returns. Queue-send
+failure releases its ticket only after recording the failure, so terminal
+completion cannot hang or silently pass a detached batch.

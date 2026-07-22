@@ -20,6 +20,13 @@ filesystem mutation starts in `initialize` after the complete output plan and
 headers validate. Individual writer-session lifecycle methods remain
 crate-private.
 
+Writer-session close is linearized with chunk admission. A full or tail batch
+reserves its completion ticket before it leaves the session state lock;
+complete, interrupt, and abort then reject later writes and wait for every
+reserved batch before returning. Complete and interrupt flush the admitted
+tail, while abort discards only chunks that were still pending. Retained opaque
+session handles remain closed after any terminal operation.
+
 ## This crate must not expose
 
 BGEN internals, sample alignment internals, engine scheduler queues, runtime

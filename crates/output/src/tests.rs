@@ -4,7 +4,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arrow::array::{Array, Float32Array, Int32Array, Int64Array, StringArray};
 use g_genotype_contracts::{
@@ -319,6 +319,22 @@ fn read_manifest(run_directory: &Path) -> Value {
     .expect("manifest is valid JSON")
 }
 
+fn parquet_part_count(parts_directory: &Path) -> usize {
+    std::fs::read_dir(parts_directory)
+        .expect("parts directory exists")
+        .map(|entry| entry.expect("part entry is readable").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "parquet"))
+        .count()
+}
+
+fn wait_until_session_is_closing(session: &OutputWriterSession) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !session.is_closing_for_test().expect("session state is readable") {
+        assert!(Instant::now() < deadline, "writer session did not start closing before the test timeout");
+        std::thread::yield_now();
+    }
+}
+
 fn read_float_column(parts_directory: &Path, column_name: &str) -> Vec<f32> {
     let input_file = File::open(only_parquet_part(parts_directory)).expect("part opens");
     let batches = ParquetRecordBatchReaderBuilder::try_new(input_file)
@@ -616,6 +632,139 @@ fn abort_discards_pending_chunks_and_closes_retained_session() {
     let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
     assert_eq!(read_manifest(&run_directory)["status"], "running");
     assert_eq!(std::fs::read_dir(run_directory.join("parts")).expect("parts exists").count(), 0);
+}
+
+#[test]
+fn finish_waits_for_a_reserved_batch_detached_before_queue_send() {
+    let directory = TestDirectory::new("finish-detached-before-send");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let planned_chunk_ranges = (0..8).map(|index| index..index + 1).collect::<Vec<_>>();
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
+    let sessions = manager
+        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+        .expect("delivery state exists")
+        .writer_sessions;
+    let retained_session = Arc::clone(&sessions[0]);
+    let detach_control = retained_session
+        .install_detached_before_send_test_hook()
+        .expect("detach hook installs while the session is open");
+    let store = metadata_store(8);
+    for chunk_range in planned_chunk_ranges.iter().take(7).cloned() {
+        let chunk = test_chunk(&store, chunk_range, 1);
+        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
+            .expect("partial batch chunk is accepted");
+    }
+    let final_chunk = test_chunk(&store, planned_chunk_ranges[7].clone(), 1);
+    let write_sessions = sessions.clone();
+    let write_handle = std::thread::spawn(move || {
+        write_regenie2_multi_trait_chunk_f32(&write_sessions, None, &final_chunk.handle, final_chunk.statistics)
+    });
+    detach_control.wait_until_detached();
+
+    let (finish_sender, finish_receiver) = crossbeam_channel::bounded(1);
+    let finish_handle = std::thread::spawn(move || {
+        let finish_result = manager.finish().map(|_| ()).map_err(|error| error.to_string());
+        finish_sender.send(finish_result).expect("finish result receiver remains connected");
+    });
+    wait_until_session_is_closing(&retained_session);
+    assert!(matches!(finish_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+    let parts_directory = directory.path.join("results/phenotype_0000_trait_alpha.regenie2_binary.run/parts");
+    assert_eq!(parquet_part_count(&parts_directory), 0);
+    let rejected_chunk = test_chunk(&store, 0..1, 1);
+    let closing_error = write_regenie2_multi_trait_chunk_f32(
+        &[Arc::clone(&retained_session)],
+        None,
+        &rejected_chunk.handle,
+        rejected_chunk.statistics,
+    )
+    .expect_err("closing session rejects later writes");
+    assert!(closing_error.to_string().contains("already closing"));
+
+    detach_control.release();
+    write_handle.join().expect("write thread does not panic").expect("reserved batch is sent");
+    finish_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("finish returns after the reserved batch completes")
+        .expect("finish succeeds");
+    finish_handle.join().expect("finish thread does not panic");
+
+    assert_eq!(parquet_part_count(&parts_directory), 1);
+    let run_directory = parts_directory.parent().expect("parts directory has a run parent");
+    assert_eq!(read_manifest(run_directory)["status"], "completed");
+    let post_finish_chunk = test_chunk(&store, 0..1, 1);
+    let closed_error = write_regenie2_multi_trait_chunk_f32(
+        &[retained_session],
+        None,
+        &post_finish_chunk.handle,
+        post_finish_chunk.statistics,
+    )
+    .expect_err("finished retained session rejects later writes");
+    assert!(closed_error.to_string().contains("already closed"));
+    assert_eq!(parquet_part_count(&parts_directory), 1);
+}
+
+#[test]
+fn abort_waits_for_a_reserved_batch_detached_before_queue_send() {
+    let directory = TestDirectory::new("abort-detached-before-send");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let planned_chunk_ranges = (0..8).map(|index| index..index + 1).collect::<Vec<_>>();
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
+    let sessions = manager
+        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+        .expect("delivery state exists")
+        .writer_sessions;
+    let retained_session = Arc::clone(&sessions[0]);
+    let detach_control = retained_session
+        .install_detached_before_send_test_hook()
+        .expect("detach hook installs while the session is open");
+    let store = metadata_store(8);
+    for chunk_range in planned_chunk_ranges.iter().take(7).cloned() {
+        let chunk = test_chunk(&store, chunk_range, 1);
+        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
+            .expect("partial batch chunk is accepted");
+    }
+    let final_chunk = test_chunk(&store, planned_chunk_ranges[7].clone(), 1);
+    let write_sessions = sessions.clone();
+    let write_handle = std::thread::spawn(move || {
+        write_regenie2_multi_trait_chunk_f32(&write_sessions, None, &final_chunk.handle, final_chunk.statistics)
+    });
+    detach_control.wait_until_detached();
+
+    let (abort_sender, abort_receiver) = crossbeam_channel::bounded(1);
+    let abort_handle = std::thread::spawn(move || {
+        let abort_result = manager.abort().map_err(|error| error.to_string());
+        abort_sender.send(abort_result).expect("abort result receiver remains connected");
+    });
+    wait_until_session_is_closing(&retained_session);
+    assert!(matches!(abort_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+    let parts_directory = directory.path.join("results/phenotype_0000_trait_alpha.regenie2_binary.run/parts");
+    assert_eq!(parquet_part_count(&parts_directory), 0);
+
+    detach_control.release();
+    write_handle.join().expect("write thread does not panic").expect("reserved batch is sent");
+    abort_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("abort returns after the reserved batch completes")
+        .expect("abort succeeds");
+    abort_handle.join().expect("abort thread does not panic");
+
+    assert_eq!(parquet_part_count(&parts_directory), 1);
+    let run_directory = parts_directory.parent().expect("parts directory has a run parent");
+    assert_eq!(read_manifest(run_directory)["status"], "running");
+    let post_abort_chunk = test_chunk(&store, 0..1, 1);
+    let closed_error = write_regenie2_multi_trait_chunk_f32(
+        &[retained_session],
+        None,
+        &post_abort_chunk.handle,
+        post_abort_chunk.statistics,
+    )
+    .expect_err("aborted retained session rejects later writes");
+    assert!(closed_error.to_string().contains("already closed"));
+    assert_eq!(parquet_part_count(&parts_directory), 1);
 }
 
 #[test]

@@ -10,7 +10,53 @@ use crate::manifest;
 use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot};
 use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_part_file_name};
 
-use super::worker_pool::{OutputWriteCompletionTracker, OutputWriterPool};
+use super::worker_pool::{OutputWriteCompletionTicket, OutputWriteCompletionTracker, OutputWriterPool};
+
+#[derive(Clone, Copy)]
+enum OutputWriterCloseKind {
+    Finish,
+    Interrupted,
+    Abort,
+}
+
+impl OutputWriterCloseKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Finish => "finish",
+            Self::Interrupted => "interrupted finish",
+            Self::Abort => "abort",
+        }
+    }
+}
+
+enum OutputWriterSessionState {
+    Open {
+        pending_chunks: Vec<RegenieStep2ChunkJob>,
+        #[cfg(test)]
+        detached_before_send_hook: Option<Arc<DetachedBeforeSendTestHook>>,
+    },
+    Closing(OutputWriterCloseKind),
+    Closed,
+}
+
+struct ReservedWriteBatch {
+    write_batch: RegenieStep2ChunkWriteBatch,
+    completion_ticket: OutputWriteCompletionTicket,
+    #[cfg(test)]
+    detached_before_send_hook: Option<Arc<DetachedBeforeSendTestHook>>,
+}
+
+#[cfg(test)]
+struct DetachedBeforeSendTestHook {
+    detached_sender: crossbeam_channel::Sender<()>,
+    release_receiver: crossbeam_channel::Receiver<()>,
+}
+
+#[cfg(test)]
+pub(crate) struct DetachedBeforeSendTestControl {
+    detached_receiver: crossbeam_channel::Receiver<()>,
+    release_sender: crossbeam_channel::Sender<()>,
+}
 
 pub(super) struct OutputWriterConfig {
     pub(super) run_directory: PathBuf,
@@ -19,7 +65,7 @@ pub(super) struct OutputWriterConfig {
 }
 
 pub struct OutputWriterSession {
-    pending_chunks: Mutex<Option<Vec<RegenieStep2ChunkJob>>>,
+    state: Mutex<OutputWriterSessionState>,
     writer_pool: Arc<OutputWriterPool>,
     worker_error: Arc<Mutex<Option<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
@@ -35,7 +81,11 @@ impl OutputWriterSession {
         let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
         let completion_tracker = OutputWriteCompletionTracker::new();
         Self {
-            pending_chunks: Mutex::new(Some(Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE))),
+            state: Mutex::new(OutputWriterSessionState::Open {
+                pending_chunks: Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE),
+                #[cfg(test)]
+                detached_before_send_hook: None,
+            }),
             writer_pool,
             worker_error,
             worker_commits,
@@ -47,24 +97,32 @@ impl OutputWriterSession {
 
     pub(crate) fn finish(&self) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
-        self.flush_and_commit()?;
-        manifest::mark_run_manifest_completed(&self.config.run_directory)?;
-        self.record_finish_timing(finish_start_time)?;
-        self.write_stage_timing_snapshot()
+        let reserved_write_batch = self.begin_flush_close(OutputWriterCloseKind::Finish)?;
+        let finish_result = (|| {
+            self.flush_and_commit(reserved_write_batch)?;
+            manifest::mark_run_manifest_completed(&self.config.run_directory)?;
+            self.record_finish_timing(finish_start_time)?;
+            self.write_stage_timing_snapshot()
+        })();
+        self.complete_close(finish_result)
     }
 
     pub(crate) fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
-        self.flush_and_commit()?;
-        manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)?;
-        self.record_finish_timing(finish_start_time)?;
-        self.write_stage_timing_snapshot()
+        let reserved_write_batch = self.begin_flush_close(OutputWriterCloseKind::Interrupted)?;
+        let finish_result = (|| {
+            self.flush_and_commit(reserved_write_batch)?;
+            manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)?;
+            self.record_finish_timing(finish_start_time)?;
+            self.write_stage_timing_snapshot()
+        })();
+        self.complete_close(finish_result)
     }
 
     pub(crate) fn abort(&self) -> Result<(), OutputError> {
-        self.close_and_discard_pending_chunks()?;
-        self.completion_tracker.wait()?;
-        Ok(())
+        self.begin_abort_close()?;
+        let abort_result = self.completion_tracker.wait();
+        self.complete_close(abort_result)
     }
 
     fn take_worker_commits(&self) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
@@ -75,9 +133,12 @@ impl OutputWriterSession {
         Ok(std::mem::take(&mut *worker_commits))
     }
 
-    fn flush_and_commit(&self) -> Result<(), OutputError> {
-        self.close_and_flush_pending_chunks()?;
-        self.completion_tracker.wait()?;
+    fn flush_and_commit(&self, reserved_write_batch: Option<ReservedWriteBatch>) -> Result<(), OutputError> {
+        let enqueue_result = reserved_write_batch
+            .map_or(Ok(()), |reserved_write_batch| self.enqueue_reserved_write_batch(reserved_write_batch));
+        let wait_result = self.completion_tracker.wait();
+        enqueue_result?;
+        wait_result?;
         self.raise_if_worker_failed()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
         manifest::record_run_manifest_chunk_commits(&self.config.run_directory, self.take_worker_commits()?)?;
@@ -109,22 +170,40 @@ impl OutputWriterSession {
         };
         self.raise_if_worker_failed()?;
         let enqueue_start_time = start_optional_timing(self.config.collect_stage_timings);
-        let write_batch = {
-            let mut pending_chunks_guard = self
-                .pending_chunks
-                .lock()
-                .map_err(|_| OutputError::Runtime("Rust output writer pending chunk lock was poisoned.".to_string()))?;
-            let pending_chunks = pending_chunks_guard
-                .as_mut()
-                .ok_or_else(|| OutputError::Runtime("Rust output writer session is already closed.".to_string()))?;
-            pending_chunks.push(job);
-            (pending_chunks.len() >= crate::CHUNKS_PER_PARQUET_FILE).then(|| {
-                let chunks = std::mem::replace(pending_chunks, Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE));
-                build_chunk_write_batch(chunks)
-            })
+        let reserved_write_batch = {
+            let mut state = self.lock_state()?;
+            match &mut *state {
+                OutputWriterSessionState::Open {
+                    pending_chunks,
+                    #[cfg(test)]
+                    detached_before_send_hook,
+                } => {
+                    let should_detach = pending_chunks.len().checked_add(1).ok_or_else(|| {
+                        OutputError::Runtime("Rust output writer pending chunk count overflowed.".to_string())
+                    })? >= crate::CHUNKS_PER_PARQUET_FILE;
+                    let completion_ticket = should_detach.then(|| self.completion_tracker.reserve()).transpose()?;
+                    pending_chunks.push(job);
+                    completion_ticket.map(|completion_ticket| {
+                        let chunks =
+                            std::mem::replace(pending_chunks, Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE));
+                        ReservedWriteBatch {
+                            write_batch: build_chunk_write_batch(chunks),
+                            completion_ticket,
+                            #[cfg(test)]
+                            detached_before_send_hook: detached_before_send_hook.take(),
+                        }
+                    })
+                }
+                OutputWriterSessionState::Closing(close_kind) => {
+                    return Err(session_closing_error(*close_kind));
+                }
+                OutputWriterSessionState::Closed => return Err(session_closed_error()),
+            }
         };
-        if let Some(write_batch) = write_batch {
-            self.enqueue_write_batch(write_batch)?;
+        if let Some(reserved_write_batch) = reserved_write_batch {
+            #[cfg(test)]
+            reserved_write_batch.pause_before_send();
+            self.enqueue_reserved_write_batch(reserved_write_batch)?;
         }
         if let Some(start_time) = enqueue_start_time {
             self.record_stage_timing(|stage_timings| {
@@ -135,40 +214,15 @@ impl OutputWriterSession {
         Ok(())
     }
 
-    fn close_and_flush_pending_chunks(&self) -> Result<(), OutputError> {
-        let write_batch = {
-            let mut pending_chunks_guard = self
-                .pending_chunks
-                .lock()
-                .map_err(|_| OutputError::Runtime("Rust output writer pending chunk lock was poisoned.".to_string()))?;
-            pending_chunks_guard.take().and_then(|pending_chunks| {
-                (!pending_chunks.is_empty()).then(|| build_chunk_write_batch(pending_chunks))
-            })
-        };
-        if let Some(write_batch) = write_batch {
-            self.enqueue_write_batch(write_batch)?;
-        }
-        Ok(())
-    }
-
-    fn close_and_discard_pending_chunks(&self) -> Result<(), OutputError> {
-        let mut pending_chunks_guard = self
-            .pending_chunks
-            .lock()
-            .map_err(|_| OutputError::Runtime("Rust output writer pending chunk lock was poisoned.".to_string()))?;
-        pending_chunks_guard.take();
-        Ok(())
-    }
-
-    fn enqueue_write_batch(&self, write_batch: RegenieStep2ChunkWriteBatch) -> Result<(), OutputError> {
+    fn enqueue_reserved_write_batch(&self, reserved_write_batch: ReservedWriteBatch) -> Result<(), OutputError> {
         let flush_start_time = start_optional_timing(self.config.collect_stage_timings);
         self.writer_pool.enqueue_regenie_step2(
-            write_batch,
+            reserved_write_batch.write_batch,
             &self.config,
             &self.worker_error,
             &self.worker_commits,
             &self.stage_timings,
-            &self.completion_tracker,
+            reserved_write_batch.completion_ticket,
         )?;
         if let Some(start_time) = flush_start_time {
             self.record_stage_timing(|stage_timings| {
@@ -177,6 +231,89 @@ impl OutputWriterSession {
             })?;
         }
         Ok(())
+    }
+
+    fn begin_flush_close(&self, close_kind: OutputWriterCloseKind) -> Result<Option<ReservedWriteBatch>, OutputError> {
+        let mut state = self.lock_state()?;
+        let reserved_write_batch = match &mut *state {
+            OutputWriterSessionState::Open { pending_chunks, .. } => {
+                if pending_chunks.is_empty() {
+                    None
+                } else {
+                    let completion_ticket = self.completion_tracker.reserve()?;
+                    let chunks = std::mem::replace(pending_chunks, Vec::with_capacity(crate::CHUNKS_PER_PARQUET_FILE));
+                    Some(ReservedWriteBatch {
+                        write_batch: build_chunk_write_batch(chunks),
+                        completion_ticket,
+                        #[cfg(test)]
+                        detached_before_send_hook: None,
+                    })
+                }
+            }
+            OutputWriterSessionState::Closing(active_close_kind) => {
+                return Err(session_closing_error(*active_close_kind));
+            }
+            OutputWriterSessionState::Closed => return Err(session_closed_error()),
+        };
+        *state = OutputWriterSessionState::Closing(close_kind);
+        Ok(reserved_write_batch)
+    }
+
+    fn begin_abort_close(&self) -> Result<(), OutputError> {
+        let mut state = self.lock_state()?;
+        match &mut *state {
+            OutputWriterSessionState::Open { pending_chunks, .. } => pending_chunks.clear(),
+            OutputWriterSessionState::Closing(close_kind) => return Err(session_closing_error(*close_kind)),
+            OutputWriterSessionState::Closed => return Err(session_closed_error()),
+        }
+        *state = OutputWriterSessionState::Closing(OutputWriterCloseKind::Abort);
+        Ok(())
+    }
+
+    fn complete_close(&self, close_result: Result<(), OutputError>) -> Result<(), OutputError> {
+        let state_result = self.mark_closed();
+        close_result.and(state_result)
+    }
+
+    fn mark_closed(&self) -> Result<(), OutputError> {
+        let mut state = self.lock_state()?;
+        match *state {
+            OutputWriterSessionState::Closing(_) => {
+                *state = OutputWriterSessionState::Closed;
+                Ok(())
+            }
+            OutputWriterSessionState::Closed => Ok(()),
+            OutputWriterSessionState::Open { .. } => Err(OutputError::Runtime(
+                "Rust output writer close completed while its session was still open.".to_string(),
+            )),
+        }
+    }
+
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, OutputWriterSessionState>, OutputError> {
+        self.state
+            .lock()
+            .map_err(|_| OutputError::Runtime("Rust output writer session state lock was poisoned.".to_string()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_detached_before_send_test_hook(&self) -> Result<DetachedBeforeSendTestControl, OutputError> {
+        let (detached_sender, detached_receiver) = crossbeam_channel::bounded(1);
+        let (release_sender, release_receiver) = crossbeam_channel::bounded(1);
+        let mut state = self.lock_state()?;
+        match &mut *state {
+            OutputWriterSessionState::Open { detached_before_send_hook, .. } => {
+                *detached_before_send_hook =
+                    Some(Arc::new(DetachedBeforeSendTestHook { detached_sender, release_receiver }));
+            }
+            OutputWriterSessionState::Closing(close_kind) => return Err(session_closing_error(*close_kind)),
+            OutputWriterSessionState::Closed => return Err(session_closed_error()),
+        }
+        Ok(DetachedBeforeSendTestControl { detached_receiver, release_sender })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_closing_for_test(&self) -> Result<bool, OutputError> {
+        Ok(matches!(*self.lock_state()?, OutputWriterSessionState::Closing(_)))
     }
 
     fn record_finish_timing(&self, finish_start_time: Option<Instant>) -> Result<(), OutputError> {
@@ -225,6 +362,39 @@ impl OutputWriterSession {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+impl ReservedWriteBatch {
+    fn pause_before_send(&self) {
+        if let Some(hook) = self.detached_before_send_hook.as_ref() {
+            hook.detached_sender.send(()).expect("detach test control remains connected");
+            hook.release_receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("detach test is released before its timeout");
+        }
+    }
+}
+
+#[cfg(test)]
+impl DetachedBeforeSendTestControl {
+    pub(crate) fn wait_until_detached(&self) {
+        self.detached_receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("writer detaches a reserved batch before the test timeout");
+    }
+
+    pub(crate) fn release(&self) {
+        self.release_sender.send(()).expect("paused writer remains connected");
+    }
+}
+
+fn session_closing_error(close_kind: OutputWriterCloseKind) -> OutputError {
+    OutputError::Runtime(format!("Rust output writer session is already closing via {}.", close_kind.label()))
+}
+
+fn session_closed_error() -> OutputError {
+    OutputError::Runtime("Rust output writer session is already closed.".to_string())
 }
 
 fn build_chunk_write_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2ChunkWriteBatch {
