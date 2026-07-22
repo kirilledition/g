@@ -55,6 +55,13 @@ batch that was already detached for writing, but discards the not-yet-detached
 tail and leaves the manifest status as `running` for strict resume repair. No
 writer can publish another part after its terminal operation returns.
 
+The run owner attempts every phenotype writer even if an earlier writer fails,
+then centrally closes shared queue admission and joins all output workers.
+Consequently, retaining an internal delivery handle cannot keep output
+admission open after complete, interrupted, or aborted shutdown.
+Admission close rejects queue sends that did not already obtain a permit;
+pre-close permits remain admitted and are covered by the same completion wait.
+
 Sample identity is always the non-empty `(FID, IID)` pair, so there is no
 identity-mode field in the execution plan. Sample-file fingerprints and aligned
 sample-set fingerprints cover the concrete identity data used by the run.

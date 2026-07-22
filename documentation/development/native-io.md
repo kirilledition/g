@@ -126,3 +126,19 @@ completion ticket under that mutex before detaching a full or tail batch, and a
 terminal operation waits for all such tickets before it returns. Queue-send
 failure releases its ticket only after recording the failure, so terminal
 completion cannot hang or silently pass a detached batch.
+
+The run-scoped `OutputManager`, not an individual writer session, owns the
+bounded queue lifetime and worker `JoinHandle`s. Sessions shared through
+`OutputDeliveryState` contain only clients of one mutex-linearized admission
+gate. Acquiring a sender permit is the gate's linearization point. The control
+mutex is released before a bounded queue send, so close does not wait for space
+in a full queue. A pre-close permit remains admitted and its completion ticket
+is drained; a post-close permit is rejected. Explicit finish, interrupted
+finish, and abort attempt every session, then close that gate and join all
+`g-output-writer-*` threads even when an earlier session failed. Spawn failure
+follows the same cleanup order for the workers already created. Join panic is
+reported only when no earlier lifecycle error exists. Destruction is a
+best-effort safety net that closes admission and never waits for a worker that
+is still running; production correctness relies on the explicit terminal
+paths. Dropping an initialized manager first aborts all sessions, drains queued
+batches, discards pending tails, and leaves retained session handles closed.

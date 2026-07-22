@@ -27,6 +27,24 @@ reserved batch before returning. Complete and interrupt flush the admitted
 tail, while abort discards only chunks that were still pending. Retained opaque
 session handles remain closed after any terminal operation.
 
+`OutputManager` is the sole owner of the bounded queue's sender lifetime and
+worker join handles. Delivery state and writer sessions carry only lightweight
+clients of a shared admission gate, so retaining a delivery-state `Arc` cannot
+keep the queue open after manager shutdown. A client obtains a short-lived
+sender permit while holding the admission lock and releases the lock before a
+bounded send can block. Permits acquired before close remain admitted and keep
+their completion tickets; close rejects later permits without waiting for queue
+progress. Explicit complete, interrupt, and abort paths attempt every session,
+close admission, and join every named worker;
+the first session failure remains primary over a later join failure. A worker
+spawn failure closes admission and joins the workers that were already started.
+The resource-owner destructor is only a panic-free fallback: it closes
+admission and reaps workers that have already exited, but it never waits for a
+live worker or substitutes for an explicit terminal operation.
+Dropping an initialized manager first aborts every session, which drains queued
+batches, discards pending tails, and closes retained session handles before the
+resource-owner fallback runs.
+
 ## This crate must not expose
 
 BGEN internals, sample alignment internals, engine scheduler queues, runtime

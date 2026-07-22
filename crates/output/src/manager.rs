@@ -16,8 +16,8 @@ use crate::manifest::{
     resolve_output_run_paths,
 };
 use crate::session::{
-    OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
-    finish_output_writer_sessions, validate_output_writer_settings,
+    CreatedOutputWriterSessions, OutputWriterResourceOwner, OutputWriterSession, create_output_writer_sessions,
+    finish_interrupted_output_writer_sessions, finish_output_writer_sessions, validate_output_writer_settings,
 };
 const COMMAND_INTERFACE: &str = "g regenie";
 
@@ -48,6 +48,7 @@ pub struct OutputManager {
     runs: Vec<ManagedOutputRun>,
     run_indices_by_phenotype: BTreeMap<String, usize>,
     writer_sessions: Option<Vec<Arc<OutputWriterSession>>>,
+    writer_resource_owner: Option<OutputWriterResourceOwner>,
     terminal: bool,
 }
 
@@ -99,6 +100,7 @@ impl OutputManager {
             runs,
             run_indices_by_phenotype,
             writer_sessions: None,
+            writer_resource_owner: None,
             terminal: false,
         })
     }
@@ -212,13 +214,14 @@ impl OutputManager {
             std::fs::write(&run.effective_config_path, &self.effective_config_toml).map_err(OutputError::runtime)?;
             extend_manifest_from_plan(&self.run_plan, run)?;
         }
-        let writer_sessions = create_output_writer_sessions(
+        let CreatedOutputWriterSessions { sessions, resource_owner } = create_output_writer_sessions(
             self.runs.iter().map(|run| run.paths.run_directory.clone()).collect(),
             self.runs.iter().map(|run| run.paths.parts_directory.clone()).collect(),
             &self.run_plan.output,
             collect_stage_timings,
         )?;
-        self.writer_sessions = Some(writer_sessions.into_iter().map(Arc::new).collect());
+        self.writer_sessions = Some(sessions.into_iter().map(Arc::new).collect());
+        self.writer_resource_owner = resource_owner;
         Ok(())
     }
 
@@ -260,10 +263,15 @@ impl OutputManager {
     ///
     /// Returns an error when a writer fails.
     pub fn finish(mut self) -> OutputResult<Vec<CompletedOutputRun>> {
-        let writer_sessions = self.writer_session_references()?;
-        let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
-        finish_output_writer_sessions(&writer_sessions, thread_count)?;
+        let finish_result = (|| {
+            let writer_sessions = self.writer_session_references()?;
+            let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
+            finish_output_writer_sessions(&writer_sessions, thread_count)
+        })();
+        let shutdown_result = self.shutdown_writer_resources();
         self.terminal = true;
+        finish_result?;
+        shutdown_result?;
         Ok(self.take_completion())
     }
 
@@ -273,11 +281,14 @@ impl OutputManager {
     ///
     /// Returns an error when interrupted output cannot be flushed.
     pub fn finish_interrupted(mut self, signal_name: &str) -> OutputResult<()> {
-        let writer_sessions = self.writer_session_references()?;
-        let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
-        finish_interrupted_output_writer_sessions(&writer_sessions, thread_count, signal_name)?;
+        let finish_result = (|| {
+            let writer_sessions = self.writer_session_references()?;
+            let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
+            finish_interrupted_output_writer_sessions(&writer_sessions, thread_count, signal_name)
+        })();
+        let shutdown_result = self.shutdown_writer_resources();
         self.terminal = true;
-        Ok(())
+        finish_result.and(shutdown_result)
     }
 
     /// Abort every writer and discard pending chunks.
@@ -286,9 +297,10 @@ impl OutputManager {
     ///
     /// Returns the first writer abort failure.
     pub fn abort(mut self) -> OutputResult<()> {
-        let result = abort_writer_sessions(self.writer_sessions.as_deref().unwrap_or_default());
+        let abort_result = abort_writer_sessions(self.writer_sessions.as_deref().unwrap_or_default());
+        let shutdown_result = self.shutdown_writer_resources();
         self.terminal = true;
-        result
+        abort_result.and(shutdown_result)
     }
 
     fn run(&self, phenotype_name: &str) -> OutputResult<&ManagedOutputRun> {
@@ -351,12 +363,17 @@ impl OutputManager {
             })
             .collect()
     }
+
+    fn shutdown_writer_resources(&mut self) -> OutputResult<()> {
+        self.writer_resource_owner.take().map_or(Ok(()), |mut resource_owner| resource_owner.shutdown_and_join())
+    }
 }
 
 impl Drop for OutputManager {
     fn drop(&mut self) {
         if !self.terminal {
             let _ = abort_writer_sessions(self.writer_sessions.as_deref().unwrap_or_default());
+            drop(self.writer_resource_owner.take());
         }
     }
 }

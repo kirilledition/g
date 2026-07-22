@@ -327,6 +327,17 @@ fn parquet_part_count(parts_directory: &Path) -> usize {
         .count()
 }
 
+fn parquet_part_names(parts_directory: &Path) -> Vec<String> {
+    let mut part_names = std::fs::read_dir(parts_directory)
+        .expect("parts directory exists")
+        .map(|entry| entry.expect("part entry is readable").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "parquet"))
+        .map(|path| path.file_name().expect("part path has a file name").to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    part_names.sort();
+    part_names
+}
+
 fn wait_until_session_is_closing(session: &OutputWriterSession) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !session.is_closing_for_test().expect("session state is readable") {
@@ -573,6 +584,7 @@ fn interrupted_finish_flushes_pending_chunk_and_records_signal() {
         .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
         .expect("delivery state exists")
         .writer_sessions;
+    let retained_session = Arc::clone(&sessions[0]);
     let chunk = test_chunk(&metadata_store(1), 0..1, 1);
     write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
     let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
@@ -582,6 +594,15 @@ fn interrupted_finish_flushes_pending_chunk_and_records_signal() {
     assert_eq!(manifest["status"], "interrupted");
     assert_eq!(manifest["interrupted_signal"], "SIGTERM");
     assert!(run_directory.join("parts/part_000000000.parquet").exists());
+    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
+    let error = write_regenie2_multi_trait_chunk_f32(
+        &[retained_session],
+        None,
+        &rejected_chunk.handle,
+        rejected_chunk.statistics,
+    )
+    .expect_err("retained delivery client rejects writes after interrupted finish");
+    assert!(error.to_string().contains("already closed"));
 }
 
 #[test]
@@ -632,6 +653,170 @@ fn abort_discards_pending_chunks_and_closes_retained_session() {
     let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
     assert_eq!(read_manifest(&run_directory)["status"], "running");
     assert_eq!(std::fs::read_dir(run_directory.join("parts")).expect("parts exists").count(), 0);
+}
+
+#[test]
+fn multi_session_finish_closes_delivery_clients_that_outlive_the_manager() {
+    let directory = TestDirectory::new("multi-session-finish");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let manager = initialize_manager(Arc::clone(&plan), &inputs, &phenotype_names, &single_chunk_plan(0..2));
+    let delivery =
+        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
+    let chunk = test_chunk(&metadata_store(2), 0..2, 2);
+    write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
+        .expect("multi-session chunk is accepted");
+
+    let completed = manager.finish().expect("all sessions finish and shared workers join");
+
+    assert_eq!(completed.len(), 2);
+    assert!(completed.iter().all(|run| read_manifest(&run.run_directory)["status"] == "completed"));
+    assert!(completed.iter().all(|run| parquet_part_count(&run.parts_directory) == 1));
+    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
+    let error = write_regenie2_multi_trait_chunk_f32(
+        &[Arc::clone(&delivery.writer_sessions[0])],
+        None,
+        &rejected_chunk.handle,
+        rejected_chunk.statistics,
+    )
+    .expect_err("retained delivery client rejects writes after finish");
+    assert!(error.to_string().contains("already closed"));
+}
+
+#[test]
+fn multi_session_abort_closes_delivery_clients_that_outlive_the_manager() {
+    let directory = TestDirectory::new("multi-session-abort");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let run_directories = planned_run_directories(&plan);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..2));
+    let delivery =
+        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
+    let chunk = test_chunk(&metadata_store(2), 0..2, 2);
+    write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
+        .expect("multi-session chunk is admitted as pending tails");
+
+    manager.abort().expect("all sessions abort and shared workers join");
+
+    assert!(run_directories.iter().all(|run_directory| {
+        read_manifest(run_directory)["status"] == "running" && parquet_part_count(&run_directory.join("parts")) == 0
+    }));
+    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
+    let error = write_regenie2_multi_trait_chunk_f32(
+        &[Arc::clone(&delivery.writer_sessions[1])],
+        None,
+        &rejected_chunk.handle,
+        rejected_chunk.statistics,
+    )
+    .expect_err("retained delivery client rejects writes after abort");
+    assert!(error.to_string().contains("already closed"));
+}
+
+#[test]
+fn finish_attempts_later_sessions_before_shutdown_after_a_primary_session_error() {
+    let directory = TestDirectory::new("multi-session-primary-error");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let run_directories = planned_run_directories(&plan);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
+    let delivery =
+        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
+    let missing_manifest_path = run_directories[0].join("run_manifest.json");
+    std::fs::remove_file(&missing_manifest_path).expect("first manifest is removed");
+
+    let error = manager.finish().err().expect("first session manifest failure remains primary");
+
+    assert!(
+        matches!(
+            error,
+            crate::OutputError::MissingRunManifest { manifest_path: ref observed_path }
+                if observed_path == &missing_manifest_path
+        ),
+        "unexpected finish error: {error}"
+    );
+    assert_eq!(read_manifest(&run_directories[1])["status"], "completed");
+    for retained_session in &delivery.writer_sessions {
+        let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
+        let write_error = write_regenie2_multi_trait_chunk_f32(
+            &[Arc::clone(retained_session)],
+            None,
+            &rejected_chunk.handle,
+            rejected_chunk.statistics,
+        )
+        .expect_err("every retained session is closed after terminal failure");
+        assert!(write_error.to_string().contains("already closed"));
+    }
+}
+
+#[test]
+fn initialized_manager_drop_drains_queued_batches_discards_tails_and_closes_retained_sessions() {
+    let directory = TestDirectory::new("initialized-manager-drop");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let planned_chunk_ranges = (0..9).map(|index| index..index + 1).collect::<Vec<_>>();
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let run_directories = planned_run_directories(&plan);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
+    let delivery =
+        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
+    let worker_control = delivery.writer_sessions[0]
+        .install_worker_before_write_test_hook()
+        .expect("before-write worker barrier installs");
+    let store = metadata_store(9);
+    for chunk_range in planned_chunk_ranges {
+        let chunk = test_chunk(&store, chunk_range, 2);
+        write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
+            .expect("full batches and pending tails are admitted");
+    }
+    worker_control.wait_until_worker_started();
+    let (drop_finished_sender, drop_finished_receiver) = crossbeam_channel::bounded::<()>(1);
+    let drop_handle = std::thread::Builder::new()
+        .name("initialized-output-manager-drop".to_string())
+        .spawn(move || {
+            drop(manager);
+            drop_finished_sender.send(()).expect("test observes manager drop completion");
+        })
+        .expect("manager drop controller starts");
+    wait_until_session_is_closing(&delivery.writer_sessions[0]);
+
+    assert!(matches!(drop_finished_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+    assert!(run_directories.iter().all(|run_directory| parquet_part_count(&run_directory.join("parts")) == 0));
+    worker_control.release();
+    drop_finished_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("manager drop returns after queued work drains");
+    drop_handle.join().expect("manager drop controller does not panic");
+
+    let expected_part_names = vec!["part_000000000_000000007.parquet".to_string()];
+    let part_names_after_drop = run_directories
+        .iter()
+        .map(|run_directory| parquet_part_names(&run_directory.join("parts")))
+        .collect::<Vec<_>>();
+    assert!(part_names_after_drop.iter().all(|part_names| part_names == &expected_part_names));
+    for run_directory in &run_directories {
+        let manifest = read_manifest(run_directory);
+        assert_eq!(manifest["status"], "running");
+        assert!(manifest["committed_chunks"].as_array().expect("commits are a list").is_empty());
+    }
+    for retained_session in &delivery.writer_sessions {
+        let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
+        let error = write_regenie2_multi_trait_chunk_f32(
+            &[Arc::clone(retained_session)],
+            None,
+            &rejected_chunk.handle,
+            rejected_chunk.statistics,
+        )
+        .expect_err("manager drop closes every retained session");
+        assert!(error.to_string().contains("already closed"));
+    }
+    let stable_part_names = run_directories
+        .iter()
+        .map(|run_directory| parquet_part_names(&run_directory.join("parts")))
+        .collect::<Vec<_>>();
+    assert_eq!(stable_part_names, part_names_after_drop, "no worker may publish after manager drop returns");
 }
 
 #[test]

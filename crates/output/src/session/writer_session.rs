@@ -10,7 +10,9 @@ use crate::manifest;
 use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot};
 use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_part_file_name};
 
-use super::worker_pool::{OutputWriteCompletionTicket, OutputWriteCompletionTracker, OutputWriterPool};
+use super::worker_pool::{
+    OutputWriteCompletionTicket, OutputWriteCompletionTracker, OutputWriterClient, OutputWriterResourceOwner,
+};
 
 #[derive(Clone, Copy)]
 enum OutputWriterCloseKind {
@@ -58,15 +60,29 @@ pub(crate) struct DetachedBeforeSendTestControl {
     release_sender: crossbeam_channel::Sender<()>,
 }
 
+#[cfg(test)]
+pub(super) struct WorkerBeforeWriteTestHook {
+    started_sender: crossbeam_channel::Sender<()>,
+    release_receiver: crossbeam_channel::Receiver<()>,
+}
+
+#[cfg(test)]
+pub(crate) struct WorkerBeforeWriteTestControl {
+    started_receiver: crossbeam_channel::Receiver<()>,
+    release_sender: crossbeam_channel::Sender<()>,
+}
+
 pub(super) struct OutputWriterConfig {
     pub(super) run_directory: PathBuf,
     pub(super) parts_directory: PathBuf,
     pub(super) collect_stage_timings: bool,
+    #[cfg(test)]
+    pub(super) worker_before_write_hook: Mutex<Option<Arc<WorkerBeforeWriteTestHook>>>,
 }
 
 pub struct OutputWriterSession {
     state: Mutex<OutputWriterSessionState>,
-    writer_pool: Arc<OutputWriterPool>,
+    writer_client: OutputWriterClient,
     worker_error: Arc<Mutex<Option<String>>>,
     worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
@@ -75,7 +91,7 @@ pub struct OutputWriterSession {
 }
 
 impl OutputWriterSession {
-    fn new_with_writer_pool(config: OutputWriterConfig, writer_pool: Arc<OutputWriterPool>) -> Self {
+    fn new_with_writer_client(config: OutputWriterConfig, writer_client: OutputWriterClient) -> Self {
         let worker_error = Arc::new(Mutex::new(None));
         let worker_commits = Arc::new(Mutex::new(Vec::new()));
         let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
@@ -86,7 +102,7 @@ impl OutputWriterSession {
                 #[cfg(test)]
                 detached_before_send_hook: None,
             }),
-            writer_pool,
+            writer_client,
             worker_error,
             worker_commits,
             stage_timings,
@@ -216,7 +232,7 @@ impl OutputWriterSession {
 
     fn enqueue_reserved_write_batch(&self, reserved_write_batch: ReservedWriteBatch) -> Result<(), OutputError> {
         let flush_start_time = start_optional_timing(self.config.collect_stage_timings);
-        self.writer_pool.enqueue_regenie_step2(
+        self.writer_client.enqueue_regenie_step2(
             reserved_write_batch.write_batch,
             &self.config,
             &self.worker_error,
@@ -312,6 +328,22 @@ impl OutputWriterSession {
     }
 
     #[cfg(test)]
+    pub(crate) fn install_worker_before_write_test_hook(&self) -> Result<WorkerBeforeWriteTestControl, OutputError> {
+        let (started_sender, started_receiver) = crossbeam_channel::bounded(1);
+        let (release_sender, release_receiver) = crossbeam_channel::bounded(1);
+        let mut worker_before_write_hook = self.config.worker_before_write_hook.lock().map_err(|_| {
+            OutputError::Runtime("Rust output writer before-write test hook lock was poisoned.".to_string())
+        })?;
+        if worker_before_write_hook.is_some() {
+            return Err(OutputError::Runtime(
+                "Rust output writer before-write test hook is already installed.".to_string(),
+            ));
+        }
+        *worker_before_write_hook = Some(Arc::new(WorkerBeforeWriteTestHook { started_sender, release_receiver }));
+        Ok(WorkerBeforeWriteTestControl { started_receiver, release_sender })
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_closing_for_test(&self) -> Result<bool, OutputError> {
         Ok(matches!(*self.lock_state()?, OutputWriterSessionState::Closing(_)))
     }
@@ -365,6 +397,21 @@ impl OutputWriterSession {
 }
 
 #[cfg(test)]
+impl OutputWriterConfig {
+    pub(super) fn pause_worker_before_write_for_test(&self) {
+        let worker_before_write_hook =
+            self.worker_before_write_hook.lock().expect("before-write test hook lock remains available").take();
+        if let Some(worker_before_write_hook) = worker_before_write_hook {
+            worker_before_write_hook.started_sender.send(()).expect("before-write test control remains connected");
+            worker_before_write_hook
+                .release_receiver
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("before-write test is released before its timeout");
+        }
+    }
+}
+
+#[cfg(test)]
 impl ReservedWriteBatch {
     fn pause_before_send(&self) {
         if let Some(hook) = self.detached_before_send_hook.as_ref() {
@@ -386,6 +433,19 @@ impl DetachedBeforeSendTestControl {
 
     pub(crate) fn release(&self) {
         self.release_sender.send(()).expect("paused writer remains connected");
+    }
+}
+
+#[cfg(test)]
+impl WorkerBeforeWriteTestControl {
+    pub(crate) fn wait_until_worker_started(&self) {
+        self.started_receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("worker reaches the before-write barrier before the test timeout");
+    }
+
+    pub(crate) fn release(&self) {
+        self.release_sender.send(()).expect("paused output worker remains connected");
     }
 }
 
@@ -413,7 +473,12 @@ pub(crate) fn validate_output_writer_settings(
         return Ok(());
     }
     let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
-    OutputWriterPool::validate_settings(writer_thread_count, crate::WRITER_QUEUE_DEPTH)
+    OutputWriterResourceOwner::validate_settings(writer_thread_count, crate::WRITER_QUEUE_DEPTH)
+}
+
+pub(crate) struct CreatedOutputWriterSessions {
+    pub(crate) sessions: Vec<OutputWriterSession>,
+    pub(crate) resource_owner: Option<OutputWriterResourceOwner>,
 }
 
 /// Create one native output writer session per run/parts directory pair.
@@ -427,7 +492,7 @@ pub(crate) fn create_output_writer_sessions(
     parts_directories: Vec<PathBuf>,
     output_plan: &g_plan::OutputPlan,
     collect_stage_timings: bool,
-) -> Result<Vec<OutputWriterSession>, OutputError> {
+) -> Result<CreatedOutputWriterSessions, OutputError> {
     if run_directories.len() != parts_directories.len() {
         return Err(OutputError::InvalidInput(format!(
             "Output writer run directory count ({}) does not match parts directory count ({}).",
@@ -437,18 +502,25 @@ pub(crate) fn create_output_writer_sessions(
     }
     validate_output_writer_settings(output_plan, run_directories.len())?;
     if run_directories.is_empty() {
-        return Ok(Vec::new());
+        return Ok(CreatedOutputWriterSessions { sessions: Vec::new(), resource_owner: None });
     }
     let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
-    let writer_pool = OutputWriterPool::new(writer_thread_count, crate::WRITER_QUEUE_DEPTH)?;
-    Ok(run_directories
+    let writer_pool = OutputWriterResourceOwner::start(writer_thread_count, crate::WRITER_QUEUE_DEPTH)?;
+    let sessions = run_directories
         .into_iter()
         .zip(parts_directories)
         .map(|(run_directory, parts_directory)| {
-            let config = OutputWriterConfig { run_directory, parts_directory, collect_stage_timings };
-            OutputWriterSession::new_with_writer_pool(config, Arc::clone(&writer_pool))
+            let config = OutputWriterConfig {
+                run_directory,
+                parts_directory,
+                collect_stage_timings,
+                #[cfg(test)]
+                worker_before_write_hook: Mutex::new(None),
+            };
+            OutputWriterSession::new_with_writer_client(config, writer_pool.client.clone())
         })
-        .collect())
+        .collect();
+    Ok(CreatedOutputWriterSessions { sessions, resource_owner: Some(writer_pool.resource_owner) })
 }
 
 /// Finish output writer sessions, optionally in bounded parallel batches.
@@ -462,15 +534,17 @@ pub(crate) fn finish_output_writer_sessions(
     thread_count: usize,
 ) -> Result<(), OutputError> {
     if thread_count <= 1 {
+        let mut first_error = None;
         for writer_session in writer_sessions {
-            writer_session.finish()?;
+            record_first_error(&mut first_error, writer_session.finish());
         }
-        return Ok(());
+        return first_error.map_or(Ok(()), Err);
     }
+    let mut first_error = None;
     for writer_session_batch in writer_sessions.chunks(thread_count) {
-        finish_output_writer_session_batch(writer_session_batch)?;
+        record_first_error(&mut first_error, finish_output_writer_session_batch(writer_session_batch));
     }
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Flush interrupted output writer sessions and mark their manifests interrupted.
@@ -485,15 +559,20 @@ pub(crate) fn finish_interrupted_output_writer_sessions(
     signal_name: &str,
 ) -> Result<(), OutputError> {
     if thread_count <= 1 {
+        let mut first_error = None;
         for writer_session in writer_sessions {
-            writer_session.finish_interrupted(signal_name)?;
+            record_first_error(&mut first_error, writer_session.finish_interrupted(signal_name));
         }
-        return Ok(());
+        return first_error.map_or(Ok(()), Err);
     }
+    let mut first_error = None;
     for writer_session_batch in writer_sessions.chunks(thread_count) {
-        finish_interrupted_output_writer_session_batch(writer_session_batch, signal_name)?;
+        record_first_error(
+            &mut first_error,
+            finish_interrupted_output_writer_session_batch(writer_session_batch, signal_name),
+        );
     }
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 fn finish_output_writer_session_batch(writer_sessions: &[&OutputWriterSession]) -> Result<(), OutputError> {
@@ -502,12 +581,15 @@ fn finish_output_writer_session_batch(writer_sessions: &[&OutputWriterSession]) 
             .iter()
             .map(|writer_session| scope.spawn(move || writer_session.finish()))
             .collect::<Vec<_>>();
+        let mut first_error = None;
         for writer_handle in writer_handles {
-            writer_handle
+            let finish_result = writer_handle
                 .join()
-                .map_err(|_| OutputError::Runtime("Output writer finish thread panicked.".to_string()))??;
+                .map_err(|_| OutputError::Runtime("Output writer finish thread panicked.".to_string()))
+                .and_then(|result| result);
+            record_first_error(&mut first_error, finish_result);
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     })
 }
 fn finish_interrupted_output_writer_session_batch(
@@ -519,13 +601,24 @@ fn finish_interrupted_output_writer_session_batch(
             .iter()
             .map(|writer_session| scope.spawn(move || writer_session.finish_interrupted(signal_name)))
             .collect::<Vec<_>>();
+        let mut first_error = None;
         for writer_handle in writer_handles {
-            writer_handle
+            let finish_result = writer_handle
                 .join()
-                .map_err(|_| OutputError::Runtime("Interrupted output writer finish thread panicked.".to_string()))??;
+                .map_err(|_| OutputError::Runtime("Interrupted output writer finish thread panicked.".to_string()))
+                .and_then(|result| result);
+            record_first_error(&mut first_error, finish_result);
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     })
+}
+
+fn record_first_error(first_error: &mut Option<OutputError>, result: Result<(), OutputError>) {
+    if let Err(error) = result
+        && first_error.is_none()
+    {
+        *first_error = Some(error);
+    }
 }
 
 #[cfg(test)]
@@ -550,7 +643,8 @@ mod tests {
 
         let empty = create_output_writer_sessions(Vec::new(), Vec::new(), &output_plan(0), false)
             .expect("empty session set needs no workers");
-        assert!(empty.is_empty());
+        assert!(empty.sessions.is_empty());
+        assert!(empty.resource_owner.is_none());
 
         let zero_workers = create_output_writer_sessions(
             vec![PathBuf::from("run")],
