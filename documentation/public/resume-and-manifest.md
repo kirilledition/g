@@ -103,6 +103,11 @@ Incompatible resume attempts are non-mutating: `run_manifest.json` remains
 unchanged and `effective_config.toml` is not newly created or overwritten until
 all selected phenotype output runs pass compatibility checks.
 
+After initialization, `run_manifest.json` must remain present for every
+lifecycle update. If it is missing when an update begins, completion or
+interruption fails instead of treating its absence as success or synthesizing
+a replacement manifest.
+
 Common mismatch causes:
 
 - changed BGEN, sample, phenotype, covariate, prediction-list, or selected

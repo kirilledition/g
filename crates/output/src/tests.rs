@@ -554,6 +554,29 @@ fn interrupted_finish_flushes_pending_chunk_and_records_signal() {
 }
 
 #[test]
+fn finish_reports_a_manifest_removed_after_initialization() {
+    let directory = TestDirectory::new("removed-manifest");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
+    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
+    let manifest_path = run_directory.join("run_manifest.json");
+    std::fs::remove_file(&manifest_path).expect("external manifest deletion succeeds");
+
+    let error = manager.finish().err().expect("finish must reject the missing manifest");
+    assert!(
+        matches!(
+            error,
+            crate::OutputError::MissingRunManifest { manifest_path: ref observed_path }
+                if observed_path == &manifest_path
+        ),
+        "unexpected finish error: {error}"
+    );
+    assert!(!manifest_path.exists());
+}
+
+#[test]
 fn abort_discards_pending_chunks_and_closes_retained_session() {
     let directory = TestDirectory::new("abort");
     let phenotype_names = [PRIMARY_PHENOTYPE];

@@ -1,9 +1,13 @@
 //! Public output error boundary.
 
+use std::path::PathBuf;
+
 #[derive(Debug, thiserror::Error)]
 pub enum OutputError {
     #[error("{0}")]
     InvalidInput(String),
+    #[error("Run manifest '{}' is missing during a lifecycle update.", manifest_path.display())]
+    MissingRunManifest { manifest_path: PathBuf },
     #[error("{0}")]
     Runtime(String),
 }

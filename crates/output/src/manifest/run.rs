@@ -90,7 +90,7 @@ pub(crate) fn extend_run_manifest_metadata(
     command: Value,
     runtime: Value,
 ) -> Result<(), OutputError> {
-    upsert_run_manifest(run_directory, |manifest| {
+    update_run_manifest(run_directory, |manifest| {
         let manifest_object = manifest
             .as_object_mut()
             .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
@@ -314,32 +314,17 @@ fn update_run_manifest(
     update_manifest: impl FnOnce(&mut Value) -> OutputResult<()>,
 ) -> OutputResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    if !manifest_path.exists() {
-        return Ok(());
-    }
     let manifest_lock = get_run_manifest_update_lock();
     let _manifest_guard =
         manifest_lock.lock().map_err(|_| OutputError::runtime("Run manifest update lock was poisoned."))?;
-    let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
-    let mut manifest = parse_run_manifest_text(&manifest_text, Some(&manifest_path))?;
-    update_manifest(&mut manifest)?;
-    write_run_manifest_value_atomic(&manifest_path, &manifest)
-}
-
-fn upsert_run_manifest(
-    run_directory: &Path,
-    update_manifest: impl FnOnce(&mut Value) -> OutputResult<()>,
-) -> OutputResult<()> {
-    let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    let manifest_lock = get_run_manifest_update_lock();
-    let _manifest_guard =
-        manifest_lock.lock().map_err(|_| OutputError::runtime("Run manifest update lock was poisoned."))?;
-    let mut manifest = if manifest_path.exists() {
-        let manifest_text = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
-        parse_run_manifest_text(&manifest_text, Some(&manifest_path))?
-    } else {
-        Value::Object(Map::new())
+    let manifest_text = match std::fs::read_to_string(&manifest_path) {
+        Ok(manifest_text) => manifest_text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(OutputError::MissingRunManifest { manifest_path });
+        }
+        Err(error) => return Err(OutputError::runtime(error)),
     };
+    let mut manifest = parse_run_manifest_text(&manifest_text, Some(&manifest_path))?;
     update_manifest(&mut manifest)?;
     write_run_manifest_value_atomic(&manifest_path, &manifest)
 }
@@ -366,6 +351,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::{Value, json};
+
+    use crate::error::OutputError;
 
     use super::{
         RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, extend_run_manifest_metadata, initialize_output_run,
@@ -518,18 +505,28 @@ mod tests {
     }
 
     #[test]
-    fn metadata_upsert_creates_manifest_while_status_updates_ignore_missing_manifest() {
-        let directory = TestDirectory::new("upsert");
-        mark_run_manifest_completed(&directory.path).expect("missing manifest update is a no-op");
-        mark_run_manifest_interrupted(&directory.path, "SIGINT").expect("missing manifest update is a no-op");
-        record_run_manifest_chunk_commits(&directory.path, Vec::new()).expect("empty commit update is a no-op");
-        assert!(!directory.path.join(RUN_MANIFEST_FILE_NAME).exists());
-
-        extend_run_manifest_metadata(&directory.path, json!(["g", "run"]), json!({"device": "gpu"}))
-            .expect("metadata upsert creates manifest");
-        let manifest = read_manifest(&directory.path);
-        assert_eq!(manifest["command"], json!(["g", "run"]));
-        assert_eq!(manifest["runtime"]["device"], "gpu");
+    fn lifecycle_updates_reject_a_missing_manifest_without_recreating_it() {
+        let directory = TestDirectory::new("missing-manifest");
+        let manifest_path = directory.path.join(RUN_MANIFEST_FILE_NAME);
+        let update_errors = [
+            mark_run_manifest_completed(&directory.path).expect_err("completion requires a manifest"),
+            mark_run_manifest_interrupted(&directory.path, "SIGINT").expect_err("interruption requires a manifest"),
+            record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "part-0.parquet")])
+                .expect_err("chunk commits require a manifest"),
+            extend_run_manifest_metadata(&directory.path, json!(["g", "run"]), json!({"device": "gpu"}))
+                .expect_err("metadata extension requires a manifest"),
+        ];
+        for error in update_errors {
+            assert!(
+                matches!(
+                    error,
+                    OutputError::MissingRunManifest { manifest_path: ref observed_path }
+                        if observed_path == &manifest_path
+                ),
+                "unexpected missing-manifest error: {error}"
+            );
+        }
+        assert!(!manifest_path.exists());
     }
 
     #[test]
