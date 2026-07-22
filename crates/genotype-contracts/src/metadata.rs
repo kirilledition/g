@@ -24,7 +24,12 @@ pub enum VariantMetadataInvariantError {
     /// An identifier offset divides a multibyte UTF-8 code point.
     VariantIdentifierOffsetNotUtf8Boundary { offset_index: usize, offset: u32 },
     /// Two adjacent identifier offsets are decreasing.
-    VariantIdentifierOffsetOrder { preceding_offset_index: usize, preceding_offset: u32, following_offset: u32 },
+    VariantIdentifierOffsetOrder {
+        preceding_offset_index: usize,
+        following_offset_index: usize,
+        preceding_offset: u32,
+        following_offset: u32,
+    },
     /// A chromosome code does not address the shared text dictionary.
     ChromosomeCodeOutOfBounds { variant_index: usize, code: u32, dictionary_length: usize },
     /// An allele-one code does not address the shared text dictionary.
@@ -73,13 +78,15 @@ impl fmt::Display for VariantMetadataInvariantError {
                 formatter,
                 "variant identifier offset {offset} at index {offset_index} is not a UTF-8 character boundary"
             ),
-            Self::VariantIdentifierOffsetOrder { preceding_offset_index, preceding_offset, following_offset } => {
-                write!(
-                    formatter,
-                    "variant identifier offsets decrease between indices {preceding_offset_index} and {}: {preceding_offset} exceeds {following_offset}",
-                    preceding_offset_index + 1
-                )
-            }
+            Self::VariantIdentifierOffsetOrder {
+                preceding_offset_index,
+                following_offset_index,
+                preceding_offset,
+                following_offset,
+            } => write!(
+                formatter,
+                "variant identifier offsets decrease between indices {preceding_offset_index} and {following_offset_index}: {preceding_offset} exceeds {following_offset}"
+            ),
             Self::ChromosomeCodeOutOfBounds { variant_index, code, dictionary_length } => write!(
                 formatter,
                 "chromosome code {code} at variant index {variant_index} is outside a dictionary of length {dictionary_length}"
@@ -320,6 +327,9 @@ fn validate_variant_identifier_offsets(
         if adjacent_offsets[0] > adjacent_offsets[1] {
             return Err(VariantMetadataInvariantError::VariantIdentifierOffsetOrder {
                 preceding_offset_index,
+                following_offset_index: preceding_offset_index
+                    .checked_add(1)
+                    .expect("an adjacent metadata offset index must fit usize"),
                 preceding_offset: adjacent_offsets[0],
                 following_offset: adjacent_offsets[1],
             });

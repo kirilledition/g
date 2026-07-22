@@ -5,6 +5,7 @@ use g_genotype_contracts::VariantMetadataStore;
 
 use super::BgenError;
 use super::decode::{ThreadScratch, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at, u32_to_usize};
+use super::error::contextualize_variant_metadata_invariant;
 use super::format::{ALLELE_LENGTH_SIZE_IN_BYTES, CompressionType, VARIANT_IDENTIFIER_LENGTH_SIZE_IN_BYTES};
 use super::metadata::VariantRecord;
 
@@ -232,7 +233,7 @@ pub(super) fn parse_variant_index(
                 allele_two_codes.into_boxed_slice(),
             )
             .map_err(|error| {
-                BgenError::InvalidFormat(format!("Parsed BGEN variant metadata violates its invariants: {error}"))
+                contextualize_variant_metadata_invariant("Parsed BGEN variant metadata violates its invariants", error)
             })?,
         ),
         chromosome_boundary_indices,

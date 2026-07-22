@@ -12,7 +12,7 @@ use crate::common::{ChunkSpec, Packed8BufferPool, Packed8Compatibility};
 use crate::error::GenotypeResult;
 
 use super::decode::{ThreadScratch, VariantDecodeFailure, read_exact_bytes, read_u32_at, u32_to_usize};
-use super::error::BgenError;
+use super::error::{BgenError, contextualize_variant_metadata_invariant};
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
 use super::sample_selection::{SampleSelection, build_sample_selection};
@@ -237,7 +237,7 @@ impl BgenReaderCore {
         validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
 
         VariantMetadataColumns::new(Arc::clone(&self.variant_metadata), variant_start..variant_stop).map_err(|error| {
-            BgenError::InvalidFormat(format!("Indexed BGEN variant metadata violates its invariants: {error}"))
+            contextualize_variant_metadata_invariant("Indexed BGEN variant metadata violates its invariants", error)
         })
     }
 
@@ -419,5 +419,40 @@ mod tests {
         selected_session.finish().expect("selected delivery session source should remain stable");
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reader_reports_invalid_metadata_ranges_as_range_errors() {
+        let path = temporary_bgen_path("metadata-range");
+        write_single_variant_bgen(&path);
+        let reader = BgenReaderCore::open(&path).expect("BGEN reader should open");
+
+        assert_metadata_range_error(
+            &reader,
+            1,
+            0,
+            "Variant bounds must satisfy 0 <= start <= stop <= 1. Received start=1, stop=0.",
+        );
+        assert_metadata_range_error(
+            &reader,
+            0,
+            2,
+            "Variant bounds must satisfy 0 <= start <= stop <= 1. Received start=0, stop=2.",
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    fn assert_metadata_range_error(
+        reader: &BgenReaderCore,
+        variant_start: usize,
+        variant_stop: usize,
+        expected_message: &str,
+    ) {
+        match reader.variant_metadata_slice(variant_start, variant_stop) {
+            Err(BgenError::Range(message)) => assert_eq!(message, expected_message),
+            Err(other) => panic!("expected a range error, observed {other:?}"),
+            Ok(_) => panic!("expected invalid metadata bounds to fail"),
+        }
     }
 }

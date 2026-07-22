@@ -230,9 +230,25 @@ fn metadata_store_returns_exact_identifier_offset_content_errors() {
         .unwrap_err(),
         VariantMetadataInvariantError::VariantIdentifierOffsetOrder {
             preceding_offset_index: 1,
+            following_offset_index: 2,
             preceding_offset: 2,
             following_offset: 1,
         }
+    );
+}
+
+#[test]
+fn metadata_invariant_display_handles_maximum_caller_index_without_overflow() {
+    let error = VariantMetadataInvariantError::VariantIdentifierOffsetOrder {
+        preceding_offset_index: usize::MAX,
+        following_offset_index: 7,
+        preceding_offset: 9,
+        following_offset: 8,
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "variant identifier offsets decrease between indices 18446744073709551615 and 7: 9 exceeds 8"
     );
 }
 
