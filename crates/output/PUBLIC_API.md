@@ -13,9 +13,12 @@ is fixed policy owned by this crate.
 
 ## Public functions
 
-Open and initialize output runs through `OutputManager`, select delivery state,
+Plan and initialize output runs through `OutputManager`, select delivery state,
 write validated trait-major chunks, and complete, interrupt, or abort the owned
-run. Individual writer-session lifecycle methods remain crate-private.
+run. `OutputManager::open` only inspects paths and existing manifest hints;
+filesystem mutation starts in `initialize` after the complete output plan and
+headers validate. Individual writer-session lifecycle methods remain
+crate-private.
 
 ## This crate must not expose
 

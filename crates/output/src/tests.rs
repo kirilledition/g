@@ -154,6 +154,21 @@ fn run_plan(
     })
 }
 
+fn planned_run_directories(run_plan: &g_plan::RunPlan) -> Vec<PathBuf> {
+    run_plan
+        .phenotype_runs
+        .iter()
+        .map(|phenotype_run| {
+            let output_root = Path::new(&run_plan.output.output_run_root).join(&phenotype_run.output_directory_name);
+            if output_root.extension().is_some_and(|extension| extension == "run") {
+                output_root
+            } else {
+                PathBuf::from(format!("{}.{}.run", output_root.display(), run_plan.association_mode.as_str()))
+            }
+        })
+        .collect()
+}
+
 fn timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i64 {
     seconds
         .checked_mul(1_000_000_000)
@@ -695,12 +710,54 @@ fn strict_resume_repairs_orphan_commit_and_rejects_each_nonzero_contract_version
 }
 
 #[test]
+fn manager_planning_is_read_only_and_rejects_multi_run_collisions() {
+    let directory = TestDirectory::new("manager-planning");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+
+    let successful_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let successful_run_directories = planned_run_directories(&successful_plan);
+    let manager = OutputManager::open(successful_plan, "# planned\n".to_string()).expect("manager planning succeeds");
+    assert!(successful_run_directories.iter().all(|run_directory| !run_directory.exists()));
+    drop(manager);
+    assert!(successful_run_directories.iter().all(|run_directory| !run_directory.exists()));
+
+    let occupied_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let mut occupied_plan = Arc::try_unwrap(occupied_plan).expect("test plan has one owner");
+    occupied_plan.output.output_run_root = directory.path.join("occupied-results").display().to_string();
+    let occupied_run_directories = planned_run_directories(&occupied_plan);
+    std::fs::create_dir_all(&occupied_run_directories[1]).expect("second output fixture directory is created");
+    let sentinel_path = occupied_run_directories[1].join("sentinel");
+    std::fs::write(&sentinel_path, b"occupied").expect("second output sentinel is written");
+    let error = OutputManager::open(Arc::new(occupied_plan), "# occupied\n".to_string())
+        .err()
+        .expect("occupied later output rejects the whole plan");
+    assert!(error.to_string().contains("already exists and is not empty"));
+    assert!(!occupied_run_directories[0].exists());
+    assert_eq!(std::fs::read(&sentinel_path).expect("sentinel remains readable"), b"occupied");
+
+    let collision_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let mut collision_plan = Arc::try_unwrap(collision_plan).expect("test plan has one owner");
+    collision_plan.output.output_run_root = directory.path.join("collision-results").display().to_string();
+    collision_plan.phenotype_runs[1].output_directory_name =
+        collision_plan.phenotype_runs[0].output_directory_name.clone();
+    let collision_run_directory = planned_run_directories(&collision_plan)[0].clone();
+    let error = OutputManager::open(Arc::new(collision_plan), "# collision\n".to_string())
+        .err()
+        .expect("colliding output paths are rejected");
+    assert!(error.to_string().contains("resolve to the same run directory"));
+    assert!(!collision_run_directory.exists());
+}
+
+#[test]
 fn manager_validates_initialization_and_trait_routing() {
     let directory = TestDirectory::new("manager-validation");
     let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
     let inputs = test_inputs(&directory, &phenotype_names);
     let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
+    let run_directories = planned_run_directories(&plan);
     let mut manager = OutputManager::open(plan, "# test\n".to_string()).expect("manager opens");
+    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
     let error = manager
         .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
         .err()
@@ -717,6 +774,7 @@ fn manager_validates_initialization_and_trait_routing() {
         .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
         .expect_err("missing phenotype header must fail");
     assert!(error.to_string().contains("initialization count"));
+    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
     let error = manager
         .initialize(
             vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header(PRIMARY_PHENOTYPE, &inputs, 1)],
@@ -725,6 +783,7 @@ fn manager_validates_initialization_and_trait_routing() {
         )
         .expect_err("duplicate phenotype header must fail");
     assert!(error.to_string().contains("Duplicate output initialization"));
+    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
     manager
         .initialize(
             vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
@@ -732,6 +791,9 @@ fn manager_validates_initialization_and_trait_routing() {
             false,
         )
         .expect("complete initialization succeeds");
+    assert!(run_directories.iter().all(|run_directory| {
+        run_directory.join("parts").is_dir() && run_directory.join("run_manifest.json").is_file()
+    }));
     let error = manager
         .initialize(
             vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],

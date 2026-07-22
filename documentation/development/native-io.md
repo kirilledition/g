@@ -75,6 +75,12 @@ Run directories also contain `run_manifest.json` and `effective_config.toml`.
 The parts directory is the completed dataset; output does not require a
 consolidation pass.
 
+Output planning is read-only. The engine resolves every phenotype run path and
+inspects any resume manifest before input preparation without creating output
+directories. Directory and initial-manifest creation begins only during output
+initialization, after the complete path plan, prepared inputs, and manifest
+headers validate.
+
 ## Manifest And Resume Contract
 
 `run_manifest.json` is the resume authority. Pre-release manifest schema version `0`

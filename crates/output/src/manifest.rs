@@ -11,8 +11,8 @@ pub(crate) use fingerprint::{build_manifest_value_sha256, manifest_file_fingerpr
 pub(crate) use header::build_current_run_manifest_header_value_with_cache;
 pub use header::{CurrentRunManifestHeaderInput, PredictionLocoFileFingerprint};
 pub(crate) use run::{
-    OutputRunPaths, PreparedOutputRun, extend_run_manifest_metadata, initialize_output_run, prepare_output_run,
-    reconcile_output_run_resume,
+    OutputRunPaths, extend_run_manifest_metadata, initialize_output_run, inspect_output_run,
+    reconcile_output_run_resume, resolve_output_run_paths,
 };
 pub(crate) use run::{
     mark_run_manifest_completed, mark_run_manifest_interrupted, read_run_manifest_chunk_commits_from_text,

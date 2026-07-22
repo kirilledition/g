@@ -10,9 +10,10 @@ use serde::Serialize;
 
 use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
-    CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, OutputRunPaths, PreparedOutputRun,
+    CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, OutputRunPaths,
     build_current_run_manifest_header_value_with_cache, extend_run_manifest_metadata, initialize_output_run,
-    prepare_output_run, read_run_manifest_gpu_genotype_format_from_text, reconcile_output_run_resume,
+    inspect_output_run, read_run_manifest_gpu_genotype_format_from_text, reconcile_output_run_resume,
+    resolve_output_run_paths,
 };
 use crate::session::{
     OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
@@ -51,19 +52,19 @@ pub struct OutputManager {
 }
 
 impl OutputManager {
-    /// Open output directories and existing manifests without initializing writers.
+    /// Plan output paths and inspect existing manifests without mutating the filesystem.
     ///
     /// # Errors
     ///
-    /// Returns an error when output names are duplicated, paths cannot be prepared,
-    /// or a non-resume output directory is already populated.
+    /// Returns an error when output names or paths collide, paths cannot be
+    /// inspected, or a non-resume output directory is already populated.
     pub fn open(run_plan: Arc<g_plan::RunPlan>, effective_config_toml: String) -> OutputResult<Self> {
         let mut runs = Vec::with_capacity(run_plan.phenotype_runs.len());
         let mut run_indices_by_phenotype = BTreeMap::new();
+        let mut phenotype_names_by_run_directory = BTreeMap::new();
         for phenotype_run in &run_plan.phenotype_runs {
             let output_root = Path::new(&run_plan.output.output_run_root).join(&phenotype_run.output_directory_name);
-            let PreparedOutputRun { output_run_paths, existing_manifest_json } =
-                prepare_output_run(&output_root, run_plan.association_mode.as_str(), run_plan.output.resume)?;
+            let output_run_paths = resolve_output_run_paths(&output_root, run_plan.association_mode.as_str());
             let output_index = runs.len();
             if run_indices_by_phenotype.insert(phenotype_run.phenotype_name.clone(), output_index).is_some() {
                 return Err(OutputError::InvalidInput(format!(
@@ -71,14 +72,26 @@ impl OutputManager {
                     phenotype_run.phenotype_name
                 )));
             }
+            if let Some(existing_phenotype_name) = phenotype_names_by_run_directory
+                .insert(output_run_paths.run_directory.clone(), phenotype_run.phenotype_name.clone())
+            {
+                return Err(OutputError::InvalidInput(format!(
+                    "Phenotype outputs '{existing_phenotype_name}' and '{}' resolve to the same run directory '{}'.",
+                    phenotype_run.phenotype_name,
+                    output_run_paths.run_directory.display()
+                )));
+            }
             let effective_config_path = output_run_paths.run_directory.join("effective_config.toml");
             runs.push(ManagedOutputRun {
                 phenotype_name: phenotype_run.phenotype_name.clone(),
                 paths: output_run_paths,
-                existing_manifest_json,
+                existing_manifest_json: None,
                 effective_config_path,
                 committed_chunk_identifiers: Arc::new(BTreeSet::new()),
             });
+        }
+        for run in &mut runs {
+            run.existing_manifest_json = inspect_output_run(&run.paths, run_plan.output.resume)?;
         }
         Ok(Self {
             run_plan,
@@ -149,6 +162,7 @@ impl OutputManager {
                 self.runs.len()
             )));
         }
+        self.refresh_run_manifest_hints()?;
         let resumed_chunk_commits = if self.run_plan.output.resume {
             self.runs
                 .iter()
@@ -172,6 +186,9 @@ impl OutputManager {
         } else {
             std::iter::repeat_with(|| None).take(self.runs.len()).collect()
         };
+        for run in &self.runs {
+            std::fs::create_dir_all(&run.paths.parts_directory).map_err(OutputError::runtime)?;
+        }
         for (run, resumed_chunk_commits) in self.runs.iter_mut().zip(resumed_chunk_commits) {
             let current_header = headers_by_phenotype.remove(&run.phenotype_name).ok_or_else(|| {
                 OutputError::InvalidInput(format!(
@@ -287,6 +304,18 @@ impl OutputManager {
         self.runs.get(*output_index).ok_or_else(|| {
             OutputError::Runtime(format!("Output index for phenotype '{phenotype_name}' is inconsistent."))
         })
+    }
+
+    fn refresh_run_manifest_hints(&mut self) -> OutputResult<()> {
+        let refreshed_manifest_json = self
+            .runs
+            .iter()
+            .map(|run| inspect_output_run(&run.paths, self.run_plan.output.resume))
+            .collect::<OutputResult<Vec<_>>>()?;
+        for (run, existing_manifest_json) in self.runs.iter_mut().zip(refreshed_manifest_json) {
+            run.existing_manifest_json = existing_manifest_json;
+        }
+        Ok(())
     }
 
     fn writer_session_references(&self) -> OutputResult<Vec<&OutputWriterSession>> {

@@ -18,14 +18,8 @@ pub(crate) struct OutputRunPaths {
     pub parts_directory: PathBuf,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct PreparedOutputRun {
-    pub output_run_paths: OutputRunPaths,
-    pub existing_manifest_json: Option<String>,
-}
-
 #[must_use]
-fn resolve_output_run_paths(output_root: &Path, association_mode: &str) -> OutputRunPaths {
+pub(crate) fn resolve_output_run_paths(output_root: &Path, association_mode: &str) -> OutputRunPaths {
     let run_directory = if output_root.extension().is_some_and(|extension| extension == "run") {
         output_root.to_path_buf()
     } else {
@@ -34,24 +28,21 @@ fn resolve_output_run_paths(output_root: &Path, association_mode: &str) -> Outpu
     OutputRunPaths { parts_directory: run_directory.join("parts"), run_directory }
 }
 
-pub(crate) fn prepare_output_run(
-    output_root: &Path,
-    association_mode: &str,
+pub(crate) fn inspect_output_run(
+    output_run_paths: &OutputRunPaths,
     resume: bool,
-) -> Result<PreparedOutputRun, OutputError> {
-    let output_run_paths = resolve_output_run_paths(output_root, association_mode);
+) -> Result<Option<String>, OutputError> {
     if !resume && directory_exists_and_is_non_empty(&output_run_paths.run_directory)? {
         return Err(OutputError::InvalidInput(format!(
             "Output run directory '{}' already exists and is not empty. Enable [output].resume or choose a new output path.",
             output_run_paths.run_directory.display()
         )));
     }
-    std::fs::create_dir_all(&output_run_paths.parts_directory).map_err(OutputError::runtime)?;
     let existing_manifest_json = load_run_manifest_json(&output_run_paths.run_directory)?;
     if resume && existing_manifest_json.is_none() {
         return Err(OutputError::InvalidInput("Resume requires run_manifest.json.".to_string()));
     }
-    Ok(PreparedOutputRun { output_run_paths, existing_manifest_json })
+    Ok(existing_manifest_json)
 }
 
 pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputError> {
@@ -356,7 +347,7 @@ mod tests {
 
     use super::{
         RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, extend_run_manifest_metadata, initialize_output_run,
-        load_run_manifest_json, mark_run_manifest_completed, mark_run_manifest_interrupted, prepare_output_run,
+        inspect_output_run, load_run_manifest_json, mark_run_manifest_completed, mark_run_manifest_interrupted,
         read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text,
         record_run_manifest_chunk_commits, resolve_output_run_paths,
     };
@@ -413,21 +404,41 @@ mod tests {
     }
 
     #[test]
-    fn prepare_output_run_enforces_fresh_and_resume_preconditions() {
-        let directory = TestDirectory::new("prepare");
-        let root = directory.path.join("fresh");
-        let prepared = prepare_output_run(&root, "regenie2_binary", false).expect("fresh run prepares");
-        assert!(prepared.output_run_paths.parts_directory.is_dir());
-        assert_eq!(prepared.existing_manifest_json, None);
+    fn output_run_planning_is_read_only_and_enforces_preconditions() {
+        let directory = TestDirectory::new("plan");
+        let fresh_root = directory.path.join("fresh");
+        let fresh_paths = resolve_output_run_paths(&fresh_root, "regenie2_binary");
+        assert_eq!(inspect_output_run(&fresh_paths, false).expect("fresh run plans"), None);
+        assert!(!fresh_paths.run_directory.exists());
+        assert!(!fresh_paths.parts_directory.exists());
 
-        std::fs::write(prepared.output_run_paths.run_directory.join("sentinel"), b"occupied").expect("sentinel writes");
-        let error = prepare_output_run(&root, "regenie2_binary", false).expect_err("nonempty fresh run is rejected");
+        std::fs::create_dir_all(&fresh_paths.run_directory).expect("occupied run directory is created");
+        let sentinel_path = fresh_paths.run_directory.join("sentinel");
+        std::fs::write(&sentinel_path, b"occupied").expect("sentinel writes");
+        let error = inspect_output_run(&fresh_paths, false).expect_err("nonempty fresh run is rejected");
         assert!(error.to_string().contains("already exists and is not empty"));
+        assert_eq!(std::fs::read(&sentinel_path).expect("sentinel remains readable"), b"occupied");
 
         let resume_root = directory.path.join("resume");
-        let error =
-            prepare_output_run(&resume_root, "regenie2_binary", true).expect_err("resume without manifest is rejected");
+        let resumed_paths = resolve_output_run_paths(&resume_root, "regenie2_binary");
+        let error = inspect_output_run(&resumed_paths, true).expect_err("resume without manifest is rejected");
         assert!(error.to_string().contains("Resume requires run_manifest.json"));
+        assert!(!resumed_paths.run_directory.exists());
+
+        std::fs::create_dir_all(&resumed_paths.run_directory).expect("resume fixture directory is created");
+        let manifest_text = r#"{"status":"interrupted"}"#;
+        let manifest_path = resumed_paths.run_directory.join(RUN_MANIFEST_FILE_NAME);
+        std::fs::write(&manifest_path, manifest_text).expect("resume fixture manifest is written");
+        let existing_manifest_json = inspect_output_run(&resumed_paths, true).expect("resume run plans");
+        assert_eq!(existing_manifest_json.as_deref(), Some(manifest_text));
+        assert!(!resumed_paths.parts_directory.exists());
+
+        let invalid_manifest_text = "[]";
+        std::fs::write(&manifest_path, invalid_manifest_text).expect("invalid resume fixture manifest is written");
+        let error = inspect_output_run(&resumed_paths, true).expect_err("invalid resume manifest is rejected");
+        assert!(error.to_string().contains("must contain a JSON object"));
+        assert_eq!(std::fs::read_to_string(&manifest_path).expect("invalid manifest remains"), invalid_manifest_text);
+        assert!(!resumed_paths.parts_directory.exists());
     }
 
     #[test]

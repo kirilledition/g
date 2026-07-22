@@ -73,6 +73,10 @@ Output run directory '<path>' already exists and is not empty. Enable [output].r
 Choose a new `--out` prefix, delete stale local output intentionally, or run
 with `[output].resume = true` when the existing manifest belongs to the same planned run.
 
+Planning a new or resumed run only inspects the selected output paths. `g` does
+not create phenotype run directories until input preparation and validation of
+every selected phenotype output have succeeded.
+
 ## Enabling Resume
 
 ```toml
