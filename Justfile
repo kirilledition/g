@@ -160,7 +160,8 @@ dev-install-profiling-tools:
     {{ server_env }} && uv tool install scalene
     {{ server_env }} && uv tool install memray
     {{ server_env }} && uv tool install xprof
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo install --locked samply flamegraph
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo install --locked --version 0.13.1 samply
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo install --locked --version 0.6.13 flamegraph
 
 # Install Nsight Systems and Nsight Compute into the repo-local tool directory
 dev-install-nsight-tools:

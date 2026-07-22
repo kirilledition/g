@@ -67,6 +67,6 @@ command.
 Rust coverage also requires `cargo-llvm-cov`:
 
 ```bash
-cargo install cargo-llvm-cov
+cargo install --locked --version 0.8.7 cargo-llvm-cov
 cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
 ```

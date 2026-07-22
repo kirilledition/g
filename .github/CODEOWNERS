@@ -1,0 +1,28 @@
+# Release and supply-chain policy
+/.github/CODEOWNERS @kirilledition
+/.github/dependabot.yml @kirilledition
+/.github/workflows/** @kirilledition
+
+# Dependency declarations and locks
+/**/Cargo.toml @kirilledition
+/Cargo.lock @kirilledition
+/pyproject.toml @kirilledition
+/uv.lock @kirilledition
+/.python-version @kirilledition
+/rust-toolchain.toml @kirilledition
+/flake.nix @kirilledition
+/flake.lock @kirilledition
+
+# Native build logic, maintained CUDA sources, and generated GPU artifacts
+/Justfile @kirilledition
+/crates/**/build.rs @kirilledition
+/crates/compute-cuda/native/** @kirilledition
+/crates/genotype-cuda/native/** @kirilledition
+/native/cuda-driver/** @kirilledition
+/vendor/openxla/** @kirilledition
+
+# External scientific-parity contract and qualification metadata
+/tests/parity/** @kirilledition
+/tests/test_regenie2_parity.py @kirilledition
+/tooling/configs/workload/regenie2_chr10_matrix.yaml @kirilledition
+/tooling/configs/workload/regenie2_chr22_matrix.yaml @kirilledition
