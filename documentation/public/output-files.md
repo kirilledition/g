@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-07-10 output file contracts | Public user docs |
+| Pre-release draft | output file contracts as of 2026-07-22 | Public user docs |
 
 This page is the canonical user-facing output contract for `g regenie`.
 
@@ -78,8 +78,20 @@ results = dataset.dataset(
 table = results.to_table()
 ```
 
-Part files are committed atomically and carry chunk-commit metadata in their
-Parquet footer. The run manifest records the same commits for resume.
+Each part is finalized, including its chunk-commit footer metadata, in a
+transaction-scoped create-new temporary file under `parts/`. The writer then
+synchronizes that file, renames it to the final part name, and synchronizes the
+`parts/` directory before the part's commit can enter the run manifest. After a
+failure before the rename, best-effort cleanup is limited to that transaction's
+unpublished temporary file. A failure after the rename never deletes the final
+part, allowing strict resume to reconcile it if it remains present, but the
+failed writer operation does not expose its commit.
+
+This guarantee covers publication of each Parquet part only. It does not make
+the part, run manifest, effective configuration, or timing diagnostics one
+cross-file filesystem transaction. Concurrent processes must not write the same
+run directory: transaction-scoped temporary names prevent temporary-file
+clobbering but do not lease or reserve final part names across processes.
 
 ## Result Schema
 

@@ -7,7 +7,7 @@ use arrow::array::ArrayRef;
 use crate::chunk::NativeChunkHandle;
 use crate::error::OutputError;
 use crate::manifest;
-use crate::persistence::model::OutputChunkCommit;
+use crate::persistence::model::{OutputChunkCommit, OutputTransactionIdentifier};
 use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot};
 use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_part_file_name};
 
@@ -76,6 +76,7 @@ pub(crate) struct WorkerBeforeWriteTestControl {
 pub(super) struct OutputWriterConfig {
     pub(super) run_directory: PathBuf,
     pub(super) parts_directory: PathBuf,
+    pub(super) transaction_identifier: OutputTransactionIdentifier,
     pub(super) collect_stage_timings: bool,
     #[cfg(test)]
     pub(super) worker_before_write_hook: Mutex<Option<Arc<WorkerBeforeWriteTestHook>>>,
@@ -507,6 +508,7 @@ pub(crate) fn create_output_writer_sessions(
     }
     let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
     let writer_pool = OutputWriterResourceOwner::start(writer_thread_count, crate::WRITER_QUEUE_DEPTH)?;
+    let transaction_identifier = OutputTransactionIdentifier::generate();
     let sessions = run_directories
         .into_iter()
         .zip(parts_directories)
@@ -514,6 +516,7 @@ pub(crate) fn create_output_writer_sessions(
             let config = OutputWriterConfig {
                 run_directory,
                 parts_directory,
+                transaction_identifier: transaction_identifier.clone(),
                 collect_stage_timings,
                 #[cfg(test)]
                 worker_before_write_hook: Mutex::new(None),
@@ -667,5 +670,39 @@ mod tests {
             .expect("serial empty interrupted finish succeeds");
         finish_interrupted_output_writer_sessions(&sessions, 2, "SIGTERM")
             .expect("parallel empty interrupted finish succeeds");
+    }
+
+    #[test]
+    fn session_configs_own_one_unique_identifier_per_writer_transaction() {
+        let mut first = create_output_writer_sessions(
+            vec![PathBuf::from("run-a"), PathBuf::from("run-b")],
+            vec![PathBuf::from("parts-a"), PathBuf::from("parts-b")],
+            &output_plan(1),
+            false,
+        )
+        .expect("first writer transaction starts");
+        let first_identifier = first.sessions[0].config.transaction_identifier.as_str().to_string();
+        assert_eq!(first.sessions[1].config.transaction_identifier.as_str(), first_identifier);
+        first
+            .resource_owner
+            .as_mut()
+            .expect("first transaction owns workers")
+            .shutdown_and_join()
+            .expect("first transaction workers stop");
+
+        let mut second = create_output_writer_sessions(
+            vec![PathBuf::from("run-c")],
+            vec![PathBuf::from("parts-c")],
+            &output_plan(1),
+            false,
+        )
+        .expect("second writer transaction starts");
+        assert_ne!(second.sessions[0].config.transaction_identifier.as_str(), first_identifier);
+        second
+            .resource_owner
+            .as_mut()
+            .expect("second transaction owns workers")
+            .shutdown_and_join()
+            .expect("second transaction workers stop");
     }
 }

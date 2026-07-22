@@ -394,7 +394,13 @@ fn writer_persists_nullable_info_labels_and_pre_release_contract_versions() {
 
     let part_path = only_parquet_part(&completed[0].parts_directory);
     assert_eq!(part_path.file_name().and_then(|name| name.to_str()), Some("part_000000000.parquet"));
-    assert!(!part_path.with_extension("parquet.tmp").exists());
+    assert!(
+        std::fs::read_dir(&completed[0].parts_directory).expect("parts directory reads").all(|entry| entry
+            .expect("part entry reads")
+            .path()
+            .extension()
+            .is_none_or(|extension| extension != "tmp"))
+    );
     let input_file = File::open(&part_path).expect("part opens");
     let builder = ParquetRecordBatchReaderBuilder::try_new(input_file).expect("part metadata reads");
     assert!(builder.schema().field_with_name("INFO").expect("INFO field exists").is_nullable());

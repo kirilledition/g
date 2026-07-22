@@ -276,6 +276,7 @@ fn run_output_write_task(output_write_task: OutputWriteTaskPayload) {
     output_write_task.config.pause_worker_before_write_for_test();
     let write_result = write_regenie_step2_chunk_job(
         &output_write_task.config.parts_directory,
+        &output_write_task.config.transaction_identifier,
         output_write_task.write_batch,
         output_write_task.config.collect_stage_timings,
     );
@@ -317,6 +318,7 @@ mod tests {
 
     use crossbeam_channel::bounded;
 
+    use crate::persistence::model::OutputTransactionIdentifier;
     use crate::timing::OutputStageTimingAccumulator;
     use crate::writer::RegenieStep2ChunkWriteBatch;
 
@@ -336,6 +338,7 @@ mod tests {
                 config: Arc::new(OutputWriterConfig {
                     run_directory: PathBuf::from("unused-run"),
                     parts_directory: PathBuf::from("unused-parts"),
+                    transaction_identifier: OutputTransactionIdentifier::for_test("empty-write-task"),
                     collect_stage_timings: false,
                     worker_before_write_hook: Mutex::new(None),
                 }),
@@ -378,6 +381,7 @@ mod tests {
         let config = Arc::new(OutputWriterConfig {
             run_directory: PathBuf::from("unused-run"),
             parts_directory: PathBuf::from("unused-parts"),
+            transaction_identifier: OutputTransactionIdentifier::for_test("closed-client"),
             collect_stage_timings: false,
             worker_before_write_hook: Mutex::new(None),
         });

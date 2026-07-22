@@ -49,7 +49,8 @@ impl RegenieStep2ParquetFileWriteTiming {
     }
 }
 
-pub(super) struct RegenieStep2ChunkStreamWriteResult {
+pub(super) struct RegenieStep2ChunkStreamWriteResult<OutputFile> {
+    pub(super) output_file: OutputFile,
     pub(super) record_batch_build_timing: RegenieStep2RecordBatchBuildTiming,
     pub(super) record_batch_build_seconds: f64,
     pub(super) parquet_file_write_timing: RegenieStep2ParquetFileWriteTiming,

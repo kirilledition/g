@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 
-use crate::error::OutputError;
+use crate::persistence::io::path_operation_error;
 use crate::persistence::model::OutputChunkCommit;
 use crate::schema;
 use crate::timing::start_optional_timing;
@@ -22,22 +22,20 @@ use super::{
     RegenieStep2ChunkStreamWriteResult, RegenieStep2ParquetFileWriteTiming, RegenieStep2RecordBatchBuildTiming,
 };
 
-pub(super) fn write_regenie_step2_chunks_to_parquet_file(
+pub(super) fn write_regenie_step2_chunks_to_parquet_file<OutputFile: Write + Send>(
+    output_file: OutputFile,
     chunks: Vec<RegenieStep2ChunkJob>,
     chunk_schema: &Arc<Schema>,
     parquet_record_batch_schema: &Arc<Schema>,
     chunk_file_path: &Path,
     chunk_commits: &[OutputChunkCommit],
+    file_create_seconds: f64,
     collect_stage_timings: bool,
-) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
-    let file_create_start_time = start_optional_timing(collect_stage_timings);
-    let output_file = File::create(chunk_file_path).map_err(OutputError::runtime)?;
-    let file_create = file_create_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
-
+) -> OutputResult<RegenieStep2ChunkStreamWriteResult<OutputFile>> {
     let writer_init_start_time = start_optional_timing(collect_stage_timings);
     let writer_properties = build_regenie_step2_parquet_writer_properties();
     let mut writer = ArrowWriter::try_new(output_file, Arc::clone(chunk_schema), Some(writer_properties))
-        .map_err(OutputError::runtime)?;
+        .map_err(|error| path_operation_error("initialize temporary Parquet part", chunk_file_path, &error))?;
     writer.append_key_value_metadata(KeyValue {
         key: schema::CHUNK_COMMITS_METADATA_KEY.to_string(),
         value: Some(chunk_manifest::build_chunk_commit_metadata_text(chunk_commits)?),
@@ -61,17 +59,22 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
         record_batch_build_timing.add(record_batch_build_result.timing);
 
         let batch_write_start_time = start_optional_timing(collect_stage_timings);
-        writer.write(&record_batch_build_result.record_batch).map_err(OutputError::runtime)?;
+        writer
+            .write(&record_batch_build_result.record_batch)
+            .map_err(|error| path_operation_error("write temporary Parquet part", chunk_file_path, &error))?;
         batch_write += batch_write_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
     }
     let writer_finish_start_time = start_optional_timing(collect_stage_timings);
-    writer.close().map_err(OutputError::runtime)?;
+    let output_file = writer
+        .into_inner()
+        .map_err(|error| path_operation_error("finalize temporary Parquet part", chunk_file_path, &error))?;
     let writer_finish = writer_finish_start_time.map_or(0.0, |start_time| start_time.elapsed().as_secs_f64());
     Ok(RegenieStep2ChunkStreamWriteResult {
+        output_file,
         record_batch_build_timing,
         record_batch_build_seconds,
         parquet_file_write_timing: RegenieStep2ParquetFileWriteTiming {
-            file_create,
+            file_create: file_create_seconds,
             writer_init,
             batch_write,
             writer_finish,
