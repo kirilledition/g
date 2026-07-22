@@ -1,7 +1,10 @@
 # Release and supply-chain policy
 /.github/CODEOWNERS @kirilledition
+/.github/actions/** @kirilledition
 /.github/dependabot.yml @kirilledition
 /.github/workflows/** @kirilledition
+/tooling/debug/check_github_action_pins.py @kirilledition
+/tests/tooling/test_check_github_action_pins.py @kirilledition
 
 # Dependency declarations and locks
 /**/Cargo.toml @kirilledition

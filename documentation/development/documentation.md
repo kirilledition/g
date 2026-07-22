@@ -98,7 +98,7 @@ On pushes to `main`, it:
 7. uploads `documentation_rendered_website/` with `actions/upload-pages-artifact`;
 8. deploys with `actions/deploy-pages`.
 
-The workflow has `contents: read`, `pages: write`, and `id-token: write` permissions because Pages deployment uses GitHub's Pages artifact and OIDC flow.
+Permissions are scoped by job. The build job has `contents: read` and `pages: read` so it can configure and upload the Pages artifact without deployment credentials. The deploy job alone has `pages: write` and `id-token: write` for the Pages deployment and OIDC flow.
 
 The workflow is path-filtered. It runs for docs infrastructure and publishable documentation changes, including:
 
@@ -117,6 +117,6 @@ If the `Documentation` workflow fails:
 
 - Run `just docs-check` locally first. Most failures are broken links, moved files missing from `zensical.toml`, rendering-hook regressions, or dependency lock mismatches.
 - Check that the GitHub repository Pages source is set to `GitHub Actions`.
-- Check that the workflow still grants `pages: write` and `id-token: write`.
+- Check that the build job grants `contents: read` and `pages: read`, and that only the deploy job grants `pages: write` and `id-token: write`.
 - Check that the build output path in `.github/workflows/docs.yml` matches `site_dir` in `zensical.toml`.
 - Check action version changes in the workflow only when the local docs build succeeds but remote deployment setup fails.
