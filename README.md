@@ -51,9 +51,9 @@ uv run g --help
 uv run g regenie --help
 ```
 
-The locked runtime uses JAX 0.11 with CUDA 12 so it remains compatible with the
-project's NVIDIA V100/R535 deployment. For CPU and GPU prerequisites, cluster
-installs, and development setup, use
+The supported runtime is exactly `jax==0.11.0` with `jaxlib==0.11.0`; GPU
+installs use its CUDA 12 extra for the project's NVIDIA V100/R535 deployment.
+For CPU and GPU prerequisites, cluster installs, and development setup, use
 [Installation](documentation/public/installation.md).
 
 ## First Step 2 Run

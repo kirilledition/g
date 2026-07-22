@@ -27,6 +27,8 @@ pub(crate) struct PyJaxBackend {
 
 static NVCOMP_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
 static FIRTH_COMPONENTS_FFI_REGISTRATION: OnceLock<bool> = OnceLock::new();
+const SUPPORTED_JAX_VERSION: &str = "0.11.0";
+const SUPPORTED_JAXLIB_VERSION: &str = "0.11.0";
 
 #[derive(Clone, Copy)]
 enum BackendKind {
@@ -83,6 +85,7 @@ pub(crate) fn create_jax_backend(
     device: g_plan::Device,
     plan: g_runner::JaxAssociationBackendPlan<'_>,
 ) -> PyResult<PyJaxBackend> {
+    validate_jax_runtime_versions(py)?;
     let genotype_delivery_capability = match device {
         g_plan::Device::Cpu => native_engine::GenotypeDeliveryCapability::HostOnly,
         g_plan::Device::Gpu => native_engine::GenotypeDeliveryCapability::RawDeflatePacked8,
@@ -109,6 +112,24 @@ pub(crate) fn create_jax_backend(
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryFirth })
         }
     }
+}
+
+fn validate_jax_runtime_versions(py: Python<'_>) -> PyResult<()> {
+    let jax_version = PyModule::import(py, "jax")?.getattr("__version__")?.extract::<String>()?;
+    let jaxlib_version = PyModule::import(py, "jaxlib")?.getattr("__version__")?.extract::<String>()?;
+    if let Some(message) = jax_runtime_version_error(&jax_version, &jaxlib_version) {
+        return Err(PyRuntimeError::new_err(message));
+    }
+    Ok(())
+}
+
+fn jax_runtime_version_error(jax_version: &str, jaxlib_version: &str) -> Option<String> {
+    if jax_version == SUPPORTED_JAX_VERSION && jaxlib_version == SUPPORTED_JAXLIB_VERSION {
+        return None;
+    }
+    Some(format!(
+        "Unsupported JAX runtime: g requires jax=={SUPPORTED_JAX_VERSION} and jaxlib=={SUPPORTED_JAXLIB_VERSION} because its native XLA FFI handlers are built against headers from that jaxlib release; observed jax=={jax_version} and jaxlib=={jaxlib_version}. Recreate the environment with `uv sync --frozen` before running g."
+    ))
 }
 
 fn register_nvcomp_ffi_target(py: Python<'_>) -> PyResult<()> {
@@ -691,4 +712,47 @@ fn parse_correction_codes(
         )));
     }
     Ok(copy_array_values(&values))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION, jax_runtime_version_error};
+
+    #[test]
+    fn exact_supported_jax_pair_is_accepted() {
+        assert_eq!(jax_runtime_version_error(SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION), None);
+    }
+
+    #[test]
+    fn wrong_jax_version_is_rejected_independently() {
+        let error = jax_runtime_version_error("0.11.1", SUPPORTED_JAXLIB_VERSION)
+            .expect("a mismatched JAX version should be rejected");
+
+        assert!(error.contains("jax==0.11.0 and jaxlib==0.11.0"));
+        assert!(error.contains("observed jax==0.11.1 and jaxlib==0.11.0"));
+        assert!(error.contains("uv sync --frozen"));
+    }
+
+    #[test]
+    fn wrong_jaxlib_version_is_rejected_independently() {
+        let error = jax_runtime_version_error(SUPPORTED_JAX_VERSION, "0.11.1")
+            .expect("a mismatched jaxlib version should be rejected");
+
+        assert!(error.contains("observed jax==0.11.0 and jaxlib==0.11.1"));
+    }
+
+    #[test]
+    fn local_and_prerelease_suffixes_are_rejected() {
+        for (jax_version, jaxlib_version) in [
+            ("0.11.0+local", SUPPORTED_JAXLIB_VERSION),
+            (SUPPORTED_JAX_VERSION, "0.11.0+local"),
+            ("0.11.0rc1", SUPPORTED_JAXLIB_VERSION),
+            (SUPPORTED_JAX_VERSION, "0.11.0rc1"),
+        ] {
+            assert!(
+                jax_runtime_version_error(jax_version, jaxlib_version).is_some(),
+                "version suffix should be rejected for jax={jax_version}, jaxlib={jaxlib_version}"
+            );
+        }
+    }
 }

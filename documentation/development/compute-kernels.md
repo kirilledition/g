@@ -91,6 +91,14 @@ JAX runtime policy is configured before backend initialization. Code that import
 JAX-heavy modules should stay behind explicit runtime boundaries when needed to
 preserve device/cache setup order.
 
+The native typed-XLA handlers are compiled against the vendored headers from
+`jaxlib==0.11.0`. Production therefore supports exactly `jax==0.11.0` and
+`jaxlib==0.11.0`. The project metadata pins JAX directly; JAX 0.11.0's own
+package metadata constrains jaxlib to that exact release. Backend construction
+checks both observed versions before any project-owned FFI target is registered,
+so a manually drifted `--no-sync` environment fails instead of crossing an
+unqualified native ABI boundary.
+
 GPU approximate Firth uses a private CUDA component reduction when the Linux
 CUDA driver reports API 12.2 or newer and the selected device has compute
 capability 7.0 or newer. The checked-in compute-70 PTX is loaded lazily into

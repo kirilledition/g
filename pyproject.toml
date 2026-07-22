@@ -7,7 +7,7 @@ authors = [
 ]
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "jax[cuda12]>=0.11.0,<0.12",
+    "jax[cuda12]==0.11.0",
     "nvidia-libnvcomp-cu12>=5.3.0.16,<6; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "numpy>=2.5.1",
 ]
@@ -46,7 +46,7 @@ docs = [
     "mkdocstrings-python>=2.0.4",
     "zensical>=0.0.51,<0.0.52",
 ]
-cpu = ["jax[cpu]>=0.11.0,<0.12"]
+cpu = ["jax[cpu]==0.11.0"]
 
 [project.scripts]
 g = "g.cli:main"

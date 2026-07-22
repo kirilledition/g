@@ -103,12 +103,17 @@ uv sync --python 3.14 --no-dev
 uv run python -c "import jax; print(jax.devices())"
 ```
 
-The base environment installs JAX 0.11 with its CUDA 12 extra. CUDA 12 is intentional: it supports
-the V100 GPUs and R535 driver deployed on the primary gauss/landau path, while JAX's CUDA 13 wheels
-require an R580-or-newer driver and compute capability 7.5 or newer. If JAX does not list the
-expected GPU, compare the installed extra with the current [JAX installation
-matrix](https://docs.jax.dev/en/latest/installation.html), then adjust the environment before
-measuring performance.
+The supported production pair is exactly `jax==0.11.0` and `jaxlib==0.11.0`.
+The base environment pins JAX with its CUDA 12 extra; JAX 0.11.0 package
+metadata constrains jaxlib and the CUDA plugin to the same release. CUDA 12 is
+intentional: it supports the V100 GPUs and R535 driver deployed on the primary
+gauss/landau path, while JAX's CUDA 13 wheels require an R580-or-newer driver
+and compute capability 7.5 or newer. `g` rejects a different JAX/JAXlib pair
+before backend construction, including when a production job uses
+`uv run --no-sync`. Recreate a drifted environment with `uv sync --frozen`.
+If JAX does not list the expected GPU, compare the installed extra with the
+current [JAX installation matrix](https://docs.jax.dev/en/latest/installation.html),
+then adjust the environment before measuring performance.
 
 Select GPU execution in a config file:
 

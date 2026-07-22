@@ -386,13 +386,13 @@ docs = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jax", extras = ["cuda12"], specifier = ">=0.11.0,<0.12" },
+    { name = "jax", extras = ["cuda12"], specifier = "==0.11.0" },
     { name = "numpy", specifier = ">=2.5.1" },
     { name = "nvidia-libnvcomp-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=5.3.0.16,<6" },
 ]
 
 [package.metadata.requires-dev]
-cpu = [{ name = "jax", extras = ["cpu"], specifier = ">=0.11.0,<0.12" }]
+cpu = [{ name = "jax", extras = ["cpu"], specifier = "==0.11.0" }]
 cuda-format = [{ name = "clang-format", specifier = "==22.1.8" }]
 cuda-lint = [
     { name = "clang-tidy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==22.1.8" },
