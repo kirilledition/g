@@ -6,16 +6,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::{ArrayRef, Float32Array};
+use arrow::datatypes::{DataType, Field, Fields, Schema};
 use g_genotype_contracts::{
     ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
-use super::{transaction_temporary_part_path, write_regenie_step2_chunk_job_with_io};
+use super::{UnpublishedPart, transaction_temporary_part_path, write_regenie_step2_chunk_job_with_io};
 use crate::chunk::{NativeChunkHandle, NativeVariantMetadataHandle};
 use crate::persistence::io::OutputIo;
 use crate::persistence::model::{OutputChunkCommit, OutputTransactionIdentifier};
-use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch};
+use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, streams};
 
 const CHUNK_FILE_NAME: &str = "part_000000000.parquet";
 const TEST_TRANSACTION_IDENTIFIER: &str = "test-transaction";
@@ -46,6 +47,7 @@ impl Drop for TestDirectory {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FaultPoint {
     CreateNew,
+    FirstPhysicalParquetWrite,
     ParquetFinalize,
     FileSync,
     Rename,
@@ -58,6 +60,7 @@ impl FaultPoint {
     const fn label(self) -> &'static str {
         match self {
             Self::CreateNew => "create-new",
+            Self::FirstPhysicalParquetWrite => "first-physical-Parquet-write",
             Self::ParquetFinalize => "Parquet-finalize",
             Self::FileSync => "file-sync",
             Self::Rename => "rename",
@@ -131,6 +134,9 @@ impl Write for RecordingFile {
         if !self.observed_parquet_header && buffer.starts_with(PARQUET_MAGIC) {
             self.observed_parquet_header = true;
             self.state.record(RecordedOperation::ParquetHeader(self.path.clone()));
+        }
+        if buffer.starts_with(PARQUET_MAGIC) && self.state.should_fail(FaultPoint::FirstPhysicalParquetWrite) {
+            return Err(injected_error(FaultPoint::FirstPhysicalParquetWrite));
         }
         let contains_final_magic =
             buffer.ends_with(PARQUET_MAGIC) && (header_was_already_observed || buffer.len() > PARQUET_MAGIC.len());
@@ -458,6 +464,110 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
             assert!(!temporary_path.exists(), "failed unpublished temp must be cleaned");
         }
     }
+}
+
+#[test]
+fn parquet_writer_initialization_failure_cleans_the_transaction_temp_without_publishing() {
+    let directory = TestDirectory::new("Parquet-writer-initialize");
+    let output_io = RecordingOutputIo::new(&[]);
+    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let foreign_temp_path = directory.path.join(".foreign-part.foreign-transaction.tmp");
+    std::fs::write(&foreign_temp_path, b"foreign temp").expect("foreign temp is created");
+    let output_file = output_io.create_new_file(&temporary_path).expect("transaction temp is created");
+    let unsupported_schema =
+        Arc::new(Schema::new(vec![Field::new("unsupported-empty-struct", DataType::Struct(Fields::empty()), false)]));
+
+    let error = {
+        let _unpublished_part = UnpublishedPart::new(&output_io, temporary_path.clone());
+        streams::write_regenie_step2_chunks_to_parquet_file(
+            output_file,
+            Vec::new(),
+            &unsupported_schema,
+            &crate::schema::REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA,
+            &temporary_path,
+            &[],
+            0.0,
+            false,
+        )
+    }
+    .err()
+    .expect("rejected Parquet schema cannot expose commits");
+
+    let error_message = error.to_string();
+    assert!(error_message.contains("initialize temporary Parquet part"), "unexpected error: {error_message}");
+    assert!(error_message.contains("Parquet does not support writing empty structs"));
+    assert!(error_message.contains(&temporary_path.display().to_string()));
+    assert_eq!(
+        output_io.operations(),
+        [RecordedOperation::CreateNew(temporary_path.clone()), RecordedOperation::Cleanup(temporary_path.clone()),]
+    );
+    assert!(!temporary_path.exists());
+    assert!(!final_path.exists());
+    assert_eq!(std::fs::read(&foreign_temp_path).expect("foreign temp remains"), b"foreign temp");
+}
+
+#[test]
+fn first_physical_parquet_write_failure_during_finalize_cleans_the_transaction_temp_without_publishing() {
+    let directory = TestDirectory::new("first-physical-Parquet-write");
+    let output_io = RecordingOutputIo::new(&[FaultPoint::FirstPhysicalParquetWrite]);
+    let transaction_identifier = test_transaction_identifier();
+    let (temporary_path, final_path) = expected_paths(&directory.path);
+
+    let error = write_regenie_step2_chunk_job_with_io(
+        &output_io,
+        &directory.path,
+        &transaction_identifier,
+        test_write_batch(),
+        true,
+    )
+    .err()
+    .expect("failed first physical Parquet write cannot expose commits");
+
+    let error_message = error.to_string();
+    assert!(error_message.contains("finalize temporary Parquet part"), "unexpected error: {error_message}");
+    assert!(error_message.contains("injected first-physical-Parquet-write failure"));
+    assert!(error_message.contains(&temporary_path.display().to_string()));
+    assert_eq!(
+        output_io.operations(),
+        [
+            RecordedOperation::CreateNew(temporary_path.clone()),
+            RecordedOperation::ParquetHeader(temporary_path.clone()),
+            RecordedOperation::Cleanup(temporary_path.clone()),
+        ]
+    );
+    assert!(!temporary_path.exists());
+    assert!(!final_path.exists());
+}
+
+#[test]
+fn invalid_record_batch_cleans_only_the_transaction_temp_without_publishing() {
+    let directory = TestDirectory::new("invalid-record-batch");
+    let output_io = RecordingOutputIo::new(&[]);
+    let transaction_identifier = test_transaction_identifier();
+    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let foreign_temp_path = directory.path.join(".foreign-part.foreign-transaction.tmp");
+    std::fs::write(&foreign_temp_path, b"foreign temp").expect("foreign temp is created");
+    let mut write_batch = test_write_batch();
+    write_batch.chunks[0].beta = Arc::new(Float32Array::from(vec![0.5_f32, 0.75_f32]));
+
+    let error =
+        write_regenie_step2_chunk_job_with_io(&output_io, &directory.path, &transaction_identifier, write_batch, true)
+            .err()
+            .expect("invalid record-batch construction cannot expose commits");
+
+    let error_message = error.to_string();
+    assert_eq!(error_message, "Invalid argument error: all columns in a record batch must have the same length");
+    assert_eq!(
+        output_io.operations(),
+        [
+            RecordedOperation::CreateNew(temporary_path.clone()),
+            RecordedOperation::ParquetHeader(temporary_path.clone()),
+            RecordedOperation::Cleanup(temporary_path.clone()),
+        ]
+    );
+    assert!(!temporary_path.exists());
+    assert!(!final_path.exists());
+    assert_eq!(std::fs::read(&foreign_temp_path).expect("foreign temp remains"), b"foreign temp");
 }
 
 #[test]
