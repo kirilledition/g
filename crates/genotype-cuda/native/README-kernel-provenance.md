@@ -6,6 +6,10 @@
 - source: `sha256:673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d`
 - PTX: `sha256:a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088`
 
+The crate build verifies both hashes before embedding the PTX. A source or PTX
+change therefore requires an explicit provenance-hash update after regeneration
+and review.
+
 The PTX was generated twice reproducibly with CUDA NVRTC 12.2.140 for
 `compute_70`; it declares PTX ISA 8.2 and target `sm_70`. NVRTC is a generation
 tool only and is not a build-time or runtime dependency of this crate. Native

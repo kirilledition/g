@@ -12,6 +12,10 @@ official `jaxlib==0.11.0` Linux wheel installed on 2026-07-20:
 
 The headers declare XLA FFI C API version 0.3 and state that this external
 interface is header-only with no dependencies beyond the C++ standard library.
+Every CUDA crate verifies all three header hashes at its build boundary before
+compiling a translation unit against them. The shared verifier keeps the frozen
+hash manifest identical for both consumers without introducing a runtime
+dependency.
 Their upstream source paths are under
 <https://github.com/openxla/xla/tree/main/xla/ffi/api>. The accompanying
 standard Apache License 2.0 text is copied from

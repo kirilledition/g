@@ -1,14 +1,15 @@
 use std::env;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+#[path = "../../native/cuda-build/artifact_verification.rs"]
+mod artifact_verification;
 
 const KERNEL_SOURCE_SHA256: &str = "1d15fd1aad609023c849942478764c8d2c67a74ff5acd0909652f2dfa180fce0";
 const KERNEL_PTX_SHA256: &str = "a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f";
 
 fn main() {
+    println!("cargo:rerun-if-changed=../../native/cuda-build/artifact_verification.rs");
     println!("cargo:rerun-if-changed=native/firth_components_ffi.cc");
     println!("cargo:rerun-if-changed=../../native/cuda-driver/cuda_driver.h");
     println!("cargo:rerun-if-changed=native/firth_components_kernel.cu");
@@ -17,11 +18,11 @@ fn main() {
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/c_api.h");
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/ffi.h");
 
+    verify_build_artifacts();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
         return;
     }
 
-    verify_kernel_artifacts();
     let output_directory = PathBuf::from(env::var_os("OUT_DIR").expect("Cargo must provide OUT_DIR"));
     write_embedded_ptx(&output_directory);
 
@@ -45,21 +46,21 @@ fn main() {
     println!("cargo:rustc-link-lib=dl");
 }
 
-fn verify_kernel_artifacts() {
-    verify_sha256("native/firth_components_kernel.cu", KERNEL_SOURCE_SHA256);
-    verify_sha256("native/firth_components_kernel.compute_70.ptx", KERNEL_PTX_SHA256);
-}
-
-fn verify_sha256(path: &str, expected_sha256: &str) {
-    let bytes = fs::read(path).unwrap_or_else(|error| panic!("read maintained CUDA artifact {path}: {error}"));
-    let mut observed_sha256 = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        write!(observed_sha256, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    assert_eq!(
-        observed_sha256, expected_sha256,
-        "maintained CUDA artifact {path} changed without a regenerated and reviewed provenance hash"
-    );
+fn verify_build_artifacts() {
+    artifact_verification::verify_sha256(
+        Path::new("native/firth_components_kernel.cu"),
+        KERNEL_SOURCE_SHA256,
+        "maintained CUDA source",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    artifact_verification::verify_sha256(
+        Path::new("native/firth_components_kernel.compute_70.ptx"),
+        KERNEL_PTX_SHA256,
+        "checked-in CUDA PTX",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    artifact_verification::verify_openxla_headers(Path::new("../../vendor/openxla"))
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn write_embedded_ptx(output_directory: &Path) {

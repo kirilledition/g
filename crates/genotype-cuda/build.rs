@@ -2,7 +2,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "../../native/cuda-build/artifact_verification.rs"]
+mod artifact_verification;
+
+const KERNEL_SOURCE_SHA256: &str = "673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d";
+const KERNEL_PTX_SHA256: &str = "a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088";
+
 fn main() {
+    println!("cargo:rerun-if-changed=../../native/cuda-build/artifact_verification.rs");
     println!("cargo:rerun-if-changed=native/packed8_deflate_ffi.cc");
     println!("cargo:rerun-if-changed=native/nvcomp_abi.h");
     println!("cargo:rerun-if-changed=../../native/cuda-driver/cuda_driver.h");
@@ -12,6 +19,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/c_api.h");
     println!("cargo:rerun-if-changed=../../vendor/openxla/xla/ffi/api/ffi.h");
 
+    verify_build_artifacts();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
         return;
     }
@@ -37,6 +45,23 @@ fn main() {
         .compile("g_genotype_cuda_native");
 
     println!("cargo:rustc-link-lib=dl");
+}
+
+fn verify_build_artifacts() {
+    artifact_verification::verify_sha256(
+        Path::new("native/packed8_kernel.cu"),
+        KERNEL_SOURCE_SHA256,
+        "maintained CUDA source",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    artifact_verification::verify_sha256(
+        Path::new("native/packed8_kernel.compute_70.ptx"),
+        KERNEL_PTX_SHA256,
+        "checked-in CUDA PTX",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    artifact_verification::verify_openxla_headers(Path::new("../../vendor/openxla"))
+        .unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn write_embedded_ptx(output_directory: &Path) {

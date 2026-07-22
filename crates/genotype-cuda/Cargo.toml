@@ -8,9 +8,13 @@ build = "build.rs"
 
 [build-dependencies]
 cc.workspace = true
+sha2.workspace = true
 
 [dependencies]
 g-genotype-contracts.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
 
 [lints]
 workspace = true

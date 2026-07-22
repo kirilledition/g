@@ -781,6 +781,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "g-genotype-contracts",
+ "sha2",
 ]
 
 [[package]]
