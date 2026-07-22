@@ -11,6 +11,7 @@ from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
+NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES = 25
 
 
 def compute_null_firth_components(
@@ -121,6 +122,54 @@ def run_null_firth_line_search(
     )
 
 
+def update_null_firth_score_history(
+    *,
+    state: regenie2_binary_firth_types.NullFirthScoreHistoryState,
+    score_maximum: jax.Array,
+    converged: bool | jax.Array,
+    check_score_increase: bool | jax.Array,
+) -> regenie2_binary_firth_types.NullFirthScoreHistoryState:
+    """Apply REGENIE's consecutive score-increase transition.
+
+    Args:
+        state: Score history before evaluating the current iterate.
+        score_maximum: Maximum absolute modified score at the current iterate.
+        converged: Whether the current iterate satisfies the convergence rule.
+        check_score_increase: Whether exceeding the consecutive-increase limit fails the attempt.
+
+    Returns:
+        Score history after accepting convergence or evaluating the increase heuristic.
+
+    """
+    converged_value = jnp.asarray(converged, dtype=jnp.bool_)
+    check_score_increase_value = jnp.asarray(check_score_increase, dtype=jnp.bool_)
+    increased_score_count = jnp.where(
+        score_maximum > state.previous_score_maximum,
+        state.score_increase_count + jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    evaluate_score_increase = ~converged_value
+    score_increase_count = jnp.where(
+        evaluate_score_increase,
+        increased_score_count,
+        state.score_increase_count,
+    )
+    return regenie2_binary_firth_types.NullFirthScoreHistoryState(
+        previous_score_maximum=jnp.where(
+            evaluate_score_increase,
+            score_maximum,
+            state.previous_score_maximum,
+        ),
+        score_increase_count=score_increase_count,
+        failed=state.failed
+        | (
+            evaluate_score_increase
+            & check_score_increase_value
+            & (increased_score_count > NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES)
+        ),
+    )
+
+
 def fit_covariate_only_firth_null_model_once(
     *,
     covariate_matrix: jax.Array,
@@ -165,23 +214,26 @@ def fit_covariate_only_firth_null_model_once(
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
         score_maximum = jnp.max(jnp.abs(components.modified_score))
         converged = components.valid & (score_maximum < tolerance_value) & (updated_iteration_count >= 2)
-        score_increase_count = jnp.where(
-            score_maximum > state.previous_score_maximum,
-            state.score_increase_count + jnp.asarray(1, dtype=jnp.int32),
-            jnp.asarray(0, dtype=jnp.int32),
+        score_history_state = update_null_firth_score_history(
+            state=regenie2_binary_firth_types.NullFirthScoreHistoryState(
+                previous_score_maximum=state.previous_score_maximum,
+                score_increase_count=state.score_increase_count,
+                failed=state.failed,
+            ),
+            score_maximum=score_maximum,
+            converged=converged,
+            check_score_increase=check_score_increase_value,
         )
-        score_increase_failed = check_score_increase_value & (score_increase_count > 25)
-        previous_score_maximum = jnp.minimum(score_maximum, state.previous_score_maximum)
 
         def finish_without_update(_: None) -> regenie2_binary_firth_types.NullFirthNewtonRaphsonState:
             return regenie2_binary_firth_types.NullFirthNewtonRaphsonState(
                 coefficients=state.coefficients,
                 deviance=components.deviance,
-                converged=converged & (~score_increase_failed),
-                failed=score_increase_failed,
+                converged=converged,
+                failed=score_history_state.failed,
                 iteration_count=updated_iteration_count,
-                previous_score_maximum=previous_score_maximum,
-                score_increase_count=score_increase_count,
+                previous_score_maximum=score_history_state.previous_score_maximum,
+                score_increase_count=score_history_state.score_increase_count,
             )
 
         def update_coefficients(_: None) -> regenie2_binary_firth_types.NullFirthNewtonRaphsonState:
@@ -205,15 +257,15 @@ def fit_covariate_only_firth_null_model_once(
             numerical_failed = (
                 (~components.valid) | (~jnp.all(jnp.isfinite(coefficient_step))) | (~line_search_result.valid)
             )
-            failed = numerical_failed | score_increase_failed | step_halving_failed
+            failed = numerical_failed | score_history_state.failed | step_halving_failed
             return regenie2_binary_firth_types.NullFirthNewtonRaphsonState(
                 coefficients=jnp.where(failed, state.coefficients, line_search_result.coefficients),
                 deviance=line_search_result.deviance,
                 converged=converged,
                 failed=failed,
                 iteration_count=updated_iteration_count,
-                previous_score_maximum=previous_score_maximum,
-                score_increase_count=score_increase_count,
+                previous_score_maximum=score_history_state.previous_score_maximum,
+                score_increase_count=score_history_state.score_increase_count,
             )
 
         return jax.lax.cond(converged, finish_without_update, update_coefficients, None)

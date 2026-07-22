@@ -10,6 +10,7 @@ import numpy.typing as npt
 
 import tests.numerical
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
+from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
@@ -32,6 +33,15 @@ class NullFirthComponentReference:
     information_cholesky_factor: npt.NDArray[np.float64]
     deviance: float
     modified_score: npt.NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class NullFirthScoreHistoryReference:
+    """Independent scalar form of REGENIE's null-Firth score history."""
+
+    previous_score_maximum: float
+    score_increase_count: int
+    failed: bool
 
 
 def build_null_firth_fixture() -> NullFirthFixture:
@@ -79,6 +89,160 @@ def compute_null_firth_component_reference(fixture: NullFirthFixture) -> NullFir
         deviance=float(deviance),
         modified_score=modified_score,
     )
+
+
+def update_null_firth_score_history_reference(
+    *,
+    state: NullFirthScoreHistoryReference,
+    score_maximum: float,
+    converged: bool,
+    check_score_increase: bool,
+) -> NullFirthScoreHistoryReference:
+    """Apply the scalar recurrence and control order from upstream REGENIE."""
+    if converged:
+        return state
+    score_increase_count = state.score_increase_count + 1 if score_maximum > state.previous_score_maximum else 0
+    return NullFirthScoreHistoryReference(
+        previous_score_maximum=score_maximum,
+        score_increase_count=score_increase_count,
+        failed=state.failed
+        or (
+            check_score_increase
+            and score_increase_count > regenie2_binary_firth_null.NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES
+        ),
+    )
+
+
+def compare_score_history_sequence_to_regenie(
+    *,
+    score_maxima: list[float],
+    convergence_iteration: int | None,
+    check_score_increase: bool,
+) -> list[regenie2_binary_firth_types.NullFirthScoreHistoryState]:
+    """Compare every production transition with the independent recurrence."""
+    observed_state = regenie2_binary_firth_types.NullFirthScoreHistoryState(
+        previous_score_maximum=jnp.asarray(jnp.inf, dtype=jnp.float64),
+        score_increase_count=jnp.asarray(0, dtype=jnp.int32),
+        failed=jnp.asarray(0, dtype=jnp.bool_),
+    )
+    reference_state = NullFirthScoreHistoryReference(
+        previous_score_maximum=float("inf"),
+        score_increase_count=0,
+        failed=False,
+    )
+    observed_states: list[regenie2_binary_firth_types.NullFirthScoreHistoryState] = []
+    for iteration, score_maximum in enumerate(score_maxima, start=1):
+        converged = iteration == convergence_iteration
+        observed_state = regenie2_binary_firth_null.update_null_firth_score_history(
+            state=observed_state,
+            score_maximum=jnp.asarray(score_maximum, dtype=jnp.float64),
+            converged=converged,
+            check_score_increase=check_score_increase,
+        )
+        reference_state = update_null_firth_score_history_reference(
+            state=reference_state,
+            score_maximum=score_maximum,
+            converged=converged,
+            check_score_increase=check_score_increase,
+        )
+        observed_previous_score_maximum = float(np.asarray(observed_state.previous_score_maximum))
+        if np.isnan(reference_state.previous_score_maximum):
+            assert np.isnan(observed_previous_score_maximum)
+        else:
+            assert observed_previous_score_maximum == reference_state.previous_score_maximum
+        assert int(np.asarray(observed_state.score_increase_count)) == reference_state.score_increase_count
+        assert bool(np.asarray(observed_state.failed)) is reference_state.failed
+        observed_states.append(observed_state)
+    return observed_states
+
+
+def test_null_firth_score_history_tracks_the_immediately_previous_score() -> None:
+    """Reset the increase count when the current score drops from the prior iterate."""
+    observed_states = compare_score_history_sequence_to_regenie(
+        score_maxima=[10.0, 1.0, 2.0, 1.5],
+        convergence_iteration=None,
+        check_score_increase=True,
+    )
+
+    observed_counts = [int(np.asarray(state.score_increase_count)) for state in observed_states]
+    assert observed_counts == [0, 0, 1, 0]
+    assert float(np.asarray(observed_states[-1].previous_score_maximum)) == 1.5
+
+
+def test_null_firth_score_history_does_not_accumulate_nonconsecutive_increases() -> None:
+    """Accept a final convergence after an alternating-score trajectory."""
+    score_maxima = [0.5] + ([2.0, 1.5] * 12) + [2.0, 0.75]
+    observed_states = compare_score_history_sequence_to_regenie(
+        score_maxima=score_maxima,
+        convergence_iteration=len(score_maxima),
+        check_score_increase=True,
+    )
+
+    final_state = observed_states[-1]
+    assert int(np.asarray(final_state.score_increase_count)) == 1
+    assert float(np.asarray(final_state.previous_score_maximum)) == 2.0
+    assert not bool(np.asarray(final_state.failed))
+
+
+def test_null_firth_score_history_fails_only_after_25_consecutive_increases() -> None:
+    """Match REGENIE's strict greater-than-25 failure threshold."""
+    score_maxima = [float(score_maximum) for score_maximum in range(27)]
+    observed_states = compare_score_history_sequence_to_regenie(
+        score_maxima=score_maxima,
+        convergence_iteration=None,
+        check_score_increase=True,
+    )
+
+    assert int(np.asarray(observed_states[-2].score_increase_count)) == 25
+    assert not bool(np.asarray(observed_states[-2].failed))
+    assert int(np.asarray(observed_states[-1].score_increase_count)) == 26
+    assert bool(np.asarray(observed_states[-1].failed))
+
+
+def test_null_firth_score_history_can_disable_the_increase_failure() -> None:
+    """Track the recurrence without failing the final fallback policy."""
+    score_maxima = [float(score_maximum) for score_maximum in range(27)]
+    observed_states = compare_score_history_sequence_to_regenie(
+        score_maxima=score_maxima,
+        convergence_iteration=None,
+        check_score_increase=False,
+    )
+
+    assert int(np.asarray(observed_states[-1].score_increase_count)) == 26
+    assert not bool(np.asarray(observed_states[-1].failed))
+
+
+def test_null_firth_convergence_precedes_the_increase_failure() -> None:
+    """Accept convergence from iteration two onward before applying the heuristic."""
+    for convergence_iteration in (2, 27):
+        score_maxima = [float(score_maximum) for score_maximum in range(convergence_iteration)]
+        observed_states = compare_score_history_sequence_to_regenie(
+            score_maxima=score_maxima,
+            convergence_iteration=convergence_iteration,
+            check_score_increase=True,
+        )
+
+        assert not bool(np.asarray(observed_states[-1].failed))
+
+
+def test_null_firth_score_history_handles_nonfinite_scores_deterministically() -> None:
+    """Match scalar comparison semantics for NaN and positive infinity."""
+    nan_states = compare_score_history_sequence_to_regenie(
+        score_maxima=[1.0, float("nan")],
+        convergence_iteration=None,
+        check_score_increase=True,
+    )
+    infinity_states = compare_score_history_sequence_to_regenie(
+        score_maxima=[1.0, float("inf")],
+        convergence_iteration=None,
+        check_score_increase=True,
+    )
+
+    assert np.isnan(float(np.asarray(nan_states[-1].previous_score_maximum)))
+    assert int(np.asarray(nan_states[-1].score_increase_count)) == 0
+    assert int(np.asarray(infinity_states[-1].score_increase_count)) == 1
+    assert not bool(np.asarray(nan_states[-1].failed))
+    assert not bool(np.asarray(infinity_states[-1].failed))
 
 
 def test_null_firth_components_match_independent_numpy_formula() -> None:
@@ -205,6 +369,29 @@ def test_null_firth_zero_iteration_budget_returns_failure_without_moving_start()
         maximum_step_size=5.0,
         tolerance=1.0e-8,
         line_search_maximum_attempts=20,
+        line_search_step_halving_scale=0.5,
+        check_score_increase=True,
+    )
+
+    assert not bool(np.asarray(observed.converged))
+    assert bool(np.isnan(np.asarray(observed.penalized_log_likelihood)))
+    tests.numerical.assert_absolute_difference_less_than(observed.coefficients, fixture.coefficients, 1.0e-15)
+
+
+def test_null_firth_nonfinite_input_returns_failure_without_moving_start() -> None:
+    """Reject an invalid initial state without exposing a trusted likelihood."""
+    fixture = build_null_firth_fixture()
+    covariate_matrix = fixture.covariate_matrix.copy()
+    covariate_matrix[0, 0] = np.nan
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model_once(
+        covariate_matrix=jnp.asarray(covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        initial_coefficients=jnp.asarray(fixture.coefficients),
+        maximum_iterations=100,
+        maximum_step_size=PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE,
+        tolerance=PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE,
+        line_search_maximum_attempts=25,
         line_search_step_halving_scale=0.5,
         check_score_increase=True,
     )

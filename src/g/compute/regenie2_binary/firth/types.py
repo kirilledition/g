@@ -39,6 +39,23 @@ class NullFirthComponents:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
+class NullFirthScoreHistoryState:
+    """Consecutive score-increase state for null Firth convergence checks.
+
+    Attributes:
+        previous_score_maximum: Maximum absolute score from the immediately previous iterate.
+        score_increase_count: Number of consecutive score increases.
+        failed: Whether the enabled consecutive-increase limit was exceeded.
+
+    """
+
+    previous_score_maximum: jax.Array
+    score_increase_count: jax.Array
+    failed: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
 class NullFirthNewtonRaphsonState:
     """Loop state for covariate-only null Firth Newton-Raphson."""
 
