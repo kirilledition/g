@@ -1,12 +1,12 @@
 use serde_json::json;
 
-use crate::manifest;
+use crate::persistence::model::OutputChunkCommit;
 
 use super::{OutputResult, RegenieStep2ChunkWriteBatch};
 
 pub(super) fn build_run_manifest_chunk_commits(
     job: &RegenieStep2ChunkWriteBatch,
-) -> OutputResult<Vec<manifest::RunManifestChunkCommit>> {
+) -> OutputResult<Vec<OutputChunkCommit>> {
     job.chunks
         .iter()
         .map(|chunk_job| {
@@ -16,7 +16,7 @@ pub(super) fn build_run_manifest_chunk_commits(
                     "Output chunk row count exceeds the signed manifest count range.".to_string(),
                 )
             })?;
-            Ok(manifest::RunManifestChunkCommit {
+            Ok(OutputChunkCommit {
                 chunk_identifier: chunk_job.chunk_handle.chunk_identifier,
                 variant_start_index: chunk_job.chunk_handle.chunk_identifier,
                 variant_stop_index,
@@ -27,9 +27,7 @@ pub(super) fn build_run_manifest_chunk_commits(
         .collect()
 }
 
-pub(super) fn build_chunk_commit_metadata_text(
-    chunk_commits: &[manifest::RunManifestChunkCommit],
-) -> OutputResult<String> {
+pub(super) fn build_chunk_commit_metadata_text(chunk_commits: &[OutputChunkCommit]) -> OutputResult<String> {
     let chunk_commit_values = chunk_commits
         .iter()
         .map(|chunk_commit| {

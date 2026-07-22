@@ -4,7 +4,7 @@ use std::thread::{Builder, JoinHandle};
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::error::OutputError;
-use crate::manifest;
+use crate::persistence::model::OutputChunkCommit;
 use crate::timing::OutputStageTimingAccumulator;
 use crate::writer::{RegenieStep2ChunkWriteBatch, write_regenie_step2_chunk_job};
 
@@ -19,7 +19,7 @@ struct OutputWriteTaskPayload {
     write_batch: RegenieStep2ChunkWriteBatch,
     config: Arc<OutputWriterConfig>,
     worker_error: Arc<Mutex<Option<String>>>,
-    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+    worker_commits: Arc<Mutex<Vec<OutputChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
 }
 
@@ -161,7 +161,7 @@ impl OutputWriterClient {
         write_batch: RegenieStep2ChunkWriteBatch,
         config: &Arc<OutputWriterConfig>,
         worker_error: &Arc<Mutex<Option<String>>>,
-        worker_commits: &Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+        worker_commits: &Arc<Mutex<Vec<OutputChunkCommit>>>,
         stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
         completion_ticket: OutputWriteCompletionTicket,
     ) -> Result<(), OutputError> {

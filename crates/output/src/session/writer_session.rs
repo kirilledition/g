@@ -7,6 +7,7 @@ use arrow::array::ArrayRef;
 use crate::chunk::NativeChunkHandle;
 use crate::error::OutputError;
 use crate::manifest;
+use crate::persistence::model::OutputChunkCommit;
 use crate::timing::{OutputStageTimingAccumulator, start_optional_timing, write_stage_timing_snapshot};
 use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, build_part_file_name};
 
@@ -84,7 +85,7 @@ pub struct OutputWriterSession {
     state: Mutex<OutputWriterSessionState>,
     writer_client: OutputWriterClient,
     worker_error: Arc<Mutex<Option<String>>>,
-    worker_commits: Arc<Mutex<Vec<manifest::RunManifestChunkCommit>>>,
+    worker_commits: Arc<Mutex<Vec<OutputChunkCommit>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
     completion_tracker: OutputWriteCompletionTracker,
     config: Arc<OutputWriterConfig>,
@@ -141,7 +142,7 @@ impl OutputWriterSession {
         self.complete_close(abort_result)
     }
 
-    fn take_worker_commits(&self) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
+    fn take_worker_commits(&self) -> Result<Vec<OutputChunkCommit>, OutputError> {
         let mut worker_commits = self
             .worker_commits
             .lock()

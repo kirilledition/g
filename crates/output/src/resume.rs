@@ -8,13 +8,14 @@ use arrow::datatypes::Schema;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::error::OutputError;
+use crate::persistence::model::OutputChunkCommit;
 use crate::{manifest, schema};
 
 pub(crate) fn repair_strict_manifest_chunk_commits(
     parts_directory: &Path,
     manifest_json: &str,
     planned_chunk_ranges: &[Range<usize>],
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
+) -> Result<Vec<OutputChunkCommit>, OutputError> {
     let planned_chunk_stops_by_start = build_planned_chunk_stops_by_start(planned_chunk_ranges)?;
     let mut repaired_commits = BTreeMap::new();
     for chunk_commit in manifest::read_run_manifest_chunk_commits_from_text(manifest_json)? {
@@ -65,13 +66,13 @@ pub(crate) fn repair_strict_manifest_chunk_commits(
 
 struct PartCommitObservation {
     schema: Arc<Schema>,
-    chunk_commits: Vec<manifest::RunManifestChunkCommit>,
+    chunk_commits: Vec<OutputChunkCommit>,
 }
 
 fn scan_committed_chunk_commits(
     parts_directory: &Path,
     planned_chunk_stops_by_start: &BTreeMap<usize, usize>,
-) -> Result<Vec<manifest::RunManifestChunkCommit>, OutputError> {
+) -> Result<Vec<OutputChunkCommit>, OutputError> {
     if !parts_directory.exists() {
         return Ok(Vec::new());
     }
@@ -130,7 +131,7 @@ fn build_planned_chunk_stops_by_start(
 }
 
 fn validate_chunk_commit_geometry(
-    chunk_commit: &manifest::RunManifestChunkCommit,
+    chunk_commit: &OutputChunkCommit,
     planned_chunk_stops_by_start: &BTreeMap<usize, usize>,
 ) -> Result<(), OutputError> {
     if chunk_commit.chunk_identifier != chunk_commit.variant_start_index {
@@ -228,7 +229,7 @@ mod tests {
         build_planned_chunk_stops_by_start, repair_strict_manifest_chunk_commits, scan_committed_chunk_commits,
         validate_chunk_commit_geometry,
     };
-    use crate::manifest::RunManifestChunkCommit;
+    use crate::persistence::model::OutputChunkCommit;
 
     struct TestDirectory {
         path: PathBuf,
@@ -268,8 +269,8 @@ mod tests {
         variant_start_index: i64,
         variant_stop_index: i64,
         row_count: i64,
-    ) -> RunManifestChunkCommit {
-        RunManifestChunkCommit {
+    ) -> OutputChunkCommit {
+        OutputChunkCommit {
             chunk_identifier,
             variant_start_index,
             variant_stop_index,

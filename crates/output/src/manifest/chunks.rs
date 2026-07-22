@@ -3,19 +3,11 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::error::{OutputError, OutputResult};
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) struct RunManifestChunkCommit {
-    pub chunk_identifier: i64,
-    pub variant_start_index: i64,
-    pub variant_stop_index: i64,
-    pub row_count: i64,
-    pub chunk_file_name: String,
-}
+use crate::persistence::model::OutputChunkCommit;
 
 pub(super) fn insert_or_validate_chunk_commit(
-    committed_chunks_by_identifier: &mut BTreeMap<i64, RunManifestChunkCommit>,
-    chunk_commit: RunManifestChunkCommit,
+    committed_chunks_by_identifier: &mut BTreeMap<i64, OutputChunkCommit>,
+    chunk_commit: OutputChunkCommit,
 ) -> OutputResult<()> {
     match committed_chunks_by_identifier.get(&chunk_commit.chunk_identifier) {
         Some(existing_commit) if existing_commit != &chunk_commit => Err(OutputError::InvalidInput(format!(
@@ -30,7 +22,7 @@ pub(super) fn insert_or_validate_chunk_commit(
     }
 }
 
-pub(super) fn chunk_commit_to_value(chunk_commit: &RunManifestChunkCommit) -> Value {
+pub(super) fn chunk_commit_to_value(chunk_commit: &OutputChunkCommit) -> Value {
     json!({
         "chunk_identifier": chunk_commit.chunk_identifier,
         "variant_start_index": chunk_commit.variant_start_index,
@@ -40,7 +32,7 @@ pub(super) fn chunk_commit_to_value(chunk_commit: &RunManifestChunkCommit) -> Va
     })
 }
 
-pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> OutputResult<RunManifestChunkCommit> {
+pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> OutputResult<OutputChunkCommit> {
     let chunk_file_name = committed_chunk.get("chunk_file_name").and_then(Value::as_str).ok_or_else(|| {
         OutputError::InvalidInput("Run manifest committed chunk entry is missing chunk_file_name.".to_string())
     })?;
@@ -50,7 +42,7 @@ pub(super) fn read_run_manifest_chunk_commit(committed_chunk: &Value) -> OutputR
 pub(crate) fn read_chunk_commits_from_text(
     chunk_commits_text: &str,
     chunk_file_name: &str,
-) -> OutputResult<Vec<RunManifestChunkCommit>> {
+) -> OutputResult<Vec<OutputChunkCommit>> {
     let chunk_commit_values = serde_json::from_str::<Value>(chunk_commits_text).map_err(OutputError::runtime)?;
     let chunk_commit_array = chunk_commit_values
         .as_array()
@@ -58,8 +50,8 @@ pub(crate) fn read_chunk_commits_from_text(
     chunk_commit_array.iter().map(|chunk_commit| read_chunk_commit(chunk_commit, chunk_file_name)).collect()
 }
 
-fn read_chunk_commit(committed_chunk: &Value, chunk_file_name: &str) -> OutputResult<RunManifestChunkCommit> {
-    Ok(RunManifestChunkCommit {
+fn read_chunk_commit(committed_chunk: &Value, chunk_file_name: &str) -> OutputResult<OutputChunkCommit> {
+    Ok(OutputChunkCommit {
         chunk_identifier: read_manifest_integer(committed_chunk, "chunk_identifier")?,
         variant_start_index: read_manifest_integer(committed_chunk, "variant_start_index")?,
         variant_stop_index: read_manifest_integer(committed_chunk, "variant_stop_index")?,
@@ -91,12 +83,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit, read_chunk_commits_from_text,
+        chunk_commit_to_value, insert_or_validate_chunk_commit, read_chunk_commits_from_text,
         read_run_manifest_chunk_commit,
     };
+    use crate::persistence::model::OutputChunkCommit;
 
-    fn chunk_commit(chunk_identifier: i64, chunk_file_name: &str) -> RunManifestChunkCommit {
-        RunManifestChunkCommit {
+    fn chunk_commit(chunk_identifier: i64, chunk_file_name: &str) -> OutputChunkCommit {
+        OutputChunkCommit {
             chunk_identifier,
             variant_start_index: chunk_identifier,
             variant_stop_index: chunk_identifier + 3,

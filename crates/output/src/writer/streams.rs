@@ -10,7 +10,7 @@ use parquet::file::properties::WriterProperties;
 use parquet::schema::types::ColumnPath;
 
 use crate::error::OutputError;
-use crate::manifest;
+use crate::persistence::model::OutputChunkCommit;
 use crate::schema;
 use crate::timing::start_optional_timing;
 
@@ -27,7 +27,7 @@ pub(super) fn write_regenie_step2_chunks_to_parquet_file(
     chunk_schema: &Arc<Schema>,
     parquet_record_batch_schema: &Arc<Schema>,
     chunk_file_path: &Path,
-    chunk_commits: &[manifest::RunManifestChunkCommit],
+    chunk_commits: &[OutputChunkCommit],
     collect_stage_timings: bool,
 ) -> OutputResult<RegenieStep2ChunkStreamWriteResult> {
     let file_create_start_time = start_optional_timing(collect_stage_timings);

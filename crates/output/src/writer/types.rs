@@ -1,7 +1,7 @@
 use arrow::array::ArrayRef;
 
 use crate::NativeChunkHandle;
-use crate::manifest;
+use crate::persistence::model::OutputChunkCommit;
 
 pub(crate) struct RegenieStep2ChunkJob {
     pub(crate) chunk_handle: NativeChunkHandle,
@@ -77,7 +77,7 @@ pub(crate) struct RegenieStep2ChunkWriteTiming {
 }
 
 pub(crate) struct RegenieStep2ChunkWriteResult {
-    pub(crate) chunk_commits: Vec<manifest::RunManifestChunkCommit>,
+    pub(crate) chunk_commits: Vec<OutputChunkCommit>,
     pub(crate) timing: RegenieStep2ChunkWriteTiming,
 }
 

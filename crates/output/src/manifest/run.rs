@@ -7,9 +7,10 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::{Map, Value};
 
-use super::chunks::{RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit};
+use super::chunks::{chunk_commit_to_value, insert_or_validate_chunk_commit};
 use super::{RUN_MANIFEST_FILE_NAME, chunks, validation};
 use crate::error::{OutputError, OutputResult};
+use crate::persistence::model::OutputChunkCommit;
 use crate::resume;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -102,7 +103,7 @@ pub(crate) fn reconcile_output_run_resume(
     manifest_json: &str,
     current_header: &Value,
     planned_chunk_ranges: &[Range<usize>],
-) -> Result<Vec<RunManifestChunkCommit>, OutputError> {
+) -> Result<Vec<OutputChunkCommit>, OutputError> {
     validate_run_manifest_compatibility(manifest_json, current_header)?;
     resume::repair_strict_manifest_chunk_commits(parts_directory, manifest_json, planned_chunk_ranges)
 }
@@ -111,7 +112,7 @@ pub(crate) fn initialize_output_run(
     run_directory: &Path,
     existing_manifest_json: Option<&str>,
     current_header: &Value,
-    resumed_chunk_commits: Option<Vec<RunManifestChunkCommit>>,
+    resumed_chunk_commits: Option<Vec<OutputChunkCommit>>,
 ) -> Result<Vec<i64>, OutputError> {
     let (mut manifest, committed_chunks, committed_chunk_identifiers) =
         if let Some(existing_manifest_text) = existing_manifest_json {
@@ -146,9 +147,7 @@ pub(crate) fn initialize_output_run(
     Ok(committed_chunk_identifiers)
 }
 
-pub(crate) fn read_run_manifest_chunk_commits_from_text(
-    manifest_json: &str,
-) -> OutputResult<Vec<RunManifestChunkCommit>> {
+pub(crate) fn read_run_manifest_chunk_commits_from_text(manifest_json: &str) -> OutputResult<Vec<OutputChunkCommit>> {
     let manifest = parse_run_manifest_text(manifest_json, None)?;
     let committed_chunks = manifest
         .get("committed_chunks")
@@ -168,7 +167,7 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
 
 pub(crate) fn record_run_manifest_chunk_commits(
     run_directory: &Path,
-    chunk_commits: Vec<RunManifestChunkCommit>,
+    chunk_commits: Vec<OutputChunkCommit>,
 ) -> OutputResult<()> {
     if chunk_commits.is_empty() {
         return Ok(());
@@ -348,11 +347,12 @@ mod tests {
     use crate::error::OutputError;
 
     use super::{
-        RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, directory_exists_and_is_non_empty,
-        extend_run_manifest_metadata, initialize_output_run, inspect_output_run, load_run_manifest_json,
-        mark_run_manifest_completed, mark_run_manifest_interrupted, read_run_manifest_chunk_commits_from_text,
-        read_run_manifest_gpu_genotype_format_from_text, record_run_manifest_chunk_commits, resolve_output_run_paths,
+        RUN_MANIFEST_FILE_NAME, directory_exists_and_is_non_empty, extend_run_manifest_metadata, initialize_output_run,
+        inspect_output_run, load_run_manifest_json, mark_run_manifest_completed, mark_run_manifest_interrupted,
+        read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text,
+        record_run_manifest_chunk_commits, resolve_output_run_paths,
     };
+    use crate::persistence::model::OutputChunkCommit;
 
     struct TestDirectory {
         path: PathBuf,
@@ -384,8 +384,8 @@ mod tests {
         .expect("manifest is valid JSON")
     }
 
-    fn chunk_commit(chunk_identifier: i64, file_name: &str) -> RunManifestChunkCommit {
-        RunManifestChunkCommit {
+    fn chunk_commit(chunk_identifier: i64, file_name: &str) -> OutputChunkCommit {
+        OutputChunkCommit {
             chunk_identifier,
             variant_start_index: chunk_identifier,
             variant_stop_index: chunk_identifier + 2,
