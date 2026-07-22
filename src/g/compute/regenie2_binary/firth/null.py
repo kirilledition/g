@@ -11,6 +11,7 @@ from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 FIRTH_DEVIANCE_LOG_DETERMINANT_MULTIPLIER = 0.5
+NULL_FIRTH_INITIAL_SCORE_MAXIMUM = 1.0e16
 NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES = 25
 
 
@@ -279,7 +280,7 @@ def fit_covariate_only_firth_null_model_once(
             converged=jnp.asarray(0, dtype=jnp.bool_),
             failed=~initial_components.valid,
             iteration_count=jnp.asarray(0, dtype=jnp.int32),
-            previous_score_maximum=jnp.asarray(jnp.inf, dtype=scalar_dtype),
+            previous_score_maximum=jnp.asarray(NULL_FIRTH_INITIAL_SCORE_MAXIMUM, dtype=scalar_dtype),
             score_increase_count=jnp.asarray(0, dtype=jnp.int32),
         ),
     )
