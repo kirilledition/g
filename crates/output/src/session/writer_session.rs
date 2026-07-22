@@ -235,6 +235,17 @@ fn build_chunk_write_batch(chunks: Vec<RegenieStep2ChunkJob>) -> RegenieStep2Chu
     RegenieStep2ChunkWriteBatch { chunk_file_name, chunks }
 }
 
+pub(crate) fn validate_output_writer_settings(
+    output_plan: &g_plan::OutputPlan,
+    output_run_count: usize,
+) -> Result<(), OutputError> {
+    if output_run_count == 0 {
+        return Ok(());
+    }
+    let writer_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
+    OutputWriterPool::validate_settings(writer_thread_count, crate::WRITER_QUEUE_DEPTH)
+}
+
 /// Create one native output writer session per run/parts directory pair.
 ///
 /// # Errors
@@ -254,6 +265,7 @@ pub(crate) fn create_output_writer_sessions(
             parts_directories.len()
         )));
     }
+    validate_output_writer_settings(output_plan, run_directories.len())?;
     if run_directories.is_empty() {
         return Ok(Vec::new());
     }

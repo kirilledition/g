@@ -750,6 +750,26 @@ fn manager_planning_is_read_only_and_rejects_multi_run_collisions() {
 }
 
 #[test]
+fn manager_rejects_writer_settings_before_initialization_mutation() {
+    let directory = TestDirectory::new("manager-writer-settings");
+    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 0);
+    let run_directories = planned_run_directories(&plan);
+    let mut manager = OutputManager::open(plan, "# invalid writers\n".to_string()).expect("manager opens");
+
+    let error = manager
+        .initialize(
+            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
+            &single_chunk_plan(0..1),
+            false,
+        )
+        .expect_err("zero writer threads are rejected");
+    assert!(error.to_string().contains("Writer thread count must be at least 1"));
+    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
+}
+
+#[test]
 fn manager_validates_initialization_and_trait_routing() {
     let directory = TestDirectory::new("manager-validation");
     let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];

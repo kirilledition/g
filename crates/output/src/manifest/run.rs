@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -47,10 +47,11 @@ pub(crate) fn inspect_output_run(
 
 pub(crate) fn load_run_manifest_json(run_directory: &Path) -> Result<Option<String>, OutputError> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
-    if !manifest_path.exists() {
-        return Ok(None);
-    }
-    let manifest_json = std::fs::read_to_string(&manifest_path).map_err(OutputError::runtime)?;
+    let manifest_json = match std::fs::read_to_string(&manifest_path) {
+        Ok(manifest_json) => manifest_json,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
     parse_run_manifest_text(&manifest_json, Some(&manifest_path))?;
     Ok(Some(manifest_json))
 }
@@ -219,10 +220,11 @@ pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &
 }
 
 fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputError> {
-    if !directory_path.exists() {
-        return Ok(false);
-    }
-    let mut directory_entries = std::fs::read_dir(directory_path).map_err(OutputError::runtime)?;
+    let mut directory_entries = match std::fs::read_dir(directory_path) {
+        Ok(directory_entries) => directory_entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
     match directory_entries.next() {
         Some(Ok(_directory_entry)) => Ok(true),
         Some(Err(error)) => Err(OutputError::runtime(error)),
@@ -346,10 +348,10 @@ mod tests {
     use crate::error::OutputError;
 
     use super::{
-        RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, extend_run_manifest_metadata, initialize_output_run,
-        inspect_output_run, load_run_manifest_json, mark_run_manifest_completed, mark_run_manifest_interrupted,
-        read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text,
-        record_run_manifest_chunk_commits, resolve_output_run_paths,
+        RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, directory_exists_and_is_non_empty,
+        extend_run_manifest_metadata, initialize_output_run, inspect_output_run, load_run_manifest_json,
+        mark_run_manifest_completed, mark_run_manifest_interrupted, read_run_manifest_chunk_commits_from_text,
+        read_run_manifest_gpu_genotype_format_from_text, record_run_manifest_chunk_commits, resolve_output_run_paths,
     };
 
     struct TestDirectory {
@@ -404,6 +406,25 @@ mod tests {
     }
 
     #[test]
+    fn directory_inspection_distinguishes_absence_contents_and_io_errors() {
+        let directory = TestDirectory::new("inspect-directory");
+        let missing_directory = directory.path.join("missing");
+        assert!(!directory_exists_and_is_non_empty(&missing_directory).expect("missing directory is absent"));
+
+        let empty_directory = directory.path.join("empty");
+        std::fs::create_dir(&empty_directory).expect("empty directory is created");
+        assert!(!directory_exists_and_is_non_empty(&empty_directory).expect("empty directory is empty"));
+        std::fs::write(empty_directory.join("entry"), b"occupied").expect("directory entry is written");
+        assert!(directory_exists_and_is_non_empty(&empty_directory).expect("occupied directory is nonempty"));
+
+        let regular_file = directory.path.join("not-a-directory");
+        std::fs::write(&regular_file, b"file").expect("regular file is written");
+        let error = directory_exists_and_is_non_empty(&regular_file)
+            .expect_err("a non-directory inspection error is propagated");
+        assert!(matches!(error, OutputError::Runtime(_)));
+    }
+
+    #[test]
     fn output_run_planning_is_read_only_and_enforces_preconditions() {
         let directory = TestDirectory::new("plan");
         let fresh_root = directory.path.join("fresh");
@@ -442,9 +463,26 @@ mod tests {
     }
 
     #[test]
+    fn manifest_loader_distinguishes_absence_content_and_io_errors() {
+        let directory = TestDirectory::new("load-io");
+        let run_directory = directory.path.join("run");
+        assert_eq!(load_run_manifest_json(&run_directory).expect("missing manifest is absent"), None);
+
+        std::fs::create_dir(&run_directory).expect("run directory is created");
+        let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
+        let manifest_text = r#"{"status":"running"}"#;
+        std::fs::write(&manifest_path, manifest_text).expect("manifest is written");
+        assert_eq!(load_run_manifest_json(&run_directory).expect("manifest loads").as_deref(), Some(manifest_text));
+
+        std::fs::remove_file(&manifest_path).expect("manifest file is removed");
+        std::fs::create_dir(&manifest_path).expect("manifest path directory is created");
+        let error = load_run_manifest_json(&run_directory).expect_err("manifest read error is propagated");
+        assert!(matches!(error, OutputError::Runtime(_)));
+    }
+
+    #[test]
     fn manifest_loader_rejects_invalid_json_and_non_object_roots() {
-        let directory = TestDirectory::new("load");
-        assert_eq!(load_run_manifest_json(&directory.path).expect("missing manifest is valid"), None);
+        let directory = TestDirectory::new("load-invalid");
         for malformed in ["not-json", "[]"] {
             std::fs::write(directory.path.join(RUN_MANIFEST_FILE_NAME), malformed).expect("fixture writes");
             assert!(load_run_manifest_json(&directory.path).is_err());

@@ -34,13 +34,18 @@ struct OutputWriteCompletionGuard {
 }
 
 impl OutputWriterPool {
-    pub(super) fn new(worker_count: usize, queue_depth: usize) -> Result<Arc<Self>, OutputError> {
+    pub(super) fn validate_settings(worker_count: usize, queue_depth: usize) -> Result<(), OutputError> {
         if worker_count == 0 {
             return Err(OutputError::InvalidInput("Writer thread count must be at least 1.".to_string()));
         }
         if queue_depth == 0 {
             return Err(OutputError::InvalidInput("Writer queue depth must be at least 1.".to_string()));
         }
+        Ok(())
+    }
+
+    pub(super) fn new(worker_count: usize, queue_depth: usize) -> Result<Arc<Self>, OutputError> {
+        Self::validate_settings(worker_count, queue_depth)?;
         let (sender, receiver) = bounded(queue_depth);
         let mut worker_handles = Vec::with_capacity(worker_count);
         for _ in 0..worker_count {

@@ -75,7 +75,8 @@ with `[output].resume = true` when the existing manifest belongs to the same pla
 
 Planning a new or resumed run only inspects the selected output paths. `g` does
 not create phenotype run directories until input preparation and validation of
-every selected phenotype output have succeeded.
+every selected phenotype output have succeeded. Missing paths are treated as
+absent; other directory or manifest inspection errors stop planning.
 
 ## Enabling Resume
 

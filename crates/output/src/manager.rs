@@ -17,7 +17,7 @@ use crate::manifest::{
 };
 use crate::session::{
     OutputWriterSession, create_output_writer_sessions, finish_interrupted_output_writer_sessions,
-    finish_output_writer_sessions,
+    finish_output_writer_sessions, validate_output_writer_settings,
 };
 const COMMAND_INTERFACE: &str = "g regenie";
 
@@ -134,6 +134,7 @@ impl OutputManager {
         if self.writer_sessions.is_some() {
             return Err(OutputError::InvalidInput("Output manager is already initialized.".to_string()));
         }
+        validate_output_writer_settings(&self.run_plan.output, self.runs.len())?;
         let mut headers_by_phenotype = BTreeMap::new();
         let mut fingerprint_cache = ManifestFileFingerprintCache::default();
         for current_header_input in current_header_inputs {
