@@ -155,13 +155,7 @@ impl OutputManager {
                 }
             }
         }
-        if headers_by_phenotype.len() != self.runs.len() {
-            return Err(OutputError::InvalidInput(format!(
-                "Output initialization count {} does not match planned phenotype count {}.",
-                headers_by_phenotype.len(),
-                self.runs.len()
-            )));
-        }
+        self.validate_run_manifest_header_coverage(&headers_by_phenotype)?;
         self.refresh_run_manifest_hints()?;
         let resumed_chunk_commits = if self.run_plan.output.resume {
             self.runs
@@ -314,6 +308,28 @@ impl OutputManager {
             .collect::<OutputResult<Vec<_>>>()?;
         for (run, existing_manifest_json) in self.runs.iter_mut().zip(refreshed_manifest_json) {
             run.existing_manifest_json = existing_manifest_json;
+        }
+        Ok(())
+    }
+
+    fn validate_run_manifest_header_coverage(
+        &self,
+        headers_by_phenotype: &BTreeMap<String, serde_json::Value>,
+    ) -> OutputResult<()> {
+        if headers_by_phenotype.len() != self.runs.len() {
+            return Err(OutputError::InvalidInput(format!(
+                "Output initialization count {} does not match planned phenotype count {}.",
+                headers_by_phenotype.len(),
+                self.runs.len()
+            )));
+        }
+        for run in &self.runs {
+            if !headers_by_phenotype.contains_key(&run.phenotype_name) {
+                return Err(OutputError::InvalidInput(format!(
+                    "Missing output initialization for phenotype '{}'.",
+                    run.phenotype_name
+                )));
+            }
         }
         Ok(())
     }

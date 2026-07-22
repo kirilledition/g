@@ -784,6 +784,15 @@ fn manager_validates_initialization_and_trait_routing() {
         .expect_err("duplicate phenotype header must fail");
     assert!(error.to_string().contains("Duplicate output initialization"));
     assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
+    let error = manager
+        .initialize(
+            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_gamma", &inputs, 1)],
+            &single_chunk_plan(0..1),
+            false,
+        )
+        .expect_err("same-count wrong phenotype coverage must fail");
+    assert!(error.to_string().contains("Missing output initialization for phenotype 'trait_beta'"));
+    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
     manager
         .initialize(
             vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
