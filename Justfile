@@ -154,6 +154,10 @@ dev-install:
 dev-install-release:
     {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile release --uv
 
+# Install a release extension with private CUDA benchmark/test registration
+dev-install-release-cuda-test-support:
+    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && uv run --no-sync maturin develop --profile release --features extension-module,private-test-support --uv
+
 # Install optional user-local profiler CLIs used by deep app profiling
 dev-install-profiling-tools:
     {{ server_env }} && uv tool install py-spy
@@ -539,6 +543,10 @@ legacy-baselines-full: data-prepare
 bench-firth-compute-gpu *overrides:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_firth_compute --config-name benchmark_firth_compute {{ overrides }}
 
+# Benchmark the raw-CUDA approximate-Firth executable without fallback
+bench-firth-compute-gpu-raw-cuda *overrides: dev-install-release-cuda-test-support
+    {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark_firth_compute --config-name benchmark_firth_compute tool.implementation=raw_cuda {{ overrides }}
+
 # Benchmark quantitative REGENIE step 2 across fresh, discarded-warm, and hot lifecycles
 bench-linear-startup-gpu: dev-install-release
     {{ server_env }} && uv run --no-sync python -m tooling.cli.benchmark --config-name benchmark_linear_startup
@@ -574,6 +582,10 @@ slurm-gpu-bench-tensorqtl-chr22 *overrides:
 # Submit the focused approximate-Firth executable benchmark to the configured GPU node
 slurm-gpu-bench-firth-compute *overrides:
     {{ server_env }} && just slurm-gpu-just bench-firth-compute-gpu {{ overrides }}
+
+# Submit the raw-CUDA focused Firth benchmark to the configured GPU node
+slurm-gpu-bench-firth-compute-raw-cuda *overrides:
+    {{ server_env }} && just slurm-gpu-just bench-firth-compute-gpu-raw-cuda {{ overrides }}
 
 # --- performance ---
 
@@ -792,6 +804,10 @@ test-cpu:
     fi
     uv run pytest tests/ -m "not phase0_data and not phase1_parity" "${pytest_arguments[@]}"
 
+# Execute both native typed-XLA CUDA handlers on an exclusive GPU
+test-cuda-native: dev-install-release-cuda-test-support
+    {{ server_env }} && GWAS_ENGINE_RUN_CUDA_NATIVE_TESTS=1 uv run --no-sync pytest -q tests/test_native_cuda_ffi_handlers.py
+
 # Run the non-data Python suite on an appropriate CPU allocation.
 test: test-cpu
 
@@ -812,6 +828,10 @@ test-parity-required:
 # Run required-fixture external parity qualification on the configured GPU node
 slurm-gpu-test-parity-required:
     {{ server_env }} && just slurm-gpu-just test-parity-required
+
+# Submit native CUDA handler execution tests to the configured GPU node
+slurm-gpu-test-cuda-native:
+    {{ server_env }} && just slurm-gpu-just test-cuda-native
 
 # Generate a Python coverage report for the active non-data test surface
 coverage-python:

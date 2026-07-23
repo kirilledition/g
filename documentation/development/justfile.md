@@ -38,6 +38,7 @@ just dev-bootstrap
 just dev-bootstrap-gpu
 just dev-install
 just dev-install-release
+just dev-install-release-cuda-test-support
 just cuda-format
 just cuda-format-check
 just cuda-lint
@@ -79,6 +80,7 @@ just slurm-cpu-test
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
 just slurm-gpu-test-parity-required
+just slurm-gpu-test-cuda-native
 ```
 
 CPU and GPU correctness run in separate processes. The CPU recipe excludes
@@ -120,12 +122,14 @@ just bench-linear-startup-gpu
 just bench-binary-hot-gpu
 just bench-binary-hot-gpu-smoke
 just bench-firth-compute-gpu
+just bench-firth-compute-gpu-raw-cuda
 just rust-bench
 just bench-torchgwas-chr22
 just bench-tensorqtl-chr22
 just bench-rust-build-profiles
 just slurm-gpu-bench-binary-hot
 just slurm-gpu-bench-firth-compute
+just slurm-gpu-bench-firth-compute-raw-cuda
 just slurm-gpu-bench-torchgwas-chr22
 just slurm-gpu-bench-tensorqtl-chr22
 ```

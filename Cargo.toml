@@ -103,6 +103,7 @@ pyo3-pylogger = { workspace = true }
 [features]
 default = []
 extension-module = ["pyo3/extension-module"]
+private-test-support = []
 
 [lints]
 workspace = true
