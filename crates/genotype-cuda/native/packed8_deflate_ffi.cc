@@ -37,7 +37,6 @@ namespace {
 
 using g::cuda_native::CudaContext;
 using g::cuda_native::CudaFunction;
-using g::cuda_native::CudaModule;
 using g::cuda_native::CudaStream;
 using g::cuda_native::DynamicLibrary;
 using g::genotype_cuda::abi::NvcompAlignmentRequirements;
@@ -151,6 +150,7 @@ struct CudaErrorFactory {
 };
 
 using CudaDriverApi = g::cuda_native::CudaDriverApi<CudaErrorFactory>;
+using CudaModuleOwner = g::cuda_native::CudaModuleOwner<CudaDriverApi>;
 
 [[nodiscard]] constexpr bool is_power_of_two(std::size_t value) noexcept {
   return value != 0 && (value & (value - 1)) == 0;
@@ -269,10 +269,10 @@ class NvcompApi {
 
 class Packed8Kernels {
  public:
-  explicit Packed8Kernels(const CudaDriverApi& driver) : driver_(driver) {
-    module_ = driver_.load_module(kPacked8KernelPtx, "load packed8 compute_70 PTX");
-    descriptor_function_ = driver_.get_function(module_, kDescriptorKernelName);
-    finalize_function_ = driver_.get_function(module_, kFinalizeKernelName);
+  explicit Packed8Kernels(const CudaDriverApi& driver)
+      : driver_(driver), module_(driver, driver.load_module(kPacked8KernelPtx, "load packed8 compute_70 PTX")) {
+    descriptor_function_ = driver_.get_function(module_.get(), kDescriptorKernelName);
+    finalize_function_ = driver_.get_function(module_.get(), kFinalizeKernelName);
   }
 
   Packed8Kernels(const Packed8Kernels&) = delete;
@@ -382,7 +382,7 @@ class Packed8Kernels {
 
  private:
   const CudaDriverApi& driver_;
-  CudaModule module_ = nullptr;
+  CudaModuleOwner module_;
   CudaFunction descriptor_function_ = nullptr;
   CudaFunction finalize_function_ = nullptr;
 };
@@ -425,7 +425,7 @@ class Packed8KernelCache {
 
 class RuntimeState {
  public:
-  RuntimeState() : driver_(g::cuda_native::CudaModuleUnloadPolicy::kNotRequired), kernels_(driver_) {}
+  RuntimeState() : kernels_(driver_) {}
 
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;

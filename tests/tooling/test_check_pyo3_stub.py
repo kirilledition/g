@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import typing
+import tomllib
+from pathlib import Path
 
 from tooling.debug import check_pyo3_stub
 
-if typing.TYPE_CHECKING:
-    from pathlib import Path
+REPOSITORY_ROOT = Path(__file__).parents[2]
 
 
 def test_nested_cli_stub_matches_registered_rust_submodule(tmp_path: Path) -> None:
@@ -80,3 +80,25 @@ def unexpected_root_function() -> None: ...
 
     assert stub_exports.classes == frozenset({"cli.NativeCliRunResult", "UnexpectedRootClass"})
     assert stub_exports.functions == frozenset({"unexpected_root_function"})
+
+
+def test_repository_production_binding_surface_is_exact_and_private_support_is_opt_in() -> None:
+    rust_exports = check_pyo3_stub.read_rust_exports(REPOSITORY_ROOT / "src/binding/mod.rs")
+
+    assert rust_exports == check_pyo3_stub.ExportSurface(
+        classes=frozenset({"cli.NativeCliRunResult"}),
+        functions=frozenset({"cli.run"}),
+        module_names=frozenset({"cli"}),
+    )
+    cargo_manifest = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    project_configuration = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert cargo_manifest["features"]["default"] == []
+    assert cargo_manifest["features"]["private-test-support"] == []
+    assert project_configuration["tool"]["maturin"]["features"] == ["extension-module"]
+    justfile_source = (REPOSITORY_ROOT / "Justfile").read_text(encoding="utf-8")
+    assert "--features extension-module,private-test-support" in justfile_source
+
+    binding_source = (REPOSITORY_ROOT / "src/binding/mod.rs").read_text(encoding="utf-8")
+    assert '#[cfg(feature = "private-test-support")]\nmod test_support;' in binding_source
+    assert '#[cfg(feature = "private-test-support")]\n    test_support::register_module(module)?;' in binding_source
+    assert "_testing" not in (REPOSITORY_ROOT / "src/g/_core.pyi").read_text(encoding="utf-8")

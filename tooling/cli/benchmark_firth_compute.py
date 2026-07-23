@@ -7,6 +7,7 @@ import dataclasses
 import enum
 import gzip
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import numpy as np
 import numpy.typing as npt
 
 import tooling.configuration as tooling_configuration
+from g.compute import cuda_ffi
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth.batch import compute as firth_batch_compute
 from tooling.common import hydra_arguments as tooling_hydra_arguments
@@ -43,11 +45,26 @@ class BenchmarkDevice(enum.StrEnum):
     GPU = "gpu"
 
 
+class BenchmarkImplementation(enum.StrEnum):
+    """Approximate-Firth component implementation measured by the executable."""
+
+    JAX = "jax"
+    RAW_CUDA = "raw_cuda"
+
+
+class CudaFfiTestSupport(typing.Protocol):
+    """Feature-gated native registration used by focused CUDA evidence."""
+
+    def register_firth_components_ffi(self) -> str:
+        """Register and return the raw-CUDA Firth typed-XLA target."""
+
+
 @dataclasses.dataclass(frozen=True)
 class BenchmarkArguments:
     """Resolved focused Firth benchmark settings."""
 
     device: BenchmarkDevice
+    implementation: BenchmarkImplementation
     sample_count: int
     candidate_capacity: int
     firth_batch_size: int
@@ -169,6 +186,8 @@ def validate_arguments(arguments: BenchmarkArguments) -> None:
     """Reject configurations that cannot represent the production executable."""
     if arguments.sample_count <= 0:
         raise ValueError("sample_count must be positive.")
+    if arguments.implementation is BenchmarkImplementation.RAW_CUDA and arguments.device is not BenchmarkDevice.GPU:
+        raise ValueError("raw_cuda Firth components require device=gpu.")
     if arguments.candidate_capacity <= 0:
         raise ValueError("candidate_capacity must be positive.")
     if arguments.firth_batch_size <= 0:
@@ -224,7 +243,7 @@ def build_kernel_config(arguments: BenchmarkArguments) -> regenie2_binary_config
             pseudo_inner_maximum_iterations=25,
             line_search_maximum_attempts=25,
             sparse_carrier_dosage_threshold=1.0e-4,
-            use_cuda_components=False,
+            use_cuda_components=arguments.implementation is BenchmarkImplementation.RAW_CUDA,
         ),
         null_firth=regenie2_binary_config.NullFirthConfig(
             maximum_iterations=1_000,
@@ -508,16 +527,42 @@ def collect_environment(arguments: BenchmarkArguments) -> dict[str, typing.Any]:
     }
 
 
+def register_firth_components_implementation(arguments: BenchmarkArguments) -> str | None:
+    """Register the explicitly requested raw-CUDA implementation.
+
+    The focused benchmark never falls back: a raw-CUDA request either registers
+    the native target or fails before lowering.
+    """
+    if arguments.implementation is BenchmarkImplementation.JAX:
+        return None
+    try:
+        test_support = typing.cast(
+            "CudaFfiTestSupport",
+            importlib.import_module("g._core._testing"),
+        )
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "raw_cuda benchmarking requires an extension built with the private-test-support Cargo feature."
+        ) from error
+    registered_target = test_support.register_firth_components_ffi()
+    if registered_target != cuda_ffi.FIRTH_COMPONENTS_FFI_TARGET:
+        raise RuntimeError(
+            "Native raw-CUDA registration returned an FFI target that does not match the Python call site."
+        )
+    return registered_target
+
+
 def run_benchmark(arguments: BenchmarkArguments) -> dict[str, typing.Any]:
     """Compile once, measure all active counts, and capture one isolated trace."""
     validate_arguments(arguments)
     arguments.output_directory.mkdir(parents=True, exist_ok=False)
     arguments.jax_cache_directory.mkdir(parents=True, exist_ok=True)
-    jax.config.update("jax_enable_x64", True)  # noqa: FBT003
+    jax.config.update("jax_enable_x64", True)  # noqa: FBT003 - JAX requires the literal enable flag.
     jax.config.update("jax_platforms", jax_platform_name(arguments.device))
     jax.config.update("jax_compilation_cache_dir", str(arguments.jax_cache_directory))
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    registered_ffi_target = register_firth_components_implementation(arguments)
     inputs = put_inputs_on_device(arguments)
     kernel_config = build_kernel_config(arguments)
     keyword_arguments_by_count = {
@@ -560,6 +605,12 @@ def run_benchmark(arguments: BenchmarkArguments) -> dict[str, typing.Any]:
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "benchmark": "dense_approximate_firth_fixed_capacity",
         "arguments": dataclasses.asdict(arguments),
+        "implementation": {
+            "requested": arguments.implementation.value,
+            "effective": arguments.implementation.value,
+            "registered_ffi_target": registered_ffi_target,
+            "fallback": None,
+        },
         "environment": collect_environment(arguments),
         "cache": {
             "before": dataclasses.asdict(cache_before),
@@ -580,6 +631,7 @@ def build_arguments_from_config(config: omegaconf.DictConfig) -> BenchmarkArgume
     trace_active_candidate_count = tooling_hydra_arguments.integer_or_none(values.get("trace_active_candidate_count"))
     return BenchmarkArguments(
         device=BenchmarkDevice(str(values["device"])),
+        implementation=BenchmarkImplementation(str(values["implementation"])),
         sample_count=int(values["sample_count"]),
         candidate_capacity=int(values["candidate_capacity"]),
         firth_batch_size=int(values["firth_batch_size"]),

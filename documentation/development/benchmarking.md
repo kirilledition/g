@@ -39,6 +39,11 @@ to explain a whole-application result:
   400, 900, and 1,024 active candidates. It records StableHLO and executable
   hashes/sizes, compiled-memory statistics, persistent-cache stability, exact
   result hashes, and one post-timing device trace with Python tracing disabled.
+  `tool.implementation=jax` and `tool.implementation=raw_cuda` are distinct
+  modes. Raw CUDA requires the feature-gated test-support extension and fails
+  before lowering if registration is unavailable; it never silently measures
+  the JAX fallback. Alternate same-build JAX/raw-CUDA processes when collecting
+  paired evidence.
 
 Run the crate targets explicitly so unrelated benches do not dilute or block a
 focused comparison:
@@ -48,6 +53,7 @@ cargo bench --package g-genotype --bench bgen_read
 cargo bench --package g-engine --bench scheduler
 cargo bench --package g-output --bench writer
 just slurm-gpu-bench-firth-compute
+just slurm-gpu-bench-firth-compute-raw-cuda
 ```
 
 ## Evidence Requirements

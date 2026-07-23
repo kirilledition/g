@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace g::cuda_native {
 
@@ -77,13 +78,6 @@ enum class CudaRuntimeFailureKind {
   kFailedPrecondition,
 };
 
-enum class CudaModuleUnloadPolicy {
-  // Some handlers intentionally retain modules for process-long XLA contexts
-  // and must not add cuModuleUnload to their required driver-symbol contract.
-  kNotRequired,
-  kRequired,
-};
-
 [[nodiscard]] static std::string dynamic_loader_error(std::string_view operation) {
   const char* detail = ::dlerror();
   if (detail == nullptr) {
@@ -127,6 +121,11 @@ Function load_dynamic_library_symbol(void* library,
         failure_kind,
         std::string("load ") + library_name + " symbol " + symbol_name + ": " + detail);
   }
+  if (symbol == nullptr) {
+    throw ErrorFactory::initialization_failure(
+        failure_kind,
+        std::string("load ") + library_name + " symbol " + symbol_name + ": dynamic loader returned a null symbol");
+  }
   Function function = nullptr;
   std::memcpy(&function, &symbol, sizeof(function));
   return function;
@@ -135,7 +134,7 @@ Function load_dynamic_library_symbol(void* library,
 template <typename ErrorFactory>
 class CudaDriverApi {
  public:
-  explicit CudaDriverApi(CudaModuleUnloadPolicy module_unload_policy)
+  CudaDriverApi()
       : library_(
             open_dynamic_library<ErrorFactory>("libcuda.so.1", CudaInitializationFailureKind::kCudaDriverUnavailable)),
         initialize_(load_driver_symbol<CudaInit>(library_.get(), "cuInit")),
@@ -145,9 +144,7 @@ class CudaDriverApi {
         context_get_current_(load_driver_symbol<CudaContextGetCurrent>(library_.get(), "cuCtxGetCurrent")),
         context_get_device_(load_driver_symbol<CudaContextGetDevice>(library_.get(), "cuCtxGetDevice")),
         module_load_data_(load_driver_symbol<CudaModuleLoadDataEx>(library_.get(), "cuModuleLoadDataEx")),
-        module_unload_(module_unload_policy == CudaModuleUnloadPolicy::kRequired
-                           ? load_driver_symbol<CudaModuleUnload>(library_.get(), "cuModuleUnload")
-                           : nullptr),
+        module_unload_(load_driver_symbol<CudaModuleUnload>(library_.get(), "cuModuleUnload")),
         module_get_function_(load_driver_symbol<CudaModuleGetFunction>(library_.get(), "cuModuleGetFunction")),
         launch_kernel_(load_driver_symbol<CudaLaunchKernel>(library_.get(), "cuLaunchKernel")) {
     check_initialization(initialize_(0), "initialize CUDA driver");
@@ -207,6 +204,10 @@ class CudaDriverApi {
   [[nodiscard]] CudaModule load_module(const void* image, std::string_view operation) const {
     CudaModule module = nullptr;
     check_runtime(module_load_data_(&module, image, 0, nullptr, nullptr), operation);
+    if (module == nullptr) {
+      throw ErrorFactory::runtime_failure(CudaRuntimeFailureKind::kInternal,
+                                          std::string(operation) + " returned a null CUDA module");
+    }
     return module;
   }
 
@@ -219,6 +220,10 @@ class CudaDriverApi {
   [[nodiscard]] CudaFunction get_function(CudaModule module, const char* name) const {
     CudaFunction function = nullptr;
     check_runtime(module_get_function_(&function, module, name), std::string("find CUDA kernel ") + name);
+    if (function == nullptr) {
+      throw ErrorFactory::runtime_failure(CudaRuntimeFailureKind::kInternal,
+                                          std::string("find CUDA kernel ") + name + " returned a null symbol");
+    }
     return function;
   }
 
@@ -270,6 +275,35 @@ class CudaDriverApi {
   CudaModuleGetFunction module_get_function_;
   CudaLaunchKernel launch_kernel_;
   std::int32_t driver_version_ = 0;
+};
+
+template <typename Driver>
+class CudaModuleOwner {
+ public:
+  CudaModuleOwner(const Driver& driver, CudaModule module) noexcept : driver_(&driver), module_(module) {}
+
+  ~CudaModuleOwner() { driver_->unload_module(module_); }
+
+  CudaModuleOwner(const CudaModuleOwner&) = delete;
+  CudaModuleOwner& operator=(const CudaModuleOwner&) = delete;
+
+  CudaModuleOwner(CudaModuleOwner&& other) noexcept
+      : driver_(other.driver_), module_(std::exchange(other.module_, nullptr)) {}
+
+  CudaModuleOwner& operator=(CudaModuleOwner&& other) noexcept {
+    if (this != &other) {
+      driver_->unload_module(module_);
+      driver_ = other.driver_;
+      module_ = std::exchange(other.module_, nullptr);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] CudaModule get() const noexcept { return module_; }
+
+ private:
+  const Driver* driver_;
+  CudaModule module_;
 };
 
 }  // namespace g::cuda_native

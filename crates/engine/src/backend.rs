@@ -73,6 +73,13 @@ pub trait AssociationBackend: Send + Sync {
     type DeviceResult: Send + 'static;
     type Error: std::error::Error + Send + Sync + 'static;
 
+    /// Return the runtime-selected implementations that affect reproducibility.
+    ///
+    /// Backends without optional implementations retain the empty default.
+    fn association_implementation_provenance(&self) -> g_plan::AssociationImplementationProvenance {
+        g_plan::AssociationImplementationProvenance::default()
+    }
+
     /// Return the genotype delivery modes supported by this backend instance.
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability;
 

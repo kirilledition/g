@@ -174,6 +174,10 @@ requires an NVIDIA driver exposing CUDA driver API 12.2 or newer and a device
 with compute capability 7.0 or newer. An eligible zlib packed8 run fails with a
 specific initialization error when those requirements or nvCOMP are missing;
 it does not silently replace the requested device decode with host decode.
+Descriptor bounds or alignment status `0x00000800` is terminal and is never
+retried. The error identifies the first affected variant and includes bounded
+source, metadata, and allocation fingerprints for diagnosis without logging
+protected genotype bytes.
 
 The supported production runtime is exactly `jax==0.11.0` with
 `jaxlib==0.11.0`, and its GPU install deliberately uses the CUDA 12 extra on
@@ -190,7 +194,8 @@ registration fails, `g` transparently retains the numerically equivalent JAX
 component reduction; the requested GPU association run continues.
 An unexpected CUDA module or launch failure after that selection is reported
 as an execution error; `g` does not change implementations inside a compiled
-solver lifecycle.
+solver lifecycle. Run provenance records the requested and effective component
+implementation and a typed reason when the JAX fallback is selected.
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

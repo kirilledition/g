@@ -95,11 +95,25 @@ Binary approximate-Firth GPU runs independently probe `g-compute-cuda` and
 register its private component-reduction target once. Compatible runs use the
 embedded PTX through typed XLA FFI; an unavailable driver, unsupported device,
 or registration failure selects the mathematically equivalent JAX reduction.
+The process-lifetime selection is typed and immutable, records requested and
+effective implementations plus a typed fallback reason, and cannot switch
+after compilation begins. The same provenance is available to the output
+manifest boundary.
+Focused native tests opt into the `private-test-support` Cargo feature, which
+adds only `g._core._testing` registration helpers. Normal Maturin builds enable
+only `extension-module`, so the helper namespace is absent from the production
+extension and its public stub.
 This optional compute capability is not coupled to packed8 delivery or nvCOMP.
 The two CUDA crates have independent Rust APIs and PTX/kernel ownership. They
 source-include only the neutral repository-private `native/cuda-driver` support
-header so CUDA ABI declarations, dynamic loading, and device/context checks
-have one maintained implementation without a linked support library.
+header so CUDA ABI declarations, dynamic loading, module ownership, and
+device/context checks have one maintained implementation without a linked
+support library.
+
+Packed8 descriptor status `0x00000800` is terminal. The binding records bounded
+FNV-1a fingerprints for the source slab, metadata, and pooled allocation
+identity before transfer, attaches them to that batch, and reports them with
+the first descriptor failure without retrying the batch.
 
 Runner holds process runtime state across logging-compatibility validation,
 native session construction, subscriber installation, and topology recording.

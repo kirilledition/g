@@ -146,6 +146,7 @@ ban-relative-imports = "all"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
+    "cuda_native: serialized native CUDA handler execution requiring an exclusive GPU allocation.",
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
     "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",
     "parity_blocking: external parity workflow that is an active release gate.",

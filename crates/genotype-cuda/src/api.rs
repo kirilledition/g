@@ -9,6 +9,8 @@ use std::ptr::NonNull;
 
 /// Stable JAX FFI target registered by the private Python binding boundary.
 pub const PACKED8_DEFLATE_FFI_TARGET: &str = "g.bgen.packed8_deflate.v1";
+/// Device status bit emitted when packed8 descriptor bounds or alignment validation fails.
+pub const PACKED8_DESCRIPTOR_FAILURE_STATUS: u32 = 0x0000_0800;
 
 #[cfg(target_os = "linux")]
 const INITIALIZATION_SUCCESS: c_int = 0;
@@ -38,7 +40,16 @@ const NVCOMP_INPUT_ALIGNMENT_UNSUPPORTED: c_int = 9;
 #[must_use]
 #[derive(Debug, Eq, PartialEq)]
 pub struct NvcompCapability {
+    input_alignment: usize,
     private: (),
+}
+
+impl NvcompCapability {
+    /// Returns the required alignment of each compressed DEFLATE member.
+    #[must_use]
+    pub const fn input_alignment(&self) -> usize {
+        self.input_alignment
+    }
 }
 
 /// Reason the nvCOMP JAX FFI path cannot be selected for a run.
@@ -139,7 +150,7 @@ pub fn initialize_nvcomp_runtime(device_ordinal: i32) -> Result<NvcompCapability
     };
 
     if status == INITIALIZATION_SUCCESS {
-        return Ok(NvcompCapability { private: () });
+        return Ok(NvcompCapability { input_alignment: native_capability.nvcomp_input_alignment, private: () });
     }
 
     let detail = if native_detail.is_null() {
@@ -200,12 +211,16 @@ pub fn initialize_nvcomp_runtime(_device_ordinal: i32) -> Result<NvcompCapabilit
 ///
 /// Requiring the opaque capability proof prevents callers from obtaining a
 /// handler before [`initialize_nvcomp_runtime`] succeeds for the selected device.
+///
+/// # Panics
+///
+/// Panics if the platform reports a null address for the linked handler
+/// function, which violates Rust's function-pointer representation contract.
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn packed8_deflate_ffi_handler(_capability: &NvcompCapability) -> NonNull<c_void> {
     let handler = g_nvcomp_decode_packed8_ffi as *mut c_void;
-    // SAFETY: A linked function symbol always has a non-null address.
-    unsafe { NonNull::new_unchecked(handler) }
+    NonNull::new(handler).expect("the linked packed8 typed-XLA handler symbol must be non-null")
 }
 
 #[cfg(target_os = "linux")]
@@ -244,6 +259,11 @@ mod tests {
     fn ffi_target_and_member_alignment_are_stable() {
         assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_TARGET), "g.bgen.packed8_deflate.v1");
         assert_eq!(std::hint::black_box(g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT), 4);
+        assert_eq!(std::hint::black_box(PACKED8_DESCRIPTOR_FAILURE_STATUS), 2048);
+        assert!(
+            include_str!("../native/packed8_kernel.cu").contains("#define STATUS_DESCRIPTOR 2048u"),
+            "Rust and CUDA descriptor status values must remain identical"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -431,13 +451,14 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn capability_gates_a_stable_non_null_handler_address() {
-        let capability = NvcompCapability { private: () };
+        let capability = NvcompCapability { input_alignment: 4, private: () };
 
         let first_handler = packed8_deflate_ffi_handler(&capability);
         let second_handler = packed8_deflate_ffi_handler(&capability);
 
         assert_eq!(first_handler, second_handler);
-        assert_eq!(capability, NvcompCapability { private: () });
+        assert_eq!(capability, NvcompCapability { input_alignment: 4, private: () });
+        assert_eq!(capability.input_alignment(), 4);
         assert!(format!("{capability:?}").contains("NvcompCapability"));
     }
 }

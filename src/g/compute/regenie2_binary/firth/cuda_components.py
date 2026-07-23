@@ -5,9 +5,8 @@ from __future__ import annotations
 import jax
 import numpy as np
 
+from g.compute import cuda_ffi
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-FIRTH_COMPONENTS_FFI_TARGET = "g.firth.components.v1"
 
 
 def compute_scalar_firth_components(
@@ -23,7 +22,7 @@ def compute_scalar_firth_components(
     """Compute one lane through the vectorizable CUDA FFI."""
     output_shape = beta.shape
     foreign_outputs = jax.ffi.ffi_call(
-        FIRTH_COMPONENTS_FFI_TARGET,
+        cuda_ffi.FIRTH_COMPONENTS_FFI_TARGET,
         (
             jax.ShapeDtypeStruct(output_shape, np.float64),
             jax.ShapeDtypeStruct(output_shape, np.float64),

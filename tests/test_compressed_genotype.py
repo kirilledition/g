@@ -11,6 +11,7 @@ import numpy.typing as npt
 import pytest
 
 import tests.numerical
+from g.compute import cuda_ffi
 from g.compute.common import compressed_genotype
 
 type Packed8ForeignOutputs = tuple[
@@ -95,7 +96,7 @@ def install_fake_packed8_ffi(
         target_name: str,
         result_shape_dtypes: tuple[jax.ShapeDtypeStruct, ...],
     ) -> Packed8ForeignCall:
-        assert target_name == compressed_genotype.PACKED8_DEFLATE_FFI_TARGET
+        assert target_name == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
         assert tuple(output.shape for output in result_shape_dtypes) == (
             (4, 100, 2),
             (4,),

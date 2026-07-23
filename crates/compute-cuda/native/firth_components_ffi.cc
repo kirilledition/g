@@ -9,13 +9,14 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
-#include <utility>
 
 #include "cuda_driver.h"
 
 static_assert(XLA_FFI_API_MAJOR == 0);
 static_assert(XLA_FFI_API_MINOR == 3);
 static_assert(sizeof(std::size_t) == sizeof(std::uint64_t));
+static_assert(sizeof(bool) == 1);
+static_assert(alignof(bool) == 1);
 
 struct GComputeCudaCapability {
   std::int32_t cuda_driver_version;
@@ -31,7 +32,6 @@ namespace {
 
 using g::cuda_native::CudaContext;
 using g::cuda_native::CudaFunction;
-using g::cuda_native::CudaModule;
 using g::cuda_native::CudaStream;
 using xla::ffi::AnyBuffer;
 using xla::ffi::DataType;
@@ -116,26 +116,7 @@ struct CudaErrorFactory {
 };
 
 using CudaDriverApi = g::cuda_native::CudaDriverApi<CudaErrorFactory>;
-
-class CudaModuleOwner {
- public:
-  CudaModuleOwner(const CudaDriverApi& driver, CudaModule module) : driver_(&driver), module_(module) {}
-
-  ~CudaModuleOwner() { driver_->unload_module(module_); }
-
-  CudaModuleOwner(const CudaModuleOwner&) = delete;
-  CudaModuleOwner& operator=(const CudaModuleOwner&) = delete;
-  CudaModuleOwner(CudaModuleOwner&& other) noexcept
-      : driver_(other.driver_), module_(std::exchange(other.module_, nullptr)) {}
-
-  CudaModuleOwner& operator=(CudaModuleOwner&&) = delete;
-
-  [[nodiscard]] CudaModule get() const noexcept { return module_; }
-
- private:
-  const CudaDriverApi* driver_;
-  CudaModule module_;
-};
+using CudaModuleOwner = g::cuda_native::CudaModuleOwner<CudaDriverApi>;
 
 class FirthComponentsKernel {
  public:
@@ -233,7 +214,7 @@ class FirthComponentsKernelCache {
 
 class RuntimeState {
  public:
-  RuntimeState() : driver_(g::cuda_native::CudaModuleUnloadPolicy::kRequired), kernels_(driver_) {}
+  RuntimeState() : kernels_(driver_) {}
 
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;

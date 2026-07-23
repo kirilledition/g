@@ -10,9 +10,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from g.compute import cuda_ffi
 from g.compute.common import genotype
 
-PACKED8_DEFLATE_FFI_TARGET = "g.bgen.packed8_deflate.v1"
 RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT = 50
 
 
@@ -97,7 +97,7 @@ def decode_packed8_deflate_batch(
 
     """
     foreign_outputs = jax.ffi.ffi_call(
-        PACKED8_DEFLATE_FFI_TARGET,
+        cuda_ffi.PACKED8_DEFLATE_FFI_TARGET,
         (
             jax.ShapeDtypeStruct(
                 (compute_variant_count, selected_sample_count, 2),

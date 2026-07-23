@@ -162,12 +162,16 @@ pub fn initialize_firth_components_runtime(
 }
 
 /// Returns the process-lifetime typed-XLA FFI handler address.
+///
+/// # Panics
+///
+/// Panics if the platform reports a null address for the linked handler
+/// function, which violates Rust's function-pointer representation contract.
 #[cfg(target_os = "linux")]
 #[must_use]
 pub fn firth_components_ffi_handler(_capability: &FirthComponentsCapability) -> NonNull<c_void> {
     let handler = g_firth_components_ffi as *mut c_void;
-    // SAFETY: A linked function symbol always has a non-null address.
-    unsafe { NonNull::new_unchecked(handler) }
+    NonNull::new(handler).expect("the linked Firth typed-XLA handler symbol must be non-null")
 }
 
 #[cfg(target_os = "linux")]
