@@ -8,6 +8,8 @@ pub enum OutputError {
     InvalidInput(String),
     #[error("Run manifest '{}' is missing during a lifecycle update.", manifest_path.display())]
     MissingRunManifest { manifest_path: PathBuf },
+    #[error("Another process published a conflicting immutable output lineage record at '{}'.", record_path.display())]
+    ConcurrentLineageUpdate { record_path: PathBuf },
     #[error("{0}")]
     Runtime(String),
 }

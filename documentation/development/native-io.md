@@ -110,6 +110,28 @@ change time.
 Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.
 
+Output ownership does not use advisory file locks. The run root carries an
+append-only `.g-output` lineage with one immutable genesis record, at most one
+immutable successor record per attempt, and an immutable terminal record per
+attempt. Records are written and synchronized under unique temporary names,
+then published with a same-directory hard-link no-replace operation and a
+directory synchronization. There is no authoritative mutable `HEAD`; readers
+traverse successor records from genesis.
+
+The hard-link no-replace operation is the cross-process linearization point.
+Its same-filesystem, cross-node visibility and `AlreadyExists` behavior must be
+qualified on the deployed BeeGFS mount before production use. A failed
+qualification is a release blocker; advisory locks are not an acceptable
+fallback.
+
+The canonical chunk plan is ordered, contiguous from zero, and SHA-256 bound.
+Part footer metadata repeats run-set, producing-attempt, phenotype,
+execution-plan, chunk-plan, part, receipt-name, and exact chunk geometry.
+Because a raw file digest cannot be embedded in the same bytes that it hashes,
+the immutable receipt repeats that footer identity and adds the final raw byte
+size and SHA-256. Resume requires footer/receipt equality and a fresh hash of
+the raw Parquet bytes.
+
 ## Testing
 
 Native I/O changes usually need tests in:
