@@ -7,6 +7,7 @@
 /tests/tooling/test_check_github_action_pins.py @kirilledition
 
 # Dependency declarations and locks
+/.cargo/** @kirilledition
 /**/Cargo.toml @kirilledition
 /Cargo.lock @kirilledition
 /pyproject.toml @kirilledition
@@ -17,11 +18,18 @@
 /flake.lock @kirilledition
 
 # Native build logic, maintained CUDA sources, and generated GPU artifacts
+/.clang-format @kirilledition
+/.clang-tidy @kirilledition
 /Justfile @kirilledition
 /crates/**/build.rs @kirilledition
 /crates/compute-cuda/native/** @kirilledition
 /crates/genotype-cuda/native/** @kirilledition
+/native/cuda-build/** @kirilledition
 /native/cuda-driver/** @kirilledition
+/tooling/cli/debug.py @kirilledition
+/tooling/configs/debug_check_cuda_native.yaml @kirilledition
+/tooling/debug/check_cuda_native.py @kirilledition
+/tests/tooling/test_check_cuda_native.py @kirilledition
 /vendor/openxla/** @kirilledition
 
 # External scientific-parity contract and qualification metadata
