@@ -9,6 +9,10 @@ mod raw_deflate;
 mod reader;
 mod sample_selection;
 mod simd;
+mod source;
+
+#[cfg(feature = "benchmark-internals")]
+pub(crate) use source::MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT;
 
 pub use error::BgenError;
 pub(in crate::bgen) use format::CompressionType;

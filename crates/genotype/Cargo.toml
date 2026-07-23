@@ -5,11 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+benchmark-internals = []
+benchmark-positioned-source = []
+
 [dependencies]
 g-genotype-contracts = { workspace = true }
 hex = { workspace = true }
 libdeflate-sys = { workspace = true }
-memmap2 = { workspace = true }
 rayon = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
@@ -24,3 +27,13 @@ workspace = true
 [[bench]]
 name = "bgen_read"
 harness = false
+
+[[bench]]
+name = "bgen_open_once"
+harness = false
+required-features = ["benchmark-internals"]
+
+[[bench]]
+name = "bgen_lifecycle_once"
+harness = false
+required-features = ["benchmark-internals"]

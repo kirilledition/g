@@ -11,14 +11,14 @@ pub(super) use matrix::{
     selected_sample_count_to_i32, with_worker_thread_scratch,
 };
 pub(super) use probability::{
-    parse_layout_two_probability_block, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at,
-    u32_to_usize, validate_layout_two_probability_values,
+    parse_layout_two_probability_block, read_exact_bytes, read_probability_block, read_u32_at, u32_to_usize,
+    validate_layout_two_probability_values,
 };
 pub(super) use variant_major::{decode_variant_major_dosage_tile, validate_variant_major_tile_stats_lengths};
 
 #[derive(Clone, Copy)]
 pub(super) struct VariantMajorTileDecodeRequest<'request> {
-    pub(super) mmap: &'request [u8],
+    pub(super) source_window: super::source::BgenByteWindow<'request>,
     pub(super) compression_type: CompressionType,
     pub(super) sample_count: usize,
     pub(super) sample_selection: &'request SampleSelection,

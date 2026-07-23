@@ -16,7 +16,7 @@ reader APIs, manifests, or buffer ownership.
 | BGEN `sample_count`, `variant_count` | `usize` after header parse | Memory count | Keep `usize`; BGEN header `u32` is checked during parse. |
 | BGEN and aligned sample selection indices | `usize` internally | Memory index | Keep native; sample-selection indices do not cross PyO3. |
 | BGEN variant metadata positions | `Vec<i64>` | Genomic position/output metadata | Keep fixed-width `i64`. |
-| BGEN file offsets and block lengths | parser-local checked integers | File format offsets/lengths | Keep checked before indexing mmap data. |
+| BGEN file offsets and block lengths | parser-local checked integers | File format offsets/lengths | Keep checked before snapshot slicing or positioned reads; owned windows are capped at 8 MiB. |
 | `ChunkStats` count columns | `Vec<i32>` | Native/JAX/output count contract | Keep `i32`; run preflight bounds the contributing sample count. |
 | Output run manifest chunk identifiers and variant ranges | `i64` | JSON/manifest schema | Keep fixed-width `i64`; convert from `usize` with checked helpers. |
 | Output writer row counts | `usize` internally, manifest JSON fixed-width | Memory count and schema field | Keep `usize` internally; convert when serializing/resuming. |

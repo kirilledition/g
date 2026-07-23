@@ -57,7 +57,6 @@ g-runner = { path = "crates/runner" }
 g-runtime = { path = "crates/runtime" }
 libdeflate-sys = "1.25.2"
 memchr = "2.8.3"
-memmap2 = "0.9.11"
 nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
 numpy = "0.29.0"
 parquet = { version = "59.1.0", default-features = false, features = ["arrow", "zstd"] }

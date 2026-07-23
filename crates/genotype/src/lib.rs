@@ -11,3 +11,8 @@ mod planner;
 mod preprocess;
 
 pub use api::*;
+
+/// Maximum source size retained as an immutable owned BGEN snapshot.
+#[cfg(feature = "benchmark-internals")]
+#[doc(hidden)]
+pub const BGEN_OWNED_SNAPSHOT_MAXIMUM_BYTE_COUNT: u64 = bgen::MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT;

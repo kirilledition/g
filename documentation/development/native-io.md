@@ -15,7 +15,7 @@ Integer boundary decisions for native I/O are maintained in
 
 | Path | Responsibility |
 | --- | --- |
-| `crates/genotype/src/` | BGEN mmap/index/decode/preprocess and genotype source planning. |
+| `crates/genotype/src/` | BGEN source ownership/index/decode/preprocess and genotype source planning. |
 | `crates/input/src/` | Sample, phenotype, covariate, prediction-list, and LOCO prediction alignment. |
 | `crates/output/src/` | Parquet dataset parts, manifests, resume, and bounded writer sessions. |
 | `crates/engine/src/` | Production coordination of input, genotype delivery, output, telemetry facts, and cleanup. |
@@ -37,6 +37,55 @@ zlib, and BGEN v1.3 Zstandard variant blocks. Native code owns:
 
 Python/JAX kernels should receive already aligned dosage or validated packed8
 chunks and metadata, not parse file formats.
+
+The reader copies BGEN files up to 256 MiB into one immutable owned snapshot.
+Larger files retain the exact opened descriptor and use positioned reads into
+one reusable owned window per active batch, never larger than 8 MiB. Byte
+windows are independent of the 32-variant compute tile: each positioned window
+is read once, then its borrowed bytes are decoded by parallel compute tiles.
+Compatibility validation reuses the same byte-window policy. Decode and
+raw-DEFLATE packing borrow directly from the snapshot when present; no safe API
+is backed by a mutable file mapping. Snapshot indexing uses a concrete
+bounds-checked slice cursor; positioned indexing streams bounded 8 MiB windows
+instead of issuing one metadata read per variant. The opened descriptor and
+configured path
+are identified by device, inode, size, modification time, and change time and
+rechecked around indexing and before a captured snapshot is published. A
+published immutable payload isolates its readers from later in-place mutation
+or configured-path replacement, so snapshot delivery and session finish do not
+restat the source. Positioned batches recheck both the descriptor and
+configured path after every delivered batch and at session finish. Concurrent
+truncation, mutation, or path replacement of a positioned source therefore
+returns an error without exposing mapped memory.
+
+One private process-wide registry entry strongly owns the latest completely
+parsed small-file payload by that full identity. The payload contains the
+snapshot bytes, header properties, variant records, validated metadata, and
+chromosome boundaries. An unchanged reopen shares this canonical payload even
+after every previous reader closes. A different identity replaces the entry
+atomically only after capture, open-time header/index validation, and final
+identity verification; a candidate rejected before publication does not evict
+the valid entry. Probability-semantic corruption discovered later during
+compatibility validation or decode still fails safely, but its published
+identity may already have replaced the earlier entry. Live readers may keep a
+replaced payload alive.
+
+The registry therefore retains up to 256 MiB of source bytes plus parsed index
+and metadata allocations until a replacement passes open/index validation or
+the process exits. The parsed allocations are outside the source-byte ceiling
+and can be substantially larger for adversarial high-cardinality metadata.
+Capturing and parsing a different identity overlaps the candidate with the
+still-retained old entry. Each concurrent cold miss owns a separate candidate
+outside the registry lock, so transient candidate memory scales with in-flight
+opens. After publication, readers of the previous identity can extend the
+overlap between old and new payloads.
+
+Header length and first-variant offsets, zero-variant end-of-file placement,
+reserved flag bits, embedded sample-block framing/counts, and variant-count
+capacity are validated before the index allocates. Variant identifiers, RSIDs,
+chromosome labels, and alleles must be valid UTF-8. Probability-pair validation
+covers every stored sample, including samples omitted from a delivery
+selection.
 
 The BGEN index publishes variant metadata only through the validated
 `g-genotype-contracts` constructors. Store construction performs one-time,
@@ -240,7 +289,6 @@ Native I/O changes usually need tests in:
 
 Output contract changes also require [Output Files](../public/output-files.md)
 and [Resume and Manifest](../public/resume-and-manifest.md) updates.
-
 Output writer closure uses one session-state mutex to order chunk admission
 against complete, interrupt, and abort. The coordinator reserves an RAII
 completion ticket under that mutex before detaching a full or tail batch, and a
@@ -264,3 +312,67 @@ is still running; production correctness relies on the explicit terminal
 paths. Dropping an initialized manager first aborts all sessions, drains queued
 batches, discards pending tails, and leaves retained delivery tokens unable to
 admit more work.
+
+For BGEN performance work, the process-registry-empty and
+process-registry-primed open contracts are deliberately separate:
+
+```bash
+GWAS_ENGINE_BGEN_BENCHMARK_PATH=/path/to/input.bgen \
+  cargo bench -p g-genotype --features benchmark-internals --bench bgen_open_once
+
+GWAS_ENGINE_BGEN_BENCHMARK_PATH=/path/to/input.bgen \
+  cargo bench -p g-genotype --bench bgen_read -- \
+  bgen_warmed_open_and_index/sequential_index
+
+GWAS_ENGINE_BGEN_BENCHMARK_PATH=/path/to/input.bgen \
+  cargo bench -p g-genotype --features benchmark-internals \
+  --bench bgen_lifecycle_once
+```
+
+`bgen_open_once` starts with an empty process registry and reports first-open
+capture/index time, same-process reopen/index time, a second reopen after both
+readers have dropped, strong canonical hit status, retained source bytes, and
+process resident memory before open and after reader drop. The retained byte
+counter covers source bytes; the accompanying flag records that the canonical
+payload also retains its parsed index and metadata. The Criterion group keeps
+one priming reader alive and measures process-registry-primed reopen/index work.
+For inputs at or below the owned-snapshot ceiling this is an unchanged
+canonical-payload reopen; larger inputs use positioned I/O.
+`bgen_lifecycle_once` reports open/index, preparation, aggregate time for all
+full 16,384-variant packed8 batches, the final logical tail using the same fixed
+production compute shape, policy-specific session finish, and their end-to-end
+sum. Snapshot finish is a no-op because the payload is already immutable;
+positioned finish verifies the source identity. Use the lifecycle total—not an
+isolated open or batch result—when comparing source policies. Set
+`GWAS_ENGINE_BGEN_BENCHMARK_PRIMED_REOPEN=1` to open and drop one priming
+reader before timing the focused same-process reopen lifecycle. This leaves
+only process-persistent state—not an extra live reader or index—during the
+measurement.
+
+The lifecycle input must be packed8-compatible: biallelic, diploid, unphased,
+eight-bit, and without missing samples. The benchmark asserts that contract
+instead of switching to dosage delivery. A paired compatibility-cache-primed
+comparison must set `XDG_CACHE_HOME` to one fresh campaign-local directory, run
+one unmeasured prewarm lifecycle, verify that it wrote a `compatible` marker,
+and reuse that same marker state for every baseline and candidate process. An
+empty compatibility-cache comparison must instead give every measured process
+its own empty cache directory. Never let the first measured design create a
+compatibility marker that only later positioned runs consume.
+
+These process-registry and compatibility-cache labels say nothing about the
+kernel filesystem page cache. A same-input source-policy campaign must give
+both designs equivalent filesystem-cache state. The paired protocol performs
+an untimed full read of the source immediately before every individual
+baseline or candidate process, verifies the source size and digest on that
+read, and alternates process order across blocks. Record that conditioning
+method with the results. Without explicit cache eviction and supporting
+evidence, describe these measurements as page-cache-primed rather than
+filesystem-cold.
+
+For an exact same-input comparison against positioned I/O, build `bgen_read`
+with `--features benchmark-positioned-source`. This benchmark-only feature
+exposes and selects an explicit zero-snapshot-limit benchmark constructor and
+labels its open group `bgen_positioned_open_and_index`. Enabling the feature
+does not change the production `BgenReaderCore::open` policy. Add
+`benchmark-positioned-source` to the `bgen_lifecycle_once` feature list for the
+corresponding end-to-end positioned measurement.

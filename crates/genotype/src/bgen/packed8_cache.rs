@@ -1,17 +1,14 @@
 //! Best-effort persistent cache for packed8 BGEN compatibility scans.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
 use g_genotype_contracts::BgenSourceIdentity;
-
-use super::reader::BgenReaderCore;
 
 const CACHE_APPLICATION_DIRECTORY: &str = "g";
 const CACHE_DIRECTORY_NAME: &str = "packed8_validation";
@@ -25,85 +22,22 @@ pub(super) struct ValidationCacheEntry {
     fingerprint: String,
 }
 
-#[derive(Debug)]
-pub(super) struct ValidationCacheSource {
-    pub(super) file: File,
-    pub(super) identity: BgenSourceIdentity,
-}
-
-impl ValidationCacheSource {
-    pub(super) fn open(bgen_path: &Path) -> std::io::Result<Self> {
-        let configured_bgen_path =
-            if bgen_path.is_absolute() { bgen_path.to_path_buf() } else { std::env::current_dir()?.join(bgen_path) };
-        let file = File::open(&configured_bgen_path)?;
-        let identity = capture_bgen_source_identity(&configured_bgen_path, &file)?;
-        Ok(Self { file, identity })
-    }
-
-    pub(super) fn is_unchanged(&self) -> std::io::Result<bool> {
-        let current_file = match File::open(&self.identity.configured_path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        bgen_source_metadata_matches(&self.identity, &current_file.metadata()?)
-    }
-}
-
-fn capture_bgen_source_identity(configured_path: &Path, file: &File) -> std::io::Result<BgenSourceIdentity> {
-    let metadata = file.metadata()?;
-    Ok(BgenSourceIdentity {
-        canonical_path: configured_path.canonicalize().ok(),
-        configured_path: configured_path.to_path_buf(),
-        device_identifier: metadata.dev(),
-        inode_identifier: metadata.ino(),
-        change_time_nanoseconds: checked_timestamp_ns(
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-            "BGEN change timestamp does not fit signed nanoseconds.",
-        )?,
-        modification_time_nanoseconds: checked_timestamp_ns(
-            metadata.mtime(),
-            metadata.mtime_nsec(),
-            "BGEN modification timestamp does not fit signed nanoseconds.",
-        )?,
-        file_size: metadata.size(),
-    })
-}
-
-fn bgen_source_metadata_matches(
-    expected_identity: &BgenSourceIdentity,
-    metadata: &std::fs::Metadata,
-) -> std::io::Result<bool> {
-    Ok(expected_identity.device_identifier == metadata.dev()
-        && expected_identity.inode_identifier == metadata.ino()
-        && expected_identity.change_time_nanoseconds
-            == checked_timestamp_ns(
-                metadata.ctime(),
-                metadata.ctime_nsec(),
-                "BGEN change timestamp does not fit signed nanoseconds.",
-            )?
-        && expected_identity.modification_time_nanoseconds
-            == checked_timestamp_ns(
-                metadata.mtime(),
-                metadata.mtime_nsec(),
-                "BGEN modification timestamp does not fit signed nanoseconds.",
-            )?
-        && expected_identity.file_size == metadata.size())
-}
-
 impl ValidationCacheEntry {
-    pub(super) fn build(reader: &BgenReaderCore, source: &ValidationCacheSource) -> std::io::Result<Option<Self>> {
+    pub(super) fn build(
+        source_identity: &BgenSourceIdentity,
+        sample_count: usize,
+        variant_count: usize,
+    ) -> std::io::Result<Option<Self>> {
         let Some(cache_directory) = default_cache_directory() else {
             return Ok(None);
         };
-        let Some(canonical_bgen_path) = source.identity.canonical_path.as_ref() else {
+        let Some(canonical_bgen_path) = source_identity.canonical_path.as_ref() else {
             return Ok(None);
         };
-        let sample_count = i64::try_from(reader.sample_count()).map_err(|_| {
+        let sample_count = i64::try_from(sample_count).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "BGEN sample count exceeds the cache range.")
         })?;
-        let variant_count = i64::try_from(reader.variant_count()).map_err(|_| {
+        let variant_count = i64::try_from(variant_count).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "BGEN variant count exceeds the cache range.")
         })?;
         let canonical_path_bytes = canonical_bgen_path.as_os_str().as_bytes();
@@ -114,12 +48,12 @@ impl ValidationCacheEntry {
         fingerprint_hash.update(CACHE_SCHEMA_VERSION.to_le_bytes());
         fingerprint_hash.update(canonical_path_byte_count.to_le_bytes());
         fingerprint_hash.update(canonical_path_bytes);
-        fingerprint_hash.update(source.identity.change_time_nanoseconds.to_le_bytes());
-        fingerprint_hash.update(source.identity.device_identifier.to_le_bytes());
-        fingerprint_hash.update(source.identity.inode_identifier.to_le_bytes());
-        fingerprint_hash.update(source.identity.modification_time_nanoseconds.to_le_bytes());
+        fingerprint_hash.update(source_identity.change_time_nanoseconds.to_le_bytes());
+        fingerprint_hash.update(source_identity.device_identifier.to_le_bytes());
+        fingerprint_hash.update(source_identity.inode_identifier.to_le_bytes());
+        fingerprint_hash.update(source_identity.modification_time_nanoseconds.to_le_bytes());
         fingerprint_hash.update(sample_count.to_le_bytes());
-        fingerprint_hash.update(source.identity.file_size.to_le_bytes());
+        fingerprint_hash.update(source_identity.file_size.to_le_bytes());
         fingerprint_hash.update(variant_count.to_le_bytes());
         let fingerprint = hex::encode(fingerprint_hash.finalize());
         Ok(Some(Self { cache_path: cache_directory.join(format!("{fingerprint}.marker")), fingerprint }))
@@ -174,13 +108,6 @@ impl ValidationCacheEntry {
         }
         Ok(())
     }
-}
-
-fn checked_timestamp_ns(seconds: i64, nanoseconds: i64, error_message: &'static str) -> std::io::Result<i64> {
-    seconds
-        .checked_mul(1_000_000_000)
-        .and_then(|whole_seconds| whole_seconds.checked_add(nanoseconds))
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, error_message))
 }
 
 fn default_cache_directory() -> Option<PathBuf> {

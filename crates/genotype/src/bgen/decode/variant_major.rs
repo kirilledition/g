@@ -23,7 +23,7 @@ pub(in crate::bgen) fn decode_variant_major_dosage_tile(
     thread_scratch: &mut ThreadScratch,
 ) -> Result<(), VariantDecodeFailure> {
     let VariantMajorTileDecodeRequest {
-        mmap,
+        source_window,
         compression_type,
         sample_count,
         sample_selection,
@@ -55,7 +55,7 @@ pub(in crate::bgen) fn decode_variant_major_dosage_tile(
         variant_records.iter().enumerate().zip(output_values.chunks_exact_mut(selected_sample_count))
     {
         let variant_decode_result = decode_variant_dosages_into_variant_major_row(
-            mmap,
+            source_window,
             compression_type,
             sample_count,
             sample_selection,
@@ -97,7 +97,7 @@ pub(in crate::bgen) fn validate_variant_major_tile_stats_lengths(
 }
 
 fn decode_variant_dosages_into_variant_major_row(
-    mmap: &[u8],
+    source_window: super::super::source::BgenByteWindow<'_>,
     compression_type: CompressionType,
     sample_count: usize,
     sample_selection: &SampleSelection,
@@ -107,7 +107,7 @@ fn decode_variant_dosages_into_variant_major_row(
     thread_scratch: &mut ThreadScratch,
 ) -> Result<DosageSummary, BgenError> {
     let selected_sample_count = output_row.len();
-    let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
+    let probability_block = read_probability_block(source_window, compression_type, variant_record, thread_scratch)?;
     let parsed_probability_block = parse_layout_two_probability_block(probability_block, sample_count)?;
     if parsed_probability_block.minimum_ploidy != 2 || parsed_probability_block.maximum_ploidy != 2 {
         return Err(BgenError::UnsupportedFormat(format!(
@@ -230,6 +230,17 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
 
     selected_sample_count_to_i32(selected_sample_count)?;
     let all_samples_present = simd::all_samples_present_diploid_simd_or_scalar(sample_ploidy_and_missingness);
+
+    if all_samples_present
+        && !sample_selection.is_identity()
+        && !simd::all_unphased_eight_bit_probability_pairs_valid_simd_or_scalar(
+            &packed_probability_bytes[..expected_probability_byte_count],
+        )
+    {
+        return Err(BgenError::InvalidFormat(
+            "contains an 8-bit probability pair whose values sum above 255.".to_string(),
+        ));
+    }
 
     if sample_selection.is_identity() && all_samples_present {
         let decode_summary = simd::decode_unphased_eight_bit_identity_simd_or_scalar(
