@@ -27,6 +27,18 @@ FIRTH_SAMPLE_COUNTS = (31, 32, 33, 255, 256, 257)
 PACKED8_DESCRIPTOR_STATUS = 0x0000_0800
 PACKED8_ADLER_STATUS = 0x0000_0200
 PACKED8_SAMPLE_INDEX_STATUS = 0x0000_0400
+PACKED8_BOUNDARY_GEOMETRIES = (
+    (31, 255, 256),
+    (32, 256, 256),
+    (33, 257, 512),
+    (255, 255, 256),
+    (256, 256, 256),
+    (257, 257, 512),
+)
+PACKED8_PRODUCTION_GEOMETRIES = (
+    (31, 16_384, 16_384),
+    (257, 257, 16_384),
+)
 
 pytestmark = [
     pytest.mark.cuda_native,
@@ -440,41 +452,16 @@ def decode_packed8_fixture(
     )
 
 
-@pytest.mark.parametrize(("logical_variant_count", "compute_variant_count"), ((64, 64), (17, 64)))
-@pytest.mark.parametrize("selection_mode", ("identity", "contiguous", "indexed"))
-def test_registered_packed8_handler_covers_geometry_selection_and_padding(
-    cuda_test_support: CudaFfiTestSupport,
+def assert_packed8_result_matches(
+    observed: compressed_genotype.DecodedPacked8DeflateBatch,
+    expected: Packed8Expected,
+    *,
     logical_variant_count: int,
     compute_variant_count: int,
-    selection_mode: str,
+    selected_sample_count: int,
 ) -> None:
-    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
-    fixture = build_raw_deflate_fixture(source_sample_count=33, logical_variant_count=logical_variant_count)
-    if selection_mode == "identity":
-        selected_indices = np.arange(33, dtype=np.int64)
-        selected_index_operand = np.empty((0,), dtype=np.uint32)
-        selection_start = 0
-    elif selection_mode == "contiguous":
-        selected_indices = np.arange(3, 30, dtype=np.int64)
-        selected_index_operand = np.empty((0,), dtype=np.uint32)
-        selection_start = 3
-    else:
-        selected_indices = np.asarray((32, 0, 16, 3, 31, 7), dtype=np.int64)
-        selected_index_operand = selected_indices.astype(np.uint32)
-        selection_start = -1
-    expected = build_packed8_expected(fixture, selected_indices)
-
-    observed = decode_packed8_fixture(
-        fixture,
-        selected_index_operand,
-        selection_start=selection_start,
-        selected_sample_count=selected_indices.size,
-        compute_variant_count=compute_variant_count,
-    )
-    jax.block_until_ready(observed)
-
     expected_probabilities = np.full(
-        (compute_variant_count, selected_indices.size, 2),
+        (compute_variant_count, selected_sample_count, 2),
         (255, 0),
         dtype=np.uint8,
     )
@@ -511,6 +498,120 @@ def test_registered_packed8_handler_covers_geometry_selection_and_padding(
     expected_sparse_mask = np.zeros(compute_variant_count, dtype=np.bool_)
     expected_sparse_mask[:logical_variant_count] = expected.sparse_candidate_mask
     np.testing.assert_array_equal(np.asarray(observed.sparse_candidate_mask), expected_sparse_mask)
+
+
+@pytest.mark.parametrize(("logical_variant_count", "compute_variant_count"), ((64, 64), (17, 64)))
+@pytest.mark.parametrize("selection_mode", ("identity", "contiguous", "indexed"))
+def test_registered_packed8_handler_covers_geometry_selection_and_padding(
+    cuda_test_support: CudaFfiTestSupport,
+    logical_variant_count: int,
+    compute_variant_count: int,
+    selection_mode: str,
+) -> None:
+    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+    fixture = build_raw_deflate_fixture(source_sample_count=33, logical_variant_count=logical_variant_count)
+    if selection_mode == "identity":
+        selected_indices = np.arange(33, dtype=np.int64)
+        selected_index_operand = np.empty((0,), dtype=np.uint32)
+        selection_start = 0
+    elif selection_mode == "contiguous":
+        selected_indices = np.arange(3, 30, dtype=np.int64)
+        selected_index_operand = np.empty((0,), dtype=np.uint32)
+        selection_start = 3
+    else:
+        selected_indices = np.asarray((32, 0, 16, 3, 31, 7), dtype=np.int64)
+        selected_index_operand = selected_indices.astype(np.uint32)
+        selection_start = -1
+    expected = build_packed8_expected(fixture, selected_indices)
+
+    observed = decode_packed8_fixture(
+        fixture,
+        selected_index_operand,
+        selection_start=selection_start,
+        selected_sample_count=selected_indices.size,
+        compute_variant_count=compute_variant_count,
+    )
+    jax.block_until_ready(observed)
+
+    assert_packed8_result_matches(
+        observed,
+        expected,
+        logical_variant_count=logical_variant_count,
+        compute_variant_count=compute_variant_count,
+        selected_sample_count=selected_indices.size,
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_sample_count", "logical_variant_count", "compute_variant_count"),
+    PACKED8_BOUNDARY_GEOMETRIES,
+)
+def test_registered_packed8_handler_covers_sample_and_block_boundaries(
+    cuda_test_support: CudaFfiTestSupport,
+    source_sample_count: int,
+    logical_variant_count: int,
+    compute_variant_count: int,
+) -> None:
+    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+    fixture = build_raw_deflate_fixture(
+        source_sample_count=source_sample_count,
+        logical_variant_count=logical_variant_count,
+    )
+    selected_indices = np.arange(source_sample_count, dtype=np.int64)
+    expected = build_packed8_expected(fixture, selected_indices)
+
+    observed = decode_packed8_fixture(
+        fixture,
+        np.empty((0,), dtype=np.uint32),
+        selection_start=0,
+        selected_sample_count=source_sample_count,
+        compute_variant_count=compute_variant_count,
+    )
+    jax.block_until_ready(observed)
+
+    assert_packed8_result_matches(
+        observed,
+        expected,
+        logical_variant_count=logical_variant_count,
+        compute_variant_count=compute_variant_count,
+        selected_sample_count=source_sample_count,
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_sample_count", "logical_variant_count", "compute_variant_count"),
+    PACKED8_PRODUCTION_GEOMETRIES,
+)
+def test_registered_packed8_handler_covers_production_chunk_full_and_tail_geometry(
+    cuda_test_support: CudaFfiTestSupport,
+    source_sample_count: int,
+    logical_variant_count: int,
+    compute_variant_count: int,
+) -> None:
+    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+    fixture = build_raw_deflate_fixture(
+        source_sample_count=source_sample_count,
+        logical_variant_count=logical_variant_count,
+    )
+    selected_indices = np.arange(source_sample_count, dtype=np.int64)
+    expected = build_packed8_expected(fixture, selected_indices)
+
+    observed = decode_packed8_fixture(
+        fixture,
+        np.empty((0,), dtype=np.uint32),
+        selection_start=0,
+        selected_sample_count=source_sample_count,
+        compute_variant_count=compute_variant_count,
+    )
+    jax.block_until_ready(observed)
+
+    assert_packed8_result_matches(
+        observed,
+        expected,
+        logical_variant_count=logical_variant_count,
+        compute_variant_count=compute_variant_count,
+        selected_sample_count=source_sample_count,
+    )
 
 
 @pytest.mark.parametrize("descriptor_failure", ("unaligned_offset", "out_of_bounds", "zero_size"))
