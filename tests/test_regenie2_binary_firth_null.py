@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    import pytest
 
 PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
@@ -472,6 +469,58 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
     tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-15)
     assert not bool(np.asarray(observed.accepted))
     assert bool(np.asarray(observed.valid))
+
+
+@pytest.mark.parametrize(
+    "candidate_deviance",
+    [11.0, 10.0],
+    ids=["valid-worse", "valid-equal"],
+)
+def test_null_firth_line_search_rejects_valid_nonimproving_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_deviance: float,
+) -> None:
+    """Require strict objective improvement from every otherwise-valid proposal."""
+
+    def compute_candidate_components(
+        *,
+        covariate_matrix: jax.Array,
+        phenotype_vector: jax.Array,
+        loco_offset: jax.Array,
+        coefficients: jax.Array,
+    ) -> regenie2_binary_firth_types.NullFirthComponents:
+        del covariate_matrix, phenotype_vector, loco_offset
+        return regenie2_binary_firth_types.NullFirthComponents(
+            information_cholesky_factor=jnp.ones((1, 1), dtype=coefficients.dtype),
+            deviance=jnp.asarray(candidate_deviance, dtype=coefficients.dtype),
+            modified_score=jnp.asarray([3.0], dtype=coefficients.dtype),
+            valid=jnp.asarray(1, dtype=jnp.bool_),
+        )
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_null,
+        "compute_null_firth_components",
+        compute_candidate_components,
+    )
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=jnp.ones((1, 1), dtype=jnp.float64),
+        phenotype_vector=jnp.ones((1,), dtype=jnp.float64),
+        loco_offset=jnp.zeros((1,), dtype=jnp.float64),
+        current_coefficients=jnp.asarray([0.0], dtype=jnp.float64),
+        current_deviance=jnp.asarray(10.0, dtype=jnp.float64),
+        coefficient_step=jnp.asarray([1.0], dtype=jnp.float64),
+        maximum_attempts=1,
+        step_halving_scale=0.5,
+    )
+
+    assert not bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        np.asarray([0.0]),
+        1.0e-15,
+    )
+    tests.numerical.assert_absolute_difference_less_than(observed.deviance, 10.0, 1.0e-15)
 
 
 def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step() -> None:

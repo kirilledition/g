@@ -227,7 +227,7 @@ The total `[compute].firth_maximum_iterations` budget is floor-divided between
 the scalar pseudo-Firth and Newton-Raphson phases. The uncapped half-budget must
 leave at least two iterations for each phase, so active approximate Firth
 requires a total budget of at least `4`; an odd remainder is not redistributed.
-The dense pseudo-Firth half is then capped by
+The pseudo-Firth half is then capped by
 `[compute].firth_pseudo_maximum_iterations`, which may intentionally be `1` to
 move quickly to Newton-Raphson fallback.
 

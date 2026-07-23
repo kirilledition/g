@@ -245,6 +245,21 @@ fn approximate_firth_requires_four_total_iterations_but_score_only_allows_lower_
         dispatch => panic!("expected approximate-Firth iteration-budget error, observed {dispatch:?}"),
     }
 
+    let minimum_firth_config = fixture.write_config(
+        "minimum-firth.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("minimum-firth-output"),
+        "[trait]\ntrait_type = \"binary\"\n\n[binary]\nfallback_method = \"firth_approximate\"\n\n[compute]\nfirth_maximum_iterations = 4\n",
+    );
+    let minimum_firth_arguments =
+        vec!["regenie".to_string(), "--config".to_string(), path_text(&minimum_firth_config).to_string()];
+    let minimum_firth_run = one_compiled_run(&minimum_firth_arguments);
+    assert_eq!(
+        minimum_firth_run.run_plan.compute.kernels.firth.maximum_iterations,
+        g_plan::APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS
+    );
+    assert_eq!(minimum_firth_run.run_plan.correction.method, g_plan::BinaryFallbackMethod::FirthApproximate);
+
     let score_only_config = fixture.write_config(
         "score-only.toml",
         &["trait-a"],

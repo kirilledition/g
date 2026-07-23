@@ -857,6 +857,10 @@ fn valid_run_plan() -> g_plan::RunPlan {
 fn run_plan_jax_integer_validation_accepts_production_values_and_rejects_boundaries() {
     validate_jax_integer_domain(&valid_run_plan()).expect("production-sized plan fits JAX integers");
 
+    let mut minimum_firth_plan = valid_run_plan();
+    minimum_firth_plan.compute.kernels.firth.maximum_iterations = g_plan::APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS;
+    validate_jax_integer_domain(&minimum_firth_plan).expect("exact minimum Firth budget is valid");
+
     let mut undersized_firth_plan = valid_run_plan();
     undersized_firth_plan.compute.kernels.firth.maximum_iterations = 3;
     assert!(matches!(

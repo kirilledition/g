@@ -5,15 +5,21 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+
+UPSTREAM_REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
+UPSTREAM_REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
+UPSTREAM_REGENIE_NUMERICAL_EPSILON_MULTIPLIER = 10.0
 
 
 @dataclass(frozen=True)
@@ -111,14 +117,23 @@ def compute_scalar_firth_component_reference(
 ) -> ScalarFirthComponentReference:
     """Evaluate the scalar penalized likelihood and adjusted score in NumPy."""
     linear_predictor = fixture.offset_vector + fixture.genotype_vector * fixture.beta
-    epsilon = regenie2_binary_config.REGENIE_NUMERICAL_EPSILON_MULTIPLIER * np.finfo(np.float64).eps
+    epsilon = UPSTREAM_REGENIE_NUMERICAL_EPSILON_MULTIPLIER * np.finfo(np.float64).eps
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        ordinary_probability = np.reciprocal(1.0 + np.exp(-np.clip(linear_predictor, -30.0, 30.0)))
+        ordinary_probability = np.reciprocal(
+            1.0
+            + np.exp(
+                -np.clip(
+                    linear_predictor,
+                    UPSTREAM_REGENIE_LOGISTIC_MINIMUM_ETA,
+                    UPSTREAM_REGENIE_LOGISTIC_MAXIMUM_ETA,
+                )
+            )
+        )
         probability = np.where(
-            linear_predictor < regenie2_binary_config.REGENIE_LOGISTIC_MINIMUM_ETA,
+            linear_predictor < UPSTREAM_REGENIE_LOGISTIC_MINIMUM_ETA,
             epsilon / (1.0 + epsilon),
             np.where(
-                linear_predictor > regenie2_binary_config.REGENIE_LOGISTIC_MAXIMUM_ETA,
+                linear_predictor > UPSTREAM_REGENIE_LOGISTIC_MAXIMUM_ETA,
                 1.0 / (1.0 + epsilon),
                 ordinary_probability,
             ),
@@ -301,6 +316,16 @@ def test_scalar_solver_parameter_budget_preserves_floor_split() -> None:
     assert int(np.asarray(observed.newton_raphson_maximum_iterations)) == 2
 
 
+def test_scalar_solver_parameter_budget_accepts_exact_minimum_split() -> None:
+    """Accept the minimum total as exactly two iterations for each phase."""
+    observed = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
+        build_binary_kernel_config(approximate_firth_maximum_iterations=4)
+    )
+
+    assert int(np.asarray(observed.pseudo_maximum_iterations)) == 2
+    assert int(np.asarray(observed.newton_raphson_maximum_iterations)) == 2
+
+
 def test_scalar_solver_parameter_budget_rejects_fewer_than_four_total_iterations() -> None:
     """Reject a total budget that cannot give both phases two iterations."""
     with np.testing.assert_raises_regex(ValueError, "must be at least 4"):
@@ -345,6 +370,76 @@ def test_scalar_line_search_with_zero_attempts_retains_trusted_state() -> None:
     assert int(np.asarray(observed.attempt_count)) == 0
     assert not bool(np.asarray(observed.accepted))
     assert bool(np.asarray(observed.valid))
+
+
+@pytest.mark.parametrize(
+    "candidate_penalized_deviance",
+    [11.0, 10.0],
+    ids=["valid-worse", "valid-equal"],
+)
+def test_scalar_line_search_rejects_valid_nonimproving_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_penalized_deviance: float,
+) -> None:
+    """Require strict objective improvement from every otherwise-valid proposal."""
+
+    def compute_candidate_components(
+        *,
+        phenotype_vector: jax.Array,
+        genotype_vector: jax.Array,
+        offset_vector: jax.Array,
+        active_sample_mask: jax.Array,
+        non_active_deviance: jax.Array,
+        beta: jax.Array,
+        minimum_variance: jax.Array,
+        use_cuda_components: bool,
+    ) -> regenie2_binary_firth_types.ScalarFirthComponents:
+        del (
+            phenotype_vector,
+            genotype_vector,
+            offset_vector,
+            active_sample_mask,
+            non_active_deviance,
+            minimum_variance,
+            use_cuda_components,
+        )
+        return regenie2_binary_firth_types.ScalarFirthComponents(
+            genotype_information=jnp.asarray(2.0, dtype=beta.dtype),
+            score_adjustment=jnp.asarray(0.25, dtype=beta.dtype),
+            penalized_deviance=jnp.asarray(candidate_penalized_deviance, dtype=beta.dtype),
+            score=jnp.asarray(3.0, dtype=beta.dtype),
+            valid=jnp.asarray(1, dtype=jnp.bool_),
+        )
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_scalar_approx,
+        "compute_scalar_firth_components_with_minimum_variance",
+        compute_candidate_components,
+    )
+    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
+        phenotype_vector=jnp.ones((1,), dtype=jnp.float64),
+        genotype_vector=jnp.ones((1,), dtype=jnp.float64),
+        offset_vector=jnp.zeros((1,), dtype=jnp.float64),
+        active_sample_mask=jnp.ones((1,), dtype=jnp.bool_),
+        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
+        current_beta=jnp.asarray(0.0, dtype=jnp.float64),
+        current_penalized_deviance=jnp.asarray(10.0, dtype=jnp.float64),
+        current_genotype_information=jnp.asarray(1.0, dtype=jnp.float64),
+        current_score=jnp.asarray(2.0, dtype=jnp.float64),
+        current_valid=jnp.asarray(1, dtype=jnp.bool_),
+        initial_step_size=jnp.asarray(1.0, dtype=jnp.float64),
+        maximum_attempts=1,
+        minimum_variance=jnp.asarray(1.0e-10, dtype=jnp.float64),
+        use_cuda_components=False,
+    )
+
+    assert int(np.asarray(observed.attempt_count)) == 1
+    assert not bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+    tests.numerical.assert_absolute_difference_less_than(observed.beta, 0.0, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(observed.penalized_deviance, 10.0, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(observed.genotype_information, 1.0, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(observed.score, 2.0, 1.0e-15)
 
 
 def test_scalar_line_search_accepts_valid_half_step_after_invalid_full_step() -> None:
