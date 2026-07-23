@@ -79,7 +79,6 @@ class NullFirthLineSearchState:
         accepted_coefficients: Last trusted coefficients.
         accepted_deviance: Last trusted penalized deviance.
         accepted: Whether a valid, improving proposal was accepted.
-        valid: Whether the retained coefficients and deviance remain trusted.
 
     """
 
@@ -88,7 +87,6 @@ class NullFirthLineSearchState:
     accepted_coefficients: jax.Array
     accepted_deviance: jax.Array
     accepted: jax.Array
-    valid: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -101,7 +99,6 @@ class NullFirthLineSearchResult:
         deviance: Accepted deviance, or the unchanged trusted input.
         attempt_count: Number of evaluated proposals.
         accepted: Whether a valid, improving proposal was accepted.
-        valid: Whether the returned coefficients and deviance remain trusted.
 
     """
 
@@ -109,7 +106,6 @@ class NullFirthLineSearchResult:
     deviance: jax.Array
     attempt_count: jax.Array
     accepted: jax.Array
-    valid: jax.Array
 
 
 @jax.tree_util.register_dataclass

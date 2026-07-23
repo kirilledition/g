@@ -81,7 +81,7 @@ def run_null_firth_line_search(
     step_scale = jnp.asarray(step_halving_scale, dtype=scalar_dtype)
 
     def should_continue(state: regenie2_binary_firth_types.NullFirthLineSearchState) -> jax.Array:
-        return (state.attempt_count < maximum_attempt_count) & (~state.accepted) & state.valid
+        return (state.attempt_count < maximum_attempt_count) & (~state.accepted)
 
     def run_iteration(
         state: regenie2_binary_firth_types.NullFirthLineSearchState,
@@ -100,7 +100,6 @@ def run_null_firth_line_search(
             accepted_coefficients=jnp.where(accepted, candidate_coefficients, state.accepted_coefficients),
             accepted_deviance=jnp.where(accepted, candidate_components.deviance, state.accepted_deviance),
             accepted=accepted,
-            valid=state.valid,
         )
 
     final_state = jax.lax.while_loop(
@@ -112,7 +111,6 @@ def run_null_firth_line_search(
             accepted_coefficients=current_coefficients,
             accepted_deviance=current_deviance,
             accepted=jnp.asarray(0, dtype=jnp.bool_),
-            valid=jnp.asarray(1, dtype=jnp.bool_),
         ),
     )
     return regenie2_binary_firth_types.NullFirthLineSearchResult(
@@ -120,7 +118,6 @@ def run_null_firth_line_search(
         deviance=final_state.accepted_deviance,
         attempt_count=final_state.attempt_count,
         accepted=final_state.accepted,
-        valid=final_state.valid,
     )
 
 
@@ -256,9 +253,7 @@ def fit_covariate_only_firth_null_model_once(
                 step_halving_scale=line_search_step_scale,
             )
             step_halving_failed = ~line_search_result.accepted
-            numerical_failed = (
-                (~components.valid) | (~jnp.all(jnp.isfinite(coefficient_step))) | (~line_search_result.valid)
-            )
+            numerical_failed = (~components.valid) | (~jnp.all(jnp.isfinite(coefficient_step)))
             failed = numerical_failed | score_history_state.failed | step_halving_failed
             return regenie2_binary_firth_types.NullFirthNewtonRaphsonState(
                 coefficients=jnp.where(failed, state.coefficients, line_search_result.coefficients),

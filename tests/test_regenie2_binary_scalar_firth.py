@@ -20,7 +20,12 @@ from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_fir
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.compute.regenie2_binary.firth.batch import compute as regenie2_binary_firth_batch_compute
 
-PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE = 5.0e-7
+FIRTH_BETA_ABSOLUTE_TOLERANCE = 5.0e-7
+FIRTH_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.5e-7
+FIRTH_CHI_SQUARED_ABSOLUTE_TOLERANCE = 2.0e-6
+FIRTH_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 5.0e-7
+NOMINAL_P_VALUE_THRESHOLD = 0.05
+GENOME_WIDE_P_VALUE_THRESHOLD = 5.0e-8
 
 UPSTREAM_REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 UPSTREAM_REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
@@ -424,17 +429,52 @@ def assert_pseudo_terminal_matches_independent_recurrence(
     tests.numerical.assert_absolute_difference_less_than(
         observed.beta,
         reference.beta,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
+        FIRTH_BETA_ABSOLUTE_TOLERANCE,
     )
     tests.numerical.assert_absolute_difference_less_than(
         observed.standard_error,
         reference.standard_error,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
+        FIRTH_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
     )
     tests.numerical.assert_absolute_difference_less_than(
         observed.chi_squared,
         reference.chi_squared,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
+        FIRTH_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+
+
+def assert_routed_pseudo_firth_matches_independent_recurrence(
+    observed: regenie2_binary_firth_types.FirthVariantResult,
+    reference: IndependentPseudoFirthResult,
+) -> None:
+    """Compare routed statistics and significance classifications strictly."""
+    reference_log10_p_value = -math.log10(math.erfc(math.sqrt(max(reference.chi_squared, 0.0) / 2.0)))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.beta[0],
+        reference.beta,
+        FIRTH_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.standard_error[0],
+        reference.standard_error,
+        FIRTH_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.chi_squared[0],
+        reference.chi_squared,
+        FIRTH_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.log10_p_value[0],
+        reference_log10_p_value,
+        FIRTH_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
+    )
+    observed_log10_p_value = float(np.asarray(observed.log10_p_value[0]))
+    assert (observed_log10_p_value > -math.log10(NOMINAL_P_VALUE_THRESHOLD)) is (
+        reference_log10_p_value > -math.log10(NOMINAL_P_VALUE_THRESHOLD)
+    )
+    assert (observed_log10_p_value > -math.log10(GENOME_WIDE_P_VALUE_THRESHOLD)) is (
+        reference_log10_p_value > -math.log10(GENOME_WIDE_P_VALUE_THRESHOLD)
     )
 
 
@@ -616,21 +656,7 @@ def test_compact_capacity_boundary_uses_sparse_budget_beyond_100_iterations() ->
     assert not bool(np.asarray(dense_capped_observed.valid_mask))
     assert_pseudo_terminal_matches_independent_recurrence(sparse_observed, sparse_reference)
     assert_pseudo_terminal_matches_independent_recurrence(dense_capped_observed, dense_capped_reference)
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.beta[0],
-        sparse_reference.beta,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.standard_error[0],
-        sparse_reference.standard_error,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.chi_squared[0],
-        sparse_reference.chi_squared,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
+    assert_routed_pseudo_firth_matches_independent_recurrence(routed_sparse_observed, sparse_reference)
 
 
 def test_masked_sparse_lane_above_compact_capacity_uses_budget_beyond_100_iterations() -> None:
@@ -702,21 +728,7 @@ def test_masked_sparse_lane_above_compact_capacity_uses_budget_beyond_100_iterat
     assert not bool(np.asarray(dense_capped_observed.valid_mask))
     assert_pseudo_terminal_matches_independent_recurrence(sparse_observed, sparse_reference)
     assert_pseudo_terminal_matches_independent_recurrence(dense_capped_observed, dense_capped_reference)
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.beta[0],
-        sparse_reference.beta,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.standard_error[0],
-        sparse_reference.standard_error,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        routed_sparse_observed.chi_squared[0],
-        sparse_reference.chi_squared,
-        PSEUDO_RECURRENCE_ABSOLUTE_TOLERANCE,
-    )
+    assert_routed_pseudo_firth_matches_independent_recurrence(routed_sparse_observed, sparse_reference)
 
 
 def test_scalar_solver_parameter_budget_rejects_fewer_than_four_total_iterations() -> None:

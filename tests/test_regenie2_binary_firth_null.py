@@ -49,7 +49,6 @@ class NullFirthLineSearchReference:
     deviance: float
     attempt_count: int
     accepted: bool
-    valid: bool
 
 
 @dataclass(frozen=True)
@@ -192,7 +191,6 @@ def run_null_firth_line_search_reference(
         deviance=accepted_deviance,
         attempt_count=attempt_count,
         accepted=accepted,
-        valid=current_components.valid,
     )
 
 
@@ -463,7 +461,6 @@ def test_null_firth_line_search_accepts_a_deviance_decreasing_newton_step() -> N
     )
 
     assert bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
     assert int(np.asarray(observed.attempt_count)) == 1
     assert float(np.asarray(observed.deviance)) < float(np.asarray(current_components.deviance))
 
@@ -493,7 +490,6 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
     tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-15)
     assert int(np.asarray(observed.attempt_count)) == 0
     assert not bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
 
 
 @pytest.mark.parametrize(
@@ -539,7 +535,6 @@ def test_null_firth_line_search_rejects_valid_nonimproving_proposals(
     )
 
     assert not bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
     assert int(np.asarray(observed.attempt_count)) == 1
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
@@ -601,9 +596,7 @@ def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step(
     assert line_search_reference.attempt_count == 2
     assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
     assert line_search_reference.accepted
-    assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
-    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         line_search_reference.coefficients,
@@ -659,9 +652,7 @@ def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() ->
     assert line_search_reference.attempt_count == 3
     assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
     assert not line_search_reference.accepted
-    assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
-    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         line_search_reference.coefficients,
