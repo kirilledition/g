@@ -13,7 +13,7 @@ use g_output::{ManifestFileFingerprintCache, NativeVariantMetadataHandle, Regeni
 
 use crate::association_scheduler::{
     AssociationBatchPipeline, ScheduledAssociationBatch, SchedulerError, assert_consumed_first_failure_for_test,
-    assert_disconnected_event_send_for_test,
+    assert_disconnected_event_send_for_test, assert_materialization_quiescence_handshake_for_test,
 };
 use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GroupPreparationInput, MaterializedAssociationBatch,
@@ -107,6 +107,11 @@ struct TestBackend {
     compute_started_sender: Option<Sender<usize>>,
     compute_gate_receiver: Option<Receiver<()>>,
     block_first_compute: AtomicBool,
+    compute_failure_variant_start_index: Option<usize>,
+    materialization_started_sender: Option<Sender<usize>>,
+    materialization_gate_receiver: Option<Receiver<()>>,
+    block_first_materialization: AtomicBool,
+    chromosome_released_sender: Option<Sender<()>>,
     release_panics: bool,
 }
 
@@ -122,6 +127,11 @@ impl TestBackend {
             compute_started_sender: None,
             compute_gate_receiver: None,
             block_first_compute: AtomicBool::new(false),
+            compute_failure_variant_start_index: None,
+            materialization_started_sender: None,
+            materialization_gate_receiver: None,
+            block_first_materialization: AtomicBool::new(false),
+            chromosome_released_sender: None,
             release_panics: false,
         }
     }
@@ -131,6 +141,22 @@ impl TestBackend {
             compute_started_sender: Some(compute_started_sender),
             compute_gate_receiver: Some(compute_gate_receiver),
             block_first_compute: AtomicBool::new(true),
+            ..Self::new(TestFailureStage::None)
+        }
+    }
+
+    fn with_materialization_gate_and_compute_failure(
+        compute_failure_variant_start_index: usize,
+        materialization_started_sender: Sender<usize>,
+        materialization_gate_receiver: Receiver<()>,
+        chromosome_released_sender: Sender<()>,
+    ) -> Self {
+        Self {
+            compute_failure_variant_start_index: Some(compute_failure_variant_start_index),
+            materialization_started_sender: Some(materialization_started_sender),
+            materialization_gate_receiver: Some(materialization_gate_receiver),
+            block_first_materialization: AtomicBool::new(true),
+            chromosome_released_sender: Some(chromosome_released_sender),
             ..Self::new(TestFailureStage::None)
         }
     }
@@ -184,6 +210,9 @@ impl AssociationBackend for TestBackend {
         self.record_backend_thread("release");
         self.chromosome_release_count.fetch_add(1, Ordering::SeqCst);
         self.record_event(format!("release:{chromosome}"));
+        if let Some(chromosome_released_sender) = self.chromosome_released_sender.as_ref() {
+            let _ = chromosome_released_sender.try_send(());
+        }
         assert!(!self.release_panics, "intentional release panic");
     }
 
@@ -210,6 +239,9 @@ impl AssociationBackend for TestBackend {
         self.record_event(format!("compute:{chromosome}:{variant_start_index}"));
         assert!(self.failure_stage != TestFailureStage::ComputePanic, "intentional compute panic");
         if self.failure_stage == TestFailureStage::Compute {
+            return Err(TestBackendError("compute"));
+        }
+        if self.compute_failure_variant_start_index == Some(variant_start_index) {
             return Err(TestBackendError("compute"));
         }
         if self.block_first_compute.swap(false, Ordering::SeqCst) {
@@ -242,6 +274,20 @@ impl AssociationBackend for TestBackend {
             .lock()
             .expect("test materialization lock is available")
             .push(active_trait_indices.map(<[usize]>::to_vec));
+        if self.block_first_materialization.swap(false, Ordering::SeqCst) {
+            self.record_event(format!("materialize_start:{}", result.variant_start_index));
+            self.materialization_started_sender
+                .as_ref()
+                .expect("gated materialization test has a start sender")
+                .send_timeout(result.variant_start_index, TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test receives the materialization-start notification before the timeout");
+            self.materialization_gate_receiver
+                .as_ref()
+                .expect("gated materialization test has a receiver")
+                .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test releases the materialization gate before the timeout");
+            self.record_event(format!("materialize_end:{}", result.variant_start_index));
+        }
         assert!(self.failure_stage != TestFailureStage::MaterializePanic, "intentional materialization panic");
         if self.failure_stage == TestFailureStage::Materialize {
             return Err(TestBackendError("materialize"));
@@ -382,6 +428,11 @@ fn scheduler_records_disconnected_event_send() {
 #[test]
 fn scheduler_consumed_first_failure_cannot_be_overwritten() {
     assert_consumed_first_failure_for_test();
+}
+
+#[test]
+fn scheduler_waits_for_materialization_quiescence_before_cleanup() {
+    assert_materialization_quiescence_handshake_for_test();
 }
 
 #[test]
@@ -710,6 +761,75 @@ fn scheduler_propagates_each_backend_failure_stage() {
         drop(pipeline);
         assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
     }
+}
+
+#[test]
+fn scheduler_waits_for_in_flight_materialization_before_failure_cleanup() {
+    let (materialization_started_sender, materialization_started_receiver) = crossbeam_channel::bounded(1);
+    let (materialization_gate_sender, materialization_gate_receiver) = crossbeam_channel::bounded(1);
+    let (chromosome_released_sender, chromosome_released_receiver) = crossbeam_channel::bounded(1);
+    let backend = Arc::new(TestBackend::with_materialization_gate_and_compute_failure(
+        2,
+        materialization_started_sender,
+        materialization_gate_receiver,
+        chromosome_released_sender,
+    ));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(7)).expect("chromosome is prepared");
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("first batch is submitted")
+            .is_none()
+    );
+    assert_eq!(
+        materialization_started_receiver
+            .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("first batch enters materialization before the timeout"),
+        0
+    );
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(2, 2, 2, ActiveTraitSelection::All))
+            .expect("failing second batch is submitted")
+            .is_none()
+    );
+
+    let error = pipeline.receive().expect_err("second-batch compute failure reaches the receiver");
+    assert!(matches!(error, SchedulerError::Backend { stage: "compute", source: TestBackendError("compute") }));
+    pipeline.wait_for_materialization_quiescence_for_test();
+    assert!(matches!(chromosome_released_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 0);
+
+    materialization_gate_sender
+        .send_timeout((), TEST_SYNCHRONIZATION_TIMEOUT)
+        .expect("materialization gate accepts its release signal before the timeout");
+    chromosome_released_receiver
+        .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+        .expect("chromosome release follows materialization quiescence");
+    drop(pipeline);
+
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+    let events = backend.events.lock().expect("test events are available");
+    let materialization_end_index =
+        events.iter().position(|event| event == "materialize_end:0").expect("materialization completion is recorded");
+    let chromosome_release_index =
+        events.iter().position(|event| event == "release:7").expect("chromosome release is recorded");
+    assert!(materialization_end_index < chromosome_release_index);
+    let backend_thread_events =
+        backend.backend_thread_events.lock().expect("test backend-thread observations are available");
+    let prepare_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "prepare")
+        .expect("prepare thread is recorded")
+        .thread_identifier;
+    let release_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "release")
+        .expect("release thread is recorded")
+        .thread_identifier;
+    assert_eq!(release_thread_identifier, prepare_thread_identifier);
 }
 
 #[test]

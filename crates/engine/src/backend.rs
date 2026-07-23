@@ -107,8 +107,10 @@ pub trait AssociationBackend: Send + Sync {
     /// Release one chromosome state on the backend execution thread.
     ///
     /// Backends with thread- or runtime-affine reference management can
-    /// override this hook. The scheduler calls it only after every submitted
-    /// batch using the state has been materialized and received.
+    /// override this hook. The scheduler calls it only after materialization
+    /// is quiescent and every produced device result has been materialized or
+    /// dropped. Graceful chromosome transitions additionally require every
+    /// submitted batch using the state to have been received.
     fn release_chromosome(&self, chromosome: Self::ChromosomeState) {
         drop(chromosome);
     }

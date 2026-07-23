@@ -108,6 +108,13 @@ where
         &mut check_interruption,
     );
     let source_result = read_session.finish().map_err(DeliveryError::Bgen);
+    combine_delivery_and_source_results(delivery_result, source_result)
+}
+
+fn combine_delivery_and_source_results<Value, Error>(
+    delivery_result: Result<Value, Error>,
+    source_result: Result<(), Error>,
+) -> Result<Value, Error> {
     match delivery_result {
         Err(error) => Err(error),
         Ok(report) => source_result.map(|()| report),
@@ -273,8 +280,17 @@ fn observe_cleanup_panic_safely<ObserveCleanupPanic>(
     ObserveCleanupPanic: FnMut(&'static str, &str),
 {
     let panic_message = panic_payload_message(panic_payload);
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    observe_cleanup_safely(|| {
         observe_cleanup_panic(cleanup_stage, &panic_message);
+    });
+}
+
+fn observe_cleanup_safely<ObserveCleanup>(observe_cleanup: ObserveCleanup)
+where
+    ObserveCleanup: FnOnce(),
+{
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observe_cleanup();
     }));
 }
 
@@ -387,11 +403,13 @@ where
         )
     {
         if let Err(release_error) = pipeline.release_chromosome() {
-            tracing::error!(
-                cleanup_stage = "release_chromosome_after_null_policy_rejection",
-                cleanup_error = %release_error,
-                "association backend cleanup failed"
-            );
+            observe_cleanup_safely(|| {
+                tracing::error!(
+                    cleanup_stage = "release_chromosome_after_null_policy_rejection",
+                    cleanup_error = %release_error,
+                    "association backend cleanup failed"
+                );
+            });
         }
         return Err(policy_error);
     }
@@ -600,6 +618,27 @@ mod tests {
     #[error("test interruption")]
     struct TestInterruption;
 
+    #[derive(Debug, Eq, PartialEq)]
+    enum TestCompletionError {
+        Delivery,
+        Source,
+    }
+
+    #[test]
+    fn source_finish_failure_replaces_only_delivery_success() {
+        assert_eq!(
+            combine_delivery_and_source_results(Ok("report"), Err(TestCompletionError::Source)),
+            Err(TestCompletionError::Source)
+        );
+        assert_eq!(
+            combine_delivery_and_source_results(
+                Err::<&str, _>(TestCompletionError::Delivery),
+                Err(TestCompletionError::Source),
+            ),
+            Err(TestCompletionError::Delivery)
+        );
+    }
+
     #[test]
     fn delivery_policy_continues_when_every_null_model_converges() {
         let mut warnings = Vec::new();
@@ -653,6 +692,26 @@ mod tests {
                 if message.contains("chromosome 1: trait-b")
         ));
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn cleanup_observer_panic_does_not_replace_null_policy_error() {
+        let outcome = std::panic::catch_unwind(|| {
+            let primary_error = DeliveryError::<TestBackendError, TestInterruption>::NullLogisticNonconvergence(
+                "intentional null-policy failure".to_string(),
+            );
+            observe_cleanup_safely(|| {
+                panic!("intentional cleanup-observer panic");
+            });
+            Err::<(), _>(primary_error)
+        });
+
+        let delivery_result = outcome.expect("cleanup observation panic is contained");
+        assert!(matches!(
+            delivery_result,
+            Err(DeliveryError::NullLogisticNonconvergence(message))
+                if message == "intentional null-policy failure"
+        ));
     }
 
     #[test]

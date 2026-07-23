@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(test)]
+use std::sync::Condvar;
+
 use crate::backend::{AssociationBackend, MaterializedAssociationBatch, MaterializedGenotypeStatistics};
 use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError};
 use g_genotype::{GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
@@ -24,6 +27,8 @@ const TRANSFER_STAGE: &str = "device transfer";
 const COMPUTE_WORKER: &str = "compute";
 const MATERIALIZATION_WORKER: &str = "materialization";
 const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(test)]
+const TEST_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One owned association batch ready for device compute.
 #[derive(Debug)]
@@ -143,6 +148,33 @@ struct TransferredAssociationBatch<TransferredInput> {
     input: TransferredInput,
 }
 
+struct MaterializationQuiescenceGuard<Value> {
+    device_receiver: Option<Receiver<Value>>,
+    materialization_quiesced_sender: Option<Sender<()>>,
+}
+
+impl<Value> MaterializationQuiescenceGuard<Value> {
+    const fn new(device_receiver: Receiver<Value>, materialization_quiesced_sender: Sender<()>) -> Self {
+        Self {
+            device_receiver: Some(device_receiver),
+            materialization_quiesced_sender: Some(materialization_quiesced_sender),
+        }
+    }
+
+    fn device_receiver(&self) -> &Receiver<Value> {
+        self.device_receiver.as_ref().expect("materialization worker retains its device-result receiver")
+    }
+}
+
+impl<Value> Drop for MaterializationQuiescenceGuard<Value> {
+    fn drop(&mut self) {
+        drop(self.device_receiver.take());
+        if let Some(materialization_quiesced_sender) = self.materialization_quiesced_sender.take() {
+            let _ = materialization_quiesced_sender.try_send(());
+        }
+    }
+}
+
 // Keeping batches inline lets the bounded channel allocate its storage once;
 // boxing the hot variant would add one allocation to every submitted batch.
 enum ComputeCommand<TransferredInput> {
@@ -164,6 +196,10 @@ struct PipelineSchedulerState {
 struct SchedulerControl<BackendError> {
     aborted: std::sync::atomic::AtomicBool,
     failure: Mutex<SchedulerFailure<BackendError>>,
+    #[cfg(test)]
+    materialization_quiescence_waiting: Mutex<bool>,
+    #[cfg(test)]
+    materialization_quiescence_waiting_changed: Condvar,
 }
 
 #[derive(Debug)]
@@ -173,10 +209,14 @@ struct SchedulerFailure<BackendError> {
 }
 
 impl<BackendError> SchedulerControl<BackendError> {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             aborted: std::sync::atomic::AtomicBool::new(false),
             failure: Mutex::new(SchedulerFailure { first_error: None, recorded: false }),
+            #[cfg(test)]
+            materialization_quiescence_waiting: Mutex::new(false),
+            #[cfg(test)]
+            materialization_quiescence_waiting_changed: Condvar::new(),
         }
     }
 
@@ -201,6 +241,22 @@ impl<BackendError> SchedulerControl<BackendError> {
 
     fn take_error(&self) -> Option<SchedulerError<BackendError>> {
         self.failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner).first_error.take()
+    }
+
+    #[cfg(test)]
+    fn record_materialization_quiescence_wait(&self) {
+        *self.materialization_quiescence_waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.materialization_quiescence_waiting_changed.notify_all();
+    }
+
+    #[cfg(test)]
+    fn wait_for_materialization_quiescence(&self) {
+        let waiting = self.materialization_quiescence_waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (waiting, _) = self
+            .materialization_quiescence_waiting_changed
+            .wait_timeout_while(waiting, TEST_QUIESCENCE_TIMEOUT, |waiting| !*waiting)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(*waiting, "compute worker did not reach materialization quiescence");
     }
 }
 
@@ -232,6 +288,7 @@ where
         let (compute_sender, compute_receiver) = crossbeam_channel::bounded(TRANSFERRED_BATCH_CAPACITY);
         let (device_sender, device_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let (event_sender, event_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
+        let (materialization_quiesced_sender, materialization_quiesced_receiver) = crossbeam_channel::bounded(1);
         let control = Arc::new(SchedulerControl::new());
 
         let materialization_backend = Arc::clone(&backend);
@@ -240,10 +297,12 @@ where
         let materialization_worker = thread::Builder::new()
             .name(MATERIALIZATION_WORKER_NAME.to_string())
             .spawn(move || {
+                let materialization_quiescence =
+                    MaterializationQuiescenceGuard::new(device_receiver, materialization_quiesced_sender);
                 let worker_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_materialization_worker(
                         materialization_backend.as_ref(),
-                        &device_receiver,
+                        materialization_quiescence.device_receiver(),
                         &materialization_event_sender,
                         &materialization_control,
                     );
@@ -254,6 +313,7 @@ where
                         message: panic_message(payload.as_ref()),
                     });
                 }
+                drop(materialization_quiescence);
             })
             .map_err(|source| SchedulerError::WorkerSpawn {
                 worker: MATERIALIZATION_WORKER,
@@ -269,9 +329,10 @@ where
                 backend.as_ref(),
                 group.as_ref(),
                 &compute_receiver,
-                &device_sender,
+                device_sender,
                 &compute_event_sender,
                 &compute_control,
+                &materialization_quiesced_receiver,
             );
         }) {
             Ok(worker) => worker,
@@ -498,6 +559,11 @@ where
         self.state.submitted_batch_count == self.state.completed_batch_count
     }
 
+    #[cfg(test)]
+    pub(crate) fn wait_for_materialization_quiescence_for_test(&self) {
+        self.control.wait_for_materialization_quiescence();
+    }
+
     /// Close the transferred-batch input so queued work can complete.
     pub(crate) fn close_submission(&mut self) {
         self.state.chromosome_prepare_pending = false;
@@ -622,9 +688,10 @@ fn run_compute_worker<Backend>(
     backend: &Backend,
     group: &Backend::GroupState,
     compute_receiver: &Receiver<ComputeCommand<Backend::TransferredInput>>,
-    device_sender: &Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
+    device_sender: Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
     event_sender: &Sender<AssociationSchedulerEvent>,
     control: &SchedulerControl<Backend::Error>,
+    materialization_quiesced_receiver: &Receiver<()>,
 ) where
     Backend: AssociationBackend,
 {
@@ -634,7 +701,7 @@ fn run_compute_worker<Backend>(
             backend,
             group,
             compute_receiver,
-            device_sender,
+            &device_sender,
             event_sender,
             control,
             &mut chromosome_state,
@@ -647,7 +714,17 @@ fn run_compute_worker<Backend>(
         });
     }
     let release_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        release_active_chromosome(backend, &mut chromosome_state);
+        run_after_materialization_quiescence(
+            device_sender,
+            materialization_quiesced_receiver,
+            || {
+                #[cfg(test)]
+                control.record_materialization_quiescence_wait();
+            },
+            || {
+                release_active_chromosome(backend, &mut chromosome_state);
+            },
+        );
     }));
     if let Err(payload) = release_result {
         let panic_message = panic_message(payload.as_ref());
@@ -662,6 +739,21 @@ fn run_compute_worker<Backend>(
             message: format!("chromosome release panicked: {panic_message}"),
         });
     }
+}
+
+fn run_after_materialization_quiescence<Value, BeforeWait, AfterQuiescence>(
+    device_sender: Sender<Value>,
+    materialization_quiesced_receiver: &Receiver<()>,
+    before_wait: BeforeWait,
+    after_quiescence: AfterQuiescence,
+) where
+    BeforeWait: FnOnce(),
+    AfterQuiescence: FnOnce(),
+{
+    drop(device_sender);
+    before_wait();
+    let _ = materialization_quiesced_receiver.recv();
+    after_quiescence();
 }
 
 fn run_compute_worker_commands<Backend>(
@@ -934,4 +1026,49 @@ pub(crate) fn assert_consumed_first_failure_for_test() {
     control.record_error(SchedulerError::ChannelDisconnected { queue: DEVICE_RESULT_QUEUE });
     assert!(control.take_error().is_none());
     assert!(control.is_aborted());
+}
+
+#[cfg(test)]
+pub(crate) fn assert_materialization_quiescence_handshake_for_test() {
+    #[derive(Debug)]
+    struct DeviceResultDropProbe {
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for DeviceResultDropProbe {
+        fn drop(&mut self) {
+            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    let device_result_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (queued_device_sender, queued_device_receiver) = crossbeam_channel::bounded(1);
+    queued_device_sender
+        .send(DeviceResultDropProbe { dropped: Arc::clone(&device_result_dropped) })
+        .expect("test device-result queue accepts one result");
+    let (quiesced_sender, quiesced_receiver) = crossbeam_channel::bounded(1);
+    drop(queued_device_sender);
+    drop(MaterializationQuiescenceGuard::new(queued_device_receiver, quiesced_sender));
+    quiesced_receiver.recv().expect("materialization quiescence is acknowledged");
+    assert!(device_result_dropped.load(std::sync::atomic::Ordering::SeqCst));
+
+    let (device_sender, device_receiver) = crossbeam_channel::bounded::<()>(1);
+    let (quiesced_sender, quiesced_receiver) = crossbeam_channel::bounded(1);
+    let (cleanup_sender, cleanup_receiver) = crossbeam_channel::bounded(1);
+    let cleanup_worker = thread::spawn(move || {
+        run_after_materialization_quiescence(
+            device_sender,
+            &quiesced_receiver,
+            || {},
+            || {
+                cleanup_sender.send(()).expect("cleanup observation receiver remains connected");
+            },
+        );
+    });
+
+    assert!(device_receiver.recv().is_err());
+    assert!(matches!(cleanup_receiver.try_recv(), Err(TryRecvError::Empty)));
+    quiesced_sender.send(()).expect("compute cleanup waits for quiescence");
+    cleanup_receiver.recv().expect("cleanup runs after materialization quiescence");
+    cleanup_worker.join().expect("cleanup test worker exits");
 }
