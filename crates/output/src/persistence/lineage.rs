@@ -73,6 +73,13 @@ pub(crate) struct LineageTerminalRecord {
     pub(crate) phenotypes: Vec<TerminalPhenotypeRecord>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "outcome_kind", content = "record", rename_all = "snake_case")]
+enum AttemptOutcomeRecord {
+    Terminal(LineageTerminalRecord),
+    ExactRecoveryClaim(LineageSuccessorRecord),
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum LineageRecordKind {
@@ -93,10 +100,11 @@ pub(crate) struct LineageSnapshot {
 pub(crate) struct OutputLineagePaths {
     pub(crate) output_root: PathBuf,
     pub(crate) control_directory: PathBuf,
+    pub(crate) outcomes_directory: PathBuf,
     pub(crate) successors_directory: PathBuf,
-    pub(crate) terminals_directory: PathBuf,
     pub(crate) attempts_directory: PathBuf,
     pub(crate) genesis_path: PathBuf,
+    legacy_terminals_directory: PathBuf,
 }
 
 impl LineageGenesisRecord {
@@ -266,15 +274,47 @@ impl LineageTerminalRecord {
     }
 }
 
+impl AttemptOutcomeRecord {
+    fn validate(&self) -> OutputResult<()> {
+        match self {
+            Self::Terminal(terminal) => terminal.validate(),
+            Self::ExactRecoveryClaim(successor) => {
+                successor.validate()?;
+                if successor.recovery_kind != LineageRecoveryKind::ExactNonterminalRecovery {
+                    return Err(OutputError::InvalidInput(
+                        "Output exact-recovery outcome contains a non-exact successor.".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn attempt_id(&self) -> &AttemptIdentifier {
+        match self {
+            Self::Terminal(terminal) => &terminal.attempt_id,
+            Self::ExactRecoveryClaim(successor) => &successor.parent_attempt_id,
+        }
+    }
+
+    fn run_set_id(&self) -> &str {
+        match self {
+            Self::Terminal(terminal) => &terminal.run_set_id,
+            Self::ExactRecoveryClaim(successor) => &successor.run_set_id,
+        }
+    }
+}
+
 impl OutputLineagePaths {
     pub(crate) fn new(output_root: &Path) -> Self {
         let control_directory = output_root.join(".g-output");
         Self {
             output_root: output_root.to_path_buf(),
+            outcomes_directory: control_directory.join("outcomes"),
             successors_directory: control_directory.join("successors"),
-            terminals_directory: control_directory.join("terminals"),
             attempts_directory: output_root.join("attempts"),
             genesis_path: control_directory.join(GENESIS_FILE_NAME),
+            legacy_terminals_directory: control_directory.join("terminals"),
             control_directory,
         }
     }
@@ -282,8 +322,8 @@ impl OutputLineagePaths {
     pub(crate) fn initialize_directories(&self) -> OutputResult<()> {
         create_directories_durable(&self.output_root)?;
         create_directories_durable(&self.control_directory)?;
+        create_directories_durable(&self.outcomes_directory)?;
         create_directories_durable(&self.successors_directory)?;
-        create_directories_durable(&self.terminals_directory)?;
         create_directories_durable(&self.attempts_directory)
     }
 
@@ -291,12 +331,12 @@ impl OutputLineagePaths {
         self.attempts_directory.join(attempt_id.as_str())
     }
 
-    pub(crate) fn successor_path(&self, parent_attempt_id: &AttemptIdentifier) -> PathBuf {
+    pub(crate) fn normal_successor_path(&self, parent_attempt_id: &AttemptIdentifier) -> PathBuf {
         self.successors_directory.join(format!("{}.json", parent_attempt_id.as_str()))
     }
 
-    pub(crate) fn terminal_path(&self, attempt_id: &AttemptIdentifier) -> PathBuf {
-        self.terminals_directory.join(format!("{}.json", attempt_id.as_str()))
+    pub(crate) fn outcome_path(&self, attempt_id: &AttemptIdentifier) -> PathBuf {
+        self.outcomes_directory.join(format!("{}.json", attempt_id.as_str()))
     }
 
     pub(crate) fn inspect(&self) -> OutputResult<Option<LineageSnapshot>> {
@@ -307,30 +347,73 @@ impl OutputLineagePaths {
         let mut successor_records = Vec::new();
         let mut visited_attempts = BTreeSet::from([genesis.attempt_id.clone()]);
         let mut leaf_attempt_id = genesis.attempt_id.clone();
+        let mut leaf_terminal = None;
         loop {
-            let successor_path = self.successor_path(&leaf_attempt_id);
-            let Some(successor) = read_optional_json::<LineageSuccessorRecord>(&successor_path)? else {
-                break;
+            self.reject_legacy_terminal(&leaf_attempt_id)?;
+            let outcome_path = self.outcome_path(&leaf_attempt_id);
+            let outcome = read_optional_json::<AttemptOutcomeRecord>(&outcome_path)?;
+            if let Some(outcome) = &outcome {
+                outcome.validate()?;
+                if outcome.run_set_id() != genesis.run_set_id || outcome.attempt_id() != &leaf_attempt_id {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Output attempt outcome '{}' is not bound to its traversed attempt and run set.",
+                        outcome_path.display()
+                    )));
+                }
+            }
+            let normal_successor_path = self.normal_successor_path(&leaf_attempt_id);
+            let normal_successor = read_optional_json::<LineageSuccessorRecord>(&normal_successor_path)?;
+            let successor = match (outcome, normal_successor) {
+                (None, None) => break,
+                (None, Some(_)) => {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Output lineage successor '{}' has no immutable parent terminal outcome.",
+                        normal_successor_path.display()
+                    )));
+                }
+                (Some(AttemptOutcomeRecord::ExactRecoveryClaim(successor)), None) => successor,
+                (Some(AttemptOutcomeRecord::ExactRecoveryClaim(_)), Some(_)) => {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Output exact-recovery attempt '{}' also has an incompatible normal successor record.",
+                        leaf_attempt_id.as_str()
+                    )));
+                }
+                (Some(AttemptOutcomeRecord::Terminal(terminal)), None) => {
+                    leaf_terminal = Some(terminal);
+                    break;
+                }
+                (Some(AttemptOutcomeRecord::Terminal(terminal)), Some(successor)) => {
+                    if terminal.status == AttemptTerminalStatus::Completed {
+                        return Err(OutputError::InvalidInput(format!(
+                            "Completed output attempt '{}' cannot have a successor.",
+                            leaf_attempt_id.as_str()
+                        )));
+                    }
+                    successor.validate()?;
+                    if successor.recovery_kind != LineageRecoveryKind::TerminalResume {
+                        return Err(OutputError::InvalidInput(format!(
+                            "Output lineage successor '{}' is not a terminal-resume successor.",
+                            normal_successor_path.display()
+                        )));
+                    }
+                    let observed_terminal_sha256 = file_sha256(&outcome_path)?;
+                    if successor.parent_terminal_sha256.as_deref() != Some(observed_terminal_sha256.as_str()) {
+                        return Err(OutputError::InvalidInput(format!(
+                            "Output lineage successor '{}' has a stale parent terminal binding.",
+                            normal_successor_path.display()
+                        )));
+                    }
+                    successor
+                }
             };
-            successor.validate()?;
             if successor.run_set_id != genesis.run_set_id || successor.parent_attempt_id != leaf_attempt_id {
                 return Err(OutputError::InvalidInput(format!(
                     "Output lineage successor '{}' is not bound to its traversed parent and run set.",
-                    successor_path.display()
+                    normal_successor_path.display()
                 )));
             }
             if !visited_attempts.insert(successor.attempt_id.clone()) {
                 return Err(OutputError::InvalidInput("Output lineage successor chain contains a cycle.".to_string()));
-            }
-            if successor.recovery_kind == LineageRecoveryKind::TerminalResume {
-                let parent_terminal_path = self.terminal_path(&successor.parent_attempt_id);
-                let observed_terminal_sha256 = file_sha256(&parent_terminal_path)?;
-                if successor.parent_terminal_sha256.as_deref() != Some(observed_terminal_sha256.as_str()) {
-                    return Err(OutputError::InvalidInput(format!(
-                        "Output lineage successor '{}' has a stale parent terminal binding.",
-                        successor_path.display()
-                    )));
-                }
             }
             leaf_attempt_id = successor.attempt_id.clone();
             successor_records.push(successor);
@@ -344,15 +427,6 @@ impl OutputLineagePaths {
                 )));
             }
         }
-        let leaf_terminal = read_optional_json::<LineageTerminalRecord>(&self.terminal_path(&leaf_attempt_id))?;
-        if let Some(terminal) = &leaf_terminal {
-            terminal.validate()?;
-            if terminal.run_set_id != genesis.run_set_id || terminal.attempt_id != leaf_attempt_id {
-                return Err(OutputError::InvalidInput(
-                    "Output lineage leaf terminal is not bound to the leaf attempt and run set.".to_string(),
-                ));
-            }
-        }
         Ok(Some(LineageSnapshot { genesis, successor_records, leaf_attempt_id, leaf_terminal }))
     }
 
@@ -363,12 +437,62 @@ impl OutputLineagePaths {
 
     pub(crate) fn publish_successor(&self, successor: &LineageSuccessorRecord) -> OutputResult<NoReplacePublication> {
         successor.validate()?;
-        self.publish_record(&self.successor_path(&successor.parent_attempt_id), successor)
+        match successor.recovery_kind {
+            LineageRecoveryKind::ExactNonterminalRecovery => {
+                let outcome = AttemptOutcomeRecord::ExactRecoveryClaim(successor.clone());
+                self.publish_record(&self.outcome_path(&successor.parent_attempt_id), &outcome)
+            }
+            LineageRecoveryKind::TerminalResume => {
+                let outcome_path = self.outcome_path(&successor.parent_attempt_id);
+                let outcome = read_required_json::<AttemptOutcomeRecord>(&outcome_path)?;
+                outcome.validate()?;
+                let AttemptOutcomeRecord::Terminal(terminal) = outcome else {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Output terminal-resume successor cannot follow nonterminal attempt '{}'.",
+                        successor.parent_attempt_id.as_str()
+                    )));
+                };
+                if terminal.status == AttemptTerminalStatus::Completed {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Completed output attempt '{}' cannot have a successor.",
+                        successor.parent_attempt_id.as_str()
+                    )));
+                }
+                let observed_terminal_sha256 = file_sha256(&outcome_path)?;
+                if terminal.run_set_id != successor.run_set_id
+                    || terminal.attempt_id != successor.parent_attempt_id
+                    || successor.parent_terminal_sha256.as_deref() != Some(observed_terminal_sha256.as_str())
+                {
+                    return Err(OutputError::InvalidInput(
+                        "Output terminal-resume successor has a stale or mismatched parent terminal binding."
+                            .to_string(),
+                    ));
+                }
+                self.publish_record(&self.normal_successor_path(&successor.parent_attempt_id), successor)
+            }
+        }
     }
 
     pub(crate) fn publish_terminal(&self, terminal: &LineageTerminalRecord) -> OutputResult<NoReplacePublication> {
         terminal.validate()?;
-        self.publish_record(&self.terminal_path(&terminal.attempt_id), terminal)
+        let outcome = AttemptOutcomeRecord::Terminal(terminal.clone());
+        self.publish_record(&self.outcome_path(&terminal.attempt_id), &outcome)
+    }
+
+    fn reject_legacy_terminal(&self, attempt_id: &AttemptIdentifier) -> OutputResult<()> {
+        let legacy_terminal_path = self.legacy_terminals_directory.join(format!("{}.json", attempt_id.as_str()));
+        if legacy_terminal_path.try_exists().map_err(|error| {
+            OutputError::Runtime(format!(
+                "Failed to inspect legacy output terminal '{}': {error}",
+                legacy_terminal_path.display()
+            ))
+        })? {
+            return Err(OutputError::InvalidInput(format!(
+                "Output lineage contains unsupported legacy terminal artifact '{}'.",
+                legacy_terminal_path.display()
+            )));
+        }
+        Ok(())
     }
 
     fn publish_record<RecordType>(&self, path: &Path, record: &RecordType) -> OutputResult<NoReplacePublication>
@@ -390,7 +514,16 @@ pub(crate) fn terminal_record_sha256(
     paths: &OutputLineagePaths,
     attempt_id: &AttemptIdentifier,
 ) -> OutputResult<String> {
-    file_sha256(&paths.terminal_path(attempt_id))
+    let outcome_path = paths.outcome_path(attempt_id);
+    let outcome = read_required_json::<AttemptOutcomeRecord>(&outcome_path)?;
+    outcome.validate()?;
+    if !matches!(outcome, AttemptOutcomeRecord::Terminal(_)) {
+        return Err(OutputError::InvalidInput(format!(
+            "Output attempt '{}' has no terminal outcome to hash.",
+            attempt_id.as_str()
+        )));
+    }
+    file_sha256(&outcome_path)
 }
 
 fn validate_phenotype_contracts(phenotypes: &[PhenotypeLineageContract]) -> OutputResult<()> {
@@ -545,6 +678,57 @@ mod tests {
     }
 
     #[test]
+    fn terminal_and_exact_recovery_claim_compete_for_one_outcome() {
+        let paths = test_paths("terminal-exact-race");
+        paths.initialize_directories().expect("lineage directories initialize");
+        let parent_attempt = AttemptIdentifier::for_test("attempt-parent");
+        let child_attempt = AttemptIdentifier::for_test("attempt-child");
+        let run_set_id = "run-set-test".to_string();
+        create_directories_durable(&paths.attempt_directory(&parent_attempt)).expect("parent attempt creates");
+        create_directories_durable(&paths.attempt_directory(&child_attempt)).expect("child attempt creates");
+        let terminal = LineageTerminalRecord::failed(
+            run_set_id.clone(),
+            parent_attempt.clone(),
+            "writer failed".to_string(),
+            vec![TerminalPhenotypeRecord {
+                phenotype_name: "trait-a".to_string(),
+                output_directory_name: "trait_0001_trait-a".to_string(),
+                run_manifest_sha256: digest('c'),
+            }],
+        );
+        let successor = LineageSuccessorRecord::new(
+            run_set_id,
+            parent_attempt,
+            child_attempt,
+            LineageRecoveryKind::ExactNonterminalRecovery,
+            None,
+        )
+        .expect("successor builds");
+        let winner_count = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let terminal_winner_count = &winner_count;
+            let terminal_paths = &paths;
+            scope.spawn(move || match terminal_paths.publish_terminal(&terminal) {
+                Ok(NoReplacePublication::Created) => {
+                    terminal_winner_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(OutputError::ConcurrentLineageUpdate { .. }) => {}
+                outcome => panic!("unexpected terminal race outcome: {outcome:?}"),
+            });
+            let exact_winner_count = &winner_count;
+            let exact_paths = &paths;
+            scope.spawn(move || match exact_paths.publish_successor(&successor) {
+                Ok(NoReplacePublication::Created) => {
+                    exact_winner_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                Err(OutputError::ConcurrentLineageUpdate { .. }) => {}
+                outcome => panic!("unexpected exact-recovery race outcome: {outcome:?}"),
+            });
+        });
+        assert_eq!(winner_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn successor_detects_corrupt_parent_terminal_binding() {
         let paths = test_paths("terminal-binding");
         paths.initialize_directories().expect("lineage directories initialize");
@@ -573,10 +757,85 @@ mod tests {
             Some(digest('d')),
         )
         .expect("successor builds");
-        paths.publish_successor(&successor).expect("successor publishes");
+        publish_json_no_replace(&paths.normal_successor_path(&first_attempt), &successor)
+            .expect("corrupt successor artifact publishes");
 
         let error = paths.inspect().expect_err("stale terminal binding is rejected");
         assert!(error.to_string().contains("stale parent terminal binding"));
+    }
+
+    #[test]
+    fn exact_recovery_outcome_rejects_incompatible_normal_successor_artifact() {
+        let paths = test_paths("dual-transition");
+        paths.initialize_directories().expect("lineage directories initialize");
+        let first_attempt = AttemptIdentifier::for_test("attempt-first");
+        let exact_child = AttemptIdentifier::for_test("attempt-exact-child");
+        let normal_child = AttemptIdentifier::for_test("attempt-normal-child");
+        create_directories_durable(&paths.attempt_directory(&first_attempt)).expect("first attempt creates");
+        create_directories_durable(&paths.attempt_directory(&exact_child)).expect("exact child creates");
+        create_directories_durable(&paths.attempt_directory(&normal_child)).expect("normal child creates");
+        let genesis = LineageGenesisRecord::new(first_attempt.clone(), digest('b'), vec![phenotype_contract()]);
+        paths.publish_genesis(&genesis).expect("genesis publishes");
+        let exact_successor = LineageSuccessorRecord::new(
+            genesis.run_set_id.clone(),
+            first_attempt.clone(),
+            exact_child,
+            LineageRecoveryKind::ExactNonterminalRecovery,
+            None,
+        )
+        .expect("exact successor builds");
+        paths.publish_successor(&exact_successor).expect("exact successor publishes");
+        let incompatible_successor = LineageSuccessorRecord::new(
+            genesis.run_set_id,
+            first_attempt.clone(),
+            normal_child,
+            LineageRecoveryKind::TerminalResume,
+            Some(digest('d')),
+        )
+        .expect("normal successor builds");
+        publish_json_no_replace(&paths.normal_successor_path(&first_attempt), &incompatible_successor)
+            .expect("incompatible successor artifact publishes");
+
+        let error = paths.inspect().expect_err("dual transition state is rejected");
+        assert!(error.to_string().contains("incompatible normal successor"));
+    }
+
+    #[test]
+    fn completed_outcome_rejects_forged_successor_artifact() {
+        let paths = test_paths("completed-successor");
+        paths.initialize_directories().expect("lineage directories initialize");
+        let completed_attempt = AttemptIdentifier::for_test("attempt-completed");
+        let child_attempt = AttemptIdentifier::for_test("attempt-child");
+        create_directories_durable(&paths.attempt_directory(&completed_attempt)).expect("completed attempt creates");
+        create_directories_durable(&paths.attempt_directory(&child_attempt)).expect("child attempt creates");
+        let genesis = LineageGenesisRecord::new(completed_attempt.clone(), digest('b'), vec![phenotype_contract()]);
+        paths.publish_genesis(&genesis).expect("genesis publishes");
+        let completed = LineageTerminalRecord::completed(
+            genesis.run_set_id.clone(),
+            completed_attempt.clone(),
+            vec![TerminalPhenotypeRecord {
+                phenotype_name: "trait-a".to_string(),
+                output_directory_name: "trait_0001_trait-a".to_string(),
+                run_manifest_sha256: digest('c'),
+            }],
+        );
+        paths.publish_terminal(&completed).expect("completed outcome publishes");
+        let forged_successor = LineageSuccessorRecord::new(
+            genesis.run_set_id,
+            completed_attempt.clone(),
+            child_attempt,
+            LineageRecoveryKind::TerminalResume,
+            Some(terminal_record_sha256(&paths, &completed_attempt).expect("completed outcome hashes")),
+        )
+        .expect("forged successor builds");
+        let publish_error =
+            paths.publish_successor(&forged_successor).expect_err("completed outcome cannot publish a successor");
+        assert!(publish_error.to_string().contains("Completed output attempt"));
+        publish_json_no_replace(&paths.normal_successor_path(&completed_attempt), &forged_successor)
+            .expect("forged successor artifact publishes");
+
+        let error = paths.inspect().expect_err("completed successor is rejected");
+        assert!(error.to_string().contains("Completed output attempt"));
     }
 
     #[test]

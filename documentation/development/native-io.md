@@ -111,12 +111,18 @@ Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.
 
 Output ownership does not use advisory file locks. The run root carries an
-append-only `.g-output` lineage with one immutable genesis record, at most one
-immutable successor record per attempt, and an immutable terminal record per
-attempt. Records are written and synchronized under unique temporary names,
-then published with a same-directory hard-link no-replace operation and a
-directory synchronization. There is no authoritative mutable `HEAD`; readers
-traverse successor records from genesis.
+append-only `.g-output` lineage with one immutable genesis record. Each attempt
+has one immutable outcome slot. A durable terminal and an exact nonterminal
+recovery claim are tagged alternatives published to that same slot, so an old
+owner cannot publish a terminal after a takeover claim wins. A terminal outcome
+may later have one immutable normal-resume successor bound to the terminal
+outcome's SHA-256 only when its status is `interrupted` or `failed`. A
+`completed` outcome remains the immutable leaf and is verified read-only on
+resume. Records are written and synchronized under unique temporary
+names, then published with a same-directory hard-link no-replace operation and
+a directory synchronization. There is no authoritative mutable `HEAD`; readers
+traverse exact-recovery claims or hash-bound normal successors from genesis and
+reject incompatible dual-state artifacts.
 
 The hard-link no-replace operation is the cross-process linearization point.
 Its same-filesystem, cross-node visibility and `AlreadyExists` behavior must be
