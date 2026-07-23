@@ -91,9 +91,16 @@ def test_repository_production_binding_surface_is_exact_and_private_support_is_o
         module_names=frozenset({"cli"}),
     )
     cargo_manifest = tomllib.loads((REPOSITORY_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    genotype_cuda_manifest = tomllib.loads(
+        (REPOSITORY_ROOT / "crates/genotype-cuda/Cargo.toml").read_text(encoding="utf-8")
+    )
     project_configuration = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert cargo_manifest["features"]["default"] == []
-    assert cargo_manifest["features"]["private-test-support"] == []
+    assert cargo_manifest["features"]["private-test-support"] == ["g-genotype-cuda/private-test-support"]
+    assert genotype_cuda_manifest["features"] == {
+        "default": [],
+        "private-test-support": [],
+    }
     assert project_configuration["tool"]["maturin"]["features"] == ["extension-module"]
     justfile_source = (REPOSITORY_ROOT / "Justfile").read_text(encoding="utf-8")
     assert "--features extension-module,private-test-support" in justfile_source

@@ -26,6 +26,8 @@ use g_genotype_contracts::{
 use g_output::{NativeVariantMetadataHandle, Regenie2StatisticBatch};
 use output_schedule::ActiveTraitSelection;
 
+pub use g_engine::AssociationImplementationState;
+
 const BATCH_COUNT: usize = 512;
 const SAMPLE_COUNT: usize = 8;
 const VARIANT_COUNT: usize = 8;

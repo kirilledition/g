@@ -162,6 +162,7 @@ def prepare_compressed_transfer_selection(
     selected_sample_count: int | None,
     selection_start: int | None,
     selected_sample_indices: npt.NDArray[np.uint32] | None,
+    device: jax.Device,
 ) -> DeviceCompressedTransferSelection | None:
     """Upload one persistent compressed-transfer selection for a group."""
     if source_sample_count is None:
@@ -179,7 +180,11 @@ def prepare_compressed_transfer_selection(
         selected_sample_indices,
     )
     return DeviceCompressedTransferSelection(
-        selected_sample_indices=jax.device_put(host_selection.selected_sample_indices, may_alias=False),
+        selected_sample_indices=jax.device_put(
+            host_selection.selected_sample_indices,
+            device=device,
+            may_alias=False,
+        ),
         source_sample_count=source_sample_count,
         selected_sample_count=selected_sample_count,
         selection_start=host_selection.selection_start,
@@ -192,6 +197,10 @@ class JaxBackendBase:
     retain_compressed_imputed_dosage_square_sum: bool
     collect_compressed_sparse_candidate_mask: bool
 
+    def __init__(self, *, device: jax.Device) -> None:
+        """Pin every backend transfer and executable input to one JAX device."""
+        self.device = device
+
     def transfer_batch(
         self,
         genotype_values: npt.NDArray[np.float32] | npt.NDArray[np.uint8],
@@ -200,20 +209,27 @@ class JaxBackendBase:
         sparse_candidate_mask: npt.NDArray[np.bool_] | None,
     ) -> DeviceGenotypeBatch:
         """Initiate asynchronous host-to-device transfer for one batch."""
-        packed8 = genotype_values.dtype == np.dtype(np.uint8)
-        device_genotype_values = (
-            jax.device_put(genotype_values, may_alias=False) if packed8 else jax.device_put(genotype_values)
-        )
-        return DeviceGenotypeBatch(
-            genotype_values=device_genotype_values,
-            genotype_mean=jax.device_put(genotype_mean),
-            imputed_dosage_square_sum=(
-                None if imputed_dosage_square_sum is None else jax.device_put(imputed_dosage_square_sum)
-            ),
-            sparse_candidate_mask=(None if sparse_candidate_mask is None else jax.device_put(sparse_candidate_mask)),
-            packed8=packed8,
-            raw_packed8_statistics=None,
-        )
+        with jax.default_device(self.device):
+            packed8 = genotype_values.dtype == np.dtype(np.uint8)
+            device_genotype_values = (
+                jax.device_put(genotype_values, device=self.device, may_alias=False)
+                if packed8
+                else jax.device_put(genotype_values, device=self.device)
+            )
+            return DeviceGenotypeBatch(
+                genotype_values=device_genotype_values,
+                genotype_mean=jax.device_put(genotype_mean, device=self.device),
+                imputed_dosage_square_sum=(
+                    None
+                    if imputed_dosage_square_sum is None
+                    else jax.device_put(imputed_dosage_square_sum, device=self.device)
+                ),
+                sparse_candidate_mask=(
+                    None if sparse_candidate_mask is None else jax.device_put(sparse_candidate_mask, device=self.device)
+                ),
+                packed8=packed8,
+                raw_packed8_statistics=None,
+            )
 
     def transfer_compressed_batch[AssociationState](
         self,
@@ -226,25 +242,34 @@ class JaxBackendBase:
         transfer_selection = group_state.compressed_transfer_selection
         if transfer_selection is None:
             raise ValueError("Compressed transfer requires a prepared compressed group selection.")
-        decoded_batch = compressed_genotype.decode_packed8_deflate_batch(
-            compressed_slab=jax.device_put(compressed_slab, may_alias=False),
-            compressed_metadata=jax.device_put(compressed_metadata, may_alias=False),
-            selected_sample_indices=transfer_selection.selected_sample_indices,
-            source_sample_count=transfer_selection.source_sample_count,
-            selected_sample_count=transfer_selection.selected_sample_count,
-            selection_start=transfer_selection.selection_start,
-            compute_variant_count=compute_variant_count,
-            retain_imputed_dosage_square_sum=self.retain_compressed_imputed_dosage_square_sum,
-            collect_sparse_candidate_mask=self.collect_compressed_sparse_candidate_mask,
-        )
-        return DeviceGenotypeBatch(
-            genotype_values=decoded_batch.packed_probability_pairs_by_variant,
-            genotype_mean=decoded_batch.genotype_mean,
-            imputed_dosage_square_sum=decoded_batch.imputed_dosage_square_sum,
-            sparse_candidate_mask=decoded_batch.sparse_candidate_mask,
-            packed8=True,
-            raw_packed8_statistics=decoded_batch.raw_packed8_statistics,
-        )
+        with jax.default_device(self.device):
+            decoded_batch = compressed_genotype.decode_packed8_deflate_batch(
+                compressed_slab=jax.device_put(
+                    compressed_slab,
+                    device=self.device,
+                    may_alias=False,
+                ),
+                compressed_metadata=jax.device_put(
+                    compressed_metadata,
+                    device=self.device,
+                    may_alias=False,
+                ),
+                selected_sample_indices=transfer_selection.selected_sample_indices,
+                source_sample_count=transfer_selection.source_sample_count,
+                selected_sample_count=transfer_selection.selected_sample_count,
+                selection_start=transfer_selection.selection_start,
+                compute_variant_count=compute_variant_count,
+                retain_imputed_dosage_square_sum=self.retain_compressed_imputed_dosage_square_sum,
+                collect_sparse_candidate_mask=self.collect_compressed_sparse_candidate_mask,
+            )
+            return DeviceGenotypeBatch(
+                genotype_values=decoded_batch.packed_probability_pairs_by_variant,
+                genotype_mean=decoded_batch.genotype_mean,
+                imputed_dosage_square_sum=decoded_batch.imputed_dosage_square_sum,
+                sparse_candidate_mask=decoded_batch.sparse_candidate_mask,
+                packed8=True,
+                raw_packed8_statistics=decoded_batch.raw_packed8_statistics,
+            )
 
     def materialize_batch(
         self,
@@ -262,35 +287,40 @@ class JaxBackendBase:
             log10_p_value = association.log10_p_value
             correction_code = association.correction_code
         else:
-            active_trait_index_array = jnp.asarray(active_trait_indices, dtype=jnp.int32)
-            beta = jnp.take(association.beta, active_trait_index_array, axis=0)
-            standard_error = jnp.take(association.standard_error, active_trait_index_array, axis=0)
-            chi_squared = jnp.take(association.chi_squared, active_trait_index_array, axis=0)
-            log10_p_value = jnp.take(association.log10_p_value, active_trait_index_array, axis=0)
-            correction_code = (
-                None
-                if association.correction_code is None
-                else jnp.take(association.correction_code, active_trait_index_array, axis=0)
-            )
+            with jax.default_device(self.device):
+                active_trait_index_array = jax.device_put(
+                    active_trait_indices,
+                    device=self.device,
+                )
+                beta = jnp.take(association.beta, active_trait_index_array, axis=0)
+                standard_error = jnp.take(association.standard_error, active_trait_index_array, axis=0)
+                chi_squared = jnp.take(association.chi_squared, active_trait_index_array, axis=0)
+                log10_p_value = jnp.take(association.log10_p_value, active_trait_index_array, axis=0)
+                correction_code = (
+                    None
+                    if association.correction_code is None
+                    else jnp.take(association.correction_code, active_trait_index_array, axis=0)
+                )
 
-        if reuse_full_batch_arrays:
-            selected_association = association
-        elif correction_code is None:
-            selected_association = association_result.AssociationResult(
-                beta=jnp.asarray(beta[:, :logical_variant_count], dtype=jnp.float32),
-                standard_error=jnp.asarray(standard_error[:, :logical_variant_count], dtype=jnp.float32),
-                chi_squared=jnp.asarray(chi_squared[:, :logical_variant_count], dtype=jnp.float32),
-                log10_p_value=jnp.asarray(log10_p_value[:, :logical_variant_count], dtype=jnp.float32),
-                correction_code=None,
-            )
-        else:
-            selected_association = association_result.AssociationResult(
-                beta=jnp.asarray(beta[:, :logical_variant_count], dtype=jnp.float32),
-                standard_error=jnp.asarray(standard_error[:, :logical_variant_count], dtype=jnp.float32),
-                chi_squared=jnp.asarray(chi_squared[:, :logical_variant_count], dtype=jnp.float32),
-                log10_p_value=jnp.asarray(log10_p_value[:, :logical_variant_count], dtype=jnp.float32),
-                correction_code=jnp.asarray(correction_code[:, :logical_variant_count], dtype=jnp.uint8),
-            )
+        with jax.default_device(self.device):
+            if reuse_full_batch_arrays:
+                selected_association = association
+            elif correction_code is None:
+                selected_association = association_result.AssociationResult(
+                    beta=jnp.asarray(beta[:, :logical_variant_count], dtype=jnp.float32),
+                    standard_error=jnp.asarray(standard_error[:, :logical_variant_count], dtype=jnp.float32),
+                    chi_squared=jnp.asarray(chi_squared[:, :logical_variant_count], dtype=jnp.float32),
+                    log10_p_value=jnp.asarray(log10_p_value[:, :logical_variant_count], dtype=jnp.float32),
+                    correction_code=None,
+                )
+            else:
+                selected_association = association_result.AssociationResult(
+                    beta=jnp.asarray(beta[:, :logical_variant_count], dtype=jnp.float32),
+                    standard_error=jnp.asarray(standard_error[:, :logical_variant_count], dtype=jnp.float32),
+                    chi_squared=jnp.asarray(chi_squared[:, :logical_variant_count], dtype=jnp.float32),
+                    log10_p_value=jnp.asarray(log10_p_value[:, :logical_variant_count], dtype=jnp.float32),
+                    correction_code=jnp.asarray(correction_code[:, :logical_variant_count], dtype=jnp.uint8),
+                )
 
         raw_packed8_statistics = device_result.raw_packed8_statistics
         if raw_packed8_statistics is None or reuse_full_batch_arrays:
@@ -335,17 +365,20 @@ class LinearJaxBackend(JaxBackendBase):
     def __init__(
         self,
         *,
+        device: jax.Device,
         minimum_variance: float,
         relative_variance_tolerance: float,
     ) -> None:
         """Initialize the linear numerical policy."""
-        from g.compute.regenie2_linear import score as regenie2_linear_score
-        from g.compute.regenie2_linear import state as regenie2_linear_state
+        super().__init__(device=device)
+        with jax.default_device(self.device):
+            from g.compute.regenie2_linear import score as regenie2_linear_score
+            from g.compute.regenie2_linear import state as regenie2_linear_state
 
-        self.minimum_variance = minimum_variance
-        self.relative_variance_tolerance = relative_variance_tolerance
-        self._linear_score = regenie2_linear_score
-        self._linear_state = regenie2_linear_state
+            self.minimum_variance = minimum_variance
+            self.relative_variance_tolerance = relative_variance_tolerance
+            self._linear_score = regenie2_linear_score
+            self._linear_state = regenie2_linear_state
 
     def prepare_group(
         self,
@@ -357,21 +390,23 @@ class LinearJaxBackend(JaxBackendBase):
         selected_sample_indices: npt.NDArray[np.uint32] | None,
     ) -> DeviceGroupState[regenie2_linear_state.Regenie2MultiLinearState]:
         """Prepare reusable device state for one aligned phenotype group."""
-        association_state = self._linear_state.build_multi_linear_state(
-            covariate_matrix=jax.device_put(covariate_matrix),
-            phenotype_matrix=jax.device_put(phenotype_matrix),
-        )
-        compressed_transfer_selection = prepare_compressed_transfer_selection(
-            source_sample_count=source_sample_count,
-            selected_sample_count=selected_sample_count,
-            selection_start=selection_start,
-            selected_sample_indices=selected_sample_indices,
-        )
-        jax.block_until_ready(association_state.phenotype_residual_matrix)
-        return DeviceGroupState(
-            association_state=association_state,
-            compressed_transfer_selection=compressed_transfer_selection,
-        )
+        with jax.default_device(self.device):
+            association_state = self._linear_state.build_multi_linear_state(
+                covariate_matrix=jax.device_put(covariate_matrix, device=self.device),
+                phenotype_matrix=jax.device_put(phenotype_matrix, device=self.device),
+            )
+            compressed_transfer_selection = prepare_compressed_transfer_selection(
+                source_sample_count=source_sample_count,
+                selected_sample_count=selected_sample_count,
+                selection_start=selection_start,
+                selected_sample_indices=selected_sample_indices,
+                device=self.device,
+            )
+            jax.block_until_ready(association_state.phenotype_residual_matrix)
+            return DeviceGroupState(
+                association_state=association_state,
+                compressed_transfer_selection=compressed_transfer_selection,
+            )
 
     def prepare_chromosome(
         self,
@@ -379,12 +414,13 @@ class LinearJaxBackend(JaxBackendBase):
         prediction_matrix: npt.NDArray[np.float32],
     ) -> regenie2_linear_state.Regenie2MultiLinearChromosomeState:
         """Prepare reusable device state for one chromosome."""
-        chromosome_state = self._linear_state.build_multi_linear_chromosome_state(
-            state=group_state.association_state,
-            loco_prediction_matrix=jax.device_put(prediction_matrix),
-        )
-        jax.block_until_ready(chromosome_state.score_left_hand_matrix)
-        return chromosome_state
+        with jax.default_device(self.device):
+            chromosome_state = self._linear_state.build_multi_linear_chromosome_state(
+                state=group_state.association_state,
+                loco_prediction_matrix=jax.device_put(prediction_matrix, device=self.device),
+            )
+            jax.block_until_ready(chromosome_state.score_left_hand_matrix)
+            return chromosome_state
 
     def compute_batch(
         self,
@@ -394,30 +430,33 @@ class LinearJaxBackend(JaxBackendBase):
         """Submit one transferred batch to the matching linear kernel."""
         if batch.imputed_dosage_square_sum is None:
             raise ValueError("Linear association requires imputed dosage square sums.")
-        if batch.packed8:
-            association = self._linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
-                chromosome_state=chromosome_state,
-                packed_probability_pairs_by_variant=batch.genotype_values,
-                native_genotype_mean=batch.genotype_mean,
-                genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
-                linear_minimum_variance=self.minimum_variance,
-                linear_relative_variance_tolerance=self.relative_variance_tolerance,
+        with jax.default_device(self.device):
+            if batch.packed8:
+                association = self._linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=batch.genotype_values,
+                    native_genotype_mean=batch.genotype_mean,
+                    genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
+                    linear_minimum_variance=self.minimum_variance,
+                    linear_relative_variance_tolerance=self.relative_variance_tolerance,
+                )
+            else:
+                association = (
+                    self._linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_donating_inputs(
+                        chromosome_state=chromosome_state,
+                        genotype_matrix_by_variant=batch.genotype_values,
+                        native_genotype_mean=batch.genotype_mean,
+                        genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
+                        linear_minimum_variance=self.minimum_variance,
+                        linear_relative_variance_tolerance=self.relative_variance_tolerance,
+                    )
+                )
+            return AssociationBatch(
+                association=association,
+                raw_packed8_statistics=batch.raw_packed8_statistics,
+                firth_candidate_count=None,
+                firth_candidate_capacity=None,
             )
-        else:
-            association = self._linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_donating_inputs(
-                chromosome_state=chromosome_state,
-                genotype_matrix_by_variant=batch.genotype_values,
-                native_genotype_mean=batch.genotype_mean,
-                genotype_imputed_dosage_square_sum=batch.imputed_dosage_square_sum,
-                linear_minimum_variance=self.minimum_variance,
-                linear_relative_variance_tolerance=self.relative_variance_tolerance,
-            )
-        return AssociationBatch(
-            association=association,
-            raw_packed8_statistics=batch.raw_packed8_statistics,
-            firth_candidate_count=None,
-            firth_candidate_capacity=None,
-        )
 
 
 class BinaryJaxBackendBase(JaxBackendBase):
@@ -426,6 +465,7 @@ class BinaryJaxBackendBase(JaxBackendBase):
     def __init__(
         self,
         *,
+        device: jax.Device,
         minimum_probability: float,
         minimum_variance: float,
         relative_variance_tolerance: float,
@@ -433,23 +473,25 @@ class BinaryJaxBackendBase(JaxBackendBase):
         null_logistic_coefficient_tolerance: float,
     ) -> None:
         """Initialize policy required by every binary score kernel."""
-        from g.compute.regenie2_binary import config as regenie2_binary_config
-        from g.compute.regenie2_binary import score as regenie2_binary_score
-        from g.compute.regenie2_binary import state as regenie2_binary_state
+        super().__init__(device=device)
+        with jax.default_device(self.device):
+            from g.compute.regenie2_binary import config as regenie2_binary_config
+            from g.compute.regenie2_binary import score as regenie2_binary_score
+            from g.compute.regenie2_binary import state as regenie2_binary_state
 
-        self._binary_score = regenie2_binary_score
-        self._binary_state = regenie2_binary_state
-        self.score_config = regenie2_binary_config.BinaryScoreConfig(
-            numerical=regenie2_binary_config.BinaryNumericalConfig(
-                minimum_probability=minimum_probability,
-                minimum_variance=minimum_variance,
-                relative_variance_tolerance=relative_variance_tolerance,
-            ),
-            null_logistic=regenie2_binary_config.BinaryNullLogisticConfig(
-                maximum_iterations=null_logistic_maximum_iterations,
-                coefficient_tolerance=null_logistic_coefficient_tolerance,
-            ),
-        )
+            self._binary_score = regenie2_binary_score
+            self._binary_state = regenie2_binary_state
+            self.score_config = regenie2_binary_config.BinaryScoreConfig(
+                numerical=regenie2_binary_config.BinaryNumericalConfig(
+                    minimum_probability=minimum_probability,
+                    minimum_variance=minimum_variance,
+                    relative_variance_tolerance=relative_variance_tolerance,
+                ),
+                null_logistic=regenie2_binary_config.BinaryNullLogisticConfig(
+                    maximum_iterations=null_logistic_maximum_iterations,
+                    coefficient_tolerance=null_logistic_coefficient_tolerance,
+                ),
+            )
 
     def prepare_group(
         self,
@@ -461,19 +503,21 @@ class BinaryJaxBackendBase(JaxBackendBase):
         selected_sample_indices: npt.NDArray[np.uint32] | None,
     ) -> DeviceGroupState[regenie2_binary_state.Regenie2MultiBinaryState]:
         """Prepare reusable device state for one aligned phenotype group."""
-        association_state = self._binary_state.build_multi_binary_state(
-            covariate_matrix=jax.device_put(covariate_matrix),
-            phenotype_matrix=jax.device_put(phenotype_matrix),
-        )
-        return DeviceGroupState(
-            association_state=association_state,
-            compressed_transfer_selection=prepare_compressed_transfer_selection(
-                source_sample_count=source_sample_count,
-                selected_sample_count=selected_sample_count,
-                selection_start=selection_start,
-                selected_sample_indices=selected_sample_indices,
-            ),
-        )
+        with jax.default_device(self.device):
+            association_state = self._binary_state.build_multi_binary_state(
+                covariate_matrix=jax.device_put(covariate_matrix, device=self.device),
+                phenotype_matrix=jax.device_put(phenotype_matrix, device=self.device),
+            )
+            return DeviceGroupState(
+                association_state=association_state,
+                compressed_transfer_selection=prepare_compressed_transfer_selection(
+                    source_sample_count=source_sample_count,
+                    selected_sample_count=selected_sample_count,
+                    selection_start=selection_start,
+                    selected_sample_indices=selected_sample_indices,
+                    device=self.device,
+                ),
+            )
 
 
 class BinaryScoreJaxBackend(BinaryJaxBackendBase):
@@ -488,11 +532,12 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
         prediction_matrix: npt.NDArray[np.float32],
     ) -> regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState:
         """Prepare only the chromosome operands consumed by score kernels."""
-        return self._binary_state.build_multi_binary_score_chromosome_state(
-            state=group_state.association_state,
-            loco_offset_matrix=jax.device_put(prediction_matrix),
-            kernel_config=self.score_config,
-        )
+        with jax.default_device(self.device):
+            return self._binary_state.build_multi_binary_score_chromosome_state(
+                state=group_state.association_state,
+                loco_offset_matrix=jax.device_put(prediction_matrix, device=self.device),
+                kernel_config=self.score_config,
+            )
 
     def compute_batch(
         self,
@@ -500,30 +545,31 @@ class BinaryScoreJaxBackend(BinaryJaxBackendBase):
         batch: DeviceGenotypeBatch,
     ) -> DeviceAssociationBatch:
         """Submit one transferred batch to the matching binary score kernel."""
-        if batch.packed8:
-            association = self._binary_score.compute_multi_binary_score_test_packed8_donating_inputs(
-                chromosome_state=chromosome_state,
-                packed_probability_pairs_by_variant=batch.genotype_values,
-                firth_candidate_p_threshold=None,
-                minimum_variance=self.score_config.numerical.minimum_variance,
-                relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
-                native_genotype_mean=batch.genotype_mean,
+        with jax.default_device(self.device):
+            if batch.packed8:
+                association = self._binary_score.compute_multi_binary_score_test_packed8_donating_inputs(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=batch.genotype_values,
+                    firth_candidate_p_threshold=None,
+                    minimum_variance=self.score_config.numerical.minimum_variance,
+                    relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
+                    native_genotype_mean=batch.genotype_mean,
+                )
+            else:
+                association = self._binary_score.compute_multi_binary_score_test_variant_major_donating_inputs(
+                    chromosome_state=chromosome_state,
+                    genotype_matrix_by_variant=batch.genotype_values,
+                    firth_candidate_p_threshold=None,
+                    minimum_variance=self.score_config.numerical.minimum_variance,
+                    relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
+                    native_genotype_mean=batch.genotype_mean,
+                )
+            return AssociationBatch(
+                association=association,
+                raw_packed8_statistics=batch.raw_packed8_statistics,
+                firth_candidate_count=None,
+                firth_candidate_capacity=None,
             )
-        else:
-            association = self._binary_score.compute_multi_binary_score_test_variant_major_donating_inputs(
-                chromosome_state=chromosome_state,
-                genotype_matrix_by_variant=batch.genotype_values,
-                firth_candidate_p_threshold=None,
-                minimum_variance=self.score_config.numerical.minimum_variance,
-                relative_variance_tolerance=self.score_config.numerical.relative_variance_tolerance,
-                native_genotype_mean=batch.genotype_mean,
-            )
-        return AssociationBatch(
-            association=association,
-            raw_packed8_statistics=batch.raw_packed8_statistics,
-            firth_candidate_count=None,
-            firth_candidate_capacity=None,
-        )
 
 
 class BinaryFirthJaxBackend(BinaryJaxBackendBase):
@@ -535,6 +581,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
     def __init__(
         self,
         *,
+        device: jax.Device,
         p_threshold: float,
         firth_se: bool,
         minimum_probability: float,
@@ -561,48 +608,50 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         null_firth_step_halving_scale: float,
     ) -> None:
         """Initialize score and approximate-Firth policy."""
-        from g.compute.regenie2_binary import api as regenie2_binary
-        from g.compute.regenie2_binary import config as regenie2_binary_config
-
         super().__init__(
+            device=device,
             minimum_probability=minimum_probability,
             minimum_variance=minimum_variance,
             relative_variance_tolerance=relative_variance_tolerance,
             null_logistic_maximum_iterations=null_logistic_maximum_iterations,
             null_logistic_coefficient_tolerance=null_logistic_coefficient_tolerance,
         )
-        self._binary_api = regenie2_binary
-        self.correction_plan = types.BinaryCorrectionPlan(
-            p_threshold=p_threshold,
-            firth_se=firth_se,
-        )
-        self.binary_config = regenie2_binary_config.BinaryKernelConfig(
-            numerical=self.score_config.numerical,
-            null_logistic=self.score_config.null_logistic,
-            firth_candidate=regenie2_binary_config.FirthCandidateConfig(
-                batch_size=firth_batch_size,
-                candidate_capacity=firth_candidate_capacity,
-            ),
-            approximate_firth=regenie2_binary_config.ApproximateFirthConfig(
-                maximum_iterations=firth_maximum_iterations,
-                gradient_tolerance=firth_gradient_tolerance,
-                maximum_step_size=firth_maximum_step_size,
-                pseudo_maximum_iterations=firth_pseudo_maximum_iterations,
-                pseudo_inner_maximum_iterations=firth_pseudo_inner_maximum_iterations,
-                line_search_maximum_attempts=firth_line_search_maximum_attempts,
-                sparse_carrier_dosage_threshold=firth_sparse_carrier_dosage_threshold,
-                use_cuda_components=use_cuda_firth_components,
-            ),
-            null_firth=regenie2_binary_config.NullFirthConfig(
-                maximum_iterations=null_firth_maximum_iterations,
-                gradient_tolerance=null_firth_gradient_tolerance,
-                maximum_step_size=null_firth_maximum_step_size,
-                fallback_iteration_multiplier=null_firth_fallback_iteration_multiplier,
-                fallback_step_divisor=null_firth_fallback_step_divisor,
-                line_search_maximum_attempts=null_firth_line_search_maximum_attempts,
-                step_halving_scale=null_firth_step_halving_scale,
-            ),
-        )
+        with jax.default_device(self.device):
+            from g.compute.regenie2_binary import api as regenie2_binary
+            from g.compute.regenie2_binary import config as regenie2_binary_config
+
+            self._binary_api = regenie2_binary
+            self.correction_plan = types.BinaryCorrectionPlan(
+                p_threshold=p_threshold,
+                firth_se=firth_se,
+            )
+            self.binary_config = regenie2_binary_config.BinaryKernelConfig(
+                numerical=self.score_config.numerical,
+                null_logistic=self.score_config.null_logistic,
+                firth_candidate=regenie2_binary_config.FirthCandidateConfig(
+                    batch_size=firth_batch_size,
+                    candidate_capacity=firth_candidate_capacity,
+                ),
+                approximate_firth=regenie2_binary_config.ApproximateFirthConfig(
+                    maximum_iterations=firth_maximum_iterations,
+                    gradient_tolerance=firth_gradient_tolerance,
+                    maximum_step_size=firth_maximum_step_size,
+                    pseudo_maximum_iterations=firth_pseudo_maximum_iterations,
+                    pseudo_inner_maximum_iterations=firth_pseudo_inner_maximum_iterations,
+                    line_search_maximum_attempts=firth_line_search_maximum_attempts,
+                    sparse_carrier_dosage_threshold=firth_sparse_carrier_dosage_threshold,
+                    use_cuda_components=use_cuda_firth_components,
+                ),
+                null_firth=regenie2_binary_config.NullFirthConfig(
+                    maximum_iterations=null_firth_maximum_iterations,
+                    gradient_tolerance=null_firth_gradient_tolerance,
+                    maximum_step_size=null_firth_maximum_step_size,
+                    fallback_iteration_multiplier=null_firth_fallback_iteration_multiplier,
+                    fallback_step_divisor=null_firth_fallback_step_divisor,
+                    line_search_maximum_attempts=null_firth_line_search_maximum_attempts,
+                    step_halving_scale=null_firth_step_halving_scale,
+                ),
+            )
 
     def prepare_chromosome(
         self,
@@ -610,11 +659,12 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         prediction_matrix: npt.NDArray[np.float32],
     ) -> regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState:
         """Prepare score operands and approximate-Firth null state."""
-        return self._binary_state.build_multi_binary_firth_chromosome_state(
-            state=group_state.association_state,
-            loco_offset_matrix=jax.device_put(prediction_matrix),
-            kernel_config=self.binary_config,
-        )
+        with jax.default_device(self.device):
+            return self._binary_state.build_multi_binary_firth_chromosome_state(
+                state=group_state.association_state,
+                loco_offset_matrix=jax.device_put(prediction_matrix, device=self.device),
+                kernel_config=self.binary_config,
+            )
 
     def compute_batch(
         self,
@@ -624,27 +674,30 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         """Submit one transferred batch to the matching score and Firth kernels."""
         if batch.sparse_candidate_mask is None:
             raise ValueError("Binary Firth association requires a sparse candidate mask.")
-        if batch.packed8:
-            corrected_result = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
-                chromosome_state=chromosome_state,
-                packed_probability_pairs_by_variant=batch.genotype_values,
-                correction_plan=self.correction_plan,
-                kernel_config=self.binary_config,
-                sparse_candidate_mask=batch.sparse_candidate_mask,
-                native_genotype_mean=batch.genotype_mean,
+        with jax.default_device(self.device):
+            if batch.packed8:
+                corrected_result = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+                    chromosome_state=chromosome_state,
+                    packed_probability_pairs_by_variant=batch.genotype_values,
+                    correction_plan=self.correction_plan,
+                    kernel_config=self.binary_config,
+                    sparse_candidate_mask=batch.sparse_candidate_mask,
+                    native_genotype_mean=batch.genotype_mean,
+                )
+            else:
+                corrected_result = (
+                    self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
+                        chromosome_state=chromosome_state,
+                        genotype_matrix_by_variant=batch.genotype_values,
+                        correction_plan=self.correction_plan,
+                        kernel_config=self.binary_config,
+                        sparse_candidate_mask=batch.sparse_candidate_mask,
+                        native_genotype_mean=batch.genotype_mean,
+                    )
+                )
+            return AssociationBatch(
+                association=corrected_result.association,
+                raw_packed8_statistics=batch.raw_packed8_statistics,
+                firth_candidate_count=corrected_result.firth_candidate_count,
+                firth_candidate_capacity=corrected_result.firth_candidate_capacity,
             )
-        else:
-            corrected_result = self._binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_variant_major(
-                chromosome_state=chromosome_state,
-                genotype_matrix_by_variant=batch.genotype_values,
-                correction_plan=self.correction_plan,
-                kernel_config=self.binary_config,
-                sparse_candidate_mask=batch.sparse_candidate_mask,
-                native_genotype_mean=batch.genotype_mean,
-            )
-        return AssociationBatch(
-            association=corrected_result.association,
-            raw_packed8_statistics=batch.raw_packed8_statistics,
-            firth_candidate_count=corrected_result.firth_candidate_count,
-            firth_candidate_capacity=corrected_result.firth_candidate_capacity,
-        )

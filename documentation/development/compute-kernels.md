@@ -97,7 +97,27 @@ The native typed-XLA handlers are compiled against the vendored headers from
 package metadata constrains jaxlib to that exact release. Backend construction
 checks both observed versions before any project-owned FFI target is registered,
 so a manually drifted `--no-sync` environment fails instead of crossing an
-unqualified native ABI boundary.
+unqualified native ABI boundary. Successful validation produces an opaque
+adapter token required by device resolution, qualification-cache access, and
+FFI registration; the token remains attached to the backend for lazy packed8
+registration.
+
+Backend construction resolves one concrete local JAX execution device. Every
+backend `device_put` targets that object, and both native capability probes use
+its `local_hardware_id`. Qualification caches include the JAX device identity
+and local ordinal, and one process supports one pinned CUDA execution device.
+Before loading PTX for a new XLA context, the shared CUDA driver layer verifies
+that `cuCtxGetDevice` equals the `CUdevice` handle returned by
+`cuDeviceGet(local_hardware_id)`. CUDA defines those handles as the
+process-visible device identity, so the equality check binds execution to the
+qualified device without relying on display order. The packed8 handler requires
+that proof before any nvCOMP access or decode-workspace allocation; a
+private-feature regression target verifies that bypassing initialization fails
+with `FailedPrecondition`. A CUDA UUID may be added as
+non-hashed diagnostic hardening if JAX exposes one through a supported API; it
+is not needed for this same-process identity proof. CUDA modules and dynamically
+loaded driver libraries intentionally live until process exit because JAX owns
+context teardown and may destroy contexts before C++ static destructors run.
 
 GPU approximate Firth uses a private CUDA component reduction when the Linux
 CUDA driver reports API 12.2 or newer and the selected device has compute

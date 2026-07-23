@@ -1,6 +1,7 @@
 #include <xla/ffi/api/ffi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -150,6 +151,7 @@ struct CudaErrorFactory {
 };
 
 using CudaDriverApi = g::cuda_native::CudaDriverApi<CudaErrorFactory>;
+using CudaDevice = g::cuda_native::CudaDevice;
 using CudaModuleOwner = g::cuda_native::CudaModuleOwner<CudaDriverApi>;
 
 [[nodiscard]] constexpr bool is_power_of_two(std::size_t value) noexcept {
@@ -391,7 +393,7 @@ class Packed8KernelCache {
  public:
   explicit Packed8KernelCache(const CudaDriverApi& driver) : driver_(driver) {}
 
-  [[nodiscard]] const Packed8Kernels& for_current_context() {
+  [[nodiscard]] const Packed8Kernels& for_current_context(CudaDevice qualified_device) {
     // JAX keeps CUDA contexts alive for the process lifetime. Holding modules by
     // context avoids repeated PTX loads; context destruction or handle reuse is
     // outside this handler's supported lifecycle.
@@ -409,7 +411,8 @@ class Packed8KernelCache {
     std::scoped_lock lock(mutex_);
     auto iterator = kernels_.find(context);
     if (iterator == kernels_.end()) {
-      driver_.validate_current_context_device(kMinimumComputeCapabilityMajor,
+      driver_.validate_current_context_device(qualified_device,
+                                              kMinimumComputeCapabilityMajor,
                                               "packed8 nvCOMP FFI requires 7.0 or newer");
       iterator = kernels_.emplace(context, std::make_unique<Packed8Kernels>(driver_)).first;
     }
@@ -430,7 +433,7 @@ class RuntimeState {
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;
 
-  void validate(std::int32_t device_ordinal, std::size_t member_alignment, GGenotypeCudaCapability& capability) const {
+  void validate(std::int32_t device_ordinal, std::size_t member_alignment, GGenotypeCudaCapability& capability) {
     const NvcompProperties& properties = nvcomp_.properties();
     const NvcompAlignmentRequirements& alignments = nvcomp_.alignments();
     capability.nvcomp_version = properties.version;
@@ -459,26 +462,49 @@ class RuntimeState {
                               std::to_string(alignments.input));
     }
 
-    driver_.inspect_device(device_ordinal, capability);
+    const CudaDevice inspected_device = driver_.inspect_device(device_ordinal, capability);
     if (capability.compute_capability_major < kMinimumComputeCapabilityMajor) {
       fail_initialization(InitializationStatus::kComputeCapabilityUnsupported,
                           "nvCOMP DEFLATE requires compute capability 7.0 or newer");
     }
+    CudaDevice unqualified_device = kUnqualifiedDevice;
+    if (!qualified_device_.compare_exchange_strong(unqualified_device, inspected_device) &&
+        unqualified_device != inspected_device) {
+      fail_initialization(InitializationStatus::kInternal,
+                          "packed8 nvCOMP runtime was already qualified for a different visible device");
+    }
   }
 
-  [[nodiscard]] const NvcompApi& nvcomp() const noexcept { return nvcomp_; }
+  [[nodiscard]] CudaDevice require_qualified_device() const {
+    const CudaDevice qualified_device = qualified_device_.load();
+    if (qualified_device == kUnqualifiedDevice) {
+      fail_handler(ErrorCode::kFailedPrecondition,
+                   "packed8 nvCOMP handler was invoked before its execution device was qualified");
+    }
+    return qualified_device;
+  }
 
-  [[nodiscard]] const Packed8Kernels& kernels() { return kernels_.for_current_context(); }
+  [[nodiscard]] const NvcompApi& nvcomp() const {
+    static_cast<void>(require_qualified_device());
+    return nvcomp_;
+  }
+
+  [[nodiscard]] const Packed8Kernels& kernels() { return kernels_.for_current_context(require_qualified_device()); }
 
  private:
+  static constexpr CudaDevice kUnqualifiedDevice = -1;
   CudaDriverApi driver_;
   NvcompApi nvcomp_;
+  std::atomic<CudaDevice> qualified_device_{kUnqualifiedDevice};
   Packed8KernelCache kernels_;
 };
 
 RuntimeState& runtime_state() {
-  static RuntimeState state;
-  return state;
+  // JAX owns the CUDA contexts and can destroy them before C++ static
+  // destructors run. Keep the driver/nvCOMP libraries and context-bound
+  // modules alive until process exit instead of attempting unsafe teardown.
+  static RuntimeState* const state = new RuntimeState();
+  return *state;
 }
 
 class WorkspaceLayout {
@@ -598,6 +624,7 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
     }
 
     RuntimeState& runtime = runtime_state();
+    const Packed8Kernels& kernels = runtime.kernels();
     const NvcompApi& nvcomp = runtime.nvcomp();
     const NvcompAlignmentRequirements& alignments = nvcomp.alignments();
     const std::size_t compressed_slab_bytes = compressed_slab.element_count();
@@ -645,7 +672,6 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
     std::uint32_t* descriptor_statuses = reinterpret_cast<std::uint32_t*>(workspace + descriptor_statuses_offset);
     void* temporary = temporary_bytes == 0 ? nullptr : workspace + temporary_offset;
 
-    const Packed8Kernels& kernels = runtime.kernels();
     kernels.launch_descriptors(compressed_slab.typed_data(),
                                compressed_slab_bytes,
                                compressed_metadata.typed_data(),

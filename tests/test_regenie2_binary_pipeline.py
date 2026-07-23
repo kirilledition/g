@@ -6,6 +6,7 @@ import dataclasses
 import math
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -1164,7 +1165,7 @@ def test_host_materialization_rejects_production_fixed_capacity_overflow(
     assert int(np.asarray(overflow_result.firth_candidate_count)) == 2
     assert overflow_result.firth_candidate_capacity == 1
     with pytest.raises(ValueError, match=r"candidate count 2 exceeded.*capacity of 1"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        jax_backend.JaxBackendBase(device=jax.local_devices(backend="cpu")[0]).materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=2,

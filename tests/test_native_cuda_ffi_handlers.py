@@ -4,6 +4,8 @@ import importlib
 import math
 import os
 import struct
+import subprocess
+import sys
 import typing
 import zlib
 from dataclasses import dataclass
@@ -53,6 +55,8 @@ class CudaFfiTestSupport(typing.Protocol):
     def register_firth_components_ffi(self) -> str: ...
 
     def register_packed8_deflate_ffi(self) -> str: ...
+
+    def register_unqualified_packed8_deflate_ffi_for_test(self) -> str: ...
 
     def nvcomp_input_alignment(self) -> int: ...
 
@@ -261,6 +265,75 @@ def test_native_registration_is_exact_and_idempotent(cuda_test_support: CudaFfiT
     assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
 
 
+def run_unqualified_packed8_handler_regression() -> None:
+    """Assert the native handler rejects execution before device qualification."""
+    jax.config.update("jax_enable_x64", True)  # noqa: FBT003 - Native summary operands require u64.
+    jax.config.update("jax_platforms", "cuda")
+    target = load_cuda_test_support().register_unqualified_packed8_deflate_ffi_for_test()
+    fixture = build_raw_deflate_fixture(source_sample_count=31, logical_variant_count=1)
+
+    @jax.jit
+    def invoke_unqualified_handler(
+        compressed_slab: jax.Array,
+        compressed_metadata: jax.Array,
+        selected_sample_indices: jax.Array,
+    ) -> typing.Sequence[jax.Array]:
+        return jax.ffi.ffi_call(
+            target,
+            (
+                jax.ShapeDtypeStruct((1, fixture.source_sample_count, 2), np.uint8),
+                jax.ShapeDtypeStruct((1,), np.uint64),
+                jax.ShapeDtypeStruct((1,), np.uint64),
+                jax.ShapeDtypeStruct((1,), np.uint32),
+                jax.ShapeDtypeStruct((1,), np.uint32),
+                jax.ShapeDtypeStruct((1,), np.uint32),
+                jax.ShapeDtypeStruct((1,), np.float32),
+            ),
+        )(
+            compressed_slab,
+            compressed_metadata,
+            selected_sample_indices,
+            source_sample_count=fixture.source_sample_count,
+            selection_start=0,
+        )
+
+    try:
+        observed = invoke_unqualified_handler(
+            jnp.asarray(fixture.compressed_slab),
+            jnp.asarray(fixture.compressed_metadata),
+            jnp.asarray(np.empty((0,), dtype=np.uint32)),
+        )
+        jax.block_until_ready(observed)
+    except jax.errors.JaxRuntimeError as error:
+        expected_message = "before its execution device was qualified"
+        if expected_message not in str(error):
+            raise AssertionError(f"Unexpected unqualified-handler error: {error}") from error
+    else:
+        raise AssertionError("The packed8 handler executed without a qualified CUDA device.")
+
+
+def test_packed8_handler_rejects_use_before_qualification_in_fresh_process() -> None:
+    script = (
+        "from tests.test_native_cuda_ffi_handlers import "
+        "run_unqualified_packed8_handler_regression; "
+        "run_unqualified_packed8_handler_regression()"
+    )
+    completed_process = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        timeout=180,
+    )
+
+    assert completed_process.returncode == 0, (
+        f"Unqualified packed8 regression subprocess failed.\n"
+        f"stdout:\n{completed_process.stdout}\n"
+        f"stderr:\n{completed_process.stderr}"
+    )
+
+
 @pytest.mark.parametrize("sample_count", FIRTH_SAMPLE_COUNTS)
 @pytest.mark.parametrize("active_prefix", FIRTH_ACTIVE_PREFIXES)
 def test_registered_firth_handler_matches_portable_boundary_matrix(
@@ -368,13 +441,24 @@ def test_registered_firth_handler_rejects_malformed_operands(
 
 def build_raw_deflate_fixture(source_sample_count: int, logical_variant_count: int) -> RawDeflateFixture:
     probability_rows = np.empty((logical_variant_count, source_sample_count, 2), dtype=np.uint8)
-    compressed_slab = bytearray()
-    metadata_rows: list[tuple[int, int, int]] = []
     for variant_index in range(logical_variant_count):
         for sample_index in range(source_sample_count):
             first_probability = (variant_index * 29 + sample_index * 17 + 3) % 256
             second_probability = (variant_index * 11 + sample_index * 7 + 5) % (256 - first_probability)
             probability_rows[variant_index, sample_index] = (first_probability, second_probability)
+    return build_raw_deflate_fixture_from_probabilities(probability_rows)
+
+
+def build_raw_deflate_fixture_from_probabilities(
+    probability_rows: npt.NDArray[np.uint8],
+) -> RawDeflateFixture:
+    """Encode explicit packed8 probability rows as aligned raw DEFLATE members."""
+    if probability_rows.ndim != 3 or probability_rows.shape[2] != 2:
+        raise ValueError("Packed8 fixture probabilities must have shape variants x samples x 2.")
+    logical_variant_count, source_sample_count, _ = probability_rows.shape
+    compressed_slab = bytearray()
+    metadata_rows: list[tuple[int, int, int]] = []
+    for variant_index in range(logical_variant_count):
         decompressed_row = (
             struct.pack("<I", source_sample_count)
             + struct.pack("<H", 2)
@@ -539,6 +623,73 @@ def test_registered_packed8_handler_covers_geometry_selection_and_padding(
         logical_variant_count=logical_variant_count,
         compute_variant_count=compute_variant_count,
         selected_sample_count=selected_indices.size,
+    )
+
+
+@pytest.mark.parametrize("selection_mode", ("contiguous", "indexed"))
+def test_registered_packed8_handler_covers_nonidentity_selection_over_256_samples(
+    cuda_test_support: CudaFfiTestSupport,
+    selection_mode: str,
+) -> None:
+    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+    fixture = build_raw_deflate_fixture(source_sample_count=513, logical_variant_count=5)
+    if selection_mode == "contiguous":
+        selected_indices = np.arange(71, 371, dtype=np.int64)
+        selected_index_operand = np.empty((0,), dtype=np.uint32)
+        selection_start = 71
+    else:
+        selected_indices = (np.arange(300, dtype=np.int64) * 37 + 11) % 513
+        selected_index_operand = selected_indices.astype(np.uint32)
+        selection_start = -1
+    expected = build_packed8_expected(fixture, selected_indices)
+
+    observed = decode_packed8_fixture(
+        fixture,
+        selected_index_operand,
+        selection_start=selection_start,
+        selected_sample_count=selected_indices.size,
+        compute_variant_count=8,
+    )
+    jax.block_until_ready(observed)
+
+    assert_packed8_result_matches(
+        observed,
+        expected,
+        logical_variant_count=fixture.logical_variant_count,
+        compute_variant_count=8,
+        selected_sample_count=selected_indices.size,
+    )
+
+
+def test_registered_packed8_handler_covers_sparse_mask_positive_and_threshold_boundary(
+    cuda_test_support: CudaFfiTestSupport,
+) -> None:
+    assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+    source_sample_count = 100
+    probability_rows = np.full((3, source_sample_count, 2), (255, 0), dtype=np.uint8)
+    probability_rows[0, -1] = (0, 255)
+    probability_rows[1, -49:] = (0, 255)
+    probability_rows[2, -50:] = (0, 255)
+    fixture = build_raw_deflate_fixture_from_probabilities(probability_rows)
+    selected_indices = np.arange(source_sample_count, dtype=np.int64)
+    expected = build_packed8_expected(fixture, selected_indices)
+    np.testing.assert_array_equal(expected.sparse_candidate_mask, np.asarray((True, True, False)))
+
+    observed = decode_packed8_fixture(
+        fixture,
+        np.empty((0,), dtype=np.uint32),
+        selection_start=0,
+        selected_sample_count=source_sample_count,
+        compute_variant_count=4,
+    )
+    jax.block_until_ready(observed)
+
+    assert_packed8_result_matches(
+        observed,
+        expected,
+        logical_variant_count=fixture.logical_variant_count,
+        compute_variant_count=4,
+        selected_sample_count=source_sample_count,
     )
 
 

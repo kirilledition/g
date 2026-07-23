@@ -1,5 +1,6 @@
 #include <xla/ffi/api/ffi.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -116,6 +117,7 @@ struct CudaErrorFactory {
 };
 
 using CudaDriverApi = g::cuda_native::CudaDriverApi<CudaErrorFactory>;
+using CudaDevice = g::cuda_native::CudaDevice;
 using CudaModuleOwner = g::cuda_native::CudaModuleOwner<CudaDriverApi>;
 
 class FirthComponentsKernel {
@@ -183,7 +185,7 @@ class FirthComponentsKernelCache {
  public:
   explicit FirthComponentsKernelCache(const CudaDriverApi& driver) : driver_(driver) {}
 
-  [[nodiscard]] const FirthComponentsKernel& for_current_context() {
+  [[nodiscard]] const FirthComponentsKernel& for_current_context(CudaDevice qualified_device) {
     const CudaContext context = driver_.current_context();
     struct ThreadCache {
       const FirthComponentsKernelCache* owner = nullptr;
@@ -198,7 +200,8 @@ class FirthComponentsKernelCache {
     std::scoped_lock lock(mutex_);
     auto iterator = kernels_.find(context);
     if (iterator == kernels_.end()) {
-      driver_.validate_current_context_device(kMinimumComputeCapabilityMajor,
+      driver_.validate_current_context_device(qualified_device,
+                                              kMinimumComputeCapabilityMajor,
                                               "CUDA Firth components require 7.0 or newer");
       iterator = kernels_.emplace(context, std::make_unique<FirthComponentsKernel>(driver_)).first;
     }
@@ -219,30 +222,48 @@ class RuntimeState {
   RuntimeState(const RuntimeState&) = delete;
   RuntimeState& operator=(const RuntimeState&) = delete;
 
-  void validate(std::int32_t device_ordinal, GComputeCudaCapability& capability) const {
+  void validate(std::int32_t device_ordinal, GComputeCudaCapability& capability) {
     capability.cuda_driver_version = driver_.driver_version();
     capability.device_ordinal = device_ordinal;
     if (capability.cuda_driver_version < kMinimumCudaDriverVersion) {
       fail_initialization(InitializationStatus::kCudaDriverTooOld,
                           "embedded PTX ISA 8.2 requires CUDA driver API version 12020 or newer");
     }
-    driver_.inspect_device(device_ordinal, capability);
+    const CudaDevice inspected_device = driver_.inspect_device(device_ordinal, capability);
     if (capability.compute_capability_major < kMinimumComputeCapabilityMajor) {
       fail_initialization(InitializationStatus::kComputeCapabilityUnsupported,
                           "CUDA Firth components require compute capability 7.0 or newer");
     }
+    CudaDevice unqualified_device = kUnqualifiedDevice;
+    if (!qualified_device_.compare_exchange_strong(unqualified_device, inspected_device) &&
+        unqualified_device != inspected_device) {
+      fail_initialization(InitializationStatus::kInternal,
+                          "CUDA Firth runtime was already qualified for a different visible device");
+    }
   }
 
-  [[nodiscard]] const FirthComponentsKernel& kernel() { return kernels_.for_current_context(); }
+  [[nodiscard]] const FirthComponentsKernel& kernel() {
+    const CudaDevice qualified_device = qualified_device_.load();
+    if (qualified_device == kUnqualifiedDevice) {
+      fail_handler(ErrorCode::kFailedPrecondition,
+                   "CUDA Firth handler was invoked before its execution device was qualified");
+    }
+    return kernels_.for_current_context(qualified_device);
+  }
 
  private:
+  static constexpr CudaDevice kUnqualifiedDevice = -1;
   CudaDriverApi driver_;
+  std::atomic<CudaDevice> qualified_device_{kUnqualifiedDevice};
   FirthComponentsKernelCache kernels_;
 };
 
 RuntimeState& runtime_state() {
-  static RuntimeState state;
-  return state;
+  // JAX owns the CUDA contexts and can destroy them before C++ static
+  // destructors run. Keep the driver library and context-bound modules alive
+  // until process exit instead of attempting context-unsafe teardown.
+  static RuntimeState* const state = new RuntimeState();
+  return *state;
 }
 
 bool dimensions_equal(const AnyBuffer& left, const AnyBuffer& right) { return left.dimensions() == right.dimensions(); }

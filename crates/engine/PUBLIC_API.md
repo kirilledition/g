@@ -18,8 +18,12 @@ orthogonal to its artifact-or-error result, including structural artifact
 conversion failures and output terminal rejections. Output authority remains
 private to the engine; `g-runner` observes only its purpose and engine-owned
 renderable error. Backend capability and transfer-preparation enums are owned
-here with the backend lifecycle;
-genotype batches, compressed transfer descriptors, and raw statistics remain
+here with the backend lifecycle. The validated association implementation
+state is also engine-owned: its constructors admit only valid requested,
+effective, FFI-target, and fallback combinations, and its accessors separate
+stable implementation and fallback-reason names from diagnostic-only free text.
+Every production JAX backend retains its exact observed JAX and JAXlib versions.
+Genotype batches, compressed transfer descriptors, and raw statistics remain
 owned by `g-genotype`. Input and output payloads remain owned by their domain
 crates and are referenced directly rather than mirrored or re-exported. Run
 preparation/execution state, upstream error types, and scheduler reports remain
@@ -98,6 +102,17 @@ travel through the backend's opaque
 batch lifecycle without cloning; compressed batches materialize exact integer
 summaries, which the genotype crate validates and converts on the
 materialization worker before any writer sees the batch.
+
+The root JAX adapter captures exact observed JAX/JAXlib versions when it builds
+the association implementation state. Effective raw CUDA carries the exact FFI
+target supplied by `g-compute-cuda`; JAX and fallback states cannot carry a
+target. Run/output integration must read this state before opening output and
+project only requested implementation, effective implementation, typed
+fallback reason, exact JAX/JAXlib versions, and the FFI target ABI name when raw
+CUDA is effective into compatibility state.
+Host-specific diagnostic detail, device ordinal, UUID, and description remain
+non-hashed. The pre-release contract version remains `0`; execution-plan hashing
+alone carries this compatibility state.
 
 ## Allowed downstream users
 

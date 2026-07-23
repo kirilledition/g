@@ -19,6 +19,11 @@ fn nvcomp_input_alignment(py: Python<'_>) -> PyResult<usize> {
     engine::require_nvcomp_input_alignment(py)
 }
 
+#[pyfunction]
+fn register_unqualified_packed8_deflate_ffi_for_test(py: Python<'_>) -> PyResult<String> {
+    engine::register_unqualified_nvcomp_ffi_target_for_test(py).map(str::to_string)
+}
+
 pub(super) fn register_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let parent_name = parent.name()?;
@@ -27,6 +32,7 @@ pub(super) fn register_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(register_firth_components_ffi, &module)?)?;
     module.add_function(wrap_pyfunction!(register_packed8_deflate_ffi, &module)?)?;
     module.add_function(wrap_pyfunction!(nvcomp_input_alignment, &module)?)?;
+    module.add_function(wrap_pyfunction!(register_unqualified_packed8_deflate_ffi_for_test, &module)?)?;
     parent.add_submodule(&module)?;
     py.import("sys")?.getattr("modules")?.set_item(full_name, &module)?;
     Ok(())

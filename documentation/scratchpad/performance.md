@@ -1564,6 +1564,15 @@ evidence is under
 `data/profiles/raw_cuda_firth_production_final_abba_analysis.json` and
 `data/profiles/raw_cuda_firth_production_final_abba`.
 
+Follow-up review on 2026-07-23 found one tooling-only multi-GPU limitation.
+The focused `benchmark_firth_compute.py` raw-CUDA registration follows the
+binding's deterministic lowest-device policy, but the benchmark still leaves
+its own array placement implicit. Existing Landau evidence is unaffected
+because that allocation exposes one GPU. Until the tooling-last pass pins the
+same concrete JAX device throughout the benchmark, do not use this focused
+benchmark with more than one visible GPU. Production backend construction and
+execution are explicitly pinned and do not share this limitation.
+
 ## 2026-07-20 Production Hygiene And CUDA Driver Ownership
 
 The frozen baseline is `d80447fa1725305d81ebfa2203601382b13bc8a7`; the

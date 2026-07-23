@@ -121,7 +121,16 @@ or registration failure selects the mathematically equivalent JAX reduction.
 The process-lifetime selection is typed and immutable, records requested and
 effective implementations plus a typed fallback reason, and cannot switch
 after compilation begins. The same provenance is available to the output
-manifest boundary.
+manifest boundary. This validated state is owned by `g-engine`, not the
+request-planning crate; invalid requested/effective combinations cannot be
+constructed. Every production JAX backend retains the exact observed JAX and
+JAXlib versions, and an effective raw-CUDA state also retains the exact
+registered FFI target. The adapter also retains an opaque successful-version
+validation token required by device resolution, native selection caches, and
+FFI registration. Stable output compatibility includes only those versions, the
+requested and effective implementations, the typed fallback reason, and the FFI
+target when raw CUDA is effective. Diagnostic fallback detail and device identity
+remain outside hashes.
 Focused native tests opt into the `private-test-support` Cargo feature, which
 adds only `g._core._testing` registration helpers. Normal Maturin builds enable
 only `extension-module`, so the helper namespace is absent from the production
@@ -133,10 +142,10 @@ header so CUDA ABI declarations, dynamic loading, module ownership, and
 device/context checks have one maintained implementation without a linked
 support library.
 
-Packed8 descriptor status `0x00000800` is terminal. The binding records bounded
-FNV-1a fingerprints for the source slab, metadata, and pooled allocation
-identity before transfer, attaches them to that batch, and reports them with
-the first descriptor failure without retrying the batch.
+Packed8 descriptor status `0x00000800` is terminal. The binding reports the
+first affected source and relative variant, status, logical and compute
+geometry, and slab byte count without retrying the batch. Production transfer
+does not scan protected genotype or descriptor contents for diagnostics.
 
 Runner holds process runtime state across logging-compatibility validation,
 native session construction, subscriber installation, and topology recording.
