@@ -26,9 +26,10 @@ Python owns:
   JAX kernel state and statistical computation
 ```
 
-The root PyO3 module exposes only `g._core.cli`. There are no legacy aliases,
-backend exchange classes, callback APIs, writer APIs, runtime APIs, or config
-object graphs registered for Python.
+The root PyO3 module exposes `g._core.cli` plus read-only exact-source build
+provenance attributes. There are no legacy aliases, backend exchange classes,
+callback APIs, writer APIs, runtime APIs, or config object graphs registered
+for Python.
 
 ## Implemented Changes
 

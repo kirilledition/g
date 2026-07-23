@@ -78,12 +78,15 @@ just slurm-cpu-check
 just slurm-cpu-test
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
-just slurm-gpu-test-parity-required
+G_REGENIE_PARITY_EXPECTED_GIT_COMMIT=<full scheduler-selected SHA> \
+  just slurm-gpu-test-parity-required
 ```
 
 CPU and GPU correctness run in separate processes. The CPU recipe excludes
-data-dependent parity; the GPU recipe qualifies all blocking upstream-REGENIE
-workflows with required local fixtures.
+data-dependent parity. The GPU recipe uses one allocation to sync GPU
+dependencies, build/install a clean exact-source release extension, run every
+required upstream-REGENIE workflow, and emit a sanitized ignored qualification
+bundle. Missing required local fixtures fail.
 
 ## Data
 

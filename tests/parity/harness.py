@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import enum
 import hashlib
 import json
@@ -13,11 +14,14 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+import pyarrow.parquet
 
 import tests.numerical
+import tooling.science_gate
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_METADATA_PATH = Path(__file__).with_name("golden_metadata.json")
+PARITY_METADATA_SCHEMA_VERSION = 3
 VARIANT_KEY_COLUMNS = ("CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1")
 REQUIRED_INPUT_OPTION_NAMES = ("bgen", "sample", "phenotype_file", "covariate_file", "prediction_list")
 REQUIRED_WORKFLOW_IDENTIFIERS = frozenset(
@@ -27,7 +31,10 @@ REQUIRED_WORKFLOW_IDENTIFIERS = frozenset(
         "binary_approximate_firth",
     }
 )
+REQUIRED_QUALIFICATION_HOSTS = ("landau",)
 SIGNIFICANCE_P_VALUE_THRESHOLDS = (0.05, 5.0e-8)
+REQUIRED_JAX_VERSION = "0.11.0"
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 REGENIE_CORRECTION_COUNT_PATTERN = re.compile(
     r"^\s*Number of tests with Firth correction\s*:\s*(\d+)\s*$",
     flags=re.MULTILINE,
@@ -47,8 +54,122 @@ class ParityWorkflowStatus(enum.StrEnum):
 class ParityGateStatus(enum.StrEnum):
     """Enforcement state of one external parity workflow."""
 
-    BLOCKING = "blocking"
     DIAGNOSTIC = "diagnostic"
+    REQUIRED = "required"
+
+
+class QualificationOutputDataType(enum.StrEnum):
+    """Closed output data-type names stored in qualification metadata."""
+
+    STRING = "String"
+    INT64 = "Int64"
+    FLOAT32 = "Float32"
+    INT32 = "Int32"
+
+
+class NativeBuildProfile(enum.StrEnum):
+    """Native build profiles eligible for qualification."""
+
+    RELEASE = "release"
+
+
+@dataclass(frozen=True)
+class QualificationOutputField:
+    """One ordered field in the qualified production output."""
+
+    name: str
+    data_type: QualificationOutputDataType
+    nullable: bool
+
+
+PRODUCTION_OUTPUT_FIELDS = (
+    QualificationOutputField(
+        name="CHROM",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="GENPOS",
+        data_type=QualificationOutputDataType.INT64,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="ID",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="ALLELE0",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="ALLELE1",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="A1FREQ",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="INFO",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=True,
+    ),
+    QualificationOutputField(
+        name="N",
+        data_type=QualificationOutputDataType.INT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="BETA",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="SE",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="CHISQ",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="LOG10P",
+        data_type=QualificationOutputDataType.FLOAT32,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="CORRECTION_METHOD",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+    QualificationOutputField(
+        name="CORRECTION_STATUS",
+        data_type=QualificationOutputDataType.STRING,
+        nullable=False,
+    ),
+)
+BASELINE_RESULT_SCHEMA = (
+    ("CHROM", "Int64"),
+    ("GENPOS", "Int64"),
+    ("ID", "String"),
+    ("ALLELE0", "String"),
+    ("ALLELE1", "String"),
+    ("A1FREQ", "Float64"),
+    ("INFO", "Int64"),
+    ("N", "Int64"),
+    ("TEST", "String"),
+    ("BETA", "Float64"),
+    ("SE", "Float64"),
+    ("CHISQ", "Float64"),
+    ("LOG10P", "Float64"),
+    ("EXTRA", "String"),
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +200,68 @@ class RegenieCorrectionSummary:
 
 
 @dataclass(frozen=True)
+class QualificationNativeBuild:
+    """Native extension identity required by an exact-source qualification."""
+
+    git_commit: str
+    science_source_sha256: str
+    source_clean: bool
+    profile: NativeBuildProfile
+    library_sha256: str
+    library_size_bytes: int
+
+
+@dataclass(frozen=True)
+class QualificationDeviceEvidence:
+    """Sanitized identity of the JAX CUDA devices used for qualification."""
+
+    platform: str
+    device_kind: str
+    device_count: int
+    backend_platform_version: str
+    nvidia_driver_version: str
+    cuda_runtime_version: str
+
+
+@dataclass(frozen=True)
+class QualificationStatisticEvidence:
+    """Observed numerical evidence for one exclusive upstream comparison."""
+
+    observed_column: str
+    baseline_column: str
+    maximum_absolute_difference: float
+    absolute_tolerance: float
+
+
+@dataclass(frozen=True)
+class QualificationEvidence:
+    """Sanitized evidence required to qualify an exact source externally."""
+
+    passed: bool
+    qualified_git_commit: str
+    science_source_sha256: str
+    working_tree_clean: bool
+    qualification_generated_at_utc: str
+    qualification_node: str
+    cargo_lock_sha256: str
+    uv_lock_sha256: str
+    jax_version: str
+    jaxlib_version: str
+    configured_device: str
+    actual_device: QualificationDeviceEvidence
+    native_build: QualificationNativeBuild
+    observed_row_count: int
+    output_fields: tuple[QualificationOutputField, ...]
+    statistics: tuple[QualificationStatisticEvidence, ...]
+    observed_correction_count: int
+    observed_correction_failure_count: int
+    exact_variant_keys: bool
+    exact_sample_counts: bool
+    exact_nonfinite_classes: bool
+    exact_significance_classifications: bool
+
+
+@dataclass(frozen=True)
 class GoldenWorkflow:
     """One production CLI workflow with an upstream REGENIE oracle."""
 
@@ -100,9 +283,10 @@ class GoldenWorkflow:
     input_sha256: dict[str, str]
     prediction_file_sha256: dict[str, str]
     validation_nodes: tuple[str, ...]
+    qualification_hosts: tuple[str, ...]
     documentation_paths: tuple[Path, ...]
     tolerances: tuple[StatisticTolerance, ...]
-    qualification: dict[str, object]
+    qualification: QualificationEvidence | None
 
 
 @dataclass(frozen=True)
@@ -128,7 +312,9 @@ class ParityMetadata:
 
 def read_regenie_table(table_path: Path) -> pl.DataFrame:
     """Read an upstream REGENIE whitespace-delimited results table."""
-    return pl.read_csv(table_path, separator=" ", null_values="NA")
+    data_frame = pl.read_csv(table_path, separator=" ", null_values="NA")
+    assert_data_frame_schema(data_frame, expected_schema=BASELINE_RESULT_SCHEMA, label="REGENIE")
+    return data_frame
 
 
 def read_direct_parquet_dataset(output_root: Path) -> pl.DataFrame:
@@ -141,7 +327,11 @@ def read_direct_parquet_dataset(output_root: Path) -> pl.DataFrame:
         AssertionError: If the run or direct Parquet-parts contract is absent.
     """
     parquet_paths = direct_parquet_paths(output_root)
-    return pl.concat((pl.read_parquet(path) for path in parquet_paths), how="vertical")
+    assert_direct_parquet_schema(parquet_paths)
+    data_frame = pl.concat((pl.read_parquet(path) for path in parquet_paths), how="vertical")
+    expected_schema = tuple((field.name, field.data_type.value) for field in PRODUCTION_OUTPUT_FIELDS)
+    assert_data_frame_schema(data_frame, expected_schema=expected_schema, label="g")
+    return data_frame
 
 
 def direct_parquet_paths(output_root: Path) -> tuple[Path, ...]:
@@ -153,6 +343,39 @@ def direct_parquet_paths(output_root: Path) -> tuple[Path, ...]:
     if not parquet_paths:
         raise AssertionError(f"No direct Parquet parts found below {run_directories[0]}")
     return tuple(parquet_paths)
+
+
+def assert_data_frame_schema(
+    data_frame: pl.DataFrame,
+    *,
+    expected_schema: tuple[tuple[str, str], ...],
+    label: str,
+) -> None:
+    """Require exact logical column order and data types."""
+    observed_schema = tuple((column_name, str(data_type)) for column_name, data_type in data_frame.schema.items())
+    if observed_schema != expected_schema:
+        raise AssertionError(f"{label} result schema mismatch: expected {expected_schema}, observed {observed_schema}")
+
+
+def assert_direct_parquet_schema(parquet_paths: tuple[Path, ...]) -> None:
+    """Require every production part to retain the ordered Arrow contract."""
+    arrow_data_type_names = {
+        QualificationOutputDataType.STRING: "string",
+        QualificationOutputDataType.INT64: "int64",
+        QualificationOutputDataType.FLOAT32: "float",
+        QualificationOutputDataType.INT32: "int32",
+    }
+    expected_schema = tuple(
+        (field.name, arrow_data_type_names[field.data_type], field.nullable) for field in PRODUCTION_OUTPUT_FIELDS
+    )
+    for parquet_path in parquet_paths:
+        arrow_schema = pyarrow.parquet.read_schema(parquet_path)
+        observed_schema = tuple((field.name, str(field.type), field.nullable) for field in arrow_schema)
+        if observed_schema != expected_schema:
+            raise AssertionError(
+                f"Production Parquet schema mismatch in {parquet_path}: "
+                f"expected {expected_schema}, observed {observed_schema}"
+            )
 
 
 def sha256_file(file_path: Path) -> str:
@@ -442,15 +665,34 @@ def assert_significance_classifications_match(
 
 def assert_metadata_covers_required_workflows(metadata: ParityMetadata) -> None:
     """Validate the required external-oracle coverage contract."""
+    if metadata.schema_version != PARITY_METADATA_SCHEMA_VERSION:
+        raise AssertionError(
+            f"Expected parity metadata schema {PARITY_METADATA_SCHEMA_VERSION}, got {metadata.schema_version}"
+        )
     missing_identifiers = REQUIRED_WORKFLOW_IDENTIFIERS.difference(metadata.workflow_identifiers)
+    unexpected_identifiers = metadata.workflow_identifiers.difference(REQUIRED_WORKFLOW_IDENTIFIERS)
     if missing_identifiers:
         missing_text = ", ".join(sorted(missing_identifiers))
         raise AssertionError(f"Missing REGENIE parity workflow metadata: {missing_text}")
+    if unexpected_identifiers:
+        unexpected_text = ", ".join(sorted(unexpected_identifiers))
+        raise AssertionError(f"Unexpected REGENIE parity workflow metadata: {unexpected_text}")
     for workflow in metadata.workflows:
         if workflow.status != ParityWorkflowStatus.EXTERNAL_GOLDEN:
             raise AssertionError(f"Parity workflow is not backed by an external golden: {workflow.identifier}")
+        if workflow.gate_status != ParityGateStatus.REQUIRED:
+            raise AssertionError(f"Required REGENIE parity workflow lost required status: {workflow.identifier}")
+        if workflow.qualification is not None:
+            raise AssertionError(
+                f"Required parity evidence must remain external to checked-in metadata: {workflow.identifier}"
+            )
         if not workflow.validation_nodes:
             raise AssertionError(f"Parity workflow has no validation nodes: {workflow.identifier}")
+        if workflow.qualification_hosts != REQUIRED_QUALIFICATION_HOSTS:
+            raise AssertionError(
+                f"Parity workflow has wrong qualification hosts: "
+                f"{workflow.identifier} requires {REQUIRED_QUALIFICATION_HOSTS}"
+            )
         if not workflow.tolerances:
             raise AssertionError(f"Parity workflow has no numerical tolerances: {workflow.identifier}")
         if set(workflow.input_sha256) != set(REQUIRED_INPUT_OPTION_NAMES):
@@ -459,14 +701,124 @@ def assert_metadata_covers_required_workflows(metadata: ParityMetadata) -> None:
             raise AssertionError(f"Parity workflow has no referenced prediction hashes: {workflow.identifier}")
 
 
+def assert_workflow_qualification_is_current(
+    workflow: GoldenWorkflow,
+    qualification: QualificationEvidence,
+    *,
+    git_commit: str,
+    science_source_sha256: str,
+) -> None:
+    """Validate one required workflow's exact-source qualification evidence."""
+    if not qualification.passed:
+        raise AssertionError(f"Qualification did not pass for {workflow.identifier}")
+    if not qualification.working_tree_clean:
+        raise AssertionError(f"Qualification used a dirty working tree for {workflow.identifier}")
+    if qualification.qualified_git_commit != git_commit:
+        raise AssertionError(
+            f"Stale Git commit qualification for {workflow.identifier}: "
+            f"expected {git_commit}, observed {qualification.qualified_git_commit}"
+        )
+    if qualification.qualification_node not in workflow.qualification_hosts:
+        raise AssertionError(
+            f"Qualification host is not allowed for {workflow.identifier}: "
+            f"{qualification.qualification_node} not in {workflow.qualification_hosts}"
+        )
+    if qualification.science_source_sha256 != science_source_sha256:
+        raise AssertionError(
+            f"Stale science-source qualification for {workflow.identifier}: "
+            f"expected {science_source_sha256}, observed {qualification.science_source_sha256}"
+        )
+    native_build = qualification.native_build
+    if native_build.git_commit != qualification.qualified_git_commit:
+        raise AssertionError(f"Native extension commit differs from qualified commit for {workflow.identifier}")
+    if native_build.science_source_sha256 != science_source_sha256:
+        raise AssertionError(f"Native extension is stale for {workflow.identifier}")
+    if not native_build.source_clean:
+        raise AssertionError(f"Native extension was built from dirty source for {workflow.identifier}")
+    if native_build.profile != NativeBuildProfile.RELEASE:
+        raise AssertionError(f"Native extension is not a release build for {workflow.identifier}")
+    if qualification.cargo_lock_sha256 != sha256_file(REPOSITORY_ROOT / "Cargo.lock"):
+        raise AssertionError(f"Cargo.lock changed since qualification for {workflow.identifier}")
+    if qualification.uv_lock_sha256 != sha256_file(REPOSITORY_ROOT / "uv.lock"):
+        raise AssertionError(f"uv.lock changed since qualification for {workflow.identifier}")
+    if qualification.jax_version != REQUIRED_JAX_VERSION or qualification.jaxlib_version != REQUIRED_JAX_VERSION:
+        raise AssertionError(f"Unsupported JAX qualification versions for {workflow.identifier}")
+    configured_device = str(workflow.g_cli_options["device"])
+    if qualification.configured_device != configured_device:
+        raise AssertionError(f"Qualified device changed for {workflow.identifier}")
+    actual_device = qualification.actual_device
+    if actual_device.platform not in {"cuda", "gpu"}:
+        raise AssertionError(f"Qualification did not use a JAX GPU platform for {workflow.identifier}")
+    if "cuda" not in actual_device.backend_platform_version.lower():
+        raise AssertionError(f"Qualification did not use the JAX CUDA backend for {workflow.identifier}")
+    if actual_device.device_count <= 0:
+        raise AssertionError(f"Qualification observed no JAX CUDA devices for {workflow.identifier}")
+    required_device_strings = (
+        actual_device.device_kind,
+        actual_device.nvidia_driver_version,
+        actual_device.cuda_runtime_version,
+    )
+    if not all(required_device_strings):
+        raise AssertionError(f"Qualification omitted CUDA device/runtime identity for {workflow.identifier}")
+    if qualification.observed_row_count != workflow.expected_row_count:
+        raise AssertionError(f"Qualified row count changed for {workflow.identifier}")
+    if qualification.output_fields != PRODUCTION_OUTPUT_FIELDS:
+        raise AssertionError(f"Qualified output schema/order/dtypes changed for {workflow.identifier}")
+    expected_statistics = tuple(
+        (
+            tolerance.observed_column,
+            tolerance.baseline_column,
+            tolerance.absolute_tolerance,
+        )
+        for tolerance in workflow.tolerances
+    )
+    observed_statistics = tuple(
+        (
+            statistic.observed_column,
+            statistic.baseline_column,
+            statistic.absolute_tolerance,
+        )
+        for statistic in qualification.statistics
+    )
+    if observed_statistics != expected_statistics:
+        raise AssertionError(f"Qualified statistic contract changed for {workflow.identifier}")
+    for statistic in qualification.statistics:
+        if not math.isfinite(statistic.maximum_absolute_difference):
+            raise AssertionError(f"Qualified statistic is non-finite for {workflow.identifier}")
+        if statistic.maximum_absolute_difference < 0.0:
+            raise AssertionError(f"Qualified statistic difference is negative for {workflow.identifier}")
+        if statistic.maximum_absolute_difference >= statistic.absolute_tolerance:
+            raise AssertionError(
+                f"Qualified statistic reached its exclusive tolerance for "
+                f"{workflow.identifier}/{statistic.observed_column}"
+            )
+    expected_correction_count = workflow.expected_correction_count or 0
+    expected_correction_failure_count = workflow.expected_correction_failure_count or 0
+    if qualification.observed_correction_count != expected_correction_count:
+        raise AssertionError(f"Qualified correction count changed for {workflow.identifier}")
+    if qualification.observed_correction_failure_count != expected_correction_failure_count:
+        raise AssertionError(f"Qualified correction failure count changed for {workflow.identifier}")
+    exact_contracts = (
+        qualification.exact_variant_keys,
+        qualification.exact_sample_counts,
+        qualification.exact_nonfinite_classes,
+        qualification.exact_significance_classifications,
+    )
+    if not all(exact_contracts):
+        raise AssertionError(f"Qualification omitted an exact comparison contract for {workflow.identifier}")
+
+
 def load_golden_metadata(metadata_path: Path = DEFAULT_METADATA_PATH) -> ParityMetadata:
     """Load and type the checked-in external parity metadata."""
     payload = typing.cast("dict[str, object]", json.loads(metadata_path.read_text(encoding="utf-8")))
+    schema_version = parse_integer(payload["schema_version"], label="schema_version")
+    if schema_version != PARITY_METADATA_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported parity metadata schema version: {schema_version}")
     workflow_payloads = typing.cast("list[dict[str, object]]", payload["workflows"])
     regenie_reference = typing.cast("dict[str, object]", payload["regenie_reference"])
     workflows = tuple(parse_workflow_payload(workflow_payload) for workflow_payload in workflow_payloads)
     return ParityMetadata(
-        schema_version=int(typing.cast("int | str", payload["schema_version"])),
+        schema_version=schema_version,
         regenie_reference=regenie_reference,
         workflows=workflows,
     )
@@ -493,9 +845,10 @@ def parse_workflow_payload(workflow_payload: dict[str, object]) -> GoldenWorkflo
         input_sha256=parse_string_mapping(workflow_payload["input_sha256"]),
         prediction_file_sha256=parse_string_mapping(workflow_payload["prediction_file_sha256"]),
         validation_nodes=parse_string_tuple(workflow_payload["validation_nodes"]),
+        qualification_hosts=parse_string_tuple(workflow_payload["qualification_hosts"]),
         documentation_paths=parse_repository_paths(workflow_payload["documentation_paths"]),
         tolerances=parse_tolerances(workflow_payload["tolerances"]),
-        qualification=typing.cast("dict[str, object]", workflow_payload["qualification"]),
+        qualification=parse_qualification_evidence(workflow_payload["qualification"]),
     )
 
 
@@ -510,6 +863,413 @@ def parse_tolerances(tolerances_payload: object) -> tuple[StatisticTolerance, ..
         )
         for tolerance_payload in tolerance_payloads
     )
+
+
+def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
+    """Parse complete promotable evidence or an explicit pending value."""
+    if value is None:
+        return None
+    payload = parse_mapping(value, label="qualification")
+    require_mapping_fields(
+        payload,
+        label="qualification",
+        expected_fields={
+            "passed",
+            "qualified_git_commit",
+            "science_source_sha256",
+            "working_tree_clean",
+            "qualification_generated_at_utc",
+            "qualification_node",
+            "cargo_lock_sha256",
+            "uv_lock_sha256",
+            "jax_version",
+            "jaxlib_version",
+            "configured_device",
+            "actual_device",
+            "native_build",
+            "observed_row_count",
+            "output_fields",
+            "statistics",
+            "observed_correction_count",
+            "observed_correction_failure_count",
+            "exact_variant_keys",
+            "exact_sample_counts",
+            "exact_nonfinite_classes",
+            "exact_significance_classifications",
+        },
+    )
+    generated_at = parse_nonempty_string(
+        payload["qualification_generated_at_utc"],
+        label="qualification.qualification_generated_at_utc",
+    )
+    parsed_generated_at = datetime.datetime.fromisoformat(generated_at)
+    if parsed_generated_at.utcoffset() != datetime.timedelta(0):
+        raise ValueError("qualification.qualification_generated_at_utc must include UTC offset")
+    return QualificationEvidence(
+        passed=parse_boolean(payload["passed"], label="qualification.passed"),
+        qualified_git_commit=parse_git_commit(
+            payload["qualified_git_commit"],
+            label="qualification.qualified_git_commit",
+        ),
+        science_source_sha256=parse_sha256(
+            payload["science_source_sha256"],
+            label="qualification.science_source_sha256",
+        ),
+        working_tree_clean=parse_boolean(
+            payload["working_tree_clean"],
+            label="qualification.working_tree_clean",
+        ),
+        qualification_generated_at_utc=generated_at,
+        qualification_node=parse_nonempty_string(
+            payload["qualification_node"],
+            label="qualification.qualification_node",
+        ),
+        cargo_lock_sha256=parse_sha256(
+            payload["cargo_lock_sha256"],
+            label="qualification.cargo_lock_sha256",
+        ),
+        uv_lock_sha256=parse_sha256(
+            payload["uv_lock_sha256"],
+            label="qualification.uv_lock_sha256",
+        ),
+        jax_version=parse_nonempty_string(payload["jax_version"], label="qualification.jax_version"),
+        jaxlib_version=parse_nonempty_string(
+            payload["jaxlib_version"],
+            label="qualification.jaxlib_version",
+        ),
+        configured_device=parse_nonempty_string(
+            payload["configured_device"],
+            label="qualification.configured_device",
+        ),
+        actual_device=parse_qualification_device_evidence(payload["actual_device"]),
+        native_build=parse_qualification_native_build(payload["native_build"]),
+        observed_row_count=parse_nonnegative_integer(
+            payload["observed_row_count"],
+            label="qualification.observed_row_count",
+        ),
+        output_fields=parse_qualification_output_fields(payload["output_fields"]),
+        statistics=parse_qualification_statistics(payload["statistics"]),
+        observed_correction_count=parse_nonnegative_integer(
+            payload["observed_correction_count"],
+            label="qualification.observed_correction_count",
+        ),
+        observed_correction_failure_count=parse_nonnegative_integer(
+            payload["observed_correction_failure_count"],
+            label="qualification.observed_correction_failure_count",
+        ),
+        exact_variant_keys=parse_boolean(
+            payload["exact_variant_keys"],
+            label="qualification.exact_variant_keys",
+        ),
+        exact_sample_counts=parse_boolean(
+            payload["exact_sample_counts"],
+            label="qualification.exact_sample_counts",
+        ),
+        exact_nonfinite_classes=parse_boolean(
+            payload["exact_nonfinite_classes"],
+            label="qualification.exact_nonfinite_classes",
+        ),
+        exact_significance_classifications=parse_boolean(
+            payload["exact_significance_classifications"],
+            label="qualification.exact_significance_classifications",
+        ),
+    )
+
+
+def qualification_evidence_payload(qualification: QualificationEvidence) -> dict[str, object]:
+    """Serialize typed qualification evidence for checked-in metadata."""
+    return {
+        "passed": qualification.passed,
+        "qualified_git_commit": qualification.qualified_git_commit,
+        "science_source_sha256": qualification.science_source_sha256,
+        "working_tree_clean": qualification.working_tree_clean,
+        "qualification_generated_at_utc": qualification.qualification_generated_at_utc,
+        "qualification_node": qualification.qualification_node,
+        "cargo_lock_sha256": qualification.cargo_lock_sha256,
+        "uv_lock_sha256": qualification.uv_lock_sha256,
+        "jax_version": qualification.jax_version,
+        "jaxlib_version": qualification.jaxlib_version,
+        "configured_device": qualification.configured_device,
+        "actual_device": {
+            "platform": qualification.actual_device.platform,
+            "device_kind": qualification.actual_device.device_kind,
+            "device_count": qualification.actual_device.device_count,
+            "backend_platform_version": qualification.actual_device.backend_platform_version,
+            "nvidia_driver_version": qualification.actual_device.nvidia_driver_version,
+            "cuda_runtime_version": qualification.actual_device.cuda_runtime_version,
+        },
+        "native_build": {
+            "git_commit": qualification.native_build.git_commit,
+            "science_source_sha256": qualification.native_build.science_source_sha256,
+            "source_clean": qualification.native_build.source_clean,
+            "profile": qualification.native_build.profile.value,
+            "library_sha256": qualification.native_build.library_sha256,
+            "library_size_bytes": qualification.native_build.library_size_bytes,
+        },
+        "observed_row_count": qualification.observed_row_count,
+        "output_fields": [
+            {
+                "name": field.name,
+                "data_type": field.data_type.value,
+                "nullable": field.nullable,
+            }
+            for field in qualification.output_fields
+        ],
+        "statistics": [
+            {
+                "observed_column": statistic.observed_column,
+                "baseline_column": statistic.baseline_column,
+                "maximum_absolute_difference": statistic.maximum_absolute_difference,
+                "absolute_tolerance": statistic.absolute_tolerance,
+            }
+            for statistic in qualification.statistics
+        ],
+        "observed_correction_count": qualification.observed_correction_count,
+        "observed_correction_failure_count": qualification.observed_correction_failure_count,
+        "exact_variant_keys": qualification.exact_variant_keys,
+        "exact_sample_counts": qualification.exact_sample_counts,
+        "exact_nonfinite_classes": qualification.exact_nonfinite_classes,
+        "exact_significance_classifications": qualification.exact_significance_classifications,
+    }
+
+
+def parse_qualification_device_evidence(value: object) -> QualificationDeviceEvidence:
+    """Parse observed JAX CUDA device identity from qualification evidence."""
+    payload = parse_mapping(value, label="qualification.actual_device")
+    require_mapping_fields(
+        payload,
+        label="qualification.actual_device",
+        expected_fields={
+            "platform",
+            "device_kind",
+            "device_count",
+            "backend_platform_version",
+            "nvidia_driver_version",
+            "cuda_runtime_version",
+        },
+    )
+    return QualificationDeviceEvidence(
+        platform=parse_nonempty_string(
+            payload["platform"],
+            label="qualification.actual_device.platform",
+        ),
+        device_kind=parse_nonempty_string(
+            payload["device_kind"],
+            label="qualification.actual_device.device_kind",
+        ),
+        device_count=parse_nonnegative_integer(
+            payload["device_count"],
+            label="qualification.actual_device.device_count",
+        ),
+        backend_platform_version=parse_nonempty_string(
+            payload["backend_platform_version"],
+            label="qualification.actual_device.backend_platform_version",
+        ),
+        nvidia_driver_version=parse_nonempty_string(
+            payload["nvidia_driver_version"],
+            label="qualification.actual_device.nvidia_driver_version",
+        ),
+        cuda_runtime_version=parse_nonempty_string(
+            payload["cuda_runtime_version"],
+            label="qualification.actual_device.cuda_runtime_version",
+        ),
+    )
+
+
+def parse_qualification_native_build(value: object) -> QualificationNativeBuild:
+    """Parse native build identity from qualification evidence."""
+    payload = parse_mapping(value, label="qualification.native_build")
+    require_mapping_fields(
+        payload,
+        label="qualification.native_build",
+        expected_fields={
+            "git_commit",
+            "science_source_sha256",
+            "source_clean",
+            "profile",
+            "library_sha256",
+            "library_size_bytes",
+        },
+    )
+    library_size_bytes = parse_nonnegative_integer(
+        payload["library_size_bytes"],
+        label="qualification.native_build.library_size_bytes",
+    )
+    if library_size_bytes == 0:
+        raise ValueError("qualification.native_build.library_size_bytes must be positive")
+    return QualificationNativeBuild(
+        git_commit=parse_git_commit(
+            payload["git_commit"],
+            label="qualification.native_build.git_commit",
+        ),
+        science_source_sha256=parse_sha256(
+            payload["science_source_sha256"],
+            label="qualification.native_build.science_source_sha256",
+        ),
+        source_clean=parse_boolean(
+            payload["source_clean"],
+            label="qualification.native_build.source_clean",
+        ),
+        profile=NativeBuildProfile(
+            parse_nonempty_string(payload["profile"], label="qualification.native_build.profile")
+        ),
+        library_sha256=parse_sha256(
+            payload["library_sha256"],
+            label="qualification.native_build.library_sha256",
+        ),
+        library_size_bytes=library_size_bytes,
+    )
+
+
+def parse_qualification_output_fields(value: object) -> tuple[QualificationOutputField, ...]:
+    """Parse ordered qualified output schema fields."""
+    payloads = parse_list(value, label="qualification.output_fields")
+    fields: list[QualificationOutputField] = []
+    for field_index, field_value in enumerate(payloads):
+        label = f"qualification.output_fields[{field_index}]"
+        payload = parse_mapping(field_value, label=label)
+        require_mapping_fields(payload, label=label, expected_fields={"name", "data_type", "nullable"})
+        fields.append(
+            QualificationOutputField(
+                name=parse_nonempty_string(payload["name"], label=f"{label}.name"),
+                data_type=QualificationOutputDataType(
+                    parse_nonempty_string(payload["data_type"], label=f"{label}.data_type")
+                ),
+                nullable=parse_boolean(payload["nullable"], label=f"{label}.nullable"),
+            )
+        )
+    if not fields:
+        raise ValueError("qualification.output_fields must not be empty")
+    return tuple(fields)
+
+
+def parse_qualification_statistics(value: object) -> tuple[QualificationStatisticEvidence, ...]:
+    """Parse ordered observed numerical evidence."""
+    payloads = parse_list(value, label="qualification.statistics")
+    statistics: list[QualificationStatisticEvidence] = []
+    for statistic_index, statistic_value in enumerate(payloads):
+        label = f"qualification.statistics[{statistic_index}]"
+        payload = parse_mapping(statistic_value, label=label)
+        require_mapping_fields(
+            payload,
+            label=label,
+            expected_fields={
+                "observed_column",
+                "baseline_column",
+                "maximum_absolute_difference",
+                "absolute_tolerance",
+            },
+        )
+        statistics.append(
+            QualificationStatisticEvidence(
+                observed_column=parse_nonempty_string(
+                    payload["observed_column"],
+                    label=f"{label}.observed_column",
+                ),
+                baseline_column=parse_nonempty_string(
+                    payload["baseline_column"],
+                    label=f"{label}.baseline_column",
+                ),
+                maximum_absolute_difference=parse_finite_float(
+                    payload["maximum_absolute_difference"],
+                    label=f"{label}.maximum_absolute_difference",
+                ),
+                absolute_tolerance=parse_finite_float(
+                    payload["absolute_tolerance"],
+                    label=f"{label}.absolute_tolerance",
+                ),
+            )
+        )
+    if not statistics:
+        raise ValueError("qualification.statistics must not be empty")
+    return tuple(statistics)
+
+
+def parse_mapping(value: object, *, label: str) -> dict[str, object]:
+    """Require and type one JSON object."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    if not all(isinstance(key, str) for key in value):
+        raise ValueError(f"{label} keys must be strings")
+    return typing.cast("dict[str, object]", value)
+
+
+def parse_list(value: object, *, label: str) -> list[object]:
+    """Require and type one JSON array."""
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be an array")
+    return typing.cast("list[object]", value)
+
+
+def require_mapping_fields(
+    payload: dict[str, object],
+    *,
+    label: str,
+    expected_fields: set[str],
+) -> None:
+    """Reject missing or unknown fields in qualification evidence."""
+    observed_fields = set(payload)
+    missing_fields = expected_fields.difference(observed_fields)
+    unknown_fields = observed_fields.difference(expected_fields)
+    if missing_fields:
+        raise ValueError(f"{label} is missing fields: {', '.join(sorted(missing_fields))}")
+    if unknown_fields:
+        raise ValueError(f"{label} has unknown fields: {', '.join(sorted(unknown_fields))}")
+
+
+def parse_boolean(value: object, *, label: str) -> bool:
+    """Require one JSON boolean."""
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be a boolean")
+    return value
+
+
+def parse_integer(value: object, *, label: str) -> int:
+    """Require one JSON integer without accepting booleans."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def parse_nonnegative_integer(value: object, *, label: str) -> int:
+    """Require one nonnegative JSON integer."""
+    parsed_value = parse_integer(value, label=label)
+    if parsed_value < 0:
+        raise ValueError(f"{label} must be nonnegative")
+    return parsed_value
+
+
+def parse_finite_float(value: object, *, label: str) -> float:
+    """Require one finite JSON number."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{label} must be numeric")
+    parsed_value = float(value)
+    if not math.isfinite(parsed_value):
+        raise ValueError(f"{label} must be finite")
+    return parsed_value
+
+
+def parse_nonempty_string(value: object, *, label: str) -> str:
+    """Require one nonempty JSON string."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a nonempty string")
+    return value
+
+
+def parse_sha256(value: object, *, label: str) -> str:
+    """Require one lowercase hexadecimal SHA-256 digest."""
+    parsed_value = parse_nonempty_string(value, label=label)
+    if SHA256_PATTERN.fullmatch(parsed_value) is None:
+        raise ValueError(f"{label} must be a lowercase SHA-256 digest")
+    return parsed_value
+
+
+def parse_git_commit(value: object, *, label: str) -> str:
+    """Require one full lowercase Git commit identifier."""
+    parsed_value = parse_nonempty_string(value, label=label)
+    if tooling.science_gate.GIT_COMMIT_PATTERN.fullmatch(parsed_value) is None:
+        raise ValueError(f"{label} must be a full lowercase Git commit")
+    return parsed_value
 
 
 def parse_optional_integer(value: object) -> int | None:

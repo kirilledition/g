@@ -148,7 +148,7 @@ pythonpath = ["."]
 markers = [
     "phase0_data: requires local Phase 0 data or generated baseline artifacts.",
     "phase1_parity: exercises Phase 1 parity and benchmark evaluation flows against external baselines.",
-    "parity_blocking: external parity workflow that is an active release gate.",
+    "parity_required: exact-source external parity workflow required for release evidence.",
 ]
 
 # Local-first static analysis (skylos). Default excludes already cover

@@ -148,7 +148,8 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
   statistics are `f32`. Approximate-Firth state, reductions, objective
   components, and validation are `f64`; its inner pseudo-logistic elementwise
   proposal is `f32`.
-- Production exports are limited to `g._core.cli`.
+- Callable production exports are limited to `g._core.cli`; read-only
+  `g._core` build-provenance attributes support exact-source qualification.
 
 Detailed contracts:
 

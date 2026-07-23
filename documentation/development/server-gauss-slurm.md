@@ -83,13 +83,15 @@ just slurm-cpu-test
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
 just slurm-cpu-coverage
-just slurm-gpu-test-parity-required
+G_REGENIE_PARITY_EXPECTED_GIT_COMMIT=<full scheduler-selected SHA> \
+  just slurm-gpu-test-parity-required
 ```
 
 `slurm-cpu-check` wraps `just check`. `slurm-cpu-test` runs the non-data Python
 suite with large-node pytest parallelism. External parity is deliberately a
-fresh GPU process: use the blocking GPU recipe above when the required local
-fixtures are present. Do not run full `just check`, full
+fresh GPU process: use the exact-head GPU recipe above when the required local
+fixtures are present. It builds and installs the stamped release extension
+before pytest inside the same allocation. Do not run full `just check`, full
 `just test`, Rust dependency builds, or Rust test builds directly on the login
 node.
 
@@ -176,6 +178,9 @@ Build-environment defaults:
 - SLURM jobs default to `target/slurm/<node>/` because `target-cpu=native`
   artifacts are not safe to reuse across heterogeneous nodes. Set
   `CARGO_TARGET_DIR` explicitly to override this location.
+- Exact-head REGENIE qualification uses the stricter
+  `target/qualification/<node>/` target and a node- and job-specific JAX cache
+  below `/tmp`; the recipe prints both locations before building.
 - Do not push every focused test through SLURM; local `check-local`,
   `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
 - Cargo uses the repo-local `.cargo/config.toml` for Linux Rust builds:

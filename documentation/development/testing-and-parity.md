@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active foundation | Main branch as of 2026-07-20 | Correctness maintainers |
+| Exact-head foundation | Main branch as of 2026-07-23 | Correctness maintainers |
 
 This page separates fast mathematical checks from full external REGENIE
 comparisons. A comparison with an earlier `g` build is useful for locating a
@@ -16,12 +16,15 @@ share the same defect.
 | External-contract harness | `just test-local-focused` | Login-node safe; reads metadata and tiny in-memory frames only. |
 | Active non-data Python suite | `just test-local` | Run on an appropriate CPU allocation when JAX compilation would be material. |
 | Optional external parity | `just test-parity` | Full chr22 GPU work when fixtures exist; missing local fixtures skip. |
-| Blocking required-fixture parity | `just slurm-gpu-test-parity-required` | Serialized GPU-node release gate for all three workflows; missing fixtures fail the test. |
+| Exact-head required-fixture parity | `just slurm-gpu-test-parity-required` | One serialized GPU allocation builds the release extension and runs all three workflows; missing fixtures fail. |
 | Full repository suite | `just test-full` | GPU allocation only; CPU and parity tests run in separate processes. |
 
 Do not run GPU workloads, heavy compilation, large suites, or benchmark sweeps
 on a login node. GitHub-hosted CI runs the active non-data tests and the
-login-safe parity harness. It does not claim to run the protected full chr22
+login-safe parity harness. The harness rejects malformed typed evidence and a
+required workflow whose status/marker disappears, checked-in self-qualification
+evidence, a stale source SHA/fingerprint, a disallowed qualification host, or
+non-CUDA device evidence. It does not claim to run the protected full chr22
 fixture.
 
 ## Correctness Oracle
@@ -31,8 +34,10 @@ primary oracle whenever the project claims REGENIE compatibility. The current
 goldens use upstream REGENIE v4.1 and are recorded in
 `tests/parity/golden_metadata.json` with their commands, row counts, and
 SHA-256 digests. Quantitative, binary score-only, and binary approximate Firth
-are all blocking after their full comparisons were reproduced on the current
-production source.
+all retain their upstream oracles and required comparison contracts.
+Historical reports do not qualify current production source; the checked-in
+workflows remain `required` with null evidence until an exact-head bundle is
+attached by a trusted external status publisher.
 
 The comparison contract is:
 
@@ -73,9 +78,13 @@ covariate, prediction, output, or log artifact is then a hard failure.
 Each completed full comparison writes an ignored qualification report below
 `results/parity/qualification/<workflow>/`. It records source, native library,
 dependencies, device/configuration, all input/reference/output hashes,
+observed JAX device kind/count and CUDA backend/driver/runtime identity,
 per-statistic maxima, correction counts, and pass/failure status. Set
 `G_REGENIE_PARITY_REPORT_DIRECTORY` to place reports in another ignored or
-temporary directory.
+temporary directory. The final required test writes one sanitized
+`qualification_bundle_<exact Git SHA>.json` covering all three workflows. The
+bundle is the external status input; it is not committed and contains no
+protected records or absolute fixture paths.
 
 ## Coverage Reports
 

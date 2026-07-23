@@ -805,13 +805,56 @@ test-full:
 test-parity:
     JAX_PLATFORMS=cuda uv run pytest --confcutdir=tests/parity tests/parity tests/test_regenie2_parity.py
 
-# Run release-blocking external parity; missing fixture data is an error.
+# Run required external parity with an already stamped release extension
 test-parity-required:
-    G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda uv run pytest --confcutdir=tests/parity tests/test_regenie2_parity.py -m parity_blocking
+    G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda uv run --no-sync pytest --confcutdir=tests/parity tests/test_regenie2_parity.py -m parity_required
 
-# Run required-fixture external parity qualification on the configured GPU node
+# Build and run exact-source required parity inside an existing GPU allocation
+test-parity-required-exact:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    qualification_node="${SLURMD_NODENAME:-$(hostname -s)}"
+    qualification_run_identifier="${SLURM_JOB_ID:-manual-${BASHPID}}"
+    export CARGO_TARGET_DIR="${PWD}/target/qualification/${qualification_node}"
+    export G_REGENIE_PARITY_JAX_CACHE_DIRECTORY="${TMPDIR:-/tmp}/g-parity-jax-cache/${USER:-unknown}/${qualification_node}/${qualification_run_identifier}"
+    echo "qualification_node=${qualification_node}"
+    echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
+    echo "G_REGENIE_PARITY_JAX_CACHE_DIRECTORY=${G_REGENIE_PARITY_JAX_CACHE_DIRECTORY}"
+    if [[ "${qualification_node}" != "landau" ]]; then
+      echo "Required parity qualification must run on landau, observed ${qualification_node}." >&2
+      exit 1
+    fi
+    just dev-install-gpu-dependencies
+    expected_git_commit="${G_REGENIE_PARITY_EXPECTED_GIT_COMMIT:-}"
+    if [[ -z "${expected_git_commit}" ]]; then
+      echo "Set G_REGENIE_PARITY_EXPECTED_GIT_COMMIT to the scheduler-selected full Git SHA." >&2
+      exit 1
+    fi
+    observed_git_commit="$(git rev-parse HEAD)"
+    if [[ "${observed_git_commit}" != "${expected_git_commit}" ]]; then
+      echo "Required parity checkout is at the wrong Git commit:" >&2
+      echo "expected ${expected_git_commit}, observed ${observed_git_commit}" >&2
+      exit 1
+    fi
+    working_tree_status="$(git status --porcelain=v1 --untracked-files=normal)"
+    if [[ -n "${working_tree_status}" ]]; then
+      echo "Required parity refuses a dirty qualification checkout:" >&2
+      echo "${working_tree_status}" >&2
+      exit 1
+    fi
+    science_source_sha256="$(PYTHONPATH=. uv run --no-sync python -m tooling.science_gate)"
+    GWAS_ENGINE_BUILD_GIT_COMMIT="${expected_git_commit}" \
+      GWAS_ENGINE_BUILD_SCIENCE_SOURCE_SHA256="${science_source_sha256}" \
+      GWAS_ENGINE_BUILD_SOURCE_CLEAN=1 \
+      just dev-install-release
+    G_REGENIE_PARITY_EXPECTED_GIT_COMMIT="${expected_git_commit}" \
+      G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256="${science_source_sha256}" \
+      just test-parity-required
+
+# Build and run required-fixture qualification in one configured GPU allocation
 slurm-gpu-test-parity-required:
-    {{ server_env }} && just slurm-gpu-just test-parity-required
+    {{ server_env }} && just slurm-gpu-just test-parity-required-exact
 
 # Generate a Python coverage report for the active non-data test surface
 coverage-python:

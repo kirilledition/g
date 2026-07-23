@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Foundation repaired | Python tests as of 2026-07-20 | Correctness maintainers |
+| Exact-head foundation | Python tests as of 2026-07-23 | Correctness maintainers |
 
 The active Python suite is intentionally a mathematical and external-parity
 surface. It does not pretend that deleted product tests still protect the
@@ -13,8 +13,8 @@ current native application boundary.
 | Path | Contract |
 | --- | --- |
 | `tests/numerical.py` | Shared strict `abs(actual - reference) < tolerance` assertion with exact nonfinite masks. |
-| `tests/parity/` | Login-safe upstream REGENIE metadata, composite-key alignment, strict tolerance, and significance-decision checks. |
-| `tests/test_regenie2_parity.py` | Three blocking full-chromosome workflows through `g._core.cli.run`: quantitative, binary score-only, and binary approximate Firth, each compared with upstream REGENIE v4.1. |
+| `tests/parity/` | Login-safe upstream metadata, source/evidence freshness, schema, composite-key alignment, strict tolerance, and significance-decision checks. |
+| `tests/test_regenie2_parity.py` | Three required exact-source full-chromosome workflows through `g._core.cli.run`, each compared with upstream REGENIE v4.1 and bundled as sanitized evidence. |
 | `tests/test_regenie2_linear.py` | Quantitative mathematical behavior. |
 | `tests/test_regenie2_binary.py` | Binary score and approximate-Firth mathematical behavior. |
 | `tests/test_regenie2_binary_firth_null.py` | Binary null-Firth behavior. |
@@ -31,8 +31,9 @@ code. Product tests for deleted Python orchestration modules are not revived.
   package-install job remains the real installed-console-script smoke check.
 - Non-data CI still collects the active mathematical suite and the parity
   harness.
-- `just test-parity-required` turns absent protected fixtures into failures;
-  ordinary local parity runs may skip them.
+- `just slurm-gpu-test-parity-required` builds the stamped release extension in
+  its allocation and turns absent protected fixtures into failures; ordinary
+  local parity runs may skip them.
 - Coverage recipes report the measured active surface without claiming an
   unsupported 90% product-coverage gate.
 

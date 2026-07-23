@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-07-20 REGENIE Step 2 compatibility | Public user docs |
+| Pre-release draft | main branch as of 2026-07-23 REGENIE Step 2 compatibility | Public user docs |
 
 This page is the canonical public compatibility and scope reference.
 
@@ -14,8 +14,8 @@ release line exists.
 | Area | Status |
 | --- | --- |
 | REGENIE Step 2 quantitative traits | Supported with `--qt`. |
-| REGENIE Step 2 binary score test | Supported with `--bt` and guarded by a full-chromosome upstream parity gate. |
-| Binary approximate Firth fallback | Supported with `--bt --binary-fallback firth_approximate` and guarded by a full-chromosome upstream parity gate. |
+| REGENIE Step 2 binary score test | Supported with `--bt`; release evidence requires exact-head full-chromosome upstream qualification. |
+| Binary approximate Firth fallback | Supported with `--bt --binary-fallback firth_approximate`; release evidence requires exact-head full-chromosome upstream qualification. |
 | Layout 2 BGEN input | Supported with uncompressed or zlib blocks and the BGEN v1.3 Zstandard extension. |
 | Oxford `.sample` files | Required for BGEN row identities. |
 | Embedded BGEN sample identifiers | Unsupported; pass an Oxford sample file with `--sample`. |
@@ -61,7 +61,7 @@ Important migration limits:
 - Keep BGEN Step 2 inputs; BED/PGEN Step 2 inputs are not accepted.
 - Compare equivalent statistical modes only. A binary score-only `g` run should
   not be compared to upstream REGENIE output that used approximate Firth.
-- Use the matching blocking upstream parity mode when changing score-only or
+- Use the matching required upstream parity mode when changing score-only or
   approximate-Firth statistics; neither binary mode is validated by comparing
   it with the other.
 - Consume each phenotype run's `parts/` directory as a Parquet dataset. This is

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import importlib
 import importlib.metadata
 import json
 import os
+import socket
 import subprocess
 import typing
 from dataclasses import dataclass
@@ -14,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-import g._core
 import tests.parity.harness
+import tooling.science_gate
 
 if typing.TYPE_CHECKING:
     import polars as pl
@@ -25,6 +27,9 @@ DATA_DIRECTORY = Path(os.environ.get("GWAS_ENGINE_DATA_DIR", str(REPOSITORY_ROOT
 REQUIRE_DATA_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_REQUIRE_DATA"
 DEVICE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_DEVICE"
 REPORT_DIRECTORY_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_REPORT_DIRECTORY"
+JAX_CACHE_DIRECTORY_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_JAX_CACHE_DIRECTORY"
+EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"
+EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256"
 DEFAULT_REPORT_DIRECTORY = REPOSITORY_ROOT / "results" / "parity" / "qualification"
 PARITY_METADATA = tests.parity.harness.load_golden_metadata()
 QUANTITATIVE_WORKFLOW = PARITY_METADATA.workflow_by_identifier("quantitative_single_bgen_loco")
@@ -32,6 +37,73 @@ BINARY_SCORE_ONLY_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_scor
 BINARY_APPROXIMATE_FIRTH_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_approximate_firth")
 
 pytestmark = [pytest.mark.phase0_data, pytest.mark.phase1_parity]
+
+
+class NativeCliRunResultProtocol(typing.Protocol):
+    """Typed subset of the native CLI result used by parity."""
+
+    exit_code: int
+    stdout_chunks: tuple[str, ...]
+    stderr_chunks: tuple[str, ...]
+
+
+class NativeCliProtocol(typing.Protocol):
+    """Typed native CLI submodule used by parity."""
+
+    def run(self, arguments: list[str]) -> NativeCliRunResultProtocol:
+        """Execute one native CLI command."""
+        ...
+
+
+class NativeCoreProtocol(typing.Protocol):
+    """Build identity and CLI exported by the native extension."""
+
+    __file__: str | None
+    __build_git_commit__: str
+    __build_science_source_sha256__: str
+    __build_source_clean__: bool
+    __build_profile__: str
+    cli: NativeCliProtocol
+
+
+class JaxClientProtocol(typing.Protocol):
+    """Typed JAX client identity used by qualification evidence."""
+
+    platform_version: str
+
+
+class JaxDeviceProtocol(typing.Protocol):
+    """Typed JAX device identity used by qualification evidence."""
+
+    platform: str
+    device_kind: str
+    client: JaxClientProtocol
+
+
+class JaxModuleProtocol(typing.Protocol):
+    """Typed subset of JAX imported after native runtime initialization."""
+
+    def devices(self) -> list[JaxDeviceProtocol]:
+        """Return devices visible to the initialized JAX backend."""
+        ...
+
+
+@dataclass(frozen=True)
+class ExactQualificationSource:
+    """Clean source and matching release extension accepted by the gate."""
+
+    git_commit: str
+    science_source_sha256: str
+    native_library_path: Path
+    native_build: tests.parity.harness.QualificationNativeBuild
+
+
+@dataclass(frozen=True)
+class WorkflowQualificationReport:
+    """One completed workflow report selected for the sanitized bundle."""
+
+    workflow_identifier: str
+    report_path: Path
 
 
 @dataclass(frozen=True)
@@ -45,6 +117,7 @@ class RegenieParityResults:
     observed_input_sha256: dict[str, str]
     observed_prediction_file_sha256: dict[str, str]
     reference_correction_summary: tests.parity.harness.RegenieCorrectionSummary | None
+    exact_qualification_source: ExactQualificationSource | None
 
 
 def metadata_string(options: dict[str, object], key: str) -> str:
@@ -70,6 +143,70 @@ def toml_string(value: str | Path) -> str:
 def parity_data_is_required() -> bool:
     """Return whether a scheduled parity lane forbids missing-data skips."""
     return os.environ.get(REQUIRE_DATA_ENVIRONMENT_VARIABLE, "").lower() in {"1", "true", "yes"}
+
+
+def load_native_core() -> NativeCoreProtocol:
+    """Load the extension only at the native execution boundary."""
+    native_module = importlib.import_module("g._core")
+    return typing.cast("NativeCoreProtocol", native_module)
+
+
+def assert_exact_qualification_source(native_core: NativeCoreProtocol) -> ExactQualificationSource:
+    """Reject dirty, wrong-commit, or stale-extension qualification runs."""
+    expected_git_commit = os.environ.get(EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE)
+    if expected_git_commit is None:
+        raise AssertionError(
+            f"Required parity must set {EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE} to the scheduler-selected commit"
+        )
+    expected_science_source_sha256 = os.environ.get(EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE)
+    if expected_science_source_sha256 is None:
+        raise AssertionError(
+            f"Required parity must set {EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE} before building the extension"
+        )
+    source_state = tooling.science_gate.assert_clean_exact_source(REPOSITORY_ROOT, expected_git_commit)
+    if source_state.science_source_sha256 != expected_science_source_sha256:
+        raise AssertionError(
+            f"Qualification science-source fingerprint changed: "
+            f"expected {expected_science_source_sha256}, observed {source_state.science_source_sha256}"
+        )
+    if native_core.__build_git_commit__ != source_state.git_commit:
+        raise AssertionError(
+            f"Loaded native extension is stale or from the wrong commit: "
+            f"expected {source_state.git_commit}, observed {native_core.__build_git_commit__}"
+        )
+    if native_core.__build_science_source_sha256__ != source_state.science_source_sha256:
+        raise AssertionError(
+            f"Loaded native extension has stale science source: "
+            f"expected {source_state.science_source_sha256}, "
+            f"observed {native_core.__build_science_source_sha256__}"
+        )
+    if not native_core.__build_source_clean__:
+        raise AssertionError("Loaded native extension was not built from a clean qualification checkout")
+    try:
+        native_build_profile = tests.parity.harness.NativeBuildProfile(native_core.__build_profile__)
+    except ValueError as error:
+        raise AssertionError(
+            f"Loaded native extension has unknown build profile: {native_core.__build_profile__}"
+        ) from error
+    if native_build_profile != tests.parity.harness.NativeBuildProfile.RELEASE:
+        raise AssertionError(f"Loaded native extension is not a release build: {native_build_profile.value}")
+    native_library_value = native_core.__file__
+    if native_library_value is None:
+        raise AssertionError("The loaded native extension has no filesystem path")
+    native_library_path = Path(native_library_value).resolve(strict=True)
+    return ExactQualificationSource(
+        git_commit=source_state.git_commit,
+        science_source_sha256=source_state.science_source_sha256,
+        native_library_path=native_library_path,
+        native_build=tests.parity.harness.QualificationNativeBuild(
+            git_commit=native_core.__build_git_commit__,
+            science_source_sha256=native_core.__build_science_source_sha256__,
+            source_clean=native_core.__build_source_clean__,
+            profile=native_build_profile,
+            library_sha256=tests.parity.harness.sha256_file(native_library_path),
+            library_size_bytes=native_library_path.stat().st_size,
+        ),
+    )
 
 
 def configured_workflow_device(workflow: tests.parity.harness.GoldenWorkflow) -> str:
@@ -256,6 +393,8 @@ def run_workflow(
 ) -> RegenieParityResults:
     """Run one full production workflow and load its upstream oracle."""
     require_or_skip_workflow_data(workflow)
+    native_core = load_native_core()
+    exact_qualification_source = assert_exact_qualification_source(native_core) if parity_data_is_required() else None
     observed_input_sha256 = assert_workflow_input_hashes(workflow)
     observed_prediction_file_sha256 = assert_workflow_prediction_file_hashes(workflow)
     baseline_path = DATA_DIRECTORY / workflow.expected_output_relative_path
@@ -271,7 +410,7 @@ def run_workflow(
         output_root=output_root,
         jax_cache_directory=jax_cache_directory,
     )
-    native_result = g._core.cli.run(["regenie", "--config", str(config_path)])
+    native_result = native_core.cli.run(["regenie", "--config", str(config_path)])
     if native_result.exit_code != 0:
         native_output = "".join((*native_result.stderr_chunks, *native_result.stdout_chunks))
         raise AssertionError(f"Native CLI parity run failed for {workflow.identifier}:\n{native_output}")
@@ -284,6 +423,7 @@ def run_workflow(
         observed_input_sha256=observed_input_sha256,
         observed_prediction_file_sha256=observed_prediction_file_sha256,
         reference_correction_summary=reference_correction_summary,
+        exact_qualification_source=exact_qualification_source,
     )
 
 
@@ -292,6 +432,19 @@ def assert_external_result_contract(
     parity_results: RegenieParityResults,
 ) -> tuple[tests.parity.harness.StatisticComparison, ...]:
     """Require numerical, validity-mask, identity, and classification parity."""
+    observed_schema = tuple(
+        (field.name, field.data_type.value) for field in tests.parity.harness.PRODUCTION_OUTPUT_FIELDS
+    )
+    tests.parity.harness.assert_data_frame_schema(
+        parity_results.observed_results,
+        expected_schema=observed_schema,
+        label="g",
+    )
+    tests.parity.harness.assert_data_frame_schema(
+        parity_results.baseline_results,
+        expected_schema=tests.parity.harness.BASELINE_RESULT_SCHEMA,
+        label="REGENIE",
+    )
     tests.parity.harness.assert_variant_key_order_match(
         parity_results.observed_results,
         parity_results.baseline_results,
@@ -397,6 +550,108 @@ def qualification_report_directory() -> Path:
     return REPOSITORY_ROOT / configured_directory
 
 
+def qualification_node_name() -> str:
+    """Return the scheduler node or host that executed qualification."""
+    return os.environ.get("SLURMD_NODENAME") or socket.gethostname()
+
+
+def nvidia_driver_version() -> str:
+    """Return the sole NVIDIA driver version visible on the qualification host."""
+    try:
+        completed_process = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as error:
+        raise AssertionError("Required CUDA qualification could not query the NVIDIA driver") from error
+    versions = {line.strip() for line in completed_process.stdout.splitlines() if line.strip()}
+    if len(versions) != 1:
+        raise AssertionError(f"Required CUDA qualification observed ambiguous NVIDIA drivers: {sorted(versions)}")
+    return versions.pop()
+
+
+def observe_qualification_device() -> tests.parity.harness.QualificationDeviceEvidence:
+    """Observe and require one homogeneous JAX CUDA device family."""
+    jax_module = typing.cast("JaxModuleProtocol", importlib.import_module("jax"))
+    devices = tuple(jax_module.devices())
+    if not devices:
+        raise AssertionError("Required CUDA qualification observed no JAX devices")
+    platforms = {device.platform for device in devices}
+    device_kinds = {device.device_kind for device in devices}
+    backend_platform_versions = {device.client.platform_version for device in devices}
+    if len(platforms) != 1 or len(device_kinds) != 1 or len(backend_platform_versions) != 1:
+        raise AssertionError("Required CUDA qualification observed heterogeneous JAX devices")
+    evidence = tests.parity.harness.QualificationDeviceEvidence(
+        platform=platforms.pop(),
+        device_kind=device_kinds.pop(),
+        device_count=len(devices),
+        backend_platform_version=backend_platform_versions.pop(),
+        nvidia_driver_version=nvidia_driver_version(),
+        cuda_runtime_version=importlib.metadata.version("nvidia-cuda-runtime-cu12"),
+    )
+    if evidence.platform not in {"cuda", "gpu"} or "cuda" not in evidence.backend_platform_version.lower():
+        raise AssertionError(
+            f"Required qualification must use JAX CUDA, observed "
+            f"{evidence.platform}/{evidence.backend_platform_version}"
+        )
+    return evidence
+
+
+def build_qualification_evidence(
+    workflow: tests.parity.harness.GoldenWorkflow,
+    parity_results: RegenieParityResults,
+    comparisons: tuple[tests.parity.harness.StatisticComparison, ...],
+    observed_correction_summary: tests.parity.harness.RegenieCorrectionSummary,
+    *,
+    generated_at: datetime.datetime,
+) -> tests.parity.harness.QualificationEvidence | None:
+    """Build promotable evidence only for an exact required-source run."""
+    exact_source = parity_results.exact_qualification_source
+    if exact_source is None:
+        return None
+    configured_tolerances = {
+        tolerance.observed_column: tolerance.absolute_tolerance for tolerance in workflow.tolerances
+    }
+    return tests.parity.harness.QualificationEvidence(
+        passed=True,
+        qualified_git_commit=exact_source.git_commit,
+        science_source_sha256=exact_source.science_source_sha256,
+        working_tree_clean=True,
+        qualification_generated_at_utc=generated_at.isoformat(),
+        qualification_node=qualification_node_name(),
+        cargo_lock_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
+        uv_lock_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / "uv.lock"),
+        jax_version=importlib.metadata.version("jax"),
+        jaxlib_version=importlib.metadata.version("jaxlib"),
+        configured_device=configured_workflow_device(workflow),
+        actual_device=observe_qualification_device(),
+        native_build=exact_source.native_build,
+        observed_row_count=parity_results.observed_results.height,
+        output_fields=tests.parity.harness.PRODUCTION_OUTPUT_FIELDS,
+        statistics=tuple(
+            tests.parity.harness.QualificationStatisticEvidence(
+                observed_column=comparison.observed_column,
+                baseline_column=comparison.baseline_column,
+                maximum_absolute_difference=comparison.maximum_absolute_difference,
+                absolute_tolerance=configured_tolerances[comparison.observed_column],
+            )
+            for comparison in comparisons
+        ),
+        observed_correction_count=observed_correction_summary.correction_count,
+        observed_correction_failure_count=observed_correction_summary.correction_failure_count,
+        exact_variant_keys=True,
+        exact_sample_counts=True,
+        exact_nonfinite_classes=True,
+        exact_significance_classifications=True,
+    )
+
+
 def write_qualification_report(
     workflow: tests.parity.harness.GoldenWorkflow,
     parity_results: RegenieParityResults,
@@ -407,10 +662,11 @@ def write_qualification_report(
     qualification_failure: str | None,
 ) -> Path:
     """Write ignored provenance and numerical evidence for a completed run."""
-    native_library_value = g._core.__file__
+    native_core = load_native_core()
+    native_library_value = native_core.__file__
     if native_library_value is None:
         raise AssertionError("The loaded native extension has no filesystem path")
-    native_library_path = Path(native_library_value)
+    native_library_path = Path(native_library_value).resolve(strict=True)
     parquet_paths = tests.parity.harness.direct_parquet_paths(parity_results.output_root)
     run_directory = parquet_paths[0].parent.parent
     required_run_metadata_paths = (run_directory / "run_manifest.json", run_directory / "effective_config.toml")
@@ -427,8 +683,19 @@ def write_qualification_report(
     git_status = git_output("status", "--short")
     git_diff = git_output("diff", "--binary", "HEAD")
     generated_at = datetime.datetime.now(datetime.UTC)
+    qualification_evidence = (
+        build_qualification_evidence(
+            workflow,
+            parity_results,
+            comparisons,
+            observed_correction_summary,
+            generated_at=generated_at,
+        )
+        if qualification_passed
+        else None
+    )
     report_payload: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": generated_at.isoformat(),
         "workflow": {
             "identifier": workflow.identifier,
@@ -439,13 +706,23 @@ def write_qualification_report(
             "passed": qualification_passed,
             "failure": qualification_failure,
         },
+        "qualification_evidence": (
+            None
+            if qualification_evidence is None
+            else tests.parity.harness.qualification_evidence_payload(qualification_evidence)
+        ),
         "source": {
             "git_commit": git_output("rev-parse", "HEAD").decode("utf-8").strip(),
             "working_tree_dirty": bool(git_status),
             "git_status_sha256": sha256_bytes(git_status),
             "git_diff_sha256": sha256_bytes(git_diff),
+            "science_source_sha256": tooling.science_gate.repository_science_source_fingerprint(REPOSITORY_ROOT),
             "native_library_path": str(native_library_path),
             "native_library_sha256": tests.parity.harness.sha256_file(native_library_path),
+            "native_build_git_commit": native_core.__build_git_commit__,
+            "native_build_science_source_sha256": native_core.__build_science_source_sha256__,
+            "native_build_source_clean": native_core.__build_source_clean__,
+            "native_build_profile": native_core.__build_profile__,
             "cargo_lock_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
             "uv_lock_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / "uv.lock"),
         },
@@ -485,9 +762,14 @@ def write_qualification_report(
             "root": str(parity_results.output_root),
             "row_count": parity_results.observed_results.height,
             "column_order": parity_results.observed_results.columns,
-            "schema": {
-                column_name: str(data_type) for column_name, data_type in parity_results.observed_results.schema.items()
-            },
+            "schema": [
+                {
+                    "name": field.name,
+                    "data_type": field.data_type.value,
+                    "nullable": field.nullable,
+                }
+                for field in tests.parity.harness.PRODUCTION_OUTPUT_FIELDS
+            ],
             "parquet_dataset_sha256": tests.parity.harness.sha256_file_set(
                 parquet_paths,
                 root=parity_results.output_root,
@@ -580,10 +862,120 @@ def assert_and_record_workflow_qualification(
     )
 
 
+def load_report_qualification_evidence(
+    report: WorkflowQualificationReport,
+) -> tests.parity.harness.QualificationEvidence:
+    """Load and validate promotable evidence from one ignored report."""
+    payload = typing.cast(
+        "dict[str, object]",
+        json.loads(report.report_path.read_text(encoding="utf-8")),
+    )
+    if payload.get("schema_version") != 2:
+        raise AssertionError(f"Unsupported qualification report schema: {report.report_path}")
+    workflow_payload = typing.cast("dict[str, object]", payload["workflow"])
+    if workflow_payload.get("identifier") != report.workflow_identifier:
+        raise AssertionError(f"Qualification report workflow mismatch: {report.report_path}")
+    qualification_payload = typing.cast("dict[str, object]", payload["qualification"])
+    if qualification_payload.get("passed") is not True or qualification_payload.get("failure") is not None:
+        raise AssertionError(f"Qualification report did not pass: {report.report_path}")
+    evidence = tests.parity.harness.parse_qualification_evidence(payload["qualification_evidence"])
+    if evidence is None:
+        raise AssertionError(f"Qualification report has no exact-source evidence: {report.report_path}")
+    return evidence
+
+
+def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...]) -> Path:
+    """Write one sanitized exact-source bundle covering every required workflow."""
+    report_identifiers = {report.workflow_identifier for report in reports}
+    if report_identifiers != tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS:
+        missing_identifiers = tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS.difference(report_identifiers)
+        unexpected_identifiers = report_identifiers.difference(tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS)
+        raise AssertionError(
+            f"Qualification bundle workflow mismatch: "
+            f"missing={sorted(missing_identifiers)}, unexpected={sorted(unexpected_identifiers)}"
+        )
+    if len(reports) != len(report_identifiers):
+        raise AssertionError("Qualification bundle contains duplicate workflows")
+
+    source_state: tooling.science_gate.ScienceSourceState | None = None
+    shared_run_identity: tuple[object, ...] | None = None
+    workflow_payloads: list[dict[str, object]] = []
+    for report in sorted(reports, key=lambda item: item.workflow_identifier):
+        workflow = PARITY_METADATA.workflow_by_identifier(report.workflow_identifier)
+        evidence = load_report_qualification_evidence(report)
+        tests.parity.harness.assert_workflow_qualification_is_current(
+            workflow,
+            evidence,
+            git_commit=evidence.qualified_git_commit,
+            science_source_sha256=evidence.science_source_sha256,
+        )
+        report_source_state = tooling.science_gate.ScienceSourceState(
+            git_commit=evidence.qualified_git_commit,
+            science_source_sha256=evidence.science_source_sha256,
+        )
+        if source_state is None:
+            source_state = report_source_state
+        elif source_state != report_source_state:
+            raise AssertionError("Qualification reports do not describe one exact source")
+        report_run_identity = (
+            evidence.qualification_node,
+            evidence.cargo_lock_sha256,
+            evidence.uv_lock_sha256,
+            evidence.jax_version,
+            evidence.jaxlib_version,
+            evidence.configured_device,
+            evidence.actual_device,
+            evidence.native_build,
+        )
+        if shared_run_identity is None:
+            shared_run_identity = report_run_identity
+        elif shared_run_identity != report_run_identity:
+            raise AssertionError("Qualification reports do not describe one native/runtime build")
+        workflow_payloads.append(
+            {
+                "identifier": workflow.identifier,
+                "regenie_version": workflow.regenie_version,
+                "reference_output_sha256": workflow.expected_output_sha256,
+                "reference_log_sha256": workflow.expected_log_sha256,
+                "input_sha256": workflow.input_sha256,
+                "prediction_file_sha256": workflow.prediction_file_sha256,
+                "qualification": tests.parity.harness.qualification_evidence_payload(evidence),
+            }
+        )
+    if source_state is None:
+        raise AssertionError("Qualification bundle has no workflow evidence")
+    current_source_state = tooling.science_gate.assert_clean_exact_source(
+        REPOSITORY_ROOT,
+        source_state.git_commit,
+    )
+    if current_source_state.science_source_sha256 != source_state.science_source_sha256:
+        raise AssertionError("Qualification bundle science-source fingerprint is stale")
+
+    bundle_payload = {
+        "schema_version": 1,
+        "qualified_git_commit": source_state.git_commit,
+        "science_source_sha256": source_state.science_source_sha256,
+        "workflows": workflow_payloads,
+    }
+    report_directory = qualification_report_directory()
+    report_directory.mkdir(parents=True, exist_ok=True)
+    bundle_path = report_directory / f"qualification_bundle_{source_state.git_commit}.json"
+    bundle_path.write_text(
+        f"{json.dumps(bundle_payload, indent=2, sort_keys=True)}\n",
+        encoding="utf-8",
+    )
+    return bundle_path
+
+
 @pytest.fixture(scope="module")
 def parity_jax_cache_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Return the sole explicit JAX cache path used by this Python process."""
-    return tmp_path_factory.mktemp("parity-jax-cache")
+    configured_directory = os.environ.get(JAX_CACHE_DIRECTORY_ENVIRONMENT_VARIABLE)
+    if configured_directory is None:
+        return tmp_path_factory.mktemp("parity-jax-cache")
+    cache_directory = Path(configured_directory).resolve()
+    cache_directory.mkdir(parents=True, exist_ok=True)
+    return cache_directory
 
 
 @pytest.fixture(scope="module")
@@ -625,28 +1017,87 @@ def binary_approximate_firth_parity_results(
     )
 
 
-@pytest.mark.parity_blocking
-def test_quantitative_full_chr22_matches_upstream_regenie(
+@pytest.fixture(scope="module")
+def quantitative_qualification_report(
     quantitative_parity_results: RegenieParityResults,
-) -> None:
-    """Compare every quantitative chr22 row with upstream REGENIE v4.1."""
-    assert_and_record_workflow_qualification(QUANTITATIVE_WORKFLOW, quantitative_parity_results)
+) -> WorkflowQualificationReport:
+    """Record exact-source evidence for the quantitative workflow."""
+    report_path = assert_and_record_workflow_qualification(
+        QUANTITATIVE_WORKFLOW,
+        quantitative_parity_results,
+    )
+    return WorkflowQualificationReport(
+        workflow_identifier=QUANTITATIVE_WORKFLOW.identifier,
+        report_path=report_path,
+    )
 
 
-@pytest.mark.parity_blocking
-def test_binary_score_only_full_chr22_matches_upstream_regenie(
+@pytest.fixture(scope="module")
+def binary_score_only_qualification_report(
     binary_score_only_parity_results: RegenieParityResults,
-) -> None:
-    """Compare every binary score-only chr22 row with upstream REGENIE v4.1."""
-    assert_and_record_workflow_qualification(BINARY_SCORE_ONLY_WORKFLOW, binary_score_only_parity_results)
+) -> WorkflowQualificationReport:
+    """Record exact-source evidence for the binary score-only workflow."""
+    report_path = assert_and_record_workflow_qualification(
+        BINARY_SCORE_ONLY_WORKFLOW,
+        binary_score_only_parity_results,
+    )
+    return WorkflowQualificationReport(
+        workflow_identifier=BINARY_SCORE_ONLY_WORKFLOW.identifier,
+        report_path=report_path,
+    )
 
 
-@pytest.mark.parity_blocking
-def test_binary_approximate_firth_full_chr22_matches_upstream_regenie(
+@pytest.fixture(scope="module")
+def binary_approximate_firth_qualification_report(
     binary_approximate_firth_parity_results: RegenieParityResults,
-) -> None:
-    """Compare every binary approximate-Firth chr22 row with upstream REGENIE v4.1."""
-    assert_and_record_workflow_qualification(
+) -> WorkflowQualificationReport:
+    """Record exact-source evidence for the binary approximate-Firth workflow."""
+    report_path = assert_and_record_workflow_qualification(
         BINARY_APPROXIMATE_FIRTH_WORKFLOW,
         binary_approximate_firth_parity_results,
     )
+    return WorkflowQualificationReport(
+        workflow_identifier=BINARY_APPROXIMATE_FIRTH_WORKFLOW.identifier,
+        report_path=report_path,
+    )
+
+
+@pytest.mark.parity_required
+def test_quantitative_full_chr22_matches_upstream_regenie(
+    quantitative_qualification_report: WorkflowQualificationReport,
+) -> None:
+    """Compare every quantitative chr22 row with upstream REGENIE v4.1."""
+    assert quantitative_qualification_report.report_path.is_file()
+
+
+@pytest.mark.parity_required
+def test_binary_score_only_full_chr22_matches_upstream_regenie(
+    binary_score_only_qualification_report: WorkflowQualificationReport,
+) -> None:
+    """Compare every binary score-only chr22 row with upstream REGENIE v4.1."""
+    assert binary_score_only_qualification_report.report_path.is_file()
+
+
+@pytest.mark.parity_required
+def test_binary_approximate_firth_full_chr22_matches_upstream_regenie(
+    binary_approximate_firth_qualification_report: WorkflowQualificationReport,
+) -> None:
+    """Compare every binary approximate-Firth chr22 row with upstream REGENIE v4.1."""
+    assert binary_approximate_firth_qualification_report.report_path.is_file()
+
+
+@pytest.mark.parity_required
+def test_exact_head_qualification_bundle_covers_every_workflow(
+    quantitative_qualification_report: WorkflowQualificationReport,
+    binary_score_only_qualification_report: WorkflowQualificationReport,
+    binary_approximate_firth_qualification_report: WorkflowQualificationReport,
+) -> None:
+    """Write the sanitized bundle consumed by the trusted status publisher."""
+    bundle_path = write_qualification_bundle(
+        (
+            quantitative_qualification_report,
+            binary_score_only_qualification_report,
+            binary_approximate_firth_qualification_report,
+        )
+    )
+    assert bundle_path.is_file()

@@ -2,18 +2,21 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Three blocking gates | Full 1KG chromosome 22 Step 2 workflows as of 2026-07-20 | Correctness maintainers |
+| Exact-head qualification required | Full 1KG chromosome 22 Step 2 workflows as of 2026-07-23 | Correctness maintainers |
 
 The parity suite compares production `g` results with independently generated
 upstream REGENIE v4.1 outputs. Earlier `g` output may be used as a secondary
 regression diagnostic, never as the sole oracle for a compatibility claim. A
-workflow becomes release-blocking only when its metadata `gate_status` is
-`blocking`.
+workflow is not release-qualified merely because an older source revision
+passed. Every checked-in workflow has first-class `required` status but keeps
+its evidence null; a trusted status publisher consumes the sanitized bundle
+produced from the exact release commit.
 
 The machine-readable record is `tests/parity/golden_metadata.json`. It pins the
-reference version, exact commands, artifact hashes, row counts, supported native
-CLI configuration, hashes for every workflow input, and statistic-specific
-tolerances.
+reference version, exact commands, artifact hashes, row counts, supported
+native CLI configuration, hashes for every workflow input, and
+statistic-specific tolerances. It does not carry a self-referential claim that
+the commit containing the metadata qualified itself.
 
 ## Commands
 
@@ -23,14 +26,28 @@ The metadata and comparison-helper tests are login-node safe:
 just test-local-focused
 ```
 
-The three release-blocking quantitative, binary score-only, and binary
-approximate-Firth runs are serialized GPU workloads and belong on `landau`:
+The required quantitative, binary score-only, and binary approximate-Firth
+runs are serialized GPU workloads and belong on `landau`:
 
 ```bash
-just slurm-gpu-test-parity-required
+G_REGENIE_PARITY_EXPECTED_GIT_COMMIT=<full scheduler-selected SHA> \
+  just slurm-gpu-test-parity-required
 ```
 
-The required recipe selects all workflows marked `parity_blocking` and sets
+The SLURM recipe creates one GPU allocation, installs the GPU dependency set,
+computes the clean checkout's science-source SHA-256, builds and installs the
+release extension with that commit and fingerprint embedded, and then runs all
+tests marked `parity_required` in the same allocation. Native artifacts are
+isolated below the current worktree at `target/qualification/<node>/`, while
+the explicit JAX cache is node- and job-specific below `/tmp`; the recipe logs
+both resolved locations. This prevents `target-cpu=native` or compiled JAX
+artifacts from crossing heterogeneous nodes. The test preflight
+rejects a missing scheduler-selected SHA, a dirty checkout, a changed SHA or
+science fingerprint, a non-release build, or an extension stamped from other
+source. Evidence is accepted only from the workflow's allowed qualification
+host (`landau`) and records the observed JAX platform, homogeneous device kind
+and count, CUDA backend version, NVIDIA driver, and CUDA runtime package. A
+non-CUDA backend is rejected. The recipe sets
 `G_REGENIE_PARITY_REQUIRE_DATA=1`, so missing fixture or oracle files fail
 loudly. The full-data gate does not run on GitHub-hosted runners because the
 protected fixture is unavailable there.
@@ -69,7 +86,7 @@ Its 418,943-row output is
 `ba7278541d211a8ca446f5af3d45beba06030ad40f8124651db3038c196dac33`.
 The pinned log SHA-256 is
 `c4002866c86dd67ebe23fcb563f17488635b59547cc30baa3a8566730e2e0e5b`.
-This workflow is release-blocking.
+This oracle remains required input to exact-head qualification.
 
 The binary approximate-Firth oracle was generated with:
 
@@ -83,24 +100,11 @@ Its 418,943-row output is
 `0b9dc124525b6fec63e1b0d3f446263c05f690862235bd84f51b1b3c77b6ed72`.
 The pinned log records 17,938 corrections and zero correction failures.
 
-Both binary gates were qualified on `landau` against the pinned full
-chromosome oracle. The qualified source is commit
-`68f831f9ba51e28140b281c786555e3af6c36d4f`; the pre-commit report identifies
-its frozen parent `6ad69f40607c83fe95edb99d217e6195457975b1` and source-diff SHA-256
-`8bf2ccce77b82dc793826048a259e2f4abfba9c99235ac623a9978d23a2b8fd7`.
-JAX and jaxlib were 0.11.0, and the native-library SHA-256 was
-`8265e3ad6f5a59cf607941ec67c78f5529b56e82cf1f9caca9a8d43e129b378c`.
-
-The score-only maximum absolute differences were
-`8.72401046753124e-6` (`BETA`), `9.53237915035654e-6` (`SE`),
-`5.738945007305318e-5` (`CHISQ`), and `1.5566101074115934e-5`
-(`LOG10P`). Approximate-Firth maxima were `8.72401046753124e-6`,
-`9.53237915035654e-6`, `8.694763183569876e-5`, and
-`1.5566101074115934e-5`, respectively. Both workflows matched all 418,943
-variant keys, sample counts, schemas, and significance classifications.
-Score-only produced no corrections or failures; approximate Firth matched the
-expected 17,938 corrections and zero failures. Qualification reports are
-generated under ignored `results/` paths and are not committed artifacts.
+Earlier binary reports targeted commit `68f831f9...` and did not prove that
+their loaded extension came from that source. They are historical diagnostics,
+not current release evidence. The exact-head runner must reproduce all three
+workflows and emit a new ignored bundle; no current-source maxima are asserted
+until that external run completes.
 
 Before launching `g`, the suite verifies SHA-256 for the BGEN, Oxford sample
 file, phenotype, covariates, Step-1 prediction list, and every `.loco` file
@@ -115,6 +119,13 @@ with the parsed values.
 Production is invoked through `g._core.cli.run` with 16,384-variant chunks,
 eight output writers, telemetry off, and direct Parquet parts. The test reads
 `*.run/parts/*.parquet`; it does not require the removed finalization path.
+Every part must expose exactly this ordered Arrow schema:
+`CHROM String`, `GENPOS Int64`, `ID String`, `ALLELE0 String`,
+`ALLELE1 String`, `A1FREQ Float32`, nullable `INFO Float32`, `N Int32`,
+`BETA Float32`, `SE Float32`, `CHISQ Float32`, `LOG10P Float32`,
+`CORRECTION_METHOD String`, and `CORRECTION_STATUS String`. The pinned
+REGENIE text schema, column order, and inferred dtypes are also asserted before
+numeric comparison.
 
 Rows are joined one-to-one by the composite key
 `(CHROM, GENPOS, ID, ALLELE0, ALLELE1)`. This is required because IDs repeat in
@@ -156,10 +167,30 @@ results/parity/qualification/<workflow>/<UTC timestamp>_<process ID>.json
 ```
 
 `results/` is ignored. Set `G_REGENIE_PARITY_REPORT_DIRECTORY` to use another
-ignored or temporary root. The report records the git commit and dirty-state
-hashes, native-library and lockfile hashes, JAX/jaxlib versions, configured
-device and TOML hash, input and reference hashes, individual and aggregate
-Parquet hashes, output schema and column order, run-manifest/metadata hashes,
+ignored or temporary root. The report records the exact git commit, canonical
+science-source fingerprint, embedded native commit/fingerprint/clean/profile
+identity, native-library and lockfile hashes, JAX/jaxlib versions, configured
+device, observed CUDA device/runtime identity, and TOML hash, input and
+reference hashes, individual and aggregate Parquet hashes, ordered output
+schema, run-manifest/metadata hashes,
 row/correction counts, and every observed maximum absolute difference with its
-exclusive tolerance. Failed qualifications retain the assertion message in the
-report before pytest re-raises the failure.
+exclusive tolerance. Failed qualifications retain the assertion message before
+pytest re-raises.
+
+After all three reports pass, the final required test writes:
+
+```text
+results/parity/qualification/qualification_bundle_<exact Git SHA>.json
+```
+
+The bundle contains only digests, versions, counts, typed schema/statistic
+evidence, and relative oracle labels. It contains no protected records or
+absolute protected-data paths. A trusted post-job identity can validate and
+attach this ignored bundle to the exact SHA without a metadata commit, avoiding
+the impossible requirement for a commit to contain its own hash. The trusted
+status publisher and repository rule remain external deployment dependencies.
+
+The current reader discovers one `*.run/parts/` transaction. If the separate
+output-transaction change lands first, rebase this branch and adapt
+`direct_parquet_paths()` to its finalized layout before the first exact-head
+run; do not treat the pre-rebase layout probe as qualification evidence.

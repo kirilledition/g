@@ -1,5 +1,10 @@
 from collections.abc import Sequence
 
+__build_git_commit__: str
+__build_profile__: str
+__build_science_source_sha256__: str
+__build_source_clean__: bool
+
 class cli:  # noqa: N801 - extension submodule name
     class NativeCliRunResult:
         @property

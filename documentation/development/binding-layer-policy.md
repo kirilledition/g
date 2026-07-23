@@ -21,6 +21,8 @@ src/g       console bootstrap, JAX backend, JAX kernels
 ## Allowed
 
 - The registered CLI entrypoint and its typed terminal result.
+- Read-only build provenance attributes used to bind native qualification to a
+  clean source commit, science fingerprint, and release profile.
 - Lazy construction of the Python JAX backend after `g-runner` completed
   native validation and runtime setup.
 - The five backend lifecycle stages with direct typed NumPy arguments,
@@ -81,6 +83,8 @@ not affect packed8 target registration.
 The complete production namespace is:
 
 ```text
+g._core           __build_git_commit__, __build_science_source_sha256__,
+                  __build_source_clean__, __build_profile__
 g._core.cli       run, NativeCliRunResult
 ```
 
