@@ -42,7 +42,7 @@ typed arrays to Rust.
 | CLI parsing, TOML, defaults, validation | `g-interface` |
 | Immutable run contracts and host policy | `g-plan` |
 | Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
-| BGEN mmap/index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
+| BGEN owned-snapshot/positioned source I/O, index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
 | Optional capability-gated packed8 raw-DEFLATE delivery and typed-XLA FFI handlers | `g-genotype-cuda` |
 | Optional capability-gated CUDA association kernels and typed-XLA FFI handlers | `g-compute-cuda` |
 | Private header-only CUDA driver ABI, loading, and device/context validation | `native/cuda-driver` |

@@ -8,6 +8,7 @@ use super::decode::{
 use super::metadata::VariantRecord;
 use super::sample_selection::SampleSelection;
 use super::simd;
+use super::source::BgenByteWindow;
 use super::{BgenError, CompressionType};
 use crate::common::{DosageSummary, Packed8Compatibility};
 
@@ -44,13 +45,13 @@ fn packed8_probability_bytes(probability_block: &[u8], sample_count: usize) -> R
 }
 
 pub(super) fn validate_variant_compatible_with_packed8(
-    mmap: &[u8],
+    source_window: BgenByteWindow<'_>,
     compression_type: CompressionType,
     variant_record: &VariantRecord,
     sample_count: usize,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<Packed8Compatibility, BgenError> {
-    let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
+    let probability_block = read_probability_block(source_window, compression_type, variant_record, thread_scratch)?;
     let parsed_probability_block = parse_layout_two_probability_block(probability_block, sample_count)?;
     let has_missing_samples = validate_layout_two_probability_values(&parsed_probability_block, sample_count)?;
     let requires_dosage = has_missing_samples
@@ -64,7 +65,7 @@ pub(super) fn validate_variant_compatible_with_packed8(
 // aggregate indirectly; the wrapper measured about 2.3% slower on chr22.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decode_variant_major_probability_pair_tile(
-    mmap: &[u8],
+    source_window: BgenByteWindow<'_>,
     compression_type: CompressionType,
     sample_count: usize,
     sample_selection: &SampleSelection,
@@ -107,7 +108,7 @@ pub(super) fn decode_variant_major_probability_pair_tile(
         variant_record_chunk.iter().enumerate().zip(output_values.chunks_exact_mut(selected_probability_byte_count))
     {
         let variant_decode_result = decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
-            mmap,
+            source_window,
             compression_type,
             sample_count,
             sample_selection,
@@ -133,7 +134,7 @@ pub(super) fn decode_variant_major_probability_pair_tile(
 }
 
 fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
-    mmap: &[u8],
+    source_window: BgenByteWindow<'_>,
     compression_type: CompressionType,
     sample_count: usize,
     sample_selection: &SampleSelection,
@@ -142,7 +143,7 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
     collect_sparse_candidate_counts: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<DosageSummary, BgenError> {
-    let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
+    let probability_block = read_probability_block(source_window, compression_type, variant_record, thread_scratch)?;
 
     let packed_probability_bytes = packed8_probability_bytes(probability_block, sample_count)?;
     let selected_probability_byte_count = output_row.len();
@@ -276,8 +277,8 @@ mod tests {
         let first_block = valid_trusted_probability_block(&[0, 0, 255, 0, 0, 255]);
         let second_block = valid_trusted_probability_block(&[0, 255, 255, 0, 0, 0]);
         let second_offset = first_block.len();
-        let mut mmap = first_block.clone();
-        mmap.extend_from_slice(&second_block);
+        let mut source_bytes = first_block.clone();
+        source_bytes.extend_from_slice(&second_block);
         let variant_records = [variant_record(0, first_block.len()), variant_record(second_offset, second_block.len())];
         let sample_selection = build_sample_selection(3, &[1, 2]).expect("subset sample selection should build");
         let mut output = dosage_output_with_sentinels(4);
@@ -300,7 +301,7 @@ mod tests {
         expect_decode_success(
             decode_variant_major_dosage_tile(
                 VariantMajorTileDecodeRequest {
-                    mmap: &mmap,
+                    source_window: BgenByteWindow::from_bytes(&source_bytes),
                     compression_type: CompressionType::None,
                     sample_count: 3,
                     sample_selection: &sample_selection,
@@ -347,7 +348,7 @@ mod tests {
         expect_decode_success(
             decode_variant_major_dosage_tile(
                 VariantMajorTileDecodeRequest {
-                    mmap: &block,
+                    source_window: BgenByteWindow::from_bytes(&block),
                     compression_type: CompressionType::None,
                     sample_count: 4,
                     sample_selection: &identity_selection,
@@ -386,7 +387,7 @@ mod tests {
         expect_decode_success(
             decode_variant_major_dosage_tile(
                 VariantMajorTileDecodeRequest {
-                    mmap: &block,
+                    source_window: BgenByteWindow::from_bytes(&block),
                     compression_type: CompressionType::None,
                     sample_count: 4,
                     sample_selection: &noncontiguous_selection,
@@ -416,7 +417,7 @@ mod tests {
         let mut thread_scratch = ThreadScratch::default();
         assert_eq!(
             validate_variant_compatible_with_packed8(
-                &block,
+                BgenByteWindow::from_bytes(&block),
                 CompressionType::None,
                 &variant_records[0],
                 4,
@@ -429,7 +430,7 @@ mod tests {
         let missing_block = trusted_probability_block(1, 2, 2, 2, &[0x82], 0, 8, &[0, 0]);
         assert_eq!(
             validate_variant_compatible_with_packed8(
-                &missing_block,
+                BgenByteWindow::from_bytes(&missing_block),
                 CompressionType::None,
                 &variant_record(0, missing_block.len()),
                 1,
@@ -441,7 +442,7 @@ mod tests {
 
         let corrupt_block = trusted_probability_block(1, 2, 2, 2, &[2], 0, 8, &[255, 1]);
         let corrupt_error = validate_variant_compatible_with_packed8(
-            &corrupt_block,
+            BgenByteWindow::from_bytes(&corrupt_block),
             CompressionType::None,
             &variant_record(0, corrupt_block.len()),
             1,
@@ -453,7 +454,7 @@ mod tests {
         let mut truncated_block = trusted_probability_block(1, 2, 2, 2, &[2], 0, 8, &[255, 0]);
         truncated_block.pop();
         let truncation_error = validate_variant_compatible_with_packed8(
-            &truncated_block,
+            BgenByteWindow::from_bytes(&truncated_block),
             CompressionType::None,
             &variant_record(0, truncated_block.len()),
             1,
@@ -487,7 +488,7 @@ mod tests {
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
-                &block,
+                BgenByteWindow::from_bytes(&block),
                 CompressionType::None,
                 4,
                 &identity_selection,
@@ -524,7 +525,7 @@ mod tests {
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
-                &block,
+                BgenByteWindow::from_bytes(&block),
                 CompressionType::None,
                 4,
                 &contiguous_selection,
@@ -570,7 +571,7 @@ mod tests {
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
-                &block,
+                BgenByteWindow::from_bytes(&block),
                 CompressionType::None,
                 4,
                 &indexed_selection,

@@ -3,13 +3,16 @@ use std::mem::MaybeUninit;
 use rayon::prelude::*;
 
 use crate::bgen::decode::{
-    ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest, VariantMajorTileStatsMut,
-    decode_variant_major_dosage_tile, with_worker_thread_scratch,
+    ThreadScratch, VariantDecodeFailure, VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest,
+    VariantMajorTileStatsMut, decode_variant_major_dosage_tile, with_worker_thread_scratch,
 };
 use crate::bgen::error::BgenError;
 use crate::bgen::packed8;
 use crate::bgen::sample_selection::SampleSelection;
-use crate::common::{ChunkStatisticsPolicy, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
+use crate::bgen::source::coalesced_variant_window_stop;
+use crate::common::{
+    ChunkStatisticsPolicy, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer, SessionBufferPool,
+};
 use crate::preprocess;
 
 use super::{BgenReadSession, BgenReaderCore, validate_variant_bounds};
@@ -142,7 +145,7 @@ impl BgenReadSession<'_> {
         use_packed8: bool,
         statistics_policy: ChunkStatisticsPolicy,
     ) -> Result<GenotypeBatch, BgenError> {
-        validate_variant_bounds(variant_start, variant_stop, self.reader.variant_count)?;
+        validate_variant_bounds(variant_start, variant_stop, self.reader.variant_count())?;
         let read_shape = VariantMajorReadShape::from_selection(&self.sample_selection, variant_start, variant_stop);
         if compute_variant_count < read_shape.selected_variant_count {
             return Err(BgenError::Range(format!(
@@ -156,6 +159,7 @@ impl BgenReadSession<'_> {
             self.decode_owned_dosage_batch(read_shape, variant_start, compute_variant_count, statistics_policy)?
         };
         pad_compute_statistics(&mut decoded.statistics, compute_variant_count);
+        self.reader.ensure_delivery_source_unchanged("BGEN source changed while a genotype batch was being read.")?;
 
         Ok(GenotypeBatch {
             variant_start_index: variant_start,
@@ -183,6 +187,7 @@ impl BgenReadSession<'_> {
             let (logical_output, compute_tail) = uninitialized_output.split_at_mut(logical_output_value_count);
             let statistics = self.reader.read_preprocessed_variant_major_dosage_f32_with_selection(
                 &self.sample_selection,
+                &self.positioned_source_window_pool,
                 variant_start,
                 variant_start + read_shape.selected_variant_count,
                 logical_output,
@@ -222,6 +227,7 @@ impl BgenReadSession<'_> {
             let (logical_output, compute_tail) = uninitialized_output.split_at_mut(logical_output_value_count);
             let statistics = self.reader.read_preprocessed_variant_major_packed8_probability_pairs_with_selection(
                 &self.sample_selection,
+                &self.positioned_source_window_pool,
                 variant_start,
                 variant_start + read_shape.selected_variant_count,
                 logical_output,
@@ -252,12 +258,13 @@ impl BgenReaderCore {
     fn read_preprocessed_variant_major_dosage_f32_with_selection(
         &self,
         sample_selection: &SampleSelection,
+        positioned_source_window_pool: &SessionBufferPool<Vec<u8>>,
         variant_start: usize,
         variant_stop: usize,
         output_values: &mut [MaybeUninit<f32>],
         statistics_policy: ChunkStatisticsPolicy,
     ) -> Result<ChunkStats, BgenError> {
-        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count())?;
         let read_shape = VariantMajorReadShape::from_selection(sample_selection, variant_start, variant_stop);
         validate_output_value_count(read_shape.dosage_value_count()?, output_values.len(), "BGEN dosage")?;
         if let Some(empty_chunk_stats) = read_shape.empty_chunk_stats(statistics_policy) {
@@ -266,19 +273,25 @@ impl BgenReaderCore {
 
         let decode_request = VariantMajorDecodeRequest { sample_selection, variant_start, shape: read_shape };
         let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count, statistics_policy);
-        self.decode_preprocessed_variant_major_dosage_tiles(decode_request, output_values, &mut stats_buffers)?;
+        self.decode_preprocessed_variant_major_dosage_tiles(
+            decode_request,
+            positioned_source_window_pool,
+            output_values,
+            &mut stats_buffers,
+        )?;
         stats_buffers.into_chunk_stats(read_shape.selected_sample_count, statistics_policy)
     }
 
     fn read_preprocessed_variant_major_packed8_probability_pairs_with_selection(
         &self,
         sample_selection: &SampleSelection,
+        positioned_source_window_pool: &SessionBufferPool<Vec<u8>>,
         variant_start: usize,
         variant_stop: usize,
         output_values: &mut [MaybeUninit<u8>],
         statistics_policy: ChunkStatisticsPolicy,
     ) -> Result<ChunkStats, BgenError> {
-        validate_variant_bounds(variant_start, variant_stop, self.variant_count)?;
+        validate_variant_bounds(variant_start, variant_stop, self.variant_count())?;
         self.validate_packed8_probability_pair_preconditions()?;
         let read_shape = VariantMajorReadShape::from_selection(sample_selection, variant_start, variant_stop);
         validate_output_value_count(read_shape.packed8_value_count()?, output_values.len(), "packed8 BGEN")?;
@@ -290,6 +303,7 @@ impl BgenReaderCore {
         let mut stats_buffers = VariantMajorStatsBuffers::new(read_shape.selected_variant_count, statistics_policy);
         self.decode_preprocessed_variant_major_packed8_probability_pair_tiles(
             decode_request,
+            positioned_source_window_pool,
             output_values,
             &mut stats_buffers,
         )?;
@@ -299,76 +313,201 @@ impl BgenReaderCore {
     fn decode_preprocessed_variant_major_dosage_tiles(
         &self,
         request: VariantMajorDecodeRequest<'_>,
+        positioned_source_window_pool: &SessionBufferPool<Vec<u8>>,
         output_values: &mut [MaybeUninit<f32>],
         stats_buffers: &mut VariantMajorStatsBuffers,
     ) -> Result<(), BgenError> {
         let output_tile_value_count = request.dosage_tile_value_count()?;
-        let selected_variant_records = &self.variant_records[request.variant_start..request.variant_stop()];
-        let decode_tile = |thread_scratch: &mut ThreadScratch,
-                           tile_index: usize,
-                           variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
-                           output_tile: &mut [MaybeUninit<f32>],
-                           tile_stats: &mut VariantMajorTileStatsMut<'_>| {
-            decode_variant_major_dosage_tile(
-                VariantMajorTileDecodeRequest {
-                    mmap: &self.mmap,
-                    compression_type: self.compression_type,
-                    sample_count: self.sample_count,
-                    sample_selection: request.sample_selection,
-                    variant_records: variant_record_chunk,
-                    tile_variant_start_index: tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
-                },
-                output_tile,
-                tile_stats,
-                thread_scratch,
+        let output_values_per_variant = request.shape.selected_sample_count;
+        let selected_variant_records = &self.variant_records()[request.variant_start..request.variant_stop()];
+        if let Some(source_window) = self.source.full_snapshot_window() {
+            let decode_tile = |thread_scratch: &mut ThreadScratch,
+                               tile_index: usize,
+                               variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
+                               output_tile: &mut [MaybeUninit<f32>],
+                               tile_stats: &mut VariantMajorTileStatsMut<'_>| {
+                decode_variant_major_dosage_tile(
+                    VariantMajorTileDecodeRequest {
+                        source_window,
+                        compression_type: self.compression_type(),
+                        sample_count: self.sample_count(),
+                        sample_selection: request.sample_selection,
+                        variant_records: variant_record_chunk,
+                        tile_variant_start_index: tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
+                    },
+                    output_tile,
+                    tile_stats,
+                    thread_scratch,
+                )
+            };
+            decode_variant_major_tiles(
+                selected_variant_records,
+                output_values,
+                output_tile_value_count,
+                stats_buffers,
+                0,
+                decode_tile,
             )
-        };
-        decode_variant_major_tiles(
-            selected_variant_records,
-            output_values,
-            output_tile_value_count,
-            stats_buffers,
-            decode_tile,
-        )
-        .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
-        Ok(())
+            .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
+            return Ok(());
+        }
+
+        let mut source_window_buffer = positioned_source_window_pool.take_matching(|_buffer| true).unwrap_or_default();
+        let decode_result = (|| {
+            let mut window_variant_start = 0_usize;
+            while window_variant_start < selected_variant_records.len() {
+                let window_variant_stop = coalesced_variant_window_stop(selected_variant_records, window_variant_start)
+                    .map_err(|error| {
+                        self.contextualize_variant_error(request.variant_start + window_variant_start, error)
+                    })?;
+                let window_variant_records = &selected_variant_records[window_variant_start..window_variant_stop];
+                let source_window =
+                    self.source.read_variant_window(window_variant_records, &mut source_window_buffer).map_err(
+                        |error| self.contextualize_variant_error(request.variant_start + window_variant_start, error),
+                    )?;
+                let output_value_range =
+                    variant_value_range(window_variant_start, window_variant_stop, output_values_per_variant)?;
+                let decode_tile = |thread_scratch: &mut ThreadScratch,
+                                   tile_index: usize,
+                                   variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
+                                   output_tile: &mut [MaybeUninit<f32>],
+                                   tile_stats: &mut VariantMajorTileStatsMut<'_>| {
+                    decode_variant_major_dosage_tile(
+                        VariantMajorTileDecodeRequest {
+                            source_window,
+                            compression_type: self.compression_type(),
+                            sample_count: self.sample_count(),
+                            sample_selection: request.sample_selection,
+                            variant_records: variant_record_chunk,
+                            tile_variant_start_index: window_variant_start
+                                + tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
+                        },
+                        output_tile,
+                        tile_stats,
+                        thread_scratch,
+                    )
+                };
+                decode_variant_major_tiles(
+                    window_variant_records,
+                    &mut output_values[output_value_range],
+                    output_tile_value_count,
+                    stats_buffers,
+                    window_variant_start,
+                    decode_tile,
+                )
+                .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
+                window_variant_start = window_variant_stop;
+            }
+            Ok(())
+        })();
+        positioned_source_window_pool.release(source_window_buffer);
+        decode_result
     }
 
     fn decode_preprocessed_variant_major_packed8_probability_pair_tiles(
         &self,
         request: VariantMajorDecodeRequest<'_>,
+        positioned_source_window_pool: &SessionBufferPool<Vec<u8>>,
         output_values: &mut [MaybeUninit<u8>],
         stats_buffers: &mut VariantMajorStatsBuffers,
     ) -> Result<(), BgenError> {
         let output_tile_value_count = request.packed8_tile_value_count()?;
-        let selected_variant_records = &self.variant_records[request.variant_start..request.variant_stop()];
-        let decode_tile = |thread_scratch: &mut ThreadScratch,
-                           tile_index: usize,
-                           variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
-                           output_tile: &mut [MaybeUninit<u8>],
-                           tile_stats: &mut VariantMajorTileStatsMut<'_>| {
-            packed8::decode_variant_major_probability_pair_tile(
-                &self.mmap,
-                self.compression_type,
-                self.sample_count,
-                request.sample_selection,
-                variant_record_chunk,
-                output_tile,
-                tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
-                tile_stats,
-                thread_scratch,
+        let output_values_per_variant = request.shape.selected_sample_count.checked_mul(2).ok_or_else(|| {
+            BgenError::Range("Integer overflow while sizing positioned packed8 BGEN output rows.".to_string())
+        })?;
+        let selected_variant_records = &self.variant_records()[request.variant_start..request.variant_stop()];
+        if let Some(source_window) = self.source.full_snapshot_window() {
+            let decode_tile = |thread_scratch: &mut ThreadScratch,
+                               tile_index: usize,
+                               variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
+                               output_tile: &mut [MaybeUninit<u8>],
+                               tile_stats: &mut VariantMajorTileStatsMut<'_>| {
+                packed8::decode_variant_major_probability_pair_tile(
+                    source_window,
+                    self.compression_type(),
+                    self.sample_count(),
+                    request.sample_selection,
+                    variant_record_chunk,
+                    output_tile,
+                    tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
+                    tile_stats,
+                    thread_scratch,
+                )
+            };
+            decode_variant_major_tiles(
+                selected_variant_records,
+                output_values,
+                output_tile_value_count,
+                stats_buffers,
+                0,
+                decode_tile,
             )
-        };
-        decode_variant_major_tiles(
-            selected_variant_records,
-            output_values,
-            output_tile_value_count,
-            stats_buffers,
-            decode_tile,
-        )
-        .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
-        Ok(())
+            .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
+            return Ok(());
+        }
+
+        let mut source_window_buffer = positioned_source_window_pool.take_matching(|_buffer| true).unwrap_or_default();
+        let decode_result = (|| {
+            let mut window_variant_start = 0_usize;
+            while window_variant_start < selected_variant_records.len() {
+                let window_variant_stop = coalesced_variant_window_stop(selected_variant_records, window_variant_start)
+                    .map_err(|error| {
+                        self.contextualize_variant_error(request.variant_start + window_variant_start, error)
+                    })?;
+                let window_variant_records = &selected_variant_records[window_variant_start..window_variant_stop];
+                let source_window =
+                    self.source.read_variant_window(window_variant_records, &mut source_window_buffer).map_err(
+                        |error| self.contextualize_variant_error(request.variant_start + window_variant_start, error),
+                    )?;
+                let output_value_range =
+                    variant_value_range(window_variant_start, window_variant_stop, output_values_per_variant)?;
+                let decode_tile = |thread_scratch: &mut ThreadScratch,
+                                   tile_index: usize,
+                                   variant_record_chunk: &[crate::bgen::metadata::VariantRecord],
+                                   output_tile: &mut [MaybeUninit<u8>],
+                                   tile_stats: &mut VariantMajorTileStatsMut<'_>| {
+                    packed8::decode_variant_major_probability_pair_tile(
+                        source_window,
+                        self.compression_type(),
+                        self.sample_count(),
+                        request.sample_selection,
+                        variant_record_chunk,
+                        output_tile,
+                        window_variant_start + tile_index * BGEN_DECODE_TILE_VARIANT_COUNT,
+                        tile_stats,
+                        thread_scratch,
+                    )
+                };
+                decode_variant_major_tiles(
+                    window_variant_records,
+                    &mut output_values[output_value_range],
+                    output_tile_value_count,
+                    stats_buffers,
+                    window_variant_start,
+                    decode_tile,
+                )
+                .map_err(|failure| self.contextualize_variant_decode_failure(request.variant_start, failure))?;
+                window_variant_start = window_variant_stop;
+            }
+            Ok(())
+        })();
+        positioned_source_window_pool.release(source_window_buffer);
+        decode_result
     }
+}
+
+fn variant_value_range(
+    variant_start: usize,
+    variant_stop: usize,
+    values_per_variant: usize,
+) -> Result<std::ops::Range<usize>, BgenError> {
+    let value_start = variant_start
+        .checked_mul(values_per_variant)
+        .ok_or_else(|| BgenError::Range("Integer overflow while positioning a BGEN output window.".to_string()))?;
+    let value_stop = variant_stop
+        .checked_mul(values_per_variant)
+        .ok_or_else(|| BgenError::Range("Integer overflow while sizing a BGEN output window.".to_string()))?;
+    Ok(value_start..value_stop)
 }
 
 fn decode_variant_major_tiles<Value, DecodeTile>(
@@ -376,8 +515,9 @@ fn decode_variant_major_tiles<Value, DecodeTile>(
     output_values: &mut [MaybeUninit<Value>],
     output_tile_value_count: usize,
     stats_buffers: &mut VariantMajorStatsBuffers,
+    stats_variant_start: usize,
     decode_tile: DecodeTile,
-) -> Result<(), crate::bgen::decode::VariantDecodeFailure>
+) -> Result<(), VariantDecodeFailure>
 where
     Value: Send,
     DecodeTile: Fn(
@@ -386,7 +526,7 @@ where
             &[crate::bgen::metadata::VariantRecord],
             &mut [MaybeUninit<Value>],
             &mut VariantMajorTileStatsMut<'_>,
-        ) -> Result<(), crate::bgen::decode::VariantDecodeFailure>
+        ) -> Result<(), VariantDecodeFailure>
         + Sync,
 {
     let VariantMajorStatsBuffers {
@@ -396,7 +536,18 @@ where
         zero_count,
         homozygous_alternate_count,
     } = stats_buffers;
-    match (zero_count.as_mut(), homozygous_alternate_count.as_mut()) {
+    let stats_variant_stop =
+        stats_variant_start.checked_add(selected_variant_records.len()).ok_or_else(|| VariantDecodeFailure {
+            relative_variant_index: None,
+            source: BgenError::Range("Integer overflow while slicing BGEN statistics windows.".to_string()),
+        })?;
+    let stats_variant_range = stats_variant_start..stats_variant_stop;
+    let dosage_sum = &mut dosage_sum[stats_variant_range.clone()];
+    let dosage_square_sum = &mut dosage_square_sum[stats_variant_range.clone()];
+    let observation_count = &mut observation_count[stats_variant_range.clone()];
+    let zero_count = zero_count.as_mut().map(|values| &mut values[stats_variant_range.clone()]);
+    let homozygous_alternate_count = homozygous_alternate_count.as_mut().map(|values| &mut values[stats_variant_range]);
+    match (zero_count, homozygous_alternate_count) {
         (Some(zero_count), Some(homozygous_alternate_count)) => selected_variant_records
             .par_chunks(BGEN_DECODE_TILE_VARIANT_COUNT)
             .zip(output_values.par_chunks_mut(output_tile_value_count))

@@ -4,6 +4,7 @@ use std::ptr::NonNull;
 use super::super::CompressionType;
 use super::super::metadata::VariantRecord;
 use super::super::sample_selection::build_sample_selection;
+use super::super::source::BgenByteWindow;
 use super::probability::PackedProbabilityReader;
 use super::*;
 
@@ -129,11 +130,11 @@ fn decode_encoded_blocks(
     collect_sparse_candidate_counts: bool,
 ) -> Result<DecodedTile, VariantDecodeFailure> {
     let sample_selection = build_sample_selection(sample_count, sample_indices).expect("sample selection should build");
-    let mut mmap = Vec::new();
+    let mut source_bytes = Vec::new();
     let mut variant_records = Vec::with_capacity(probability_blocks.len());
     for probability_block in probability_blocks {
-        let probability_payload_offset = mmap.len();
-        mmap.extend_from_slice(probability_block.probability_payload);
+        let probability_payload_offset = source_bytes.len();
+        source_bytes.extend_from_slice(probability_block.probability_payload);
         variant_records.push(test_variant_record_with_declared_length(
             probability_payload_offset,
             probability_block.probability_payload.len(),
@@ -165,7 +166,7 @@ fn decode_encoded_blocks(
         };
         decode_variant_major_dosage_tile(
             VariantMajorTileDecodeRequest {
-                mmap: &mmap,
+                source_window: BgenByteWindow::from_bytes(&source_bytes),
                 compression_type,
                 sample_count,
                 sample_selection: &sample_selection,
@@ -456,6 +457,16 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
 }
 
 #[test]
+fn variant_major_eight_bit_subsets_validate_unselected_probability_pairs() {
+    let invalid_unselected_block = probability_block(3, &[2, 2, 2], 0, 8, &[255, 1, 255, 0, 0, 255]);
+    for sample_indices in [&[1, 2][..], &[2, 1][..]] {
+        let failure = decode_blocks(std::slice::from_ref(&invalid_unselected_block), 3, sample_indices, false)
+            .expect_err("a corrupt unselected probability pair should fail subset decode");
+        assert!(failure.source.to_string().contains("sum above 255"));
+    }
+}
+
+#[test]
 fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
     let first_block = probability_block(2, &[2, 2], 0, 8, &[255, 0, 0, 255]);
     let second_block = probability_block(2, &[2, 2], 0, 8, &[0, 0, 255, 0]);
@@ -468,9 +479,9 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
     assert_eq!(decoded.zero_count, Some(vec![1, 1]));
     assert_eq!(decoded.homozygous_alternate_count, Some(vec![0, 1]));
 
-    let mut mmap = first_block;
-    let second_offset = mmap.len();
-    mmap.extend_from_slice(&second_block);
+    let mut source_bytes = first_block;
+    let second_offset = source_bytes.len();
+    source_bytes.extend_from_slice(&second_block);
     let variant_records =
         [test_variant_record_at(0, second_offset), test_variant_record_at(second_offset, second_block.len())];
     let sample_selection = build_sample_selection(2, &[0, 1]).expect("identity selection should build");
@@ -487,7 +498,7 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
     };
     let shape_failure = decode_variant_major_dosage_tile(
         VariantMajorTileDecodeRequest {
-            mmap: &mmap,
+            source_window: BgenByteWindow::from_bytes(&source_bytes),
             compression_type: CompressionType::None,
             sample_count: 2,
             sample_selection: &sample_selection,

@@ -1,13 +1,13 @@
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::common::{ChunkSpec, SessionBufferPool};
 
 use super::BgenError;
-use super::decode::read_exact_bytes;
 use super::format::CompressionType;
 use super::reader::{BgenReadSession, validate_variant_bounds};
 use super::sample_selection::SampleSelection;
+use super::source::{BgenByteWindow, coalesced_variant_window_stop};
 
 const MEMBER_METADATA_VALUE_COUNT: usize = 3;
 const ZLIB_HEADER_LENGTH: usize = 2;
@@ -26,10 +26,10 @@ pub(super) struct CompressedPacked8Storage {
 
 pub(super) type CompressedPacked8BufferPool = SessionBufferPool<CompressedPacked8Storage>;
 
-#[derive(Debug)]
 pub(super) struct CompressedPacked8SessionState {
     pool: Arc<CompressedPacked8BufferPool>,
     transfer: CompressedPacked8Transfer,
+    positioned_source_window: Mutex<Vec<u8>>,
 }
 
 /// Sample selection applied after GPU decompression of packed8 BGEN rows.
@@ -99,10 +99,40 @@ impl Drop for CompressedPacked8Batch {
     }
 }
 
+#[derive(Clone, Copy)]
 struct ParsedZlibMember<'member> {
     raw_deflate_bytes: &'member [u8],
     expected_adler32: u32,
     zlib_header: u16,
+}
+
+struct PreparedCompressedPacked8Storage {
+    storage: CompressedPacked8Storage,
+    slab_is_initialized: bool,
+    layout_slab_word_count: usize,
+}
+
+struct RawDeflatePackState<'storage> {
+    storage: &'storage mut CompressedPacked8Storage,
+    slab_is_initialized: bool,
+    layout_slab_word_count: usize,
+    slab_byte_count: usize,
+    member_offset: usize,
+    member_count: usize,
+    last_validated_zlib_header: u16,
+}
+
+impl fmt::Debug for CompressedPacked8SessionState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let positioned_window_capacity =
+            self.positioned_source_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner).capacity();
+        formatter
+            .debug_struct("CompressedPacked8SessionState")
+            .field("pool", &self.pool)
+            .field("transfer", &self.transfer)
+            .field("positioned_window_capacity", &positioned_window_capacity)
+            .finish_non_exhaustive()
+    }
 }
 
 fn build_compressed_sample_selection(sample_selection: &SampleSelection) -> CompressedPacked8SampleSelection {
@@ -132,6 +162,7 @@ impl BgenReadSession<'_> {
                 file_sample_count: self.reader.sample_count(),
                 selected_sample_count: self.sample_selection.selected_sample_count(),
             },
+            positioned_source_window: Mutex::new(Vec::new()),
         })
     }
 
@@ -160,7 +191,7 @@ impl BgenReadSession<'_> {
     ) -> Result<CompressedPacked8Batch, BgenError> {
         validate_variant_bounds(variant_start, variant_stop, self.reader.variant_count())?;
         let logical_variant_count = variant_stop - variant_start;
-        if self.reader.compression_type != CompressionType::Zlib {
+        if self.reader.compression_type() != CompressionType::Zlib {
             return Err(BgenError::UnsupportedFormat(
                 "Compressed packed8 delivery requires a zlib-compressed BGEN source.".to_string(),
             ));
@@ -168,94 +199,40 @@ impl BgenReadSession<'_> {
         self.reader.validate_packed8_probability_pair_preconditions()?;
         let compressed_state = self.compressed_packed8_session_state();
 
-        let variant_records = &self.reader.variant_records[variant_start..variant_stop];
-        let metadata_value_count = logical_variant_count
-            .checked_mul(MEMBER_METADATA_VALUE_COUNT)
-            .ok_or_else(|| BgenError::Range("Raw-DEFLATE member metadata length overflowed usize.".to_string()))?;
-        let layout_slab_word_count = layout.slab_byte_count / g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT;
-        let mut storage = compressed_state
-            .pool
-            .take_matching(|candidate| {
-                candidate.raw_deflate_words.len() == layout_slab_word_count
-                    && candidate.member_metadata.capacity() >= metadata_value_count
-            })
-            .unwrap_or_default();
-        let slab_is_initialized = storage.raw_deflate_words.len() == layout_slab_word_count;
-        prepare_storage(&mut storage, layout_slab_word_count, metadata_value_count)?;
-
-        let slab_pointer = storage.raw_deflate_words.as_mut_ptr().cast::<u8>();
-        let metadata_pointer = storage.member_metadata.spare_capacity_mut().as_mut_ptr().cast::<u32>();
-        let mut member_offset = 0_usize;
-        // Zero cannot be a valid DEFLATE zlib header, so it marks the cache as
-        // uninitialized without adding an Option or borrowed cache to the hot
-        // loop. The explicit zero check still sends a malformed zero header
-        // through full validation.
-        let mut last_validated_zlib_header = 0_u16;
-        for (relative_variant_index, variant_record) in variant_records.iter().enumerate() {
-            let member = self.reader.zlib_member(variant_record).map_err(|error| {
-                self.reader.contextualize_variant_error(variant_start + relative_variant_index, error)
-            })?;
-            if member.zlib_header != last_validated_zlib_header || last_validated_zlib_header == 0 {
-                validate_zlib_header(member.zlib_header.to_ne_bytes()).map_err(|error| {
-                    self.reader.contextualize_variant_error(variant_start + relative_variant_index, error)
-                })?;
-                last_validated_zlib_header = member.zlib_header;
+        let variant_records = &self.reader.variant_records()[variant_start..variant_stop];
+        let mut prepared_storage = acquire_compressed_packed8_storage(compressed_state, layout, logical_variant_count)?;
+        {
+            let mut pack_state = RawDeflatePackState::new(
+                &mut prepared_storage.storage,
+                prepared_storage.slab_is_initialized,
+                prepared_storage.layout_slab_word_count,
+                layout.slab_byte_count,
+            );
+            if let Some(source_window) = self.reader.source.full_snapshot_window() {
+                pack_compressed_member_window(
+                    self.reader,
+                    variant_start,
+                    variant_records,
+                    source_window,
+                    &mut pack_state,
+                )?;
+            } else {
+                let mut source_window_buffer =
+                    compressed_state.positioned_source_window.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                pack_positioned_member_windows(
+                    self.reader,
+                    variant_start,
+                    variant_records,
+                    &mut source_window_buffer,
+                    &mut pack_state,
+                )?;
             }
-            let member_length = member.raw_deflate_bytes.len();
-            let aligned_member_length = align_member_length(member_length)?;
-            let next_member_offset = member_offset
-                .checked_add(aligned_member_length)
-                .ok_or_else(|| BgenError::Range("Raw-DEFLATE batch byte count overflowed usize.".to_string()))?;
-            if next_member_offset > layout.slab_byte_count {
-                return Err(BgenError::Range(
-                    "Raw-DEFLATE batch exceeds the slab shape derived from the run chunk plan.".to_string(),
-                ));
-            }
-            let member_offset_u32 = u32::try_from(member_offset)
-                .map_err(|_| BgenError::Range("Raw-DEFLATE member offset exceeds uint32.".to_string()))?;
-            let member_length_u32 = u32::try_from(member_length)
-                .map_err(|_| BgenError::Range("Raw-DEFLATE member length exceeds uint32.".to_string()))?;
-            let metadata_offset = relative_variant_index * MEMBER_METADATA_VALUE_COUNT;
-            // SAFETY: prepare_storage reserves the fixed slab and three
-            // metadata values per member. The checked next offset proves this
-            // member and its alignment gap fit before the disjoint writes. A
-            // fresh slab initializes its gap explicitly; a pooled slab retains
-            // initialized bytes from its previous fixed-shape packing. Three
-            // scalar writes initialize every published metadata value.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    member.raw_deflate_bytes.as_ptr(),
-                    slab_pointer.add(member_offset),
-                    member_length,
-                );
-                if !slab_is_initialized {
-                    std::ptr::write_bytes(
-                        slab_pointer.add(member_offset + member_length),
-                        0,
-                        aligned_member_length - member_length,
-                    );
-                }
-                std::ptr::write(metadata_pointer.add(metadata_offset), member_offset_u32);
-                std::ptr::write(metadata_pointer.add(metadata_offset + 1), member_length_u32);
-                std::ptr::write(metadata_pointer.add(metadata_offset + 2), member.expected_adler32);
-            }
-            member_offset = next_member_offset;
+            pack_state.finish(logical_variant_count)?;
         }
-        // SAFETY: member copies and alignment-gap writes initialize the real
-        // prefix of a fresh slab. The checked layout bound proves the remaining
-        // tail fits its allocation. Publishing the fixed word length happens
-        // only after every byte is initialized. A pooled slab already has that
-        // initialized length. Every metadata value was initialized by the
-        // three writes per member above.
-        unsafe {
-            if !slab_is_initialized {
-                std::ptr::write_bytes(slab_pointer.add(member_offset), 0, layout.slab_byte_count - member_offset);
-                storage.raw_deflate_words.set_len(layout_slab_word_count);
-            }
-            storage.member_metadata.set_len(metadata_value_count);
-        }
+        self.reader
+            .ensure_delivery_source_unchanged("BGEN source changed while a compressed packed8 batch was being read.")?;
 
-        Ok(CompressedPacked8Batch { storage, pool: Arc::clone(&compressed_state.pool) })
+        Ok(CompressedPacked8Batch { storage: prepared_storage.storage, pool: Arc::clone(&compressed_state.pool) })
     }
 }
 
@@ -271,7 +248,7 @@ impl super::reader::BgenReaderCore {
         &self,
         chunk_specs: &[ChunkSpec],
     ) -> Result<Option<CompressedPacked8BatchLayout>, BgenError> {
-        if self.compression_type != CompressionType::Zlib {
+        if self.compression_type() != CompressionType::Zlib {
             return Ok(None);
         }
         self.validate_packed8_probability_pair_preconditions()?;
@@ -284,7 +261,7 @@ impl super::reader::BgenReaderCore {
                 self.variant_count(),
             )?;
             let slab_byte_count = aligned_slab_byte_count(
-                &self.variant_records[chunk_spec.variant_start_index..chunk_spec.variant_stop_index],
+                &self.variant_records()[chunk_spec.variant_start_index..chunk_spec.variant_stop_index],
             )?;
             maximum_slab_byte_count = maximum_slab_byte_count.max(slab_byte_count);
         }
@@ -296,18 +273,6 @@ impl super::reader::BgenReaderCore {
             ));
         }
         Ok(Some(CompressedPacked8BatchLayout { slab_byte_count: maximum_slab_byte_count }))
-    }
-
-    fn zlib_member<'reader>(
-        &'reader self,
-        variant_record: &super::metadata::VariantRecord,
-    ) -> Result<ParsedZlibMember<'reader>, BgenError> {
-        let payload_offset = usize::try_from(variant_record.probability_payload_offset)
-            .expect("uint64 BGEN offsets must fit the supported 64-bit usize domain");
-        let payload_length = usize::try_from(variant_record.probability_payload_length)
-            .map_err(|_| BgenError::Range("BGEN zlib payload length does not fit usize.".to_string()))?;
-        let payload = read_exact_bytes(&self.mmap, payload_offset, payload_length)?;
-        parse_zlib_member(payload)
     }
 }
 
@@ -331,6 +296,180 @@ fn prepare_storage(
         })?;
     }
     Ok(())
+}
+
+fn acquire_compressed_packed8_storage(
+    compressed_state: &CompressedPacked8SessionState,
+    layout: &CompressedPacked8BatchLayout,
+    logical_variant_count: usize,
+) -> Result<PreparedCompressedPacked8Storage, BgenError> {
+    let metadata_value_count = logical_variant_count
+        .checked_mul(MEMBER_METADATA_VALUE_COUNT)
+        .ok_or_else(|| BgenError::Range("Raw-DEFLATE member metadata length overflowed usize.".to_string()))?;
+    let layout_slab_word_count = layout.slab_byte_count / g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT;
+    let mut storage = compressed_state
+        .pool
+        .take_matching(|candidate| {
+            candidate.raw_deflate_words.len() == layout_slab_word_count
+                && candidate.member_metadata.capacity() >= metadata_value_count
+        })
+        .unwrap_or_default();
+    let slab_is_initialized = storage.raw_deflate_words.len() == layout_slab_word_count;
+    prepare_storage(&mut storage, layout_slab_word_count, metadata_value_count)?;
+    Ok(PreparedCompressedPacked8Storage { storage, slab_is_initialized, layout_slab_word_count })
+}
+
+fn pack_positioned_member_windows(
+    reader: &super::reader::BgenReaderCore,
+    variant_start: usize,
+    variant_records: &[super::metadata::VariantRecord],
+    source_window_buffer: &mut Vec<u8>,
+    pack_state: &mut RawDeflatePackState<'_>,
+) -> Result<(), BgenError> {
+    let mut window_variant_start = 0_usize;
+    while window_variant_start < variant_records.len() {
+        let window_variant_stop = coalesced_variant_window_stop(variant_records, window_variant_start)
+            .map_err(|error| reader.contextualize_variant_error(variant_start + window_variant_start, error))?;
+        let source_window = reader
+            .source
+            .read_variant_window(&variant_records[window_variant_start..window_variant_stop], source_window_buffer)
+            .map_err(|error| reader.contextualize_variant_error(variant_start + window_variant_start, error))?;
+        pack_compressed_member_window(
+            reader,
+            variant_start + window_variant_start,
+            &variant_records[window_variant_start..window_variant_stop],
+            source_window,
+            pack_state,
+        )?;
+        window_variant_start = window_variant_stop;
+    }
+    Ok(())
+}
+
+fn pack_compressed_member_window(
+    reader: &super::reader::BgenReaderCore,
+    absolute_variant_start: usize,
+    variant_records: &[super::metadata::VariantRecord],
+    source_window: BgenByteWindow<'_>,
+    pack_state: &mut RawDeflatePackState<'_>,
+) -> Result<(), BgenError> {
+    for (window_variant_index, variant_record) in variant_records.iter().enumerate() {
+        let absolute_variant_index = absolute_variant_start + window_variant_index;
+        let variant_payload = source_window
+            .variant_payload(variant_record)
+            .map_err(|error| reader.contextualize_variant_error(absolute_variant_index, error))?;
+        let member = parse_zlib_member(variant_payload)
+            .map_err(|error| reader.contextualize_variant_error(absolute_variant_index, error))?;
+        pack_state
+            .write_member(member)
+            .map_err(|error| reader.contextualize_variant_error(absolute_variant_index, error))?;
+    }
+    Ok(())
+}
+
+impl RawDeflatePackState<'_> {
+    fn new(
+        storage: &mut CompressedPacked8Storage,
+        slab_is_initialized: bool,
+        layout_slab_word_count: usize,
+        slab_byte_count: usize,
+    ) -> RawDeflatePackState<'_> {
+        RawDeflatePackState {
+            storage,
+            slab_is_initialized,
+            layout_slab_word_count,
+            slab_byte_count,
+            member_offset: 0,
+            member_count: 0,
+            last_validated_zlib_header: 0,
+        }
+    }
+
+    fn write_member(&mut self, member: ParsedZlibMember<'_>) -> Result<(), BgenError> {
+        if member.zlib_header != self.last_validated_zlib_header || self.last_validated_zlib_header == 0 {
+            validate_zlib_header(member.zlib_header.to_ne_bytes())?;
+            self.last_validated_zlib_header = member.zlib_header;
+        }
+        let member_length = member.raw_deflate_bytes.len();
+        let aligned_member_length = align_member_length(member_length)?;
+        let next_member_offset = self
+            .member_offset
+            .checked_add(aligned_member_length)
+            .ok_or_else(|| BgenError::Range("Raw-DEFLATE batch byte count overflowed usize.".to_string()))?;
+        if next_member_offset > self.slab_byte_count {
+            return Err(BgenError::Range(
+                "Raw-DEFLATE batch exceeds the slab shape derived from the run chunk plan.".to_string(),
+            ));
+        }
+        let member_offset_u32 = u32::try_from(self.member_offset)
+            .map_err(|_| BgenError::Range("Raw-DEFLATE member offset exceeds uint32.".to_string()))?;
+        let member_length_u32 = u32::try_from(member_length)
+            .map_err(|_| BgenError::Range("Raw-DEFLATE member length exceeds uint32.".to_string()))?;
+        let metadata_offset = self
+            .member_count
+            .checked_mul(MEMBER_METADATA_VALUE_COUNT)
+            .ok_or_else(|| BgenError::Range("Raw-DEFLATE member metadata offset overflowed usize.".to_string()))?;
+        let slab_pointer = self.storage.raw_deflate_words.as_mut_ptr().cast::<u8>();
+        let metadata_pointer = self.storage.member_metadata.spare_capacity_mut().as_mut_ptr().cast::<u32>();
+        // SAFETY: prepare_storage reserves the fixed slab and three metadata
+        // values per member. The checked next offset proves this member and its
+        // alignment gap fit before the disjoint writes. A fresh slab initializes
+        // its gap explicitly; a pooled slab retains initialized bytes from its
+        // previous fixed-shape packing. Three scalar writes initialize every
+        // published metadata value.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                member.raw_deflate_bytes.as_ptr(),
+                slab_pointer.add(self.member_offset),
+                member_length,
+            );
+            if !self.slab_is_initialized {
+                std::ptr::write_bytes(
+                    slab_pointer.add(self.member_offset + member_length),
+                    0,
+                    aligned_member_length - member_length,
+                );
+            }
+            std::ptr::write(metadata_pointer.add(metadata_offset), member_offset_u32);
+            std::ptr::write(metadata_pointer.add(metadata_offset + 1), member_length_u32);
+            std::ptr::write(metadata_pointer.add(metadata_offset + 2), member.expected_adler32);
+        }
+        self.member_offset = next_member_offset;
+        self.member_count = self
+            .member_count
+            .checked_add(1)
+            .ok_or_else(|| BgenError::Range("Raw-DEFLATE member count overflowed usize.".to_string()))?;
+        Ok(())
+    }
+
+    fn finish(self, logical_variant_count: usize) -> Result<(), BgenError> {
+        let metadata_value_count = logical_variant_count
+            .checked_mul(MEMBER_METADATA_VALUE_COUNT)
+            .ok_or_else(|| BgenError::Range("Raw-DEFLATE member metadata length overflowed usize.".to_string()))?;
+        if self.member_count != logical_variant_count {
+            return Err(BgenError::Range(format!(
+                "Raw-DEFLATE pack initialized {} members, expected {logical_variant_count}.",
+                self.member_count,
+            )));
+        }
+        let slab_pointer = self.storage.raw_deflate_words.as_mut_ptr().cast::<u8>();
+        // SAFETY: write_member initializes the real member prefix and alignment
+        // gaps. The checked slab bound proves the remaining tail fits. Publishing
+        // the fixed word length happens only after every fresh byte is initialized;
+        // pooled slabs already have that initialized length.
+        unsafe {
+            if !self.slab_is_initialized {
+                std::ptr::write_bytes(
+                    slab_pointer.add(self.member_offset),
+                    0,
+                    self.slab_byte_count - self.member_offset,
+                );
+                self.storage.raw_deflate_words.set_len(self.layout_slab_word_count);
+            }
+            self.storage.member_metadata.set_len(metadata_value_count);
+        }
+        Ok(())
+    }
 }
 
 fn aligned_slab_byte_count(variant_records: &[super::metadata::VariantRecord]) -> Result<usize, BgenError> {
@@ -407,7 +546,8 @@ fn validate_zlib_header(zlib_header: [u8; ZLIB_HEADER_LENGTH]) -> Result<(), Bge
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::fs::{self, File};
+    use std::io::{Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -489,6 +629,30 @@ mod tests {
         TemporaryBgenFile { path }
     }
 
+    fn write_positioned_independent_zlib_bgen() -> TemporaryBgenFile {
+        let path = temporary_bgen_path();
+        let first_variant_offset = crate::bgen::source::MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT + 1;
+        let relative_first_variant_offset =
+            u32::try_from(first_variant_offset - 4).expect("positioned test offset should fit u32");
+        let mut header = vec![0_u8; 24];
+        header[0..4].copy_from_slice(&relative_first_variant_offset.to_le_bytes());
+        header[4..8].copy_from_slice(&20_u32.to_le_bytes());
+        header[8..12].copy_from_slice(&3_u32.to_le_bytes());
+        header[12..16].copy_from_slice(&3_u32.to_le_bytes());
+        header[16..20].copy_from_slice(b"bgen");
+        header[20..24].copy_from_slice(&(1_u32 | (2_u32 << 2)).to_le_bytes());
+        let mut variants = Vec::new();
+        append_zlib_variant(&mut variants, 0, &ZLIB_FIRST);
+        append_zlib_variant(&mut variants, 1, &ZLIB_SECOND);
+        append_zlib_variant(&mut variants, 2, &ZLIB_THIRD);
+        let mut file = File::create(&path).expect("positioned zlib BGEN fixture should be created");
+        file.write_all(&header).expect("positioned zlib BGEN header should be written");
+        file.seek(SeekFrom::Start(first_variant_offset))
+            .expect("positioned zlib BGEN payload offset should be seekable");
+        file.write_all(&variants).expect("positioned zlib BGEN variants should be written");
+        TemporaryBgenFile { path }
+    }
+
     #[test]
     fn zlib_member_parser_validates_independent_headers_framing_and_alignment() {
         for (zlib_payload, expected_raw_deflate, expected_adler32) in [
@@ -537,6 +701,7 @@ mod tests {
     fn compressed_packed8_batch_packs_independent_full_tail_and_pooled_members() {
         let fixture = write_independent_zlib_bgen();
         let reader = BgenReaderCore::open(fixture.path()).expect("independent zlib BGEN should open");
+        assert!(reader.source.snapshot_bytes().is_some(), "small zlib input should use an owned snapshot");
         assert_eq!(
             reader.packed8_compatibility_with_cache().expect("independent zlib BGEN compatibility should validate"),
             Packed8Compatibility::Compatible
@@ -554,6 +719,16 @@ mod tests {
 
         let full_batch =
             session.pack_compressed_packed8_batch(&layout, 0, 2).expect("full compressed packed8 batch should pack");
+        assert_eq!(
+            session
+                .compressed_packed8_session_state()
+                .positioned_source_window
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .capacity(),
+            0,
+            "the snapshot raw path should not allocate a positioned source window",
+        );
         assert_eq!(full_batch.member_metadata(), &[0, 17, 0x060B_0216, 20, 17, 0x0A07_0216]);
         assert_eq!(&full_batch.raw_deflate_slab()[0..17], &RAW_DEFLATE_FIRST);
         assert_eq!(&full_batch.raw_deflate_slab()[17..20], &[0_u8; 3]);
@@ -580,5 +755,53 @@ mod tests {
         drop(pooled_full_batch);
 
         session.finish().expect("compressed packed8 session source should remain stable");
+    }
+
+    #[test]
+    fn compressed_packed8_batch_uses_reusable_positioned_source_windows() {
+        let fixture = write_positioned_independent_zlib_bgen();
+        let reader = BgenReaderCore::open(fixture.path()).expect("positioned zlib BGEN should open");
+        assert!(reader.source.snapshot_bytes().is_none(), "large zlib input should use positioned reads");
+        assert_eq!(
+            reader.packed8_compatibility_with_cache().expect("positioned zlib compatibility should validate"),
+            Packed8Compatibility::Compatible
+        );
+        let chunk_specs = [ChunkSpec { variant_start_index: 0, variant_stop_index: 3 }];
+        let layout = reader
+            .plan_compressed_packed8_batch_layout(&chunk_specs)
+            .expect("positioned compressed layout should plan")
+            .expect("positioned zlib input should produce a compressed layout");
+        let session = reader.read_session(&[0, 1, 2]).expect("positioned compressed session should build");
+
+        let first_batch =
+            session.pack_compressed_packed8_batch(&layout, 0, 3).expect("positioned compressed batch should pack");
+        assert_eq!(first_batch.member_metadata(), &[0, 17, 0x060B_0216, 20, 17, 0x0A07_0216, 40, 18, 0x090B_0296]);
+        assert_eq!(&first_batch.raw_deflate_slab()[0..17], &RAW_DEFLATE_FIRST);
+        assert_eq!(&first_batch.raw_deflate_slab()[20..37], &RAW_DEFLATE_SECOND);
+        assert_eq!(&first_batch.raw_deflate_slab()[40..58], &RAW_DEFLATE_THIRD);
+        drop(first_batch);
+
+        let positioned_capacity = session
+            .compressed_packed8_session_state()
+            .positioned_source_window
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .capacity();
+        assert!(positioned_capacity > 0, "positioned raw packing should retain its owned source window");
+        let second_batch =
+            session.pack_compressed_packed8_batch(&layout, 0, 3).expect("positioned source window should be reusable");
+        assert_eq!(
+            session
+                .compressed_packed8_session_state()
+                .positioned_source_window
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .capacity(),
+            positioned_capacity,
+        );
+        assert_eq!(second_batch.member_metadata().len(), 9);
+        drop(second_batch);
+
+        session.finish().expect("positioned compressed source should remain stable");
     }
 }

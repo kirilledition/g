@@ -38,6 +38,32 @@ Supported:
 file, not from identifiers embedded in the BGEN. Adjacent `.sample` files are
 not discovered implicitly.
 
+The BGEN header sample count must equal the aligned Oxford `.sample` metadata
+count. Header offsets and reserved flags, any embedded sample-block framing,
+variant counts, and probability ranges are validated before genotype delivery.
+Variant identifiers, RSIDs, chromosome labels, and alleles must be valid UTF-8;
+malformed or truncated input fails instead of being decoded lossily. An
+individual allele, encoded probability payload, or uncompressed probability
+block may contain at most 8 MiB so delivery and decompression remain
+memory-bounded.
+
+Files no larger than 256 MiB are captured into an immutable owned snapshot
+before indexing. The process keeps one fully parsed canonical snapshot payload
+for the latest exact source identity, including its index and metadata, until a
+different source passes open/index validation and replaces it or the process
+exits. A candidate rejected during open/index validation does not evict the
+valid payload. Probability corruption discovered later still fails safely
+during validation or decode, but that source identity may already have
+replaced the earlier cache entry. Later mutation or replacement of the
+configured file cannot alter a run already backed by that snapshot. This cache
+can retain more than 256 MiB in total because parsed index and metadata
+allocations are additional to the source bytes. Capturing and parsing a
+replacement temporarily overlaps the retained payload with the candidate.
+Concurrent cold opens each add their own candidate allocation, and readers can
+extend old-payload overlap after publication. Larger files use bounded
+positioned reads and are rechecked during delivery; changing one during a run
+fails with a source error.
+
 Unsupported options, which are absent from the CLI and rejected as unknown:
 
 - `--bed`
@@ -52,10 +78,12 @@ with the no-missing diploid 8-bit representation. The scan also rejects invalid
 probability lengths, normalization sums, padding, reserved flags, and nonzero
 probabilities for missing samples before choosing a delivery format. Both typed
 outcomes—packed8 compatible and dosage required—are cached by a file-identity,
-timestamp, size, and dimension fingerprint under the user cache directory. The exact opened file is checked
-after indexing, before and after compatibility validation, and around genotype
-delivery, so a source changed during a run fails. Cache-directory lookup or persistence
-failures trigger an uncached scan and do not disable packed8. Otherwise-supported
+timestamp, size, and dimension fingerprint under the user cache directory.
+Snapshot-backed validation reads only the verified immutable payload;
+positioned input is checked after indexing, before and after compatibility
+validation, and around genotype delivery. Cache-directory lookup or
+persistence failures trigger an uncached scan and do not disable packed8.
+Otherwise-supported
 biallelic diploid Layout-2 variants with missing values, phased probabilities,
 or a bit depth other than 8 fall back to dosage delivery. Multiallelic,
 non-diploid or otherwise unsupported input fails instead

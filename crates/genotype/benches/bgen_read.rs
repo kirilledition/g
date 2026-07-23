@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -29,6 +29,17 @@ fn benchmark_bgen_path() -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+#[cfg(not(feature = "benchmark-positioned-source"))]
+fn open_benchmark_reader(bgen_path: &Path) -> BgenReaderCore {
+    BgenReaderCore::open(bgen_path).expect("native Rust BGEN reader should open benchmark input")
+}
+
+#[cfg(feature = "benchmark-positioned-source")]
+fn open_benchmark_reader(bgen_path: &Path) -> BgenReaderCore {
+    BgenReaderCore::open_positioned_for_benchmark(bgen_path)
+        .expect("native Rust positioned BGEN reader should open benchmark input")
 }
 
 fn full_sample_indices(reader: &BgenReaderCore) -> Vec<usize> {
@@ -83,14 +94,18 @@ fn benchmark_variant_major_read(
 fn benchmark_bgen_open(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
     let source_byte_count = std::fs::metadata(&bgen_path).expect("benchmark BGEN metadata should be available").len();
-    let mut open_group = criterion.benchmark_group("bgen_open_and_index");
+    let warm_reader = open_benchmark_reader(&bgen_path);
+    let group_name = if cfg!(feature = "benchmark-positioned-source") {
+        "bgen_positioned_open_and_index"
+    } else {
+        "bgen_warmed_open_and_index"
+    };
+    let mut open_group = criterion.benchmark_group(group_name);
     open_group.throughput(Throughput::Bytes(source_byte_count));
     open_group.bench_function("sequential_index", |benchmark| {
         benchmark.iter(|| {
-            std::hint::black_box(
-                BgenReaderCore::open(std::hint::black_box(&bgen_path))
-                    .expect("native Rust BGEN reader should open benchmark input"),
-            );
+            std::hint::black_box(&warm_reader);
+            std::hint::black_box(open_benchmark_reader(std::hint::black_box(&bgen_path)));
         });
     });
     open_group.finish();
@@ -299,10 +314,9 @@ fn benchmark_gpu_host_delivery(
     delivery_group.finish();
 }
 
-#[allow(clippy::too_many_lines)]
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
-    let reader = BgenReaderCore::open(&bgen_path).expect("native Rust BGEN reader should open benchmark input");
+    let reader = open_benchmark_reader(&bgen_path);
 
     let full_sample_indices = full_sample_indices(&reader);
     let full_sample_session =
