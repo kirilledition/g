@@ -45,9 +45,14 @@ and redirects invalid metadata to a known-valid aligned empty-DEFLATE sentinel.
 Arbitrary compressed bytes must not be passed directly to nvCOMP because its
 API does not guarantee memory safety for corrupt streams.
 
-Loaded modules are cached by CUDA context for the process lifetime. This relies
-on JAX's process-long CUDA contexts; destroying a context and reusing its handle
-within the same process is outside the supported lifecycle.
+Loaded modules are cached by CUDA context for the process lifetime, after the
+context's CUDA device is proven equal to the device obtained from the
+JAX-selected local hardware ordinal. The handler establishes that proof before
+accessing nvCOMP or allocating decode workspace; direct use before capability
+qualification fails with `FailedPrecondition`. Driver, nvCOMP, and module state
+is intentionally retained until process exit because JAX may destroy its
+contexts before C++ static teardown. Destroying a context and reusing its handle
+within the same process remains outside the supported lifecycle.
 
 The compressed decoder was execution-validated on a V100 with the R535 driver
 against nvCOMP 5.3 in SLURM job 45171 and the official

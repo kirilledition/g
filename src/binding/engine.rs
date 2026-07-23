@@ -1,6 +1,7 @@
 //! Private PyO3 adapter for the coarse JAX association backend.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use numpy::ndarray::{Array2, ArrayView1, ArrayView2, ArrayView3, Ix1, Ix2};
 use numpy::{
@@ -11,7 +12,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 #[cfg(target_os = "linux")]
 use pyo3::types::PyCapsule;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyDict, PyList, PyModule};
 
 use g_engine as native_engine;
 use g_genotype as native_genotype;
@@ -20,16 +21,54 @@ use g_output as native_output;
 
 /// Private adapter implementing the Python-free engine contract.
 pub(crate) struct PyJaxBackend {
-    association_implementation_provenance: g_plan::AssociationImplementationProvenance,
+    association_implementation_state: native_engine::AssociationImplementationState,
     backend: Py<PyAny>,
+    execution_device: JaxExecutionDevice,
     genotype_delivery_capability: native_engine::GenotypeDeliveryCapability,
     kind: BackendKind,
+    validated_runtime: ValidatedJaxRuntime,
 }
 
 static NVCOMP_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
-static FIRTH_COMPONENTS_FFI_SELECTION: OnceLock<g_plan::FirthComponentsImplementationProvenance> = OnceLock::new();
+static NVCOMP_DEVICE_QUALIFICATIONS: OnceLock<Mutex<HashMap<JaxExecutionDeviceIdentity, Result<usize, String>>>> =
+    OnceLock::new();
+static FIRTH_COMPONENTS_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
+static FIRTH_COMPONENTS_FFI_SELECTIONS: OnceLock<
+    Mutex<HashMap<JaxExecutionDeviceIdentity, native_engine::FirthComponentsImplementationState>>,
+> = OnceLock::new();
+static CUDA_EXECUTION_DEVICE_IDENTITY: OnceLock<JaxExecutionDeviceIdentity> = OnceLock::new();
 const SUPPORTED_JAX_VERSION: &str = "0.11.0";
 const SUPPORTED_JAXLIB_VERSION: &str = "0.11.0";
+#[cfg(all(feature = "private-test-support", target_os = "linux"))]
+const UNQUALIFIED_NVCOMP_FFI_TEST_TARGET: &str = "g.bgen.packed8_deflate.unqualified_test.v0";
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct JaxExecutionDeviceIdentity {
+    platform: String,
+    global_device_id: i64,
+    process_index: i64,
+    local_hardware_ordinal: i32,
+}
+
+struct JaxExecutionDevice {
+    identity: JaxExecutionDeviceIdentity,
+    value: Py<PyAny>,
+}
+
+struct ValidatedJaxRuntime {
+    versions: native_engine::JaxRuntimeVersions,
+}
+
+impl ValidatedJaxRuntime {
+    fn versions(&self) -> native_engine::JaxRuntimeVersions {
+        self.versions.clone()
+    }
+}
+
+struct FirthComponentsFallback {
+    reason: native_engine::FirthComponentsFallbackReason,
+    detail: String,
+}
 
 #[derive(Clone, Copy)]
 enum BackendKind {
@@ -54,14 +93,7 @@ pub(crate) struct Packed8TransferDiagnostics {
     logical_variant_count: usize,
     compute_variant_count: usize,
     slab_byte_count: usize,
-    source_fingerprint: u64,
-    metadata_fingerprint: u64,
-    owner_fingerprint: u64,
 }
-
-const DIAGNOSTIC_FINGERPRINT_SAMPLE_LIMIT: usize = 4_096;
-const FNV1A_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV1A_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 #[pyclass(frozen)]
 struct Packed8ArrayOwner {
@@ -101,7 +133,8 @@ pub(crate) fn create_jax_backend(
     device: g_plan::Device,
     plan: g_runner::JaxAssociationBackendPlan<'_>,
 ) -> PyResult<PyJaxBackend> {
-    validate_jax_runtime_versions(py)?;
+    let validated_runtime = validate_jax_runtime_versions(py)?;
+    let execution_device = resolve_jax_execution_device(py, device, &validated_runtime)?;
     let genotype_delivery_capability = match device {
         g_plan::Device::Cpu => native_engine::GenotypeDeliveryCapability::HostOnly,
         g_plan::Device::Gpu => native_engine::GenotypeDeliveryCapability::RawDeflatePacked8,
@@ -112,50 +145,67 @@ pub(crate) fn create_jax_backend(
             let keyword_arguments = PyDict::new(py);
             keyword_arguments.set_item("minimum_variance", kernel.minimum_variance.get())?;
             keyword_arguments.set_item("relative_variance_tolerance", kernel.relative_variance_tolerance.get())?;
+            keyword_arguments.set_item("device", execution_device.value.bind(py))?;
             let backend = backend_module.getattr("LinearJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
             Ok(PyJaxBackend {
-                association_implementation_provenance: g_plan::AssociationImplementationProvenance::default(),
+                association_implementation_state: native_engine::AssociationImplementationState::jax(
+                    validated_runtime.versions(),
+                    None,
+                ),
                 backend,
+                execution_device,
                 genotype_delivery_capability,
                 kind: BackendKind::Linear,
+                validated_runtime,
             })
         }
         g_runner::JaxAssociationBackendPlan::BinaryScore(kernels) => {
-            let keyword_arguments = binary_score_backend_keyword_arguments(py, kernels)?;
+            let keyword_arguments = binary_score_backend_keyword_arguments(py, kernels, &execution_device)?;
             let backend = backend_module.getattr("BinaryScoreJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
             Ok(PyJaxBackend {
-                association_implementation_provenance: g_plan::AssociationImplementationProvenance::default(),
+                association_implementation_state: native_engine::AssociationImplementationState::jax(
+                    validated_runtime.versions(),
+                    None,
+                ),
                 backend,
+                execution_device,
                 genotype_delivery_capability,
                 kind: BackendKind::BinaryScore,
+                validated_runtime,
             })
         }
         g_runner::JaxAssociationBackendPlan::BinaryFirth { correction, kernels } => {
-            let firth_components = select_firth_components_implementation(py, device);
+            let firth_components =
+                select_firth_components_implementation(py, device, &execution_device, &validated_runtime);
             let use_cuda_firth_components =
-                firth_components.effective == g_plan::FirthComponentsImplementation::RawCuda;
-            let keyword_arguments =
-                binary_firth_backend_keyword_arguments(py, kernels, *correction, use_cuda_firth_components)?;
+                firth_components.effective() == native_engine::FirthComponentsImplementation::RawCuda;
+            let keyword_arguments = binary_firth_backend_keyword_arguments(
+                py,
+                kernels,
+                *correction,
+                use_cuda_firth_components,
+                &execution_device,
+            )?;
             let backend = backend_module.getattr("BinaryFirthJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
             Ok(PyJaxBackend {
-                association_implementation_provenance: g_plan::AssociationImplementationProvenance {
-                    firth_components: Some(firth_components),
-                },
+                association_implementation_state: native_engine::AssociationImplementationState::jax(
+                    validated_runtime.versions(),
+                    Some(firth_components),
+                ),
                 backend,
+                execution_device,
                 genotype_delivery_capability,
                 kind: BackendKind::BinaryFirth,
+                validated_runtime,
             })
         }
     }
 }
 
-fn validate_jax_runtime_versions(py: Python<'_>) -> PyResult<()> {
+fn validate_jax_runtime_versions(py: Python<'_>) -> PyResult<ValidatedJaxRuntime> {
     let jax_version = PyModule::import(py, "jax")?.getattr("__version__")?.extract::<String>()?;
     let jaxlib_version = PyModule::import(py, "jaxlib")?.getattr("__version__")?.extract::<String>()?;
-    if let Some(message) = jax_runtime_version_error(&jax_version, &jaxlib_version) {
-        return Err(PyRuntimeError::new_err(message));
-    }
-    Ok(())
+    validate_jax_runtime_version_strings(&jax_version, &jaxlib_version).map_err(PyRuntimeError::new_err)
 }
 
 fn jax_runtime_version_error(jax_version: &str, jaxlib_version: &str) -> Option<String> {
@@ -167,16 +217,144 @@ fn jax_runtime_version_error(jax_version: &str, jaxlib_version: &str) -> Option<
     ))
 }
 
-fn register_nvcomp_ffi_target(py: Python<'_>) -> PyResult<()> {
-    NVCOMP_FFI_REGISTRATION
-        .get_or_init(|| register_nvcomp_ffi_target_once(py).map_err(|error| error.to_string()))
-        .as_ref()
-        .map_err(|message| PyRuntimeError::new_err(message.clone()))
-        .copied()
+fn validate_jax_runtime_version_strings(
+    jax_version: &str,
+    jaxlib_version: &str,
+) -> Result<ValidatedJaxRuntime, String> {
+    if let Some(message) = jax_runtime_version_error(jax_version, jaxlib_version) {
+        return Err(message);
+    }
+    let versions = native_engine::JaxRuntimeVersions::new(jax_version.to_owned(), jaxlib_version.to_owned())
+        .expect("the exact supported JAX and JAXlib versions are nonempty");
+    Ok(ValidatedJaxRuntime { versions })
+}
+
+#[cfg(test)]
+fn run_with_validated_jax_runtime<Value>(
+    jax_version: &str,
+    jaxlib_version: &str,
+    operation: impl FnOnce(&ValidatedJaxRuntime) -> Value,
+) -> Result<Value, String> {
+    let validated_runtime = validate_jax_runtime_version_strings(jax_version, jaxlib_version)?;
+    Ok(operation(&validated_runtime))
+}
+
+fn resolve_jax_execution_device(
+    py: Python<'_>,
+    device: g_plan::Device,
+    _validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<JaxExecutionDevice> {
+    let requested_platform = match device {
+        g_plan::Device::Cpu => "cpu",
+        g_plan::Device::Gpu => "gpu",
+    };
+    let keyword_arguments = PyDict::new(py);
+    keyword_arguments.set_item("backend", requested_platform)?;
+    let local_devices = PyModule::import(py, "jax")?
+        .getattr("local_devices")?
+        .call((), Some(&keyword_arguments))?
+        .cast_into::<PyList>()?;
+    let identities = local_devices
+        .iter()
+        .map(|local_device| jax_execution_device_identity(&local_device))
+        .collect::<PyResult<Vec<_>>>()?;
+    let selected_index = lowest_jax_execution_device_index(&identities).ok_or_else(|| {
+        PyRuntimeError::new_err(format!(
+            "JAX reported no local {requested_platform} execution device for the requested backend."
+        ))
+    })?;
+    let selected_device = local_devices.get_item(selected_index)?;
+    let identity = identities
+        .into_iter()
+        .nth(selected_index)
+        .expect("the selected JAX device index came from the same identity collection");
+    let platform = identity.platform.as_str();
+    if platform != requested_platform && !(requested_platform == "gpu" && platform == "cuda") {
+        return Err(PyRuntimeError::new_err(format!(
+            "JAX resolved platform {platform:?} while g requested {requested_platform:?}."
+        )));
+    }
+    if device == g_plan::Device::Gpu {
+        let process_device = CUDA_EXECUTION_DEVICE_IDENTITY.get_or_init(|| identity.clone());
+        if process_device != &identity {
+            return Err(PyRuntimeError::new_err(format!(
+                "This process already pinned CUDA execution to {process_device:?}; refusing a second JAX CUDA device {identity:?}."
+            )));
+        }
+    }
+    Ok(JaxExecutionDevice { identity, value: selected_device.unbind() })
+}
+
+fn jax_execution_device_identity(device: &Bound<'_, PyAny>) -> PyResult<JaxExecutionDeviceIdentity> {
+    let local_hardware_ordinal = device.getattr("local_hardware_id")?.extract::<i32>()?;
+    if local_hardware_ordinal < 0 {
+        return Err(PyRuntimeError::new_err(format!(
+            "JAX resolved invalid negative local hardware ordinal {local_hardware_ordinal}."
+        )));
+    }
+    Ok(JaxExecutionDeviceIdentity {
+        platform: device.getattr("platform")?.extract::<String>()?,
+        global_device_id: device.getattr("id")?.extract::<i64>()?,
+        process_index: device.getattr("process_index")?.extract::<i64>()?,
+        local_hardware_ordinal,
+    })
+}
+
+fn lowest_jax_execution_device_index(identities: &[JaxExecutionDeviceIdentity]) -> Option<usize> {
+    identities
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, identity)| {
+            (identity.local_hardware_ordinal, identity.global_device_id, identity.process_index)
+        })
+        .map(|(index, _)| index)
+}
+
+fn register_nvcomp_ffi_target(
+    py: Python<'_>,
+    execution_device: &JaxExecutionDevice,
+    validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<usize> {
+    let qualifications = NVCOMP_DEVICE_QUALIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut qualifications = qualifications.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(cached) = qualifications.get(&execution_device.identity) {
+        return cached.clone().map_err(PyRuntimeError::new_err);
+    }
+    let qualification =
+        qualify_nvcomp_device(py, execution_device, validated_runtime).map_err(|error| error.to_string());
+    qualifications.insert(execution_device.identity.clone(), qualification.clone());
+    qualification.map_err(PyRuntimeError::new_err)
 }
 
 #[cfg(target_os = "linux")]
-fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
+fn qualify_nvcomp_device(
+    py: Python<'_>,
+    execution_device: &JaxExecutionDevice,
+    validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<usize> {
+    load_nvcomp_library(py)?;
+
+    let capability = g_genotype_cuda::initialize_nvcomp_runtime(execution_device.identity.local_hardware_ordinal)
+        .map_err(|error| PyRuntimeError::new_err(format!("nvCOMP runtime initialization failed: {error}")))?;
+    let input_alignment = capability.input_alignment();
+    let handler = g_genotype_cuda::packed8_deflate_ffi_handler(&capability);
+    NVCOMP_FFI_REGISTRATION
+        .get_or_init(|| {
+            register_nvcomp_ffi_target_address(
+                py,
+                g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET,
+                handler,
+                validated_runtime,
+            )
+            .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|message| PyRuntimeError::new_err(message.clone()))?;
+    Ok(input_alignment)
+}
+
+#[cfg(target_os = "linux")]
+fn load_nvcomp_library(py: Python<'_>) -> PyResult<()> {
     let nvcomp_module = PyModule::import(py, "nvidia.libnvcomp").map_err(|error| {
         PyRuntimeError::new_err(format!(
             "GPU packed8 delivery requires the official nvidia-libnvcomp-cu12 package: {error}"
@@ -188,10 +366,16 @@ fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
     if loaded_library.is_none() {
         return Err(PyRuntimeError::new_err("The official nvidia.libnvcomp loader could not find libnvcomp.so.5."));
     }
+    Ok(())
+}
 
-    let capability = g_genotype_cuda::initialize_nvcomp_runtime(0)
-        .map_err(|error| PyRuntimeError::new_err(format!("nvCOMP runtime initialization failed: {error}")))?;
-    let handler = g_genotype_cuda::packed8_deflate_ffi_handler(&capability);
+#[cfg(target_os = "linux")]
+fn register_nvcomp_ffi_target_address(
+    py: Python<'_>,
+    target: &str,
+    handler: std::ptr::NonNull<std::ffi::c_void>,
+    _validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<()> {
     // SAFETY: `handler` is the process-lifetime address of the linked typed-XLA FFI
     // handler, and the capsule has no destructor or borrowed storage.
     let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
@@ -200,159 +384,190 @@ fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
     keyword_arguments.set_item("api_version", 1)?;
     PyModule::import(py, "jax")?
         .getattr("ffi")?
-        .call_method(
-            "register_ffi_target",
-            (g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET, capsule),
-            Some(&keyword_arguments),
-        )
+        .call_method("register_ffi_target", (target, capsule), Some(&keyword_arguments))
         .map_err(|error| PyRuntimeError::new_err(format!("JAX nvCOMP FFI target registration failed: {error}")))?;
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn register_nvcomp_ffi_target_once(_py: Python<'_>) -> PyResult<()> {
+fn qualify_nvcomp_device(
+    _py: Python<'_>,
+    _execution_device: &JaxExecutionDevice,
+    _validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<usize> {
     Err(PyRuntimeError::new_err("GPU packed8 delivery through nvCOMP is supported only on Linux."))
 }
 
 fn select_firth_components_implementation(
     py: Python<'_>,
     device: g_plan::Device,
-) -> g_plan::FirthComponentsImplementationProvenance {
+    execution_device: &JaxExecutionDevice,
+    validated_runtime: &ValidatedJaxRuntime,
+) -> native_engine::FirthComponentsImplementationState {
     if device == g_plan::Device::Cpu {
-        return g_plan::FirthComponentsImplementationProvenance {
-            requested: g_plan::FirthComponentsImplementation::Jax,
-            effective: g_plan::FirthComponentsImplementation::Jax,
-            fallback: None,
-        };
+        return native_engine::FirthComponentsImplementationState::jax();
     }
-    FIRTH_COMPONENTS_FFI_SELECTION.get_or_init(|| select_firth_components_implementation_once(py)).clone()
+    let selections = FIRTH_COMPONENTS_FFI_SELECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut selections = selections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(selection) = selections.get(&execution_device.identity) {
+        return selection.clone();
+    }
+    let selection = select_firth_components_implementation_once(py, execution_device, validated_runtime);
+    selections.insert(execution_device.identity.clone(), selection.clone());
+    selection
 }
 
 #[cfg(target_os = "linux")]
-fn select_firth_components_implementation_once(py: Python<'_>) -> g_plan::FirthComponentsImplementationProvenance {
-    let capability = match g_compute_cuda::initialize_firth_components_runtime(0) {
-        Ok(capability) => capability,
-        Err(error) => {
-            return jax_firth_components_fallback(firth_components_initialization_fallback(&error));
-        }
-    };
+fn select_firth_components_implementation_once(
+    py: Python<'_>,
+    execution_device: &JaxExecutionDevice,
+    validated_runtime: &ValidatedJaxRuntime,
+) -> native_engine::FirthComponentsImplementationState {
+    let capability =
+        match g_compute_cuda::initialize_firth_components_runtime(execution_device.identity.local_hardware_ordinal) {
+            Ok(capability) => capability,
+            Err(error) => {
+                return jax_firth_components_fallback(firth_components_initialization_fallback(&error));
+            }
+        };
     let handler = g_compute_cuda::firth_components_ffi_handler(&capability);
-    // SAFETY: The linked typed-XLA FFI handler has process lifetime, and the
-    // capsule has no destructor or borrowed storage.
-    let capsule = match unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET") } {
-        Ok(capsule) => capsule,
-        Err(error) => return jax_firth_components_fallback(jax_registration_fallback(&error)),
-    };
-    let keyword_arguments = PyDict::new(py);
-    let registration = (|| -> PyResult<()> {
-        keyword_arguments.set_item("platform", "CUDA")?;
-        keyword_arguments.set_item("api_version", 1)?;
-        PyModule::import(py, "jax")?.getattr("ffi")?.call_method(
-            "register_ffi_target",
-            (g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET, capsule),
-            Some(&keyword_arguments),
-        )?;
-        Ok(())
-    })();
-    match registration {
-        Ok(()) => g_plan::FirthComponentsImplementationProvenance {
-            requested: g_plan::FirthComponentsImplementation::RawCuda,
-            effective: g_plan::FirthComponentsImplementation::RawCuda,
-            fallback: None,
-        },
-        Err(error) => jax_firth_components_fallback(jax_registration_fallback(&error)),
+    match FIRTH_COMPONENTS_FFI_REGISTRATION.get_or_init(|| {
+        register_firth_components_ffi_target_once(py, handler, validated_runtime).map_err(|error| error.to_string())
+    }) {
+        Ok(()) => {
+            native_engine::FirthComponentsImplementationState::raw_cuda(g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET)
+                .expect("the compiled raw-CUDA FFI target is nonempty")
+        }
+        Err(detail) => jax_firth_components_fallback(FirthComponentsFallback {
+            reason: native_engine::FirthComponentsFallbackReason::JaxRegistrationFailure,
+            detail: detail.clone(),
+        }),
     }
 }
 
+#[cfg(target_os = "linux")]
+fn register_firth_components_ffi_target_once(
+    py: Python<'_>,
+    handler: std::ptr::NonNull<std::ffi::c_void>,
+    _validated_runtime: &ValidatedJaxRuntime,
+) -> PyResult<()> {
+    // SAFETY: The linked typed-XLA FFI handler has process lifetime, and the
+    // capsule has no destructor or borrowed storage.
+    let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
+    let keyword_arguments = PyDict::new(py);
+    keyword_arguments.set_item("platform", "CUDA")?;
+    keyword_arguments.set_item("api_version", 1)?;
+    PyModule::import(py, "jax")?.getattr("ffi")?.call_method(
+        "register_ffi_target",
+        (g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET, capsule),
+        Some(&keyword_arguments),
+    )?;
+    Ok(())
+}
+
 #[cfg(not(target_os = "linux"))]
-fn select_firth_components_implementation_once(_py: Python<'_>) -> g_plan::FirthComponentsImplementationProvenance {
-    jax_firth_components_fallback(g_plan::FirthComponentsFallback {
-        reason: g_plan::FirthComponentsFallbackReason::UnsupportedPlatform,
+fn select_firth_components_implementation_once(
+    _py: Python<'_>,
+    _execution_device: &JaxExecutionDevice,
+    _validated_runtime: &ValidatedJaxRuntime,
+) -> native_engine::FirthComponentsImplementationState {
+    jax_firth_components_fallback(FirthComponentsFallback {
+        reason: native_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
         detail: g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform.to_string(),
     })
 }
 
 fn jax_firth_components_fallback(
-    fallback: g_plan::FirthComponentsFallback,
-) -> g_plan::FirthComponentsImplementationProvenance {
-    g_plan::FirthComponentsImplementationProvenance {
-        requested: g_plan::FirthComponentsImplementation::RawCuda,
-        effective: g_plan::FirthComponentsImplementation::Jax,
-        fallback: Some(fallback),
-    }
+    fallback: FirthComponentsFallback,
+) -> native_engine::FirthComponentsImplementationState {
+    native_engine::FirthComponentsImplementationState::raw_cuda_fallback(fallback.reason, fallback.detail)
 }
 
 fn firth_components_initialization_fallback(
     error: &g_compute_cuda::FirthComponentsInitializationError,
-) -> g_plan::FirthComponentsFallback {
+) -> FirthComponentsFallback {
     let reason = match error {
         g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform => {
-            g_plan::FirthComponentsFallbackReason::UnsupportedPlatform
+            native_engine::FirthComponentsFallbackReason::UnsupportedPlatform
         }
         g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable { .. } => {
-            g_plan::FirthComponentsFallbackReason::CudaDriverUnavailable
+            native_engine::FirthComponentsFallbackReason::CudaDriverUnavailable
         }
         g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable { .. } => {
-            g_plan::FirthComponentsFallbackReason::RequiredSymbolUnavailable
+            native_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable
         }
         g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure { .. } => {
-            g_plan::FirthComponentsFallbackReason::CudaDriverFailure
+            native_engine::FirthComponentsFallbackReason::CudaDriverFailure
         }
         g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld { .. } => {
-            g_plan::FirthComponentsFallbackReason::CudaDriverTooOld
+            native_engine::FirthComponentsFallbackReason::CudaDriverTooOld
         }
         g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable { .. } => {
-            g_plan::FirthComponentsFallbackReason::CudaDeviceUnavailable
+            native_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable
         }
         g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability { .. } => {
-            g_plan::FirthComponentsFallbackReason::UnsupportedComputeCapability
+            native_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability
         }
         g_compute_cuda::FirthComponentsInitializationError::Internal { .. } => {
-            g_plan::FirthComponentsFallbackReason::NativeInitializationFailure
+            native_engine::FirthComponentsFallbackReason::NativeInitializationFailure
         }
     };
-    g_plan::FirthComponentsFallback { reason, detail: error.to_string() }
-}
-
-fn jax_registration_fallback(error: &PyErr) -> g_plan::FirthComponentsFallback {
-    g_plan::FirthComponentsFallback {
-        reason: g_plan::FirthComponentsFallbackReason::JaxRegistrationFailure,
-        detail: error.to_string(),
-    }
+    FirthComponentsFallback { reason, detail: error.to_string() }
 }
 
 #[cfg(feature = "private-test-support")]
 pub(crate) fn require_firth_components_ffi_target(py: Python<'_>) -> PyResult<&'static str> {
-    let selection = select_firth_components_implementation(py, g_plan::Device::Gpu);
-    if selection.effective == g_plan::FirthComponentsImplementation::RawCuda {
+    let validated_runtime = validate_jax_runtime_versions(py)?;
+    let execution_device = resolve_jax_execution_device(py, g_plan::Device::Gpu, &validated_runtime)?;
+    let selection =
+        select_firth_components_implementation(py, g_plan::Device::Gpu, &execution_device, &validated_runtime);
+    if selection.effective() == native_engine::FirthComponentsImplementation::RawCuda {
         return Ok(g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET);
     }
-    let fallback = selection.fallback.expect("a raw-CUDA fallback must retain its reason");
+    let fallback_reason = selection.fallback_reason().expect("a raw-CUDA fallback must retain its reason");
+    let fallback_detail = selection.fallback_detail().expect("a raw-CUDA fallback must retain diagnostic detail");
     Err(PyRuntimeError::new_err(format!(
-        "Raw-CUDA Firth components are unavailable ({:?}): {}",
-        fallback.reason, fallback.detail
+        "Raw-CUDA Firth components are unavailable ({fallback_reason:?}): {fallback_detail}"
     )))
 }
 
 #[cfg(feature = "private-test-support")]
 pub(crate) fn require_nvcomp_ffi_target(py: Python<'_>) -> PyResult<&'static str> {
-    register_nvcomp_ffi_target(py)?;
+    let validated_runtime = validate_jax_runtime_versions(py)?;
+    let execution_device = resolve_jax_execution_device(py, g_plan::Device::Gpu, &validated_runtime)?;
+    register_nvcomp_ffi_target(py, &execution_device, &validated_runtime)?;
     Ok(g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET)
 }
 
 #[cfg(feature = "private-test-support")]
 pub(crate) fn require_nvcomp_input_alignment(py: Python<'_>) -> PyResult<usize> {
-    register_nvcomp_ffi_target(py)?;
-    g_genotype_cuda::initialize_nvcomp_runtime(0)
-        .map(|capability| capability.input_alignment())
-        .map_err(|error| PyRuntimeError::new_err(format!("nvCOMP runtime initialization failed: {error}")))
+    let validated_runtime = validate_jax_runtime_versions(py)?;
+    let execution_device = resolve_jax_execution_device(py, g_plan::Device::Gpu, &validated_runtime)?;
+    register_nvcomp_ffi_target(py, &execution_device, &validated_runtime)
+}
+
+#[cfg(all(feature = "private-test-support", target_os = "linux"))]
+pub(crate) fn register_unqualified_nvcomp_ffi_target_for_test(py: Python<'_>) -> PyResult<&'static str> {
+    let validated_runtime = validate_jax_runtime_versions(py)?;
+    load_nvcomp_library(py)?;
+    let handler = g_genotype_cuda::unqualified_packed8_deflate_ffi_handler_for_test();
+    register_nvcomp_ffi_target_address(py, UNQUALIFIED_NVCOMP_FFI_TEST_TARGET, handler, &validated_runtime)?;
+    Ok(UNQUALIFIED_NVCOMP_FFI_TEST_TARGET)
+}
+
+#[cfg(all(feature = "private-test-support", not(target_os = "linux")))]
+pub(crate) fn register_unqualified_nvcomp_ffi_target_for_test(py: Python<'_>) -> PyResult<&'static str> {
+    let _validated_runtime = validate_jax_runtime_versions(py)?;
+    Err(PyRuntimeError::new_err("The unqualified nvCOMP regression target is available only on Linux."))
 }
 
 fn binary_score_backend_keyword_arguments<'py>(
     py: Python<'py>,
     kernels: &g_plan::KernelPlan,
+    execution_device: &JaxExecutionDevice,
 ) -> PyResult<Bound<'py, PyDict>> {
     let keyword_arguments = PyDict::new(py);
+    keyword_arguments.set_item("device", execution_device.value.bind(py))?;
     keyword_arguments.set_item("minimum_probability", kernels.binary_null.minimum_probability.get())?;
     keyword_arguments.set_item("minimum_variance", kernels.binary_null.minimum_variance.get())?;
     keyword_arguments.set_item("relative_variance_tolerance", kernels.binary_null.relative_variance_tolerance.get())?;
@@ -367,8 +582,9 @@ fn binary_firth_backend_keyword_arguments<'py>(
     kernels: &g_plan::KernelPlan,
     correction: g_plan::CorrectionPlan,
     use_cuda_firth_components: bool,
+    execution_device: &JaxExecutionDevice,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let keyword_arguments = binary_score_backend_keyword_arguments(py, kernels)?;
+    let keyword_arguments = binary_score_backend_keyword_arguments(py, kernels, execution_device)?;
     keyword_arguments.set_item("p_threshold", correction.p_threshold.get())?;
     keyword_arguments.set_item("firth_se", correction.firth_se)?;
     keyword_arguments.set_item("firth_batch_size", kernels.firth.batch_size)?;
@@ -402,8 +618,8 @@ impl native_engine::AssociationBackend for PyJaxBackend {
     type Error = PyJaxBackendError;
     type GroupState = Py<PyAny>;
 
-    fn association_implementation_provenance(&self) -> g_plan::AssociationImplementationProvenance {
-        self.association_implementation_provenance.clone()
+    fn association_implementation_state(&self) -> native_engine::AssociationImplementationState {
+        self.association_implementation_state.clone()
     }
 
     fn genotype_delivery_capability(&self) -> native_engine::GenotypeDeliveryCapability {
@@ -421,9 +637,17 @@ impl native_engine::AssociationBackend for PyJaxBackend {
                 Array2::from_shape_vec((covariates.sample_count, covariates.covariate_count), covariates.values)
                     .expect("engine-validated covariate matrix shape")
                     .into_pyarray(py);
-            prepare_python_group(py, self.backend.bind(py), &phenotype_matrix, &covariate_matrix, genotype_transfer)
-                .map(Bound::unbind)
-                .map_err(PyJaxBackendError::Python)
+            prepare_python_group(
+                py,
+                self.backend.bind(py),
+                &self.execution_device,
+                &self.validated_runtime,
+                &phenotype_matrix,
+                &covariate_matrix,
+                genotype_transfer,
+            )
+            .map(Bound::unbind)
+            .map_err(PyJaxBackendError::Python)
         })
     }
 
@@ -552,6 +776,8 @@ impl native_engine::AssociationBackend for PyJaxBackend {
 fn prepare_python_group<'py>(
     py: Python<'py>,
     backend: &Bound<'py, PyAny>,
+    execution_device: &JaxExecutionDevice,
+    validated_runtime: &ValidatedJaxRuntime,
     phenotype_matrix: &Bound<'py, PyArray2<f32>>,
     covariate_matrix: &Bound<'py, PyArray2<f32>>,
     genotype_transfer: native_engine::GenotypeTransferPreparation,
@@ -562,7 +788,7 @@ fn prepare_python_group<'py>(
             (phenotype_matrix, covariate_matrix, py.None(), py.None(), py.None(), py.None()),
         ),
         native_engine::GenotypeTransferPreparation::CompressedPacked8(transfer) => {
-            register_nvcomp_ffi_target(py)?;
+            register_nvcomp_ffi_target(py, execution_device, validated_runtime)?;
             let source_sample_count = transfer.file_sample_count;
             let selected_sample_count = transfer.selected_sample_count;
             match transfer.sample_selection {
@@ -684,73 +910,12 @@ fn build_packed8_transfer_diagnostics(
     compute_variant_count: usize,
     batch: &native_genotype::CompressedPacked8Batch,
 ) -> Packed8TransferDiagnostics {
-    let slab = batch.raw_deflate_slab();
-    let metadata = batch.member_metadata();
-    let slab_pointer = u64::try_from(slab.as_ptr().addr()).expect("g requires a 64-bit pointer domain");
-    let metadata_pointer = u64::try_from(metadata.as_ptr().addr()).expect("g requires a 64-bit pointer domain");
-    let mut owner_fingerprint = FNV1A_OFFSET_BASIS;
-    for value in [
-        slab_pointer,
-        u64::try_from(slab.len()).expect("usize fits the required 64-bit target"),
-        metadata_pointer,
-        u64::try_from(metadata.len()).expect("usize fits the required 64-bit target"),
-    ] {
-        owner_fingerprint = update_fnv1a(owner_fingerprint, &value.to_le_bytes());
-    }
     Packed8TransferDiagnostics {
         variant_start_index,
         logical_variant_count,
         compute_variant_count,
-        slab_byte_count: slab.len(),
-        source_fingerprint: bounded_byte_fingerprint(slab),
-        metadata_fingerprint: bounded_u32_fingerprint(metadata),
-        owner_fingerprint,
+        slab_byte_count: batch.raw_deflate_slab().len(),
     }
-}
-
-fn bounded_byte_fingerprint(values: &[u8]) -> u64 {
-    let mut fingerprint = update_fnv1a(
-        FNV1A_OFFSET_BASIS,
-        &u64::try_from(values.len()).expect("usize fits the required 64-bit target").to_le_bytes(),
-    );
-    for index in diagnostic_sample_indices(values.len()) {
-        fingerprint = update_fnv1a(
-            fingerprint,
-            &u64::try_from(index).expect("usize fits the required 64-bit target").to_le_bytes(),
-        );
-        fingerprint = update_fnv1a(fingerprint, &values[index..=index]);
-    }
-    fingerprint
-}
-
-fn bounded_u32_fingerprint(values: &[u32]) -> u64 {
-    let mut fingerprint = update_fnv1a(
-        FNV1A_OFFSET_BASIS,
-        &u64::try_from(values.len()).expect("usize fits the required 64-bit target").to_le_bytes(),
-    );
-    for index in diagnostic_sample_indices(values.len()) {
-        fingerprint = update_fnv1a(
-            fingerprint,
-            &u64::try_from(index).expect("usize fits the required 64-bit target").to_le_bytes(),
-        );
-        fingerprint = update_fnv1a(fingerprint, &values[index].to_le_bytes());
-    }
-    fingerprint
-}
-
-fn diagnostic_sample_indices(value_count: usize) -> impl Iterator<Item = usize> {
-    let prefix_count = value_count.min(DIAGNOSTIC_FINGERPRINT_SAMPLE_LIMIT / 2);
-    let suffix_count = (value_count - prefix_count).min(DIAGNOSTIC_FINGERPRINT_SAMPLE_LIMIT - prefix_count);
-    let suffix_start = value_count - suffix_count;
-    (0..prefix_count).chain(suffix_start..value_count)
-}
-
-fn update_fnv1a(mut fingerprint: u64, bytes: &[u8]) -> u64 {
-    for byte in bytes {
-        fingerprint ^= u64::from(*byte);
-        fingerprint = fingerprint.wrapping_mul(FNV1A_PRIME);
-    }
-    fingerprint
 }
 
 fn into_python_genotype_batch(
@@ -851,15 +1016,11 @@ fn packed8_descriptor_failure_message(statuses: &[u32], diagnostics: &Packed8Tra
     Some(format!(
         "Compressed packed8 descriptor validation failed without retry: relative_variant_index={relative_variant_index}, \
          source_variant_index={}, status=0x{status:08x}, logical_variant_count={}, compute_variant_count={}, \
-         slab_byte_count={}, source_fingerprint_fnv1a64={:016x}, metadata_fingerprint_fnv1a64={:016x}, \
-         owner_fingerprint_fnv1a64={:016x}.",
+         slab_byte_count={}.",
         diagnostics.variant_start_index + relative_variant_index,
         diagnostics.logical_variant_count,
         diagnostics.compute_variant_count,
         diagnostics.slab_byte_count,
-        diagnostics.source_fingerprint,
-        diagnostics.metadata_fingerprint,
-        diagnostics.owner_fingerprint,
     ))
 }
 
@@ -981,10 +1142,13 @@ fn parse_correction_codes(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::collections::HashMap;
+
     use super::{
-        Packed8TransferDiagnostics, SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION, bounded_byte_fingerprint,
-        bounded_u32_fingerprint, firth_components_initialization_fallback, jax_runtime_version_error,
-        packed8_descriptor_failure_message,
+        JaxExecutionDeviceIdentity, Packed8TransferDiagnostics, SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION,
+        firth_components_initialization_fallback, jax_runtime_version_error, lowest_jax_execution_device_index,
+        packed8_descriptor_failure_message, run_with_validated_jax_runtime,
     };
 
     #[test]
@@ -1026,43 +1190,90 @@ mod tests {
     }
 
     #[test]
+    fn version_mismatch_returns_before_any_token_gated_cache_operation() {
+        let cache_was_touched = Cell::new(false);
+
+        let result = run_with_validated_jax_runtime("0.11.1", SUPPORTED_JAXLIB_VERSION, |_| {
+            cache_was_touched.set(true);
+        });
+
+        assert!(result.is_err());
+        assert!(!cache_was_touched.get());
+    }
+
+    #[test]
+    fn device_cache_identity_includes_local_ordinal_and_jax_identity() {
+        let first = JaxExecutionDeviceIdentity {
+            platform: "cuda".to_owned(),
+            global_device_id: 0,
+            process_index: 0,
+            local_hardware_ordinal: 0,
+        };
+        let different_ordinal = JaxExecutionDeviceIdentity { local_hardware_ordinal: 1, ..first.clone() };
+        let different_global_identity = JaxExecutionDeviceIdentity { global_device_id: 8, ..first.clone() };
+        let mut cache = HashMap::new();
+        cache.insert(first, 0);
+        cache.insert(different_ordinal, 1);
+        cache.insert(different_global_identity, 8);
+
+        assert_eq!(cache.len(), 3);
+    }
+
+    #[test]
+    fn execution_device_selection_uses_lowest_ordinal_independent_of_jax_order() {
+        let identity = |local_hardware_ordinal, global_device_id| JaxExecutionDeviceIdentity {
+            platform: "cuda".to_owned(),
+            global_device_id,
+            process_index: 0,
+            local_hardware_ordinal,
+        };
+        let first_order = [identity(3, 9), identity(0, 7), identity(0, 2), identity(1, 0)];
+        let second_order = [identity(1, 0), identity(0, 2), identity(3, 9), identity(0, 7)];
+
+        assert_eq!(lowest_jax_execution_device_index(&first_order), Some(2));
+        assert_eq!(lowest_jax_execution_device_index(&second_order), Some(1));
+        assert_eq!(first_order[2], second_order[1]);
+        assert_eq!(lowest_jax_execution_device_index(&[]), None);
+    }
+
+    #[test]
     fn initialization_errors_map_to_typed_fallback_reasons() {
         let cases = [
             (
                 g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform,
-                g_plan::FirthComponentsFallbackReason::UnsupportedPlatform,
+                g_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable {
                     detail: "driver".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::CudaDriverUnavailable,
+                g_engine::FirthComponentsFallbackReason::CudaDriverUnavailable,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable {
                     detail: "symbol".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::RequiredSymbolUnavailable,
+                g_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure {
                     detail: "driver failure".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::CudaDriverFailure,
+                g_engine::FirthComponentsFallbackReason::CudaDriverFailure,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld {
                     version: 12_010,
                     detail: "old".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::CudaDriverTooOld,
+                g_engine::FirthComponentsFallbackReason::CudaDriverTooOld,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable {
                     device_ordinal: 0,
                     detail: "device".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::CudaDeviceUnavailable,
+                g_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability {
@@ -1071,11 +1282,11 @@ mod tests {
                     minor: 1,
                     detail: "capability".to_string(),
                 },
-                g_plan::FirthComponentsFallbackReason::UnsupportedComputeCapability,
+                g_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability,
             ),
             (
                 g_compute_cuda::FirthComponentsInitializationError::Internal { detail: "internal".to_string() },
-                g_plan::FirthComponentsFallbackReason::NativeInitializationFailure,
+                g_engine::FirthComponentsFallbackReason::NativeInitializationFailure,
             ),
         ];
 
@@ -1087,30 +1298,12 @@ mod tests {
     }
 
     #[test]
-    fn bounded_fingerprints_cover_length_position_and_value() {
-        let mut bytes = vec![0_u8; 20_000];
-        let original_bytes = bounded_byte_fingerprint(&bytes);
-        bytes[19_999] = 7;
-        assert_ne!(bounded_byte_fingerprint(&bytes), original_bytes);
-        assert_ne!(bounded_byte_fingerprint(&bytes[..19_999]), original_bytes);
-
-        let mut metadata = vec![0_u32; 20_000];
-        let original_metadata = bounded_u32_fingerprint(&metadata);
-        metadata[19_999] = 7;
-        assert_ne!(bounded_u32_fingerprint(&metadata), original_metadata);
-        assert_ne!(bounded_u32_fingerprint(&metadata[..19_999]), original_metadata);
-    }
-
-    #[test]
-    fn descriptor_status_reports_bounded_batch_identity_without_retry() {
+    fn descriptor_status_reports_actionable_geometry_without_retry() {
         let diagnostics = Packed8TransferDiagnostics {
             variant_start_index: 16_384,
             logical_variant_count: 3,
             compute_variant_count: 512,
             slab_byte_count: 65_536,
-            source_fingerprint: 0x1234,
-            metadata_fingerprint: 0x5678,
-            owner_fingerprint: 0x9abc,
         };
 
         let message = packed8_descriptor_failure_message(
@@ -1123,9 +1316,10 @@ mod tests {
         assert!(message.contains("relative_variant_index=1"));
         assert!(message.contains("source_variant_index=16385"));
         assert!(message.contains("status=0x00000804"));
-        assert!(message.contains("source_fingerprint_fnv1a64=0000000000001234"));
-        assert!(message.contains("metadata_fingerprint_fnv1a64=0000000000005678"));
-        assert!(message.contains("owner_fingerprint_fnv1a64=0000000000009abc"));
+        assert!(message.contains("logical_variant_count=3"));
+        assert!(message.contains("compute_variant_count=512"));
+        assert!(message.contains("slab_byte_count=65536"));
+        assert!(!message.contains("fingerprint"));
         assert_eq!(packed8_descriptor_failure_message(&[0, 4, 0], &diagnostics), None);
     }
 }

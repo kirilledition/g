@@ -223,6 +223,21 @@ pub fn packed8_deflate_ffi_handler(_capability: &NvcompCapability) -> NonNull<c_
     NonNull::new(handler).expect("the linked packed8 typed-XLA handler symbol must be non-null")
 }
 
+/// Returns the handler address without a capability proof for one negative test.
+///
+/// This function exists only under the repository-private test-support feature.
+/// Production registration must use [`packed8_deflate_ffi_handler`].
+///
+/// # Panics
+///
+/// Panics if the linked handler address is null.
+#[cfg(all(target_os = "linux", feature = "private-test-support"))]
+#[must_use]
+pub fn unqualified_packed8_deflate_ffi_handler_for_test() -> NonNull<c_void> {
+    let handler = g_nvcomp_decode_packed8_ffi as *mut c_void;
+    NonNull::new(handler).expect("the linked packed8 typed-XLA handler symbol must be non-null")
+}
+
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn g_genotype_cuda_initialize_nvcomp_runtime(

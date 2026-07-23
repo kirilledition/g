@@ -175,9 +175,9 @@ with compute capability 7.0 or newer. An eligible zlib packed8 run fails with a
 specific initialization error when those requirements or nvCOMP are missing;
 it does not silently replace the requested device decode with host decode.
 Descriptor bounds or alignment status `0x00000800` is terminal and is never
-retried. The error identifies the first affected variant and includes bounded
-source, metadata, and allocation fingerprints for diagnosis without logging
-protected genotype bytes.
+retried. The error identifies the first affected variant and includes status,
+logical and compute geometry, and slab size. The hot transfer path does not
+scan genotype or metadata contents solely to construct failure diagnostics.
 
 The supported production runtime is exactly `jax==0.11.0` with
 `jaxlib==0.11.0`, and its GPU install deliberately uses the CUDA 12 extra on
@@ -195,7 +195,9 @@ component reduction; the requested GPU association run continues.
 An unexpected CUDA module or launch failure after that selection is reported
 as an execution error; `g` does not change implementations inside a compiled
 solver lifecycle. Run provenance records the requested and effective component
-implementation and a typed reason when the JAX fallback is selected.
+implementation and a typed reason when the JAX fallback is selected. Free-text
+driver or registration detail is diagnostic only and is not part of resume
+compatibility.
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,
 and compare approximate Firth only when both tools use approximate Firth with the same fallback

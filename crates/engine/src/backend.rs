@@ -76,8 +76,8 @@ pub trait AssociationBackend: Send + Sync {
     /// Return the runtime-selected implementations that affect reproducibility.
     ///
     /// Backends without optional implementations retain the empty default.
-    fn association_implementation_provenance(&self) -> g_plan::AssociationImplementationProvenance {
-        g_plan::AssociationImplementationProvenance::default()
+    fn association_implementation_state(&self) -> crate::AssociationImplementationState {
+        crate::AssociationImplementationState::default()
     }
 
     /// Return the genotype delivery modes supported by this backend instance.

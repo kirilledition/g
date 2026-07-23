@@ -13,6 +13,10 @@ sha2.workspace = true
 [dependencies]
 g-genotype-contracts.workspace = true
 
+[features]
+default = []
+private-test-support = []
+
 [dev-dependencies]
 sha2.workspace = true
 

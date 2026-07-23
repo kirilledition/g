@@ -1,9 +1,5 @@
 //! Public facade for deterministic run-planning contracts.
 
-pub use crate::association_implementation::{
-    AssociationImplementationProvenance, FirthComponentsFallback, FirthComponentsFallbackReason,
-    FirthComponentsImplementation, FirthComponentsImplementationProvenance,
-};
 pub use crate::enums::{
     AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, MultiPhenotypeSampleMode,
     NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode, RegenieTraitType, TelemetryMode,

@@ -23,7 +23,9 @@ BGEN decoding, sample/phenotype parsing, output writer sessions, callback queues
 
 Keep DTO construction deterministic and allocation-visible. Run plans contain
 request-derived policy, not fixed scheduler capacities, decode tiling, or
-backend-selection implementation state. Fixed input invariants such as
+backend-selection implementation state. Runtime implementation selection and
+its stable output projection belong to `g-engine`, not this request plan.
+Fixed input invariants such as
 `(FID, IID)` sample identity do not belong in the plan. Do not add hot-path
 parsing, I/O, or JSON round trips here.
 

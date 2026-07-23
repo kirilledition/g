@@ -19,8 +19,11 @@ newer; unsupported configurations retain the pure-JAX implementation.
 
 CUDA 12.9.86 `ptxas` reports 38 registers, one barrier, 256 bytes of static
 shared memory, no stack frame, and no spills when compiling the artifact for
-`sm_70`. The PTX is loaded once per process-long XLA CUDA context. A partially
-constructed module is unloaded if symbol lookup fails.
+`sm_70`. The PTX is loaded once per process-long XLA CUDA context, only after
+the context's CUDA device is proven equal to the device obtained from the
+JAX-selected local hardware ordinal. A partially constructed module is unloaded
+if symbol lookup fails. Successfully cached driver and module state is retained
+until process exit; it is not destroyed after JAX may have torn down contexts.
 
 The kernel evaluates clipped logistic probability, genotype information,
 score adjustment, score, and penalized deviance with `f64` accumulation. It

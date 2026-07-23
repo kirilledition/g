@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+import os
+import subprocess
+import sys
 import typing
 
 import jax
@@ -35,6 +39,7 @@ MATERIALIZED_BETA_ABSOLUTE_TOLERANCE = 5.0e-7
 MATERIALIZED_STANDARD_ERROR_ABSOLUTE_TOLERANCE = 2.5e-7
 MATERIALIZED_CHI_SQUARED_ABSOLUTE_TOLERANCE = 2.0e-6
 MATERIALIZED_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 5.0e-7
+CPU_DEVICE = jax.local_devices(backend="cpu")[0]
 
 
 class CompressedTestBackend(jax_backend.JaxBackendBase):
@@ -42,6 +47,105 @@ class CompressedTestBackend(jax_backend.JaxBackendBase):
 
     retain_compressed_imputed_dosage_square_sum = True
     collect_compressed_sparse_candidate_mask = True
+
+
+def assert_jax_arrays_use_cpu_device(value: object) -> None:
+    """Assert every JAX array leaf uses the backend's pinned test device."""
+    assert_jax_arrays_use_device(value, CPU_DEVICE)
+
+
+def assert_jax_arrays_use_device(value: object, expected_device: jax.Device) -> None:
+    """Assert every JAX array leaf uses one explicit device."""
+    device_arrays = collect_jax_arrays(value)
+    assert device_arrays
+    assert all(device_array.device == expected_device for device_array in device_arrays)
+
+
+def collect_jax_arrays(value: object) -> list[jax.Array]:
+    """Collect JAX arrays from nested production-state dataclasses."""
+    if isinstance(value, jax.Array):
+        return [value]
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        device_arrays: list[jax.Array] = []
+        for field in dataclasses.fields(value):
+            device_arrays.extend(collect_jax_arrays(getattr(value, field.name)))
+        return device_arrays
+    if isinstance(value, dict):
+        device_arrays = []
+        for nested_value in value.values():
+            device_arrays.extend(collect_jax_arrays(nested_value))
+        return device_arrays
+    if isinstance(value, (list, tuple)):
+        device_arrays = []
+        for nested_value in value:
+            device_arrays.extend(collect_jax_arrays(nested_value))
+        return device_arrays
+    return []
+
+
+def run_nondefault_cpu_device_regression() -> None:
+    """Exercise the production adapter on CPU device one in a fresh process."""
+    cpu_devices = jax.local_devices(backend="cpu")
+    if len(cpu_devices) != 2:
+        raise AssertionError(f"Expected exactly two forced host devices, observed {cpu_devices}.")
+    execution_device = cpu_devices[1]
+    with jax.default_device(cpu_devices[0]):
+        fixture = tests.test_regenie2_linear.build_linear_fixture()
+        genotype_mean = np.asarray(np.mean(fixture.genotype_matrix_by_variant, axis=1), dtype=np.float32)
+        dosage_square_sum = np.asarray(np.sum(fixture.genotype_matrix_by_variant**2, axis=1), dtype=np.float32)
+        backend = jax_backend.LinearJaxBackend(
+            device=execution_device,
+            minimum_variance=1.0e-8,
+            relative_variance_tolerance=1.0e-7,
+        )
+        group_state = backend.prepare_group(
+            phenotype_matrix=np.asarray(fixture.phenotype_matrix, dtype=np.float32),
+            covariate_matrix=np.asarray(fixture.covariate_matrix, dtype=np.float32),
+            source_sample_count=None,
+            selected_sample_count=None,
+            selection_start=None,
+            selected_sample_indices=None,
+        )
+        chromosome_state = backend.prepare_chromosome(
+            group_state=group_state,
+            prediction_matrix=np.asarray(fixture.loco_prediction_matrix, dtype=np.float32),
+        )
+        batch = backend.transfer_batch(
+            genotype_values=np.asarray(fixture.genotype_matrix_by_variant, dtype=np.float32),
+            genotype_mean=genotype_mean,
+            imputed_dosage_square_sum=dosage_square_sum,
+            sparse_candidate_mask=None,
+        )
+        result = backend.compute_batch(chromosome_state=chromosome_state, batch=batch)
+        jax.block_until_ready(result.association.beta)
+
+    for value in (group_state, chromosome_state, batch, result):
+        assert_jax_arrays_use_device(value, execution_device)
+
+
+def test_backend_pins_nondefault_cpu_device_in_fresh_process() -> None:
+    environment = os.environ.copy()
+    environment["JAX_PLATFORMS"] = "cpu"
+    environment["XLA_FLAGS"] = "--xla_force_host_platform_device_count=2"
+    script = (
+        "from tests.test_jax_backend import "
+        "run_nondefault_cpu_device_regression; "
+        "run_nondefault_cpu_device_regression()"
+    )
+    completed_process = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=180,
+    )
+
+    assert completed_process.returncode == 0, (
+        f"Nondefault-device regression subprocess failed.\n"
+        f"stdout:\n{completed_process.stdout}\n"
+        f"stderr:\n{completed_process.stderr}"
+    )
 
 
 def build_device_association(
@@ -243,6 +347,7 @@ def test_prepare_host_transfer_requires_all_compressed_values_absent() -> None:
             selected_sample_count=None,
             selection_start=None,
             selected_sample_indices=None,
+            device=CPU_DEVICE,
         )
         is None
     )
@@ -253,6 +358,7 @@ def test_prepare_host_transfer_requires_all_compressed_values_absent() -> None:
             selected_sample_count=4,
             selection_start=None,
             selected_sample_indices=None,
+            device=CPU_DEVICE,
         )
 
 
@@ -263,6 +369,7 @@ def test_prepare_compressed_transfer_requires_complete_positive_geometry() -> No
             selected_sample_count=None,
             selection_start=0,
             selected_sample_indices=None,
+            device=CPU_DEVICE,
         )
 
     for source_sample_count, selected_sample_count in [(0, 1), (12, 0), (-1, 1), (12, -1)]:
@@ -272,6 +379,7 @@ def test_prepare_compressed_transfer_requires_complete_positive_geometry() -> No
                 selected_sample_count=selected_sample_count,
                 selection_start=0,
                 selected_sample_indices=None,
+                device=CPU_DEVICE,
             )
 
 
@@ -283,6 +391,7 @@ def test_prepare_compressed_transfer_uploads_indexed_selection() -> None:
         selected_sample_count=3,
         selection_start=None,
         selected_sample_indices=selected_sample_indices,
+        device=CPU_DEVICE,
     )
 
     assert observed is not None
@@ -290,12 +399,13 @@ def test_prepare_compressed_transfer_uploads_indexed_selection() -> None:
     assert observed.selected_sample_count == 3
     assert observed.selection_start == -1
     assert observed.selected_sample_indices.dtype == jnp.uint32
+    assert observed.selected_sample_indices.device == CPU_DEVICE
     np.testing.assert_array_equal(np.asarray(observed.selected_sample_indices), selected_sample_indices)
 
 
 @pytest.mark.parametrize("packed8", [False, True])
 def test_transfer_batch_preserves_values_and_optional_operands(*, packed8: bool) -> None:
-    backend = CompressedTestBackend()
+    backend = CompressedTestBackend(device=CPU_DEVICE)
     genotype_values: npt.NDArray[np.float32] | npt.NDArray[np.uint8]
     if packed8:
         genotype_values = np.asarray([[[255, 0], [0, 255]]], dtype=np.uint8)
@@ -313,21 +423,25 @@ def test_transfer_batch_preserves_values_and_optional_operands(*, packed8: bool)
     )
 
     assert observed.packed8 is packed8
+    assert observed.genotype_values.device == CPU_DEVICE
+    assert observed.genotype_mean.device == CPU_DEVICE
     np.testing.assert_array_equal(np.asarray(observed.genotype_values), genotype_values)
     tests.numerical.assert_absolute_difference_less_than(observed.genotype_mean, genotype_mean, 1.0e-7)
     assert observed.imputed_dosage_square_sum is not None
+    assert observed.imputed_dosage_square_sum.device == CPU_DEVICE
     tests.numerical.assert_absolute_difference_less_than(
         observed.imputed_dosage_square_sum,
         imputed_dosage_square_sum,
         1.0e-7,
     )
     assert observed.sparse_candidate_mask is not None
+    assert observed.sparse_candidate_mask.device == CPU_DEVICE
     np.testing.assert_array_equal(np.asarray(observed.sparse_candidate_mask), sparse_candidate_mask)
     assert observed.raw_packed8_statistics is None
 
 
 def test_transfer_batch_preserves_absent_optional_operands() -> None:
-    observed = CompressedTestBackend().transfer_batch(
+    observed = CompressedTestBackend(device=CPU_DEVICE).transfer_batch(
         genotype_values=np.asarray([[0.0, 1.0]], dtype=np.float32),
         genotype_mean=np.asarray([0.5], dtype=np.float32),
         imputed_dosage_square_sum=None,
@@ -345,7 +459,7 @@ def test_transfer_compressed_batch_requires_prepared_selection() -> None:
     )
 
     with pytest.raises(ValueError, match="requires a prepared compressed group selection"):
-        CompressedTestBackend().transfer_compressed_batch(
+        CompressedTestBackend(device=CPU_DEVICE).transfer_compressed_batch(
             group_state=group_state,
             compressed_slab=np.asarray([1], dtype=np.uint8),
             compressed_metadata=np.asarray([[0, 1, 1]], dtype=np.uint32),
@@ -364,6 +478,7 @@ def test_transfer_compressed_batch_maps_indexed_selection(monkeypatch: pytest.Mo
         selected_sample_count=100,
         selection_start=None,
         selected_sample_indices=np.arange(100, dtype=np.uint32),
+        device=CPU_DEVICE,
     )
     assert selection is not None
     group_state = jax_backend.DeviceGroupState(
@@ -372,7 +487,7 @@ def test_transfer_compressed_batch_maps_indexed_selection(monkeypatch: pytest.Mo
     )
 
     with jax.disable_jit():
-        observed = CompressedTestBackend().transfer_compressed_batch(
+        observed = CompressedTestBackend(device=CPU_DEVICE).transfer_compressed_batch(
             group_state=group_state,
             compressed_slab=tests.test_compressed_genotype.build_compressed_slab(),
             compressed_metadata=tests.test_compressed_genotype.build_compressed_metadata(),
@@ -407,6 +522,7 @@ def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest
         selected_sample_count=100,
         selection_start=10,
         selected_sample_indices=None,
+        device=CPU_DEVICE,
     )
     assert selection is not None
     assert selection.selection_start == 10
@@ -417,7 +533,7 @@ def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest
     )
 
     with jax.disable_jit():
-        observed = CompressedTestBackend().transfer_compressed_batch(
+        observed = CompressedTestBackend(device=CPU_DEVICE).transfer_compressed_batch(
             group_state=group_state,
             compressed_slab=tests.test_compressed_genotype.build_compressed_slab(),
             compressed_metadata=tests.test_compressed_genotype.build_compressed_metadata(),
@@ -438,7 +554,7 @@ def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> No
         firth_candidate_capacity=4,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = jax_backend.JaxBackendBase(device=CPU_DEVICE).materialize_batch(
         device_result=device_batch,
         active_trait_indices=np.asarray([2, 0], dtype=np.int32),
         logical_variant_count=3,
@@ -486,7 +602,7 @@ def test_materialize_batch_supports_uncorrected_full_batch() -> None:
         firth_candidate_capacity=None,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = jax_backend.JaxBackendBase(device=CPU_DEVICE).materialize_batch(
         device_result=device_batch,
         active_trait_indices=None,
         logical_variant_count=4,
@@ -557,7 +673,7 @@ def test_materialize_batch_truncates_uncorrected_association_without_raw_statist
         firth_candidate_capacity=None,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = jax_backend.JaxBackendBase(device=CPU_DEVICE).materialize_batch(
         device_result=device_batch,
         active_trait_indices=None,
         logical_variant_count=2,
@@ -592,7 +708,7 @@ def test_materialize_batch_rejects_partial_candidate_capacity_contract(
     )
 
     with pytest.raises(ValueError, match="count and capacity must be materialized together"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        jax_backend.JaxBackendBase(device=CPU_DEVICE).materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=4,
@@ -608,7 +724,7 @@ def test_materialize_batch_rejects_candidate_capacity_overflow() -> None:
     )
 
     with pytest.raises(ValueError, match=r"candidate count 5 exceeded.*capacity of 4"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        jax_backend.JaxBackendBase(device=CPU_DEVICE).materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=4,
@@ -618,6 +734,7 @@ def test_materialize_batch_rejects_candidate_capacity_overflow() -> None:
 def build_linear_backend() -> jax_backend.LinearJaxBackend:
     """Build the adapter with the policy used by the independent linear oracle."""
     return jax_backend.LinearJaxBackend(
+        device=CPU_DEVICE,
         minimum_variance=1.0e-8,
         relative_variance_tolerance=1.0e-7,
     )
@@ -651,8 +768,12 @@ def test_linear_backend_runs_decoded_batch_against_independent_oracle() -> None:
         imputed_dosage_square_sum=dosage_square_sum,
         sparse_candidate_mask=None,
     )
+    assert_jax_arrays_use_cpu_device(group_state)
+    assert_jax_arrays_use_cpu_device(chromosome_state)
+    assert_jax_arrays_use_cpu_device(batch)
 
     observed = backend.compute_batch(chromosome_state=chromosome_state, batch=batch)
+    assert_jax_arrays_use_cpu_device(observed)
 
     tests.numerical.assert_absolute_difference_less_than(
         observed.association.beta,
@@ -764,6 +885,7 @@ def build_binary_score_backend() -> jax_backend.BinaryScoreJaxBackend:
     """Build the adapter with the policy used by the independent score oracle."""
     config = tests.test_regenie2_binary.build_binary_score_config()
     return jax_backend.BinaryScoreJaxBackend(
+        device=CPU_DEVICE,
         minimum_probability=config.numerical.minimum_probability,
         minimum_variance=config.numerical.minimum_variance,
         relative_variance_tolerance=config.numerical.relative_variance_tolerance,
@@ -881,9 +1003,15 @@ def test_binary_score_backend_packed8_route_matches_decoded_route() -> None:
         imputed_dosage_square_sum=None,
         sparse_candidate_mask=None,
     )
+    assert_jax_arrays_use_cpu_device(group_state)
+    assert_jax_arrays_use_cpu_device(chromosome_state)
+    assert_jax_arrays_use_cpu_device(packed_batch)
+    assert_jax_arrays_use_cpu_device(decoded_batch)
 
     packed_result = backend.compute_batch(chromosome_state=chromosome_state, batch=packed_batch)
     decoded_result = backend.compute_batch(chromosome_state=chromosome_state, batch=decoded_batch)
+    assert_jax_arrays_use_cpu_device(packed_result)
+    assert_jax_arrays_use_cpu_device(decoded_result)
 
     tests.numerical.assert_absolute_difference_less_than(
         packed_result.association.beta,
@@ -915,6 +1043,7 @@ def build_firth_backend() -> jax_backend.BinaryFirthJaxBackend:
     """Build a bounded CPU Firth adapter matching the independent oracle policy."""
     config = tests.test_regenie2_binary_pipeline.build_binary_kernel_config(candidate_capacity=2, batch_size=2)
     return jax_backend.BinaryFirthJaxBackend(
+        device=CPU_DEVICE,
         p_threshold=1.0,
         firth_se=False,
         minimum_probability=config.numerical.minimum_probability,

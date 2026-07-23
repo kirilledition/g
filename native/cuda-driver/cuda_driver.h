@@ -157,7 +157,7 @@ class CudaDriverApi {
   [[nodiscard]] std::int32_t driver_version() const noexcept { return driver_version_; }
 
   template <typename Capability>
-  void inspect_device(std::int32_t device_ordinal, Capability& capability) const {
+  [[nodiscard]] CudaDevice inspect_device(std::int32_t device_ordinal, Capability& capability) const {
     capability.device_ordinal = device_ordinal;
     CudaDevice device = 0;
     const CudaResult device_status = device_get_(&device, device_ordinal);
@@ -170,6 +170,7 @@ class CudaDriverApi {
                          "query CUDA compute-capability major version");
     check_initialization(device_get_attribute_(&capability.compute_capability_minor, kComputeCapabilityMinor, device),
                          "query CUDA compute-capability minor version");
+    return device;
   }
 
   [[nodiscard]] CudaContext current_context() const {
@@ -182,10 +183,17 @@ class CudaDriverApi {
     return context;
   }
 
-  void validate_current_context_device(std::int32_t minimum_compute_capability_major,
+  void validate_current_context_device(CudaDevice qualified_device,
+                                       std::int32_t minimum_compute_capability_major,
                                        std::string_view unsupported_device_detail) const {
     CudaDevice device = 0;
     check_runtime(context_get_device_(&device), "query current XLA CUDA context device");
+    if (device != qualified_device) {
+      throw ErrorFactory::runtime_failure(CudaRuntimeFailureKind::kFailedPrecondition,
+                                          "current XLA CUDA context device " + std::to_string(device) +
+                                              " does not match qualified CUDA device " +
+                                              std::to_string(qualified_device));
+    }
     std::int32_t compute_capability_major = 0;
     std::int32_t compute_capability_minor = 0;
     check_runtime(device_get_attribute_(&compute_capability_major, kComputeCapabilityMajor, device),

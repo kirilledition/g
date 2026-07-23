@@ -2,6 +2,7 @@
 compile_error!("g requires a 64-bit target.");
 
 mod api;
+mod association_implementation;
 mod association_scheduler;
 mod backend;
 mod delivery;
