@@ -4,6 +4,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::PlanEnumParseError;
+
 macro_rules! string_enum {
     (
         $name:ident {
@@ -29,12 +31,12 @@ macro_rules! string_enum {
         }
 
         impl FromStr for $name {
-            type Err = String;
+            type Err = PlanEnumParseError;
 
             fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
                 match raw_value {
                     $($value => Ok(Self::$variant),)+
-                    _ => Err(format!("invalid value {raw_value:?}")),
+                    _ => Err(PlanEnumParseError::new(stringify!($name), raw_value)),
                 }
             }
         }

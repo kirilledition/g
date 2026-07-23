@@ -3,14 +3,14 @@ use std::str::FromStr;
 
 use g_plan::{
     AssociationMode, BinaryFallbackMethod, Device, GpuGenotypeFormat, MultiPhenotypeSampleMode,
-    NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode, RegenieTraitType, TelemetryMode,
+    NullLogisticNonconvergencePolicy, PhenotypeComputeGroupMode, PlanEnumParseError, RegenieTraitType, TelemetryMode,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 fn assert_string_enum_variant<EnumType>(variant: EnumType, actual_value: &str, expected_value: &str)
 where
-    EnumType: Copy + Debug + DeserializeOwned + Eq + FromStr<Err = String> + Serialize,
+    EnumType: Copy + Debug + DeserializeOwned + Eq + FromStr<Err = PlanEnumParseError> + Serialize,
 {
     assert_eq!(actual_value, expected_value);
     let serialized_value = serde_json::to_value(variant).expect("enum serialization should succeed");
@@ -26,13 +26,31 @@ where
 
 fn assert_invalid_string_enum_value<EnumType>()
 where
-    EnumType: Debug + DeserializeOwned + FromStr<Err = String>,
+    EnumType: Debug + DeserializeOwned + FromStr<Err = PlanEnumParseError>,
 {
     let parse_error = "__invalid__".parse::<EnumType>().expect_err("unknown enum value should be rejected");
-    assert_eq!(parse_error, "invalid value \"__invalid__\"");
+    assert_eq!(parse_error.to_string(), "invalid value \"__invalid__\"");
+    assert_eq!(parse_error.raw_value(), "__invalid__");
 
     let serialized_value = serde_json::Value::String("__invalid__".to_string());
     assert!(serde_json::from_value::<EnumType>(serialized_value).is_err());
+}
+
+fn assert_error_contract<ErrorType>()
+where
+    ErrorType: std::error::Error + Send + Sync + 'static,
+{
+}
+
+#[test]
+fn enum_parse_errors_are_owned_standard_errors_with_type_context() {
+    assert_error_contract::<PlanEnumParseError>();
+
+    let parse_error = "__invalid__".parse::<Device>().expect_err("unknown device should be rejected");
+    assert_eq!(parse_error.enum_name(), "Device");
+    assert_eq!(parse_error.raw_value(), "__invalid__");
+    assert_eq!(parse_error.to_string(), "invalid value \"__invalid__\"");
+    assert!(std::error::Error::source(&parse_error).is_none());
 }
 
 #[test]

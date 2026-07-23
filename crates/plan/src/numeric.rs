@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
+use crate::error::NumericValueError;
+
 macro_rules! validated_f64 {
     ($name:ident, $expectation:literal, $predicate:expr) => {
         #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -18,24 +20,26 @@ macro_rules! validated_f64 {
         }
 
         impl TryFrom<f64> for $name {
-            type Error = String;
+            type Error = NumericValueError;
 
             fn try_from(value: f64) -> Result<Self, Self::Error> {
                 if !value.is_finite() {
-                    return Err("must be finite".to_string());
+                    return Err(NumericValueError::validation(stringify!($name), "must be finite"));
                 }
                 if !($predicate)(value) {
-                    return Err($expectation.to_string());
+                    return Err(NumericValueError::validation(stringify!($name), $expectation));
                 }
                 Ok(Self(value))
             }
         }
 
         impl FromStr for $name {
-            type Err = String;
+            type Err = NumericValueError;
 
             fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
-                let value = raw_value.parse::<f64>().map_err(|_| "must be a number".to_string())?;
+                let value = raw_value
+                    .parse::<f64>()
+                    .map_err(|source| NumericValueError::invalid_number(stringify!($name), source))?;
                 Self::try_from(value)
             }
         }
@@ -83,24 +87,26 @@ macro_rules! validated_f32 {
         }
 
         impl TryFrom<f32> for $name {
-            type Error = String;
+            type Error = NumericValueError;
 
             fn try_from(value: f32) -> Result<Self, Self::Error> {
                 if !value.is_finite() {
-                    return Err("must be finite".to_string());
+                    return Err(NumericValueError::validation(stringify!($name), "must be finite"));
                 }
                 if !($predicate)(value) {
-                    return Err($expectation.to_string());
+                    return Err(NumericValueError::validation(stringify!($name), $expectation));
                 }
                 Ok(Self(value))
             }
         }
 
         impl FromStr for $name {
-            type Err = String;
+            type Err = NumericValueError;
 
             fn from_str(raw_value: &str) -> Result<Self, Self::Err> {
-                let value = raw_value.parse::<f32>().map_err(|_| "must be a number".to_string())?;
+                let value = raw_value
+                    .parse::<f32>()
+                    .map_err(|source| NumericValueError::invalid_number(stringify!($name), source))?;
                 Self::try_from(value)
             }
         }

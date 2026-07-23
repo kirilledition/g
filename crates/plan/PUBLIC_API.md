@@ -8,8 +8,11 @@ by Rust domain crates.
 ## Public types
 
 `RunPlan` and its input, compute, correction, output, phenotype-group, enum,
-and validated finite numeric components. Association mode and chunk size live
-directly on `RunPlan`; they are not wrapped in a one-use analysis DTO.
+and validated finite numeric components. String-enum parsing and numeric
+validation expose crate-owned standard error types with rejected-type context;
+numeric text parsing retains the underlying parse error as its source.
+Association mode and chunk size live directly on `RunPlan`; they are not
+wrapped in a one-use analysis DTO.
 
 ## Public functions
 

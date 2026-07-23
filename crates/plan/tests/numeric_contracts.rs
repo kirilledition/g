@@ -1,4 +1,4 @@
-use g_plan::{DosageThreshold, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
+use g_plan::{DosageThreshold, NumericValueError, PositiveF32, PositiveF64, Probability, ProbabilityFloor, StepScale};
 
 const F32_TOLERANCE: f32 = 1.0e-6;
 const F64_TOLERANCE: f64 = 1.0e-12;
@@ -127,13 +127,25 @@ where
 
 #[test]
 fn numeric_wrappers_report_parse_and_range_failures() {
-    assert_eq!("not-a-number".parse::<PositiveF32>().expect_err("text should be rejected"), "must be a number");
-    assert_eq!(PositiveF32::try_from(0.0).expect_err("zero should be rejected"), "must be positive");
-    assert_eq!(PositiveF64::try_from(f64::NAN).expect_err("NaN should be rejected"), "must be finite");
-    assert_eq!(StepScale::try_from(1.0).expect_err("upper bound should be rejected"), "must be in (0, 1)");
-    assert_eq!(DosageThreshold::try_from(2.1).expect_err("upper excess should be rejected"), "must be in (0, 2]");
-    assert_eq!(Probability::try_from(1.0).expect_err("upper bound should be rejected"), "must be in (0, 1)");
-    assert_eq!(ProbabilityFloor::try_from(0.5).expect_err("upper bound should be rejected"), "must be in (0, 0.5)",);
+    assert_eq!(
+        "not-a-number".parse::<PositiveF32>().expect_err("text should be rejected").to_string(),
+        "must be a number"
+    );
+    assert_eq!(PositiveF32::try_from(0.0).expect_err("zero should be rejected").to_string(), "must be positive");
+    assert_eq!(PositiveF64::try_from(f64::NAN).expect_err("NaN should be rejected").to_string(), "must be finite");
+    assert_eq!(StepScale::try_from(1.0).expect_err("upper bound should be rejected").to_string(), "must be in (0, 1)");
+    assert_eq!(
+        DosageThreshold::try_from(2.1).expect_err("upper excess should be rejected").to_string(),
+        "must be in (0, 2]"
+    );
+    assert_eq!(
+        Probability::try_from(1.0).expect_err("upper bound should be rejected").to_string(),
+        "must be in (0, 1)"
+    );
+    assert_eq!(
+        ProbabilityFloor::try_from(0.5).expect_err("upper bound should be rejected").to_string(),
+        "must be in (0, 0.5)",
+    );
 }
 
 #[test]
@@ -144,4 +156,30 @@ fn deserialization_revalidates_numeric_values() {
     assert!(serde_json::from_str::<DosageThreshold>("2.1").is_err());
     assert!(serde_json::from_str::<Probability>("1.0").is_err());
     assert!(serde_json::from_str::<ProbabilityFloor>("0.5").is_err());
+}
+
+fn assert_error_contract<ErrorType>()
+where
+    ErrorType: std::error::Error + Send + Sync + 'static,
+{
+}
+
+#[test]
+fn numeric_errors_are_standard_errors_with_type_and_source_context() {
+    assert_error_contract::<NumericValueError>();
+
+    let parse_error = "not-a-number".parse::<PositiveF32>().expect_err("text should be rejected");
+    assert_eq!(parse_error.numeric_type_name(), "PositiveF32");
+    assert_eq!(parse_error.to_string(), "must be a number");
+    assert!(std::error::Error::source(&parse_error).is_some());
+
+    let validation_error = Probability::try_from(1.0).expect_err("upper bound should be rejected");
+    assert_eq!(validation_error.numeric_type_name(), "Probability");
+    assert_eq!(validation_error.expectation(), Some("must be in (0, 1)"));
+    assert!(std::error::Error::source(&validation_error).is_none());
+
+    let parsed_validation_error = "1.0".parse::<Probability>().expect_err("upper bound should be rejected");
+    assert_eq!(parsed_validation_error.numeric_type_name(), "Probability");
+    assert_eq!(parsed_validation_error.to_string(), "must be in (0, 1)");
+    assert!(std::error::Error::source(&parsed_validation_error).is_none());
 }
