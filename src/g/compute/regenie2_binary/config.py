@@ -80,7 +80,8 @@ class ApproximateFirthConfig:
         maximum_iterations: Maximum Firth solver iterations.
         gradient_tolerance: Firth adjusted-score convergence tolerance.
         maximum_step_size: Maximum absolute Firth coefficient update before step scaling.
-        pseudo_maximum_iterations: Maximum approximate pseudo-Firth outer iterations.
+        pseudo_maximum_iterations: Maximum approximate pseudo-Firth outer iterations
+            for dense lanes. Sparse carrier lanes use half of ``maximum_iterations``.
         pseudo_inner_maximum_iterations: Maximum pseudo-response logistic inner iterations.
         line_search_maximum_attempts: Maximum scalar Firth line-search attempts.
         sparse_carrier_dosage_threshold: Raw dosage threshold for sparse carrier-only Firth samples.

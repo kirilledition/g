@@ -10,6 +10,9 @@ use super::{
     build_manifest_value_sha256, manifest_file_fingerprint_to_value,
 };
 
+const APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD: &str = "approximate_firth_sparse_pseudo_budget_policy";
+const APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY: &str = "half_total_uncapped_by_dense_cap";
+
 pub struct CurrentRunManifestHeaderInput {
     pub phenotype_name: String,
     pub bgen_source_identity: Arc<g_genotype_contracts::BgenSourceIdentity>,
@@ -68,11 +71,16 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "prediction_list": prediction_list_fingerprint,
         "loco_files": prediction_loco_files,
     });
-    let binary_correction_plan = json!({
+    let mut binary_correction_plan = json!({
         "method": run_plan.correction.method.as_str(),
         "p_threshold": run_plan.correction.p_threshold.get(),
         "firth_se": run_plan.correction.firth_se,
     });
+    if run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate
+    {
+        add_current_approximate_firth_sparse_pseudo_budget_policy(&mut binary_correction_plan);
+    }
     let binary_kernel_config = match run_plan.association_mode {
         g_plan::AssociationMode::Regenie2Binary => {
             serde_json::to_value(&run_plan.compute.kernels).map_err(OutputError::runtime)?
@@ -147,6 +155,11 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     Ok(current_header)
 }
 
+fn add_current_approximate_firth_sparse_pseudo_budget_policy(binary_correction_plan: &mut Value) {
+    binary_correction_plan[APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD] =
+        Value::String(APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY.to_string());
+}
+
 fn bgen_source_identity_to_value(identity: &g_genotype_contracts::BgenSourceIdentity) -> Value {
     let resolved_path = identity.canonical_path.as_ref().unwrap_or(&identity.configured_path);
     json!({
@@ -205,4 +218,67 @@ fn build_optional_file_fingerprint_with_cache(
     fingerprint_cache
         .build_file_fingerprint(file_path, include_content_hash)
         .map(|fingerprint| Some(manifest_file_fingerprint_to_value(fingerprint.as_ref())))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD, add_current_approximate_firth_sparse_pseudo_budget_policy,
+    };
+    use crate::manifest::{build_manifest_value_sha256, validation};
+
+    #[test]
+    fn sparse_pseudo_budget_policy_changes_hash_and_rejects_legacy_resume() {
+        let base_execution_plan = json!({
+            "binary_correction_plan": {
+                "method": "firth_approximate",
+                "p_threshold": 0.05,
+                "firth_se": false,
+            },
+            "binary_kernel_config": {
+                "firth": {
+                    "maximum_iterations": 250,
+                    "pseudo_maximum_iterations": 50,
+                },
+            },
+        });
+        let unversioned_dense_capped_execution_plan = base_execution_plan.clone();
+        let mut dense_capped_execution_plan = base_execution_plan.clone();
+        dense_capped_execution_plan["binary_correction_plan"][APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD] =
+            json!("dense_cap_applies_to_all_lanes");
+        let mut sparse_half_execution_plan = base_execution_plan;
+        add_current_approximate_firth_sparse_pseudo_budget_policy(
+            &mut sparse_half_execution_plan["binary_correction_plan"],
+        );
+        let sparse_half_hash =
+            build_manifest_value_sha256(&sparse_half_execution_plan).expect("current execution plan hashes");
+
+        for legacy_execution_plan in [unversioned_dense_capped_execution_plan, dense_capped_execution_plan] {
+            let legacy_hash =
+                build_manifest_value_sha256(&legacy_execution_plan).expect("legacy execution plan hashes");
+            assert_ne!(legacy_hash, sparse_half_hash);
+
+            let legacy_manifest = json!({
+                "schema_version": 0,
+                "output_schema_version": 0,
+                "execution_plan": legacy_execution_plan,
+                "execution_plan_hash": legacy_hash,
+            });
+            let sparse_half_header = json!({
+                "schema_version": 0,
+                "output_schema_version": 0,
+                "execution_plan": sparse_half_execution_plan,
+                "execution_plan_hash": sparse_half_hash,
+            });
+            let error = validation::validate_manifest_compatibility_values(&legacy_manifest, &sparse_half_header)
+                .expect_err("different sparse pseudo-budget semantics cannot resume together");
+            assert!(
+                error
+                    .to_string()
+                    .contains("execution_plan.binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy")
+            );
+        }
+    }
 }

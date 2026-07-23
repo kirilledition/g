@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
 
@@ -19,11 +21,11 @@ def build_scalar_approximate_firth_solver_parameters(
     regenie2_binary_config.validate_approximate_firth_iteration_budget(
         kernel_config.approximate_firth.maximum_iterations
     )
+    phase_maximum_iterations = kernel_config.approximate_firth.maximum_iterations // 2
     pseudo_maximum_iterations = min(
-        kernel_config.approximate_firth.maximum_iterations // 2,
+        phase_maximum_iterations,
         kernel_config.approximate_firth.pseudo_maximum_iterations,
     )
-    newton_raphson_maximum_iterations = kernel_config.approximate_firth.maximum_iterations // 2
     return regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters(
         minimum_variance=jnp.asarray(kernel_config.numerical.minimum_variance, dtype=jnp.float64),
         tolerance=jnp.asarray(kernel_config.approximate_firth.gradient_tolerance, dtype=jnp.float64),
@@ -33,12 +35,28 @@ def build_scalar_approximate_firth_solver_parameters(
             kernel_config.approximate_firth.pseudo_inner_maximum_iterations,
             dtype=jnp.int32,
         ),
-        newton_raphson_maximum_iterations=jnp.asarray(newton_raphson_maximum_iterations, dtype=jnp.int32),
+        newton_raphson_maximum_iterations=jnp.asarray(phase_maximum_iterations, dtype=jnp.int32),
         line_search_maximum_attempts=jnp.asarray(
             kernel_config.approximate_firth.line_search_maximum_attempts,
             dtype=jnp.int32,
         ),
         use_cuda_components=kernel_config.approximate_firth.use_cuda_components,
+    )
+
+
+def select_scalar_approximate_firth_pseudo_budget(
+    *,
+    solver_parameters: regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters,
+    sparse_correction: jax.Array,
+) -> regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters:
+    """Select the upstream dense or sparse pseudo-Firth iteration budget."""
+    return dataclasses.replace(
+        solver_parameters,
+        pseudo_maximum_iterations=jnp.where(
+            sparse_correction,
+            solver_parameters.sparse_pseudo_maximum_iterations,
+            solver_parameters.pseudo_maximum_iterations,
+        ),
     )
 
 
@@ -559,6 +577,10 @@ def initialize_single_variant_regenie_approximate_firth(
         phenotype_vector, null_probability_vector, active_sample_mask
     )
     non_active_deviance = jnp.where(sparse_correction, full_null_deviance - active_null_deviance, 0.0)
+    selected_solver_parameters = select_scalar_approximate_firth_pseudo_budget(
+        solver_parameters=solver_parameters,
+        sparse_correction=sparse_correction,
+    )
     return initialize_scalar_approximate_firth_with_active_samples(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
@@ -566,7 +588,7 @@ def initialize_single_variant_regenie_approximate_firth(
         active_sample_mask=active_sample_mask,
         full_null_deviance=full_null_deviance,
         non_active_deviance=non_active_deviance,
-        solver_parameters=solver_parameters,
+        solver_parameters=selected_solver_parameters,
     )
 
 
@@ -589,6 +611,10 @@ def initialize_compact_carrier_regenie_approximate_firth(
         null_probability_vector,
         active_carrier_slot_mask,
     )
+    selected_solver_parameters = dataclasses.replace(
+        solver_parameters,
+        pseudo_maximum_iterations=solver_parameters.sparse_pseudo_maximum_iterations,
+    )
     return initialize_scalar_approximate_firth_with_active_samples(
         phenotype_vector=phenotype_vector,
         genotype_vector=genotype_vector,
@@ -596,7 +622,7 @@ def initialize_compact_carrier_regenie_approximate_firth(
         active_sample_mask=active_carrier_slot_mask,
         full_null_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64),
         non_active_deviance=jnp.asarray(full_null_deviance, dtype=jnp.float64) - active_null_deviance,
-        solver_parameters=solver_parameters,
+        solver_parameters=selected_solver_parameters,
     )
 
 

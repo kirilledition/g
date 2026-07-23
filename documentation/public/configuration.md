@@ -232,9 +232,9 @@ When `[binary] fallback_method = "firth_approximate"` is active,
 `[compute] firth_maximum_iterations` must be at least `4`, ensuring its
 floor-divided half-budget has at least two iterations before any per-phase cap.
 The solver assigns `floor(firth_maximum_iterations / 2)` iterations to
-Newton-Raphson and at most that many to pseudo-Firth, subject to
-`[compute] firth_pseudo_maximum_iterations`. The pseudo-Firth cap may
-intentionally be `1` to move quickly to Newton-Raphson fallback, and an odd
+Newton-Raphson and sparse carrier-only pseudo-Firth. Dense pseudo-Firth is
+additionally capped by `[compute] firth_pseudo_maximum_iterations`, which may
+intentionally be `1` to move quickly to Newton-Raphson fallback. An odd
 remainder is not redistributed. The minimum is conditional on active
 approximate Firth, so a score-only binary run may retain a lower positive value
 without constructing the Firth solver.

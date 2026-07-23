@@ -229,7 +229,8 @@ leave at least two iterations for each phase, so active approximate Firth
 requires a total budget of at least `4`; an odd remainder is not redistributed.
 The pseudo-Firth half is then capped by
 `[compute].firth_pseudo_maximum_iterations`, which may intentionally be `1` to
-move quickly to Newton-Raphson fallback.
+move quickly to Newton-Raphson fallback. Sparse carrier-only pseudo-Firth
+retains the full floor-divided half-budget, matching REGENIE's sparse path.
 
 Newton line search accepts only a numerically valid proposal that lowers the
 penalized deviance. An invalid or non-improving proposal leaves the last trusted
