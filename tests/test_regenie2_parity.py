@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import importlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 import socket
@@ -30,8 +31,30 @@ REPORT_DIRECTORY_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_REPORT_DIRECTORY"
 JAX_CACHE_DIRECTORY_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_JAX_CACHE_DIRECTORY"
 EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"
 EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256"
+EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_PATH"
+EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_SHA256"
+EXPECTED_BUNDLE_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_BUNDLE_PATH"
+RUN_NONCE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_RUN_NONCE"
+RUN_STARTED_AT_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_RUN_STARTED_AT_UTC"
+SLURM_JOB_ID_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_JOB_ID"
+SLURM_STEP_ID_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_STEP_ID"
+BOOTSTRAP_RELATIVE_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_BOOTSTRAP_RELATIVE_PATH"
+BOOTSTRAP_SHA256_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_BOOTSTRAP_SHA256"
+QUALIFICATION_TOOL_ENVIRONMENT_PREFIX = "G_REGENIE_PARITY_TOOL"
+TRUSTED_SYSTEM_TOOL_PATHS = {
+    "bash": "/usr/bin/bash",
+    "ar": "/usr/bin/ar",
+    "as": "/usr/bin/as",
+    "cc": "/usr/bin/cc",
+    "cxx": "/usr/bin/c++",
+    "env": "/usr/bin/env",
+    "git": "/usr/bin/git",
+    "ranlib": "/usr/bin/ranlib",
+    "scontrol": "/usr/bin/scontrol",
+}
 DEFAULT_REPORT_DIRECTORY = REPOSITORY_ROOT / "results" / "parity" / "qualification"
 PARITY_METADATA = tests.parity.harness.load_golden_metadata()
+tests.parity.harness.assert_metadata_covers_required_workflows(PARITY_METADATA)
 QUANTITATIVE_WORKFLOW = PARITY_METADATA.workflow_by_identifier("quantitative_single_bgen_loco")
 BINARY_SCORE_ONLY_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_score_only")
 BINARY_APPROXIMATE_FIRTH_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_approximate_firth")
@@ -63,6 +86,7 @@ class NativeCoreProtocol(typing.Protocol):
     __build_science_source_sha256__: str
     __build_source_clean__: bool
     __build_profile__: str
+    __build_run_nonce__: str
     cli: NativeCliProtocol
 
 
@@ -99,11 +123,82 @@ class ExactQualificationSource:
 
 
 @dataclass(frozen=True)
+class ExpectedNativeArtifact:
+    """Trusted path and digest of the extension built for this run."""
+
+    library_path: Path
+    library_sha256: str
+
+
+@dataclass(frozen=True)
+class QualificationBootstrapIdentity:
+    """Committed entrypoint selected by the trusted scheduler launcher."""
+
+    relative_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class WorkflowQualificationReport:
     """One completed workflow report selected for the sanitized bundle."""
 
     workflow_identifier: str
     report_path: Path
+
+
+@dataclass(frozen=True)
+class WorkflowArtifactSnapshot:
+    """Hashes of every external artifact used by one workflow."""
+
+    input_sha256: dict[str, str]
+    prediction_file_sha256: dict[str, str]
+    reference_output_sha256: str
+    reference_log_sha256: str
+
+
+@dataclass(frozen=True)
+class OutputArtifactSnapshot:
+    """Hashes of the exact production bytes parsed for comparison."""
+
+    parquet_file_sha256: dict[str, str]
+    parquet_dataset_sha256: str
+
+
+@dataclass(frozen=True)
+class LoadedQualificationReport:
+    """Validated promotable report plus its publication digests."""
+
+    evidence: tests.parity.harness.QualificationEvidence
+    report_relative_path: Path
+    report_sha256: str
+    observed_output_sha256: str
+
+
+@dataclass(frozen=True)
+class QualificationRunIdentity:
+    """Fields that bind reports to one scheduler execution and native build."""
+
+    qualification_node: str
+    slurm_job_id: str
+    slurm_step_id: str
+    run_nonce: str
+    run_started_at_utc: str
+    bootstrap_relative_path: str
+    bootstrap_sha256: str
+    toolchain: tests.parity.harness.QualificationToolchainEvidence
+    cargo_lock_sha256: str
+    cargo_configuration_sha256: str
+    rust_toolchain_sha256: str
+    rustflags_environment: str
+    cargo_encoded_rustflags_environment: str
+    rustc_wrapper_environment: str
+    cargo_build_rustc_wrapper_environment: str
+    uv_lock_sha256: str
+    jax_version: str
+    jaxlib_version: str
+    configured_device: str
+    actual_device: tests.parity.harness.QualificationDeviceEvidence
+    native_build: tests.parity.harness.QualificationNativeBuild
 
 
 @dataclass(frozen=True)
@@ -113,9 +208,10 @@ class RegenieParityResults:
     observed_results: pl.DataFrame
     baseline_results: pl.DataFrame
     output_root: Path
+    output_dataset: tests.parity.harness.CompletedParquetDataset
     config_path: Path
-    observed_input_sha256: dict[str, str]
-    observed_prediction_file_sha256: dict[str, str]
+    artifact_snapshot: WorkflowArtifactSnapshot
+    output_artifact_snapshot: OutputArtifactSnapshot
     reference_correction_summary: tests.parity.harness.RegenieCorrectionSummary | None
     exact_qualification_source: ExactQualificationSource | None
 
@@ -145,24 +241,73 @@ def parity_data_is_required() -> bool:
     return os.environ.get(REQUIRE_DATA_ENVIRONMENT_VARIABLE, "").lower() in {"1", "true", "yes"}
 
 
+def require_exact_bundle_mode() -> None:
+    """Skip bundle publication during optional local diagnostic parity."""
+    if not parity_data_is_required():
+        pytest.skip("Exact-source bundle publication applies only to the required parity recipe.")
+
+
 def load_native_core() -> NativeCoreProtocol:
     """Load the extension only at the native execution boundary."""
+    if parity_data_is_required():
+        expected_artifact = expected_native_artifact()
+        native_specification = importlib.util.find_spec("g._core")
+        if native_specification is None or native_specification.origin is None:
+            raise AssertionError("Required parity could not locate the native extension")
+        discovered_library_path = Path(native_specification.origin).resolve(strict=True)
+        if discovered_library_path != expected_artifact.library_path:
+            raise AssertionError(
+                f"Native extension import path differs from the just-built artifact: "
+                f"expected {expected_artifact.library_path}, observed {discovered_library_path}"
+            )
+        discovered_library_sha256 = tests.parity.harness.sha256_file(discovered_library_path)
+        if discovered_library_sha256 != expected_artifact.library_sha256:
+            raise AssertionError(
+                f"Native extension import bytes differ from the just-built artifact: "
+                f"expected {expected_artifact.library_sha256}, observed {discovered_library_sha256}"
+            )
     native_module = importlib.import_module("g._core")
     return typing.cast("NativeCoreProtocol", native_module)
 
 
+def required_environment_value(variable_name: str) -> str:
+    """Return one nonempty qualification environment value."""
+    value = os.environ.get(variable_name)
+    if not value:
+        raise AssertionError(f"Required parity must set {variable_name}")
+    return value
+
+
+def expected_native_artifact() -> ExpectedNativeArtifact:
+    """Validate the trusted path and digest before importing native code."""
+    library_path_value = required_environment_value(EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE)
+    library_sha256 = required_environment_value(EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.SHA256_PATTERN.fullmatch(library_sha256) is None:
+        raise AssertionError("Required parity expected native library SHA-256 is malformed")
+    library_path = Path(library_path_value)
+    if not library_path.is_absolute():
+        raise AssertionError("Required parity expected native library path must be absolute")
+    library_path = library_path.resolve(strict=True)
+    observed_library_sha256 = tests.parity.harness.sha256_file(library_path)
+    if observed_library_sha256 != library_sha256:
+        raise AssertionError(
+            f"Just-built native extension bytes changed before import: "
+            f"expected {library_sha256}, observed {observed_library_sha256}"
+        )
+    return ExpectedNativeArtifact(
+        library_path=library_path,
+        library_sha256=library_sha256,
+    )
+
+
 def assert_exact_qualification_source(native_core: NativeCoreProtocol) -> ExactQualificationSource:
     """Reject dirty, wrong-commit, or stale-extension qualification runs."""
-    expected_git_commit = os.environ.get(EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE)
-    if expected_git_commit is None:
-        raise AssertionError(
-            f"Required parity must set {EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE} to the scheduler-selected commit"
-        )
-    expected_science_source_sha256 = os.environ.get(EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE)
-    if expected_science_source_sha256 is None:
-        raise AssertionError(
-            f"Required parity must set {EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE} before building the extension"
-        )
+    expected_git_commit = required_environment_value(EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE)
+    expected_science_source_sha256 = required_environment_value(EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE)
+    expected_artifact = expected_native_artifact()
+    run_nonce = required_environment_value(RUN_NONCE_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.RUN_NONCE_PATTERN.fullmatch(run_nonce) is None:
+        raise AssertionError("Required parity run nonce is malformed")
     source_state = tooling.science_gate.assert_clean_exact_source(REPOSITORY_ROOT, expected_git_commit)
     if source_state.science_source_sha256 != expected_science_source_sha256:
         raise AssertionError(
@@ -182,6 +327,11 @@ def assert_exact_qualification_source(native_core: NativeCoreProtocol) -> ExactQ
         )
     if not native_core.__build_source_clean__:
         raise AssertionError("Loaded native extension was not built from a clean qualification checkout")
+    if native_core.__build_run_nonce__ != run_nonce:
+        raise AssertionError(
+            f"Loaded native extension has the wrong qualification nonce: "
+            f"expected {run_nonce}, observed {native_core.__build_run_nonce__}"
+        )
     try:
         native_build_profile = tests.parity.harness.NativeBuildProfile(native_core.__build_profile__)
     except ValueError as error:
@@ -194,6 +344,17 @@ def assert_exact_qualification_source(native_core: NativeCoreProtocol) -> ExactQ
     if native_library_value is None:
         raise AssertionError("The loaded native extension has no filesystem path")
     native_library_path = Path(native_library_value).resolve(strict=True)
+    if native_library_path != expected_artifact.library_path:
+        raise AssertionError(
+            f"Loaded native extension path differs from the just-built artifact: "
+            f"expected {expected_artifact.library_path}, observed {native_library_path}"
+        )
+    observed_native_library_sha256 = tests.parity.harness.sha256_file(native_library_path)
+    if observed_native_library_sha256 != expected_artifact.library_sha256:
+        raise AssertionError(
+            f"Loaded native extension bytes differ from the just-built artifact: "
+            f"expected {expected_artifact.library_sha256}, observed {observed_native_library_sha256}"
+        )
     return ExactQualificationSource(
         git_commit=source_state.git_commit,
         science_source_sha256=source_state.science_source_sha256,
@@ -203,7 +364,8 @@ def assert_exact_qualification_source(native_core: NativeCoreProtocol) -> ExactQ
             science_source_sha256=native_core.__build_science_source_sha256__,
             source_clean=native_core.__build_source_clean__,
             profile=native_build_profile,
-            library_sha256=tests.parity.harness.sha256_file(native_library_path),
+            run_nonce=native_core.__build_run_nonce__,
+            library_sha256=observed_native_library_sha256,
             library_size_bytes=native_library_path.stat().st_size,
         ),
     )
@@ -293,6 +455,76 @@ def assert_workflow_prediction_file_hashes(workflow: tests.parity.harness.Golden
             )
         observed_hashes[relative_path] = observed_sha256
     return observed_hashes
+
+
+def snapshot_workflow_artifacts(
+    workflow: tests.parity.harness.GoldenWorkflow,
+) -> WorkflowArtifactSnapshot:
+    """Hash and validate every input, prediction, and upstream oracle."""
+    reference_output_path = DATA_DIRECTORY / workflow.expected_output_relative_path
+    reference_log_path = DATA_DIRECTORY / workflow.expected_log_relative_path
+    reference_output_sha256 = tests.parity.harness.sha256_file(reference_output_path)
+    reference_log_sha256 = tests.parity.harness.sha256_file(reference_log_path)
+    if reference_output_sha256 != workflow.expected_output_sha256:
+        raise AssertionError(
+            f"SHA-256 mismatch for upstream output {reference_output_path}: "
+            f"expected {workflow.expected_output_sha256}, observed {reference_output_sha256}"
+        )
+    if reference_log_sha256 != workflow.expected_log_sha256:
+        raise AssertionError(
+            f"SHA-256 mismatch for upstream log {reference_log_path}: "
+            f"expected {workflow.expected_log_sha256}, observed {reference_log_sha256}"
+        )
+    return WorkflowArtifactSnapshot(
+        input_sha256=assert_workflow_input_hashes(workflow),
+        prediction_file_sha256=assert_workflow_prediction_file_hashes(workflow),
+        reference_output_sha256=reference_output_sha256,
+        reference_log_sha256=reference_log_sha256,
+    )
+
+
+def assert_workflow_artifact_snapshot_unchanged(
+    workflow: tests.parity.harness.GoldenWorkflow,
+    expected_snapshot: WorkflowArtifactSnapshot,
+) -> None:
+    """Reject external artifacts changed while a long qualification was running."""
+    try:
+        observed_snapshot = snapshot_workflow_artifacts(workflow)
+    except AssertionError as error:
+        raise AssertionError(f"External artifacts changed during qualification for {workflow.identifier}") from error
+    if observed_snapshot != expected_snapshot:
+        raise AssertionError(f"External artifacts changed during qualification for {workflow.identifier}")
+
+
+def snapshot_output_artifacts(
+    output_dataset: tests.parity.harness.CompletedParquetDataset,
+) -> OutputArtifactSnapshot:
+    """Hash the complete direct Parquet file set selected for comparison."""
+    parquet_paths = tests.parity.harness.direct_parquet_paths(output_dataset.directory)
+    parquet_file_sha256 = {
+        parquet_path.relative_to(output_dataset.output_root).as_posix(): tests.parity.harness.sha256_file(parquet_path)
+        for parquet_path in parquet_paths
+    }
+    return OutputArtifactSnapshot(
+        parquet_file_sha256=parquet_file_sha256,
+        parquet_dataset_sha256=tests.parity.harness.sha256_file_set(
+            parquet_paths,
+            root=output_dataset.output_root,
+        ),
+    )
+
+
+def assert_output_artifact_snapshot_unchanged(
+    output_dataset: tests.parity.harness.CompletedParquetDataset,
+    expected_snapshot: OutputArtifactSnapshot,
+) -> None:
+    """Reject output file-set or byte changes after the pre-read snapshot."""
+    try:
+        observed_snapshot = snapshot_output_artifacts(output_dataset)
+    except (AssertionError, OSError) as error:
+        raise AssertionError("Production output changed during qualification") from error
+    if observed_snapshot != expected_snapshot:
+        raise AssertionError("Production output changed during qualification")
 
 
 def parse_and_validate_reference_corrections(
@@ -395,13 +627,9 @@ def run_workflow(
     require_or_skip_workflow_data(workflow)
     native_core = load_native_core()
     exact_qualification_source = assert_exact_qualification_source(native_core) if parity_data_is_required() else None
-    observed_input_sha256 = assert_workflow_input_hashes(workflow)
-    observed_prediction_file_sha256 = assert_workflow_prediction_file_hashes(workflow)
+    artifact_snapshot = snapshot_workflow_artifacts(workflow)
     baseline_path = DATA_DIRECTORY / workflow.expected_output_relative_path
     baseline_log_path = DATA_DIRECTORY / workflow.expected_log_relative_path
-    tests.parity.harness.assert_file_sha256(baseline_path, workflow.expected_output_sha256)
-    tests.parity.harness.assert_file_sha256(baseline_log_path, workflow.expected_log_sha256)
-    reference_correction_summary = parse_and_validate_reference_corrections(workflow, baseline_log_path)
 
     temporary_directory = tmp_path_factory.mktemp(workflow.identifier)
     output_root = temporary_directory / "output"
@@ -415,13 +643,25 @@ def run_workflow(
         native_output = "".join((*native_result.stderr_chunks, *native_result.stdout_chunks))
         raise AssertionError(f"Native CLI parity run failed for {workflow.identifier}:\n{native_output}")
 
+    output_dataset = tests.parity.harness.completed_parquet_dataset(
+        output_root,
+        native_result.stdout_chunks,
+    )
+    output_artifact_snapshot = snapshot_output_artifacts(output_dataset)
+    observed_results = tests.parity.harness.read_direct_parquet_dataset(output_dataset)
+    assert_output_artifact_snapshot_unchanged(output_dataset, output_artifact_snapshot)
+    baseline_results = tests.parity.harness.read_regenie_table(baseline_path)
+    reference_correction_summary = parse_and_validate_reference_corrections(workflow, baseline_log_path)
+    assert_workflow_artifact_snapshot_unchanged(workflow, artifact_snapshot)
+    assert_output_artifact_snapshot_unchanged(output_dataset, output_artifact_snapshot)
     return RegenieParityResults(
-        observed_results=tests.parity.harness.read_direct_parquet_dataset(output_root),
-        baseline_results=tests.parity.harness.read_regenie_table(baseline_path),
+        observed_results=observed_results,
+        baseline_results=baseline_results,
         output_root=output_root,
+        output_dataset=output_dataset,
         config_path=config_path,
-        observed_input_sha256=observed_input_sha256,
-        observed_prediction_file_sha256=observed_prediction_file_sha256,
+        artifact_snapshot=artifact_snapshot,
+        output_artifact_snapshot=output_artifact_snapshot,
         reference_correction_summary=reference_correction_summary,
         exact_qualification_source=exact_qualification_source,
     )
@@ -515,10 +755,19 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def fsync_directory(directory_path: Path) -> None:
+    """Persist directory-entry changes below one existing directory."""
+    directory_descriptor = os.open(directory_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 def git_output(*arguments: str) -> bytes:
     """Return bytes emitted by one read-only repository query."""
     completed_process = subprocess.run(
-        ["git", *arguments],
+        ["git", "--no-replace-objects", *arguments],
         cwd=REPOSITORY_ROOT,
         check=True,
         capture_output=True,
@@ -555,12 +804,118 @@ def qualification_node_name() -> str:
     return os.environ.get("SLURMD_NODENAME") or socket.gethostname()
 
 
+def validated_slurm_job_id() -> str:
+    """Return the numeric Slurm job identity supplied by the trusted recipe."""
+    slurm_job_id = required_environment_value(SLURM_JOB_ID_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.SLURM_JOB_ID_PATTERN.fullmatch(slurm_job_id) is None:
+        raise AssertionError("Required parity Slurm job ID is malformed")
+    return slurm_job_id
+
+
+def validated_slurm_step_id() -> str:
+    """Return the numeric Slurm step identity supplied by the trusted recipe."""
+    slurm_step_id = required_environment_value(SLURM_STEP_ID_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.SLURM_JOB_ID_PATTERN.fullmatch(slurm_step_id) is None:
+        raise AssertionError("Required parity Slurm step ID is malformed")
+    return slurm_step_id
+
+
+def validated_bootstrap_identity() -> QualificationBootstrapIdentity:
+    """Return the exact committed bootstrap path and digest for this run."""
+    bootstrap_relative_path = required_environment_value(BOOTSTRAP_RELATIVE_PATH_ENVIRONMENT_VARIABLE)
+    if bootstrap_relative_path != tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH:
+        raise AssertionError(f"Required parity bootstrap path is unknown: {bootstrap_relative_path}")
+    bootstrap_sha256 = required_environment_value(BOOTSTRAP_SHA256_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.SHA256_PATTERN.fullmatch(bootstrap_sha256) is None:
+        raise AssertionError("Required parity bootstrap SHA-256 is malformed")
+    return QualificationBootstrapIdentity(
+        relative_path=bootstrap_relative_path,
+        sha256=bootstrap_sha256,
+    )
+
+
+def qualification_tool_evidence(tool_name: str) -> tests.parity.harness.QualificationToolEvidence:
+    """Return one bootstrap-recorded executable identity."""
+    environment_tool_name = tool_name.upper()
+    path = required_environment_value(f"{QUALIFICATION_TOOL_ENVIRONMENT_PREFIX}_{environment_tool_name}_PATH")
+    sha256 = required_environment_value(f"{QUALIFICATION_TOOL_ENVIRONMENT_PREFIX}_{environment_tool_name}_SHA256")
+    version = required_environment_value(f"{QUALIFICATION_TOOL_ENVIRONMENT_PREFIX}_{environment_tool_name}_VERSION")
+    if not Path(path).is_absolute():
+        raise AssertionError(f"Required parity {tool_name} path must be absolute")
+    trusted_system_path = TRUSTED_SYSTEM_TOOL_PATHS.get(tool_name)
+    if trusted_system_path is not None and path != trusted_system_path:
+        raise AssertionError(f"Required parity {tool_name} path must be {trusted_system_path}")
+    expected_generated_path: Path | None = None
+    if tool_name == "maturin":
+        expected_generated_path = REPOSITORY_ROOT / ".venv" / "bin" / "maturin"
+    elif tool_name == "venv_python":
+        expected_generated_path = Path(required_environment_value("G_REGENIE_PARITY_VENV_PYTHON_PATH"))
+    if expected_generated_path is not None and Path(path) != expected_generated_path:
+        raise AssertionError(f"Required parity {tool_name} path must be {expected_generated_path}")
+    if tests.parity.harness.SHA256_PATTERN.fullmatch(sha256) is None:
+        raise AssertionError(f"Required parity {tool_name} SHA-256 is malformed")
+    if tests.parity.harness.sha256_file(Path(path)) != sha256:
+        raise AssertionError(f"Required parity {tool_name} executable changed after bootstrap")
+    return tests.parity.harness.QualificationToolEvidence(
+        path=path,
+        sha256=sha256,
+        version=version,
+    )
+
+
+def qualification_toolchain_evidence() -> tests.parity.harness.QualificationToolchainEvidence:
+    """Return the fixed executable set trusted for this qualification."""
+    return tests.parity.harness.QualificationToolchainEvidence(
+        bash=qualification_tool_evidence("bash"),
+        ar=qualification_tool_evidence("ar"),
+        assembler=qualification_tool_evidence("as"),
+        cc=qualification_tool_evidence("cc"),
+        cc1=qualification_tool_evidence("cc1"),
+        cc1plus=qualification_tool_evidence("cc1plus"),
+        cargo=qualification_tool_evidence("cargo"),
+        collect2=qualification_tool_evidence("collect2"),
+        cxx=qualification_tool_evidence("cxx"),
+        environment=qualification_tool_evidence("env"),
+        git=qualification_tool_evidence("git"),
+        just=qualification_tool_evidence("just"),
+        maturin=qualification_tool_evidence("maturin"),
+        mold=qualification_tool_evidence("mold"),
+        python=qualification_tool_evidence("python"),
+        ranlib=qualification_tool_evidence("ranlib"),
+        rustc=qualification_tool_evidence("rustc"),
+        scontrol=qualification_tool_evidence("scontrol"),
+        uv=qualification_tool_evidence("uv"),
+        venv_python=qualification_tool_evidence("venv_python"),
+    )
+
+
+def validated_run_nonce() -> str:
+    """Return the cryptographic lexical nonce supplied by the trusted recipe."""
+    run_nonce = required_environment_value(RUN_NONCE_ENVIRONMENT_VARIABLE)
+    if tests.parity.harness.RUN_NONCE_PATTERN.fullmatch(run_nonce) is None:
+        raise AssertionError("Required parity run nonce is malformed")
+    return run_nonce
+
+
+def validated_run_started_at_utc() -> str:
+    """Return the UTC start timestamp supplied before checkout and build."""
+    run_started_at_utc = required_environment_value(RUN_STARTED_AT_ENVIRONMENT_VARIABLE)
+    try:
+        tests.parity.harness.parse_utc_datetime(
+            run_started_at_utc,
+            label=RUN_STARTED_AT_ENVIRONMENT_VARIABLE,
+        )
+    except ValueError as error:
+        raise AssertionError("Required parity run start timestamp is malformed") from error
+    return run_started_at_utc
+
+
 def nvidia_driver_version() -> str:
     """Return the sole NVIDIA driver version visible on the qualification host."""
     try:
         completed_process = subprocess.run(
             [
-                "nvidia-smi",
+                "/usr/bin/nvidia-smi",
                 "--query-gpu=driver_version",
                 "--format=csv,noheader,nounits",
             ],
@@ -618,6 +973,7 @@ def build_qualification_evidence(
     configured_tolerances = {
         tolerance.observed_column: tolerance.absolute_tolerance for tolerance in workflow.tolerances
     }
+    bootstrap_identity = validated_bootstrap_identity()
     return tests.parity.harness.QualificationEvidence(
         passed=True,
         qualified_git_commit=exact_source.git_commit,
@@ -625,7 +981,20 @@ def build_qualification_evidence(
         working_tree_clean=True,
         qualification_generated_at_utc=generated_at.isoformat(),
         qualification_node=qualification_node_name(),
+        slurm_job_id=validated_slurm_job_id(),
+        slurm_step_id=validated_slurm_step_id(),
+        run_nonce=validated_run_nonce(),
+        run_started_at_utc=validated_run_started_at_utc(),
+        bootstrap_relative_path=bootstrap_identity.relative_path,
+        bootstrap_sha256=bootstrap_identity.sha256,
+        toolchain=qualification_toolchain_evidence(),
         cargo_lock_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
+        cargo_configuration_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / ".cargo" / "config.toml"),
+        rust_toolchain_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / "rust-toolchain.toml"),
+        rustflags_environment=os.environ.get("RUSTFLAGS", ""),
+        cargo_encoded_rustflags_environment=os.environ.get("CARGO_ENCODED_RUSTFLAGS", ""),
+        rustc_wrapper_environment=os.environ.get("RUSTC_WRAPPER", ""),
+        cargo_build_rustc_wrapper_environment=os.environ.get("CARGO_BUILD_RUSTC_WRAPPER", ""),
         uv_lock_sha256=tests.parity.harness.sha256_file(REPOSITORY_ROOT / "uv.lock"),
         jax_version=importlib.metadata.version("jax"),
         jaxlib_version=importlib.metadata.version("jaxlib"),
@@ -633,6 +1002,7 @@ def build_qualification_evidence(
         actual_device=observe_qualification_device(),
         native_build=exact_source.native_build,
         observed_row_count=parity_results.observed_results.height,
+        observed_output_sha256=parity_results.output_artifact_snapshot.parquet_dataset_sha256,
         output_fields=tests.parity.harness.PRODUCTION_OUTPUT_FIELDS,
         statistics=tuple(
             tests.parity.harness.QualificationStatisticEvidence(
@@ -662,13 +1032,18 @@ def write_qualification_report(
     qualification_failure: str | None,
 ) -> Path:
     """Write ignored provenance and numerical evidence for a completed run."""
+    assert_workflow_artifact_snapshot_unchanged(workflow, parity_results.artifact_snapshot)
+    assert_output_artifact_snapshot_unchanged(
+        parity_results.output_dataset,
+        parity_results.output_artifact_snapshot,
+    )
     native_core = load_native_core()
     native_library_value = native_core.__file__
     if native_library_value is None:
         raise AssertionError("The loaded native extension has no filesystem path")
     native_library_path = Path(native_library_value).resolve(strict=True)
-    parquet_paths = tests.parity.harness.direct_parquet_paths(parity_results.output_root)
-    run_directory = parquet_paths[0].parent.parent
+    parquet_paths = tests.parity.harness.direct_parquet_paths(parity_results.output_dataset.directory)
+    run_directory = parity_results.output_dataset.directory.parent
     required_run_metadata_paths = (run_directory / "run_manifest.json", run_directory / "effective_config.toml")
     missing_run_metadata_paths = [path for path in required_run_metadata_paths if not path.is_file()]
     if missing_run_metadata_paths:
@@ -677,6 +1052,7 @@ def write_qualification_report(
     run_metadata_paths = tuple(sorted(path for path in run_directory.iterdir() if path.is_file()))
     input_paths = workflow_input_paths(workflow)
     prediction_file_paths = workflow_prediction_file_paths(workflow)
+    observed_output_sha256 = parity_results.output_artifact_snapshot.parquet_dataset_sha256
     configured_tolerances = {
         tolerance.observed_column: tolerance.absolute_tolerance for tolerance in workflow.tolerances
     }
@@ -695,8 +1071,24 @@ def write_qualification_report(
         else None
     )
     report_payload: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at_utc": generated_at.isoformat(),
+        "run": (
+            None
+            if qualification_evidence is None
+            else {
+                "qualification_node": qualification_evidence.qualification_node,
+                "slurm_job_id": qualification_evidence.slurm_job_id,
+                "slurm_step_id": qualification_evidence.slurm_step_id,
+                "run_nonce": qualification_evidence.run_nonce,
+                "run_started_at_utc": qualification_evidence.run_started_at_utc,
+                "bootstrap_relative_path": qualification_evidence.bootstrap_relative_path,
+                "bootstrap_sha256": qualification_evidence.bootstrap_sha256,
+                "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(
+                    qualification_evidence.toolchain
+                ),
+            }
+        ),
         "workflow": {
             "identifier": workflow.identifier,
             "gate_status": workflow.gate_status.value,
@@ -723,7 +1115,14 @@ def write_qualification_report(
             "native_build_science_source_sha256": native_core.__build_science_source_sha256__,
             "native_build_source_clean": native_core.__build_source_clean__,
             "native_build_profile": native_core.__build_profile__,
+            "native_build_run_nonce": native_core.__build_run_nonce__,
             "cargo_lock_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / "Cargo.lock"),
+            "cargo_configuration_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / ".cargo" / "config.toml"),
+            "rust_toolchain_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / "rust-toolchain.toml"),
+            "rustflags_environment": os.environ.get("RUSTFLAGS", ""),
+            "cargo_encoded_rustflags_environment": os.environ.get("CARGO_ENCODED_RUSTFLAGS", ""),
+            "rustc_wrapper_environment": os.environ.get("RUSTC_WRAPPER", ""),
+            "cargo_build_rustc_wrapper_environment": os.environ.get("CARGO_BUILD_RUSTC_WRAPPER", ""),
             "uv_lock_sha256": tests.parity.harness.sha256_file(REPOSITORY_ROOT / "uv.lock"),
         },
         "runtime": {
@@ -740,26 +1139,28 @@ def write_qualification_report(
         "inputs": {
             option_name: {
                 "path": str(input_paths[option_name]),
-                "sha256": parity_results.observed_input_sha256[option_name],
+                "sha256": parity_results.artifact_snapshot.input_sha256[option_name],
             }
             for option_name in tests.parity.harness.REQUIRED_INPUT_OPTION_NAMES
         },
         "prediction_files": {
             relative_path: {
                 "path": str(prediction_file_paths[relative_path]),
-                "sha256": parity_results.observed_prediction_file_sha256[relative_path],
+                "sha256": parity_results.artifact_snapshot.prediction_file_sha256[relative_path],
             }
             for relative_path in sorted(prediction_file_paths)
         },
         "reference": {
             "output_path": str(DATA_DIRECTORY / workflow.expected_output_relative_path),
-            "output_sha256": workflow.expected_output_sha256,
+            "output_sha256": parity_results.artifact_snapshot.reference_output_sha256,
             "log_path": str(DATA_DIRECTORY / workflow.expected_log_relative_path),
-            "log_sha256": workflow.expected_log_sha256,
+            "log_sha256": parity_results.artifact_snapshot.reference_log_sha256,
             "corrections": correction_summary_payload(parity_results.reference_correction_summary),
         },
         "output": {
             "root": str(parity_results.output_root),
+            "dataset_directory": str(parity_results.output_dataset.directory),
+            "completion_line": parity_results.output_dataset.completion_line,
             "row_count": parity_results.observed_results.height,
             "column_order": parity_results.observed_results.columns,
             "schema": [
@@ -770,14 +1171,13 @@ def write_qualification_report(
                 }
                 for field in tests.parity.harness.PRODUCTION_OUTPUT_FIELDS
             ],
-            "parquet_dataset_sha256": tests.parity.harness.sha256_file_set(
-                parquet_paths,
-                root=parity_results.output_root,
-            ),
+            "parquet_dataset_sha256": observed_output_sha256,
             "parquet_files": [
                 {
                     "relative_path": parquet_path.relative_to(parity_results.output_root).as_posix(),
-                    "sha256": tests.parity.harness.sha256_file(parquet_path),
+                    "sha256": parity_results.output_artifact_snapshot.parquet_file_sha256[
+                        parquet_path.relative_to(parity_results.output_root).as_posix()
+                    ],
                 }
                 for parquet_path in parquet_paths
             ],
@@ -801,13 +1201,26 @@ def write_qualification_report(
             for comparison in comparisons
         ],
     }
+    assert_workflow_artifact_snapshot_unchanged(workflow, parity_results.artifact_snapshot)
+    assert_output_artifact_snapshot_unchanged(
+        parity_results.output_dataset,
+        parity_results.output_artifact_snapshot,
+    )
     workflow_report_directory = qualification_report_directory() / workflow.identifier
     workflow_report_directory.mkdir(parents=True, exist_ok=True)
     timestamp = generated_at.strftime("%Y%m%dT%H%M%S.%fZ")
-    report_path = workflow_report_directory / f"{timestamp}_{os.getpid()}.json"
-    report_path.write_text(
-        f"{json.dumps(report_payload, indent=2, sort_keys=True)}\n",
-        encoding="utf-8",
+    report_run_identifier = "diagnostic" if qualification_evidence is None else qualification_evidence.run_nonce
+    report_path = workflow_report_directory / f"{timestamp}_{report_run_identifier}_{os.getpid()}.json"
+    report_bytes = f"{json.dumps(report_payload, indent=2, sort_keys=True)}\n".encode()
+    with report_path.open("xb") as report_file:
+        report_file.write(report_bytes)
+        report_file.flush()
+        os.fsync(report_file.fileno())
+    fsync_directory(workflow_report_directory)
+    assert_workflow_artifact_snapshot_unchanged(workflow, parity_results.artifact_snapshot)
+    assert_output_artifact_snapshot_unchanged(
+        parity_results.output_dataset,
+        parity_results.output_artifact_snapshot,
     )
     return report_path
 
@@ -817,12 +1230,22 @@ def assert_and_record_workflow_qualification(
     parity_results: RegenieParityResults,
 ) -> Path:
     """Apply external contracts and persist evidence from a completed run."""
+    assert_workflow_artifact_snapshot_unchanged(workflow, parity_results.artifact_snapshot)
+    assert_output_artifact_snapshot_unchanged(
+        parity_results.output_dataset,
+        parity_results.output_artifact_snapshot,
+    )
     comparisons: tuple[tests.parity.harness.StatisticComparison, ...] = ()
     try:
         comparisons = assert_external_result_contract(workflow, parity_results)
         observed_correction_summary = assert_correction_contract(
             parity_results.observed_results,
             parity_results.reference_correction_summary,
+        )
+        assert_workflow_artifact_snapshot_unchanged(workflow, parity_results.artifact_snapshot)
+        assert_output_artifact_snapshot_unchanged(
+            parity_results.output_dataset,
+            parity_results.output_artifact_snapshot,
         )
     except AssertionError as error:
         original_traceback = error.__traceback__
@@ -862,26 +1285,560 @@ def assert_and_record_workflow_qualification(
     )
 
 
+def parse_report_artifact_sha256_mapping(
+    value: object,
+    *,
+    expected_keys: set[str],
+    label: str,
+) -> dict[str, str]:
+    """Parse a strict report mapping from artifact name to path and digest."""
+    payload = tests.parity.harness.parse_mapping(value, label=label)
+    if set(payload) != expected_keys:
+        raise AssertionError(f"{label} artifact set mismatch")
+    observed_sha256: dict[str, str] = {}
+    for artifact_name, artifact_value in payload.items():
+        artifact_label = f"{label}.{artifact_name}"
+        artifact_payload = tests.parity.harness.parse_mapping(
+            artifact_value,
+            label=artifact_label,
+        )
+        tests.parity.harness.require_mapping_fields(
+            artifact_payload,
+            label=artifact_label,
+            expected_fields={"path", "sha256"},
+        )
+        tests.parity.harness.parse_nonempty_string(
+            artifact_payload["path"],
+            label=f"{artifact_label}.path",
+        )
+        observed_sha256[artifact_name] = tests.parity.harness.parse_sha256(
+            artifact_payload["sha256"],
+            label=f"{artifact_label}.sha256",
+        )
+    return observed_sha256
+
+
+def parse_report_file_sha256_list(
+    value: object,
+    *,
+    root_directory: Path,
+    label: str,
+) -> dict[str, str]:
+    """Parse and rehash a strict list of files below one trusted root."""
+    if not isinstance(value, list):
+        raise AssertionError(f"{label} must be a list")
+    observed_sha256: dict[str, str] = {}
+    for file_index, file_value in enumerate(value):
+        file_label = f"{label}[{file_index}]"
+        file_payload = tests.parity.harness.parse_mapping(file_value, label=file_label)
+        tests.parity.harness.require_mapping_fields(
+            file_payload,
+            label=file_label,
+            expected_fields={"relative_path", "sha256"},
+        )
+        relative_path_text = tests.parity.harness.parse_nonempty_string(
+            file_payload["relative_path"],
+            label=f"{file_label}.relative_path",
+        )
+        relative_path = Path(relative_path_text)
+        if relative_path.is_absolute() or relative_path.as_posix() != relative_path_text or ".." in relative_path.parts:
+            raise AssertionError(f"{file_label}.relative_path is not canonical")
+        if relative_path_text in observed_sha256:
+            raise AssertionError(f"{label} contains duplicate paths")
+        expected_sha256 = tests.parity.harness.parse_sha256(
+            file_payload["sha256"],
+            label=f"{file_label}.sha256",
+        )
+        file_path = root_directory / relative_path
+        if file_path.is_symlink() or not file_path.is_file():
+            raise AssertionError(f"{file_label} is not a direct regular file")
+        try:
+            file_path.resolve(strict=True).relative_to(root_directory)
+        except ValueError as error:
+            raise AssertionError(f"{file_label} escapes its root") from error
+        if tests.parity.harness.sha256_file(file_path) != expected_sha256:
+            raise AssertionError(f"{file_label} digest no longer matches")
+        observed_sha256[relative_path_text] = expected_sha256
+    return observed_sha256
+
+
 def load_report_qualification_evidence(
     report: WorkflowQualificationReport,
-) -> tests.parity.harness.QualificationEvidence:
+) -> LoadedQualificationReport:
     """Load and validate promotable evidence from one ignored report."""
-    payload = typing.cast(
-        "dict[str, object]",
-        json.loads(report.report_path.read_text(encoding="utf-8")),
+    report_directory = qualification_report_directory().resolve(strict=True)
+    if report.report_path.is_symlink() or not report.report_path.is_file():
+        raise AssertionError(f"Qualification report is not a regular file: {report.report_path}")
+    report_path = report.report_path.resolve(strict=True)
+    try:
+        report_relative_path = report_path.relative_to(report_directory)
+    except ValueError as error:
+        raise AssertionError(f"Qualification report escapes the report directory: {report_path}") from error
+    report_bytes = report_path.read_bytes()
+    report_sha256 = sha256_bytes(report_bytes)
+    payload = typing.cast("dict[str, object]", json.loads(report_bytes))
+    tests.parity.harness.require_mapping_fields(
+        payload,
+        label="qualification report",
+        expected_fields={
+            "schema_version",
+            "generated_at_utc",
+            "run",
+            "workflow",
+            "qualification",
+            "qualification_evidence",
+            "source",
+            "runtime",
+            "configuration",
+            "inputs",
+            "prediction_files",
+            "reference",
+            "output",
+            "statistics",
+        },
     )
-    if payload.get("schema_version") != 2:
-        raise AssertionError(f"Unsupported qualification report schema: {report.report_path}")
-    workflow_payload = typing.cast("dict[str, object]", payload["workflow"])
+    if payload.get("schema_version") != 3:
+        raise AssertionError(f"Unsupported qualification report schema: {report_path}")
+    workflow_payload = tests.parity.harness.parse_mapping(payload["workflow"], label="qualification report.workflow")
+    tests.parity.harness.require_mapping_fields(
+        workflow_payload,
+        label="qualification report.workflow",
+        expected_fields={"identifier", "gate_status", "regenie_version"},
+    )
     if workflow_payload.get("identifier") != report.workflow_identifier:
-        raise AssertionError(f"Qualification report workflow mismatch: {report.report_path}")
-    qualification_payload = typing.cast("dict[str, object]", payload["qualification"])
+        raise AssertionError(f"Qualification report workflow mismatch: {report_path}")
+    qualification_payload = tests.parity.harness.parse_mapping(
+        payload["qualification"],
+        label="qualification report.qualification",
+    )
+    tests.parity.harness.require_mapping_fields(
+        qualification_payload,
+        label="qualification report.qualification",
+        expected_fields={"passed", "failure"},
+    )
     if qualification_payload.get("passed") is not True or qualification_payload.get("failure") is not None:
-        raise AssertionError(f"Qualification report did not pass: {report.report_path}")
+        raise AssertionError(f"Qualification report did not pass: {report_path}")
     evidence = tests.parity.harness.parse_qualification_evidence(payload["qualification_evidence"])
     if evidence is None:
-        raise AssertionError(f"Qualification report has no exact-source evidence: {report.report_path}")
-    return evidence
+        raise AssertionError(f"Qualification report has no exact-source evidence: {report_path}")
+    if payload["generated_at_utc"] != evidence.qualification_generated_at_utc:
+        raise AssertionError(f"Qualification report generation timestamp mismatch: {report_path}")
+    run_payload = tests.parity.harness.parse_mapping(payload["run"], label="qualification report.run")
+    tests.parity.harness.require_mapping_fields(
+        run_payload,
+        label="qualification report.run",
+        expected_fields={
+            "qualification_node",
+            "slurm_job_id",
+            "slurm_step_id",
+            "run_nonce",
+            "run_started_at_utc",
+            "bootstrap_relative_path",
+            "bootstrap_sha256",
+            "toolchain",
+        },
+    )
+    expected_run_payload = {
+        "qualification_node": evidence.qualification_node,
+        "slurm_job_id": evidence.slurm_job_id,
+        "slurm_step_id": evidence.slurm_step_id,
+        "run_nonce": evidence.run_nonce,
+        "run_started_at_utc": evidence.run_started_at_utc,
+        "bootstrap_relative_path": evidence.bootstrap_relative_path,
+        "bootstrap_sha256": evidence.bootstrap_sha256,
+        "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(evidence.toolchain),
+    }
+    if run_payload != expected_run_payload:
+        raise AssertionError(f"Qualification report run identity mismatch: {report_path}")
+    output_payload = tests.parity.harness.parse_mapping(
+        payload["output"],
+        label="qualification report.output",
+    )
+    tests.parity.harness.require_mapping_fields(
+        output_payload,
+        label="qualification report.output",
+        expected_fields={
+            "root",
+            "dataset_directory",
+            "completion_line",
+            "row_count",
+            "column_order",
+            "schema",
+            "parquet_dataset_sha256",
+            "parquet_files",
+            "run_metadata_files",
+            "corrections",
+        },
+    )
+    observed_output_sha256 = tests.parity.harness.parse_sha256(
+        output_payload["parquet_dataset_sha256"],
+        label="qualification report.output.parquet_dataset_sha256",
+    )
+    if observed_output_sha256 != evidence.observed_output_sha256:
+        raise AssertionError(f"Qualification report output digest mismatch: {report_path}")
+    workflow = PARITY_METADATA.workflow_by_identifier(report.workflow_identifier)
+    if (
+        workflow_payload["gate_status"] != workflow.gate_status.value
+        or workflow_payload["regenie_version"] != workflow.regenie_version
+    ):
+        raise AssertionError(f"Qualification report workflow contract mismatch: {report_path}")
+    if output_payload["row_count"] != evidence.observed_row_count:
+        raise AssertionError(f"Qualification report output row count mismatch: {report_path}")
+    expected_column_order = [field.name for field in evidence.output_fields]
+    if output_payload["column_order"] != expected_column_order:
+        raise AssertionError(f"Qualification report output column order mismatch: {report_path}")
+    expected_output_schema = [
+        {
+            "name": field.name,
+            "data_type": field.data_type.value,
+            "nullable": field.nullable,
+        }
+        for field in evidence.output_fields
+    ]
+    if output_payload["schema"] != expected_output_schema:
+        raise AssertionError(f"Qualification report output schema mismatch: {report_path}")
+    output_root_text = tests.parity.harness.parse_nonempty_string(
+        output_payload["root"],
+        label="qualification report.output.root",
+    )
+    dataset_directory_text = tests.parity.harness.parse_nonempty_string(
+        output_payload["dataset_directory"],
+        label="qualification report.output.dataset_directory",
+    )
+    output_root_path = Path(output_root_text)
+    dataset_directory_path = Path(dataset_directory_text)
+    if not output_root_path.is_absolute() or not dataset_directory_path.is_absolute():
+        raise AssertionError(f"Qualification report output paths must be absolute: {report_path}")
+    resolved_output_root = output_root_path.resolve(strict=True)
+    resolved_dataset_directory = dataset_directory_path.resolve(strict=True)
+    if output_root_path != resolved_output_root or dataset_directory_path != resolved_dataset_directory:
+        raise AssertionError(f"Qualification report output paths must be canonical: {report_path}")
+    try:
+        dataset_relative_path = resolved_dataset_directory.relative_to(resolved_output_root)
+    except ValueError as error:
+        raise AssertionError(f"Qualification report dataset escapes its output root: {report_path}") from error
+    if dataset_relative_path == Path() or not resolved_dataset_directory.is_dir():
+        raise AssertionError(f"Qualification report dataset path is invalid: {report_path}")
+    expected_completion_line = f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{resolved_dataset_directory}"
+    if output_payload["completion_line"] != expected_completion_line:
+        raise AssertionError(f"Qualification report completion line mismatch: {report_path}")
+    observed_parquet_sha256 = parse_report_file_sha256_list(
+        output_payload["parquet_files"],
+        root_directory=resolved_output_root,
+        label="qualification report.output.parquet_files",
+    )
+    current_parquet_paths = tests.parity.harness.direct_parquet_paths(resolved_dataset_directory)
+    expected_parquet_relative_paths = {
+        parquet_path.relative_to(resolved_output_root).as_posix() for parquet_path in current_parquet_paths
+    }
+    if set(observed_parquet_sha256) != expected_parquet_relative_paths:
+        raise AssertionError(f"Qualification report Parquet file set mismatch: {report_path}")
+    if (
+        tests.parity.harness.sha256_file_set(
+            current_parquet_paths,
+            root=resolved_output_root,
+        )
+        != observed_output_sha256
+    ):
+        raise AssertionError(f"Qualification report Parquet bytes changed: {report_path}")
+    observed_run_metadata_sha256 = parse_report_file_sha256_list(
+        output_payload["run_metadata_files"],
+        root_directory=resolved_output_root,
+        label="qualification report.output.run_metadata_files",
+    )
+    run_metadata_names = {Path(relative_path).name for relative_path in observed_run_metadata_sha256}
+    if not {"run_manifest.json", "effective_config.toml"}.issubset(run_metadata_names):
+        raise AssertionError(f"Qualification report run metadata set mismatch: {report_path}")
+    run_directory = resolved_dataset_directory.parent
+    current_run_metadata_paths = tuple(sorted(path for path in run_directory.iterdir() if path.is_file()))
+    if any(path.is_symlink() for path in current_run_metadata_paths):
+        raise AssertionError(f"Qualification report run metadata contains a symbolic link: {report_path}")
+    current_run_metadata_sha256 = {
+        metadata_path.relative_to(resolved_output_root).as_posix(): tests.parity.harness.sha256_file(metadata_path)
+        for metadata_path in current_run_metadata_paths
+    }
+    if observed_run_metadata_sha256 != current_run_metadata_sha256:
+        raise AssertionError(f"Qualification report run metadata changed: {report_path}")
+    expected_output_corrections = correction_summary_payload(
+        tests.parity.harness.RegenieCorrectionSummary(
+            correction_count=evidence.observed_correction_count,
+            correction_failure_count=evidence.observed_correction_failure_count,
+        )
+    )
+    if output_payload["corrections"] != expected_output_corrections:
+        raise AssertionError(f"Qualification report output correction summary mismatch: {report_path}")
+    observed_input_sha256 = parse_report_artifact_sha256_mapping(
+        payload["inputs"],
+        expected_keys=set(tests.parity.harness.REQUIRED_INPUT_OPTION_NAMES),
+        label="qualification report.inputs",
+    )
+    current_artifact_snapshot = snapshot_workflow_artifacts(workflow)
+    if (
+        observed_input_sha256 != workflow.input_sha256
+        or observed_input_sha256 != current_artifact_snapshot.input_sha256
+    ):
+        raise AssertionError(f"Qualification report input digests mismatch: {report_path}")
+    input_payload = tests.parity.harness.parse_mapping(
+        payload["inputs"],
+        label="qualification report.inputs",
+    )
+    expected_input_paths = workflow_input_paths(workflow)
+    for option_name, expected_input_path in expected_input_paths.items():
+        input_artifact_payload = tests.parity.harness.parse_mapping(
+            input_payload[option_name],
+            label=f"qualification report.inputs.{option_name}",
+        )
+        if input_artifact_payload["path"] != str(expected_input_path):
+            raise AssertionError(f"Qualification report input path mismatch: {report_path}")
+    observed_prediction_sha256 = parse_report_artifact_sha256_mapping(
+        payload["prediction_files"],
+        expected_keys=set(workflow.prediction_file_sha256),
+        label="qualification report.prediction_files",
+    )
+    if (
+        observed_prediction_sha256 != workflow.prediction_file_sha256
+        or observed_prediction_sha256 != current_artifact_snapshot.prediction_file_sha256
+    ):
+        raise AssertionError(f"Qualification report prediction digests mismatch: {report_path}")
+    prediction_payload = tests.parity.harness.parse_mapping(
+        payload["prediction_files"],
+        label="qualification report.prediction_files",
+    )
+    expected_prediction_paths = workflow_prediction_file_paths(workflow)
+    for relative_path, expected_prediction_path in expected_prediction_paths.items():
+        prediction_artifact_payload = tests.parity.harness.parse_mapping(
+            prediction_payload[relative_path],
+            label=f"qualification report.prediction_files.{relative_path}",
+        )
+        if prediction_artifact_payload["path"] != str(expected_prediction_path):
+            raise AssertionError(f"Qualification report prediction path mismatch: {report_path}")
+    reference_payload = tests.parity.harness.parse_mapping(
+        payload["reference"],
+        label="qualification report.reference",
+    )
+    tests.parity.harness.require_mapping_fields(
+        reference_payload,
+        label="qualification report.reference",
+        expected_fields={"output_path", "output_sha256", "log_path", "log_sha256", "corrections"},
+    )
+    expected_reference_output_path = DATA_DIRECTORY / workflow.expected_output_relative_path
+    expected_reference_log_path = DATA_DIRECTORY / workflow.expected_log_relative_path
+    if (
+        reference_payload.get("output_path") != str(expected_reference_output_path)
+        or reference_payload.get("output_sha256") != workflow.expected_output_sha256
+        or reference_payload.get("output_sha256") != current_artifact_snapshot.reference_output_sha256
+    ):
+        raise AssertionError(f"Qualification report reference output digest mismatch: {report_path}")
+    if (
+        reference_payload.get("log_path") != str(expected_reference_log_path)
+        or reference_payload.get("log_sha256") != workflow.expected_log_sha256
+        or reference_payload.get("log_sha256") != current_artifact_snapshot.reference_log_sha256
+    ):
+        raise AssertionError(f"Qualification report reference log digest mismatch: {report_path}")
+    expected_reference_corrections = correction_summary_payload(
+        None
+        if workflow.expected_correction_count is None
+        else tests.parity.harness.RegenieCorrectionSummary(
+            correction_count=workflow.expected_correction_count,
+            correction_failure_count=typing.cast("int", workflow.expected_correction_failure_count),
+        )
+    )
+    if reference_payload["corrections"] != expected_reference_corrections:
+        raise AssertionError(f"Qualification report reference correction summary mismatch: {report_path}")
+    source_payload = tests.parity.harness.parse_mapping(
+        payload["source"],
+        label="qualification report.source",
+    )
+    tests.parity.harness.require_mapping_fields(
+        source_payload,
+        label="qualification report.source",
+        expected_fields={
+            "git_commit",
+            "working_tree_dirty",
+            "git_status_sha256",
+            "git_diff_sha256",
+            "science_source_sha256",
+            "native_library_path",
+            "native_library_sha256",
+            "native_build_git_commit",
+            "native_build_science_source_sha256",
+            "native_build_source_clean",
+            "native_build_profile",
+            "native_build_run_nonce",
+            "cargo_lock_sha256",
+            "cargo_configuration_sha256",
+            "rust_toolchain_sha256",
+            "rustflags_environment",
+            "cargo_encoded_rustflags_environment",
+            "rustc_wrapper_environment",
+            "cargo_build_rustc_wrapper_environment",
+            "uv_lock_sha256",
+        },
+    )
+    expected_source_values = {
+        "git_commit": evidence.qualified_git_commit,
+        "working_tree_dirty": False,
+        "git_status_sha256": sha256_bytes(b""),
+        "git_diff_sha256": sha256_bytes(b""),
+        "science_source_sha256": evidence.science_source_sha256,
+        "native_library_sha256": evidence.native_build.library_sha256,
+        "native_build_git_commit": evidence.native_build.git_commit,
+        "native_build_science_source_sha256": evidence.native_build.science_source_sha256,
+        "native_build_source_clean": evidence.native_build.source_clean,
+        "native_build_profile": evidence.native_build.profile.value,
+        "native_build_run_nonce": evidence.native_build.run_nonce,
+        "cargo_lock_sha256": evidence.cargo_lock_sha256,
+        "cargo_configuration_sha256": evidence.cargo_configuration_sha256,
+        "rust_toolchain_sha256": evidence.rust_toolchain_sha256,
+        "rustflags_environment": evidence.rustflags_environment,
+        "cargo_encoded_rustflags_environment": evidence.cargo_encoded_rustflags_environment,
+        "rustc_wrapper_environment": evidence.rustc_wrapper_environment,
+        "cargo_build_rustc_wrapper_environment": evidence.cargo_build_rustc_wrapper_environment,
+        "uv_lock_sha256": evidence.uv_lock_sha256,
+    }
+    for source_name, expected_value in expected_source_values.items():
+        if source_payload[source_name] != expected_value:
+            raise AssertionError(f"Qualification report source mismatch for {source_name}: {report_path}")
+    native_library_path_text = tests.parity.harness.parse_nonempty_string(
+        source_payload["native_library_path"],
+        label="qualification report.source.native_library_path",
+    )
+    native_library_path = Path(native_library_path_text)
+    if (
+        not native_library_path.is_absolute()
+        or native_library_path.is_symlink()
+        or not native_library_path.is_file()
+        or native_library_path.resolve(strict=True) != native_library_path
+        or tests.parity.harness.sha256_file(native_library_path) != evidence.native_build.library_sha256
+        or native_library_path.stat().st_size != evidence.native_build.library_size_bytes
+    ):
+        raise AssertionError(f"Qualification report native library artifact mismatch: {report_path}")
+    runtime_payload = tests.parity.harness.parse_mapping(
+        payload["runtime"],
+        label="qualification report.runtime",
+    )
+    tests.parity.harness.require_mapping_fields(
+        runtime_payload,
+        label="qualification report.runtime",
+        expected_fields={
+            "jax_version",
+            "jaxlib_version",
+            "configured_device",
+            "jax_platforms_environment",
+        },
+    )
+    if (
+        runtime_payload["jax_version"] != evidence.jax_version
+        or runtime_payload["jaxlib_version"] != evidence.jaxlib_version
+        or runtime_payload["configured_device"] != evidence.configured_device
+        or runtime_payload["jax_platforms_environment"] != "cuda"
+    ):
+        raise AssertionError(f"Qualification report runtime mismatch: {report_path}")
+    configuration_payload = tests.parity.harness.parse_mapping(
+        payload["configuration"],
+        label="qualification report.configuration",
+    )
+    tests.parity.harness.require_mapping_fields(
+        configuration_payload,
+        label="qualification report.configuration",
+        expected_fields={"metadata_options", "toml_path", "toml_sha256"},
+    )
+    if configuration_payload["metadata_options"] != workflow.g_cli_options:
+        raise AssertionError(f"Qualification report metadata options mismatch: {report_path}")
+    configuration_path_text = tests.parity.harness.parse_nonempty_string(
+        configuration_payload["toml_path"],
+        label="qualification report.configuration.toml_path",
+    )
+    configuration_path = Path(configuration_path_text)
+    if not configuration_path.is_absolute() or configuration_path.is_symlink() or not configuration_path.is_file():
+        raise AssertionError(f"Qualification report configuration path is invalid: {report_path}")
+    expected_configuration_sha256 = tests.parity.harness.parse_sha256(
+        configuration_payload["toml_sha256"],
+        label="qualification report.configuration.toml_sha256",
+    )
+    if tests.parity.harness.sha256_file(configuration_path) != expected_configuration_sha256:
+        raise AssertionError(f"Qualification report configuration changed: {report_path}")
+    expected_statistics = [
+        {
+            "observed_column": statistic.observed_column,
+            "reference_column": statistic.baseline_column,
+            "row_count": evidence.observed_row_count,
+            "maximum_absolute_difference": statistic.maximum_absolute_difference,
+            "absolute_tolerance": statistic.absolute_tolerance,
+        }
+        for statistic in evidence.statistics
+    ]
+    if payload["statistics"] != expected_statistics:
+        raise AssertionError(f"Qualification report statistics mismatch: {report_path}")
+    return LoadedQualificationReport(
+        evidence=evidence,
+        report_relative_path=report_relative_path,
+        report_sha256=report_sha256,
+        observed_output_sha256=observed_output_sha256,
+    )
+
+
+def qualification_run_identity(
+    evidence: tests.parity.harness.QualificationEvidence,
+) -> QualificationRunIdentity:
+    """Extract the fields that every report in one run must share."""
+    return QualificationRunIdentity(
+        qualification_node=evidence.qualification_node,
+        slurm_job_id=evidence.slurm_job_id,
+        slurm_step_id=evidence.slurm_step_id,
+        run_nonce=evidence.run_nonce,
+        run_started_at_utc=evidence.run_started_at_utc,
+        bootstrap_relative_path=evidence.bootstrap_relative_path,
+        bootstrap_sha256=evidence.bootstrap_sha256,
+        toolchain=evidence.toolchain,
+        cargo_lock_sha256=evidence.cargo_lock_sha256,
+        cargo_configuration_sha256=evidence.cargo_configuration_sha256,
+        rust_toolchain_sha256=evidence.rust_toolchain_sha256,
+        rustflags_environment=evidence.rustflags_environment,
+        cargo_encoded_rustflags_environment=evidence.cargo_encoded_rustflags_environment,
+        rustc_wrapper_environment=evidence.rustc_wrapper_environment,
+        cargo_build_rustc_wrapper_environment=evidence.cargo_build_rustc_wrapper_environment,
+        uv_lock_sha256=evidence.uv_lock_sha256,
+        jax_version=evidence.jax_version,
+        jaxlib_version=evidence.jaxlib_version,
+        configured_device=evidence.configured_device,
+        actual_device=evidence.actual_device,
+        native_build=evidence.native_build,
+    )
+
+
+def qualification_bundle_path(
+    source_state: tooling.science_gate.ScienceSourceState,
+    run_identity: QualificationRunIdentity,
+) -> Path:
+    """Return the unique immutable bundle path for one exact scheduler run."""
+    return qualification_report_directory() / (
+        f"qualification_bundle_{source_state.git_commit}_{run_identity.slurm_job_id}_"
+        f"{run_identity.slurm_step_id}_{run_identity.run_nonce}.json"
+    )
+
+
+def publish_unique_json(
+    file_path: Path,
+    payload: dict[str, object],
+    *,
+    validate_temporary: typing.Callable[[Path], None] | None = None,
+) -> None:
+    """Publish one JSON file atomically without replacing an existing path."""
+    payload_bytes = f"{json.dumps(payload, indent=2, sort_keys=True)}\n".encode()
+    temporary_path = file_path.parent / f".{file_path.name}.{os.getpid()}.tmp"
+    try:
+        with temporary_path.open("xb") as temporary_file:
+            temporary_file.write(payload_bytes)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        if validate_temporary is not None:
+            validate_temporary(temporary_path)
+        os.link(temporary_path, file_path)
+        temporary_path.unlink()
+        fsync_directory(file_path.parent)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...]) -> Path:
@@ -898,11 +1855,12 @@ def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...])
         raise AssertionError("Qualification bundle contains duplicate workflows")
 
     source_state: tooling.science_gate.ScienceSourceState | None = None
-    shared_run_identity: tuple[object, ...] | None = None
+    shared_run_identity: QualificationRunIdentity | None = None
     workflow_payloads: list[dict[str, object]] = []
     for report in sorted(reports, key=lambda item: item.workflow_identifier):
         workflow = PARITY_METADATA.workflow_by_identifier(report.workflow_identifier)
-        evidence = load_report_qualification_evidence(report)
+        loaded_report = load_report_qualification_evidence(report)
+        evidence = loaded_report.evidence
         tests.parity.harness.assert_workflow_qualification_is_current(
             workflow,
             evidence,
@@ -917,20 +1875,12 @@ def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...])
             source_state = report_source_state
         elif source_state != report_source_state:
             raise AssertionError("Qualification reports do not describe one exact source")
-        report_run_identity = (
-            evidence.qualification_node,
-            evidence.cargo_lock_sha256,
-            evidence.uv_lock_sha256,
-            evidence.jax_version,
-            evidence.jaxlib_version,
-            evidence.configured_device,
-            evidence.actual_device,
-            evidence.native_build,
-        )
+        report_run_identity = qualification_run_identity(evidence)
         if shared_run_identity is None:
             shared_run_identity = report_run_identity
         elif shared_run_identity != report_run_identity:
             raise AssertionError("Qualification reports do not describe one native/runtime build")
+        snapshot_workflow_artifacts(workflow)
         workflow_payloads.append(
             {
                 "identifier": workflow.identifier,
@@ -939,10 +1889,13 @@ def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...])
                 "reference_log_sha256": workflow.expected_log_sha256,
                 "input_sha256": workflow.input_sha256,
                 "prediction_file_sha256": workflow.prediction_file_sha256,
+                "qualification_report_relative_path": loaded_report.report_relative_path.as_posix(),
+                "qualification_report_sha256": loaded_report.report_sha256,
+                "observed_output_sha256": loaded_report.observed_output_sha256,
                 "qualification": tests.parity.harness.qualification_evidence_payload(evidence),
             }
         )
-    if source_state is None:
+    if source_state is None or shared_run_identity is None:
         raise AssertionError("Qualification bundle has no workflow evidence")
     current_source_state = tooling.science_gate.assert_clean_exact_source(
         REPOSITORY_ROOT,
@@ -951,20 +1904,260 @@ def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...])
     if current_source_state.science_source_sha256 != source_state.science_source_sha256:
         raise AssertionError("Qualification bundle science-source fingerprint is stale")
 
-    bundle_payload = {
-        "schema_version": 1,
+    generated_at = datetime.datetime.now(datetime.UTC)
+    run_started_at = tests.parity.harness.parse_utc_datetime(
+        shared_run_identity.run_started_at_utc,
+        label="qualification bundle.run.run_started_at_utc",
+    )
+    if generated_at < run_started_at:
+        raise AssertionError("Qualification bundle predates its scheduler run")
+    bundle_payload: dict[str, object] = {
+        "schema_version": 2,
+        "generated_at_utc": generated_at.isoformat(),
         "qualified_git_commit": source_state.git_commit,
         "science_source_sha256": source_state.science_source_sha256,
+        "run": {
+            "qualification_node": shared_run_identity.qualification_node,
+            "slurm_job_id": shared_run_identity.slurm_job_id,
+            "slurm_step_id": shared_run_identity.slurm_step_id,
+            "run_nonce": shared_run_identity.run_nonce,
+            "run_started_at_utc": shared_run_identity.run_started_at_utc,
+            "bootstrap_relative_path": shared_run_identity.bootstrap_relative_path,
+            "bootstrap_sha256": shared_run_identity.bootstrap_sha256,
+            "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(shared_run_identity.toolchain),
+        },
         "workflows": workflow_payloads,
     }
     report_directory = qualification_report_directory()
     report_directory.mkdir(parents=True, exist_ok=True)
-    bundle_path = report_directory / f"qualification_bundle_{source_state.git_commit}.json"
-    bundle_path.write_text(
-        f"{json.dumps(bundle_payload, indent=2, sort_keys=True)}\n",
-        encoding="utf-8",
+    bundle_path = qualification_bundle_path(source_state, shared_run_identity)
+    expected_bundle_path = Path(required_environment_value(EXPECTED_BUNDLE_PATH_ENVIRONMENT_VARIABLE))
+    if not expected_bundle_path.is_absolute():
+        raise AssertionError("Required parity expected bundle path must be absolute")
+    if bundle_path.resolve(strict=False) != expected_bundle_path.resolve(strict=False):
+        raise AssertionError(
+            f"Qualification bundle path differs from the trusted recipe: "
+            f"expected {expected_bundle_path}, observed {bundle_path}"
+        )
+
+    def validate_bundle_candidate(candidate_path: Path) -> None:
+        validate_published_qualification_bundle(
+            candidate_path,
+            expected_git_commit=source_state.git_commit,
+            expected_science_source_sha256=source_state.science_source_sha256,
+            expected_slurm_job_id=shared_run_identity.slurm_job_id,
+            expected_slurm_step_id=shared_run_identity.slurm_step_id,
+            expected_run_nonce=shared_run_identity.run_nonce,
+            expected_run_started_at_utc=shared_run_identity.run_started_at_utc,
+            expected_bootstrap_sha256=shared_run_identity.bootstrap_sha256,
+        )
+
+    publish_unique_json(
+        bundle_path,
+        bundle_payload,
+        validate_temporary=validate_bundle_candidate,
     )
+    try:
+        validate_bundle_candidate(bundle_path)
+    except Exception:
+        bundle_path.unlink()
+        fsync_directory(bundle_path.parent)
+        raise
     return bundle_path
+
+
+def validate_published_qualification_bundle(
+    bundle_path: Path,
+    *,
+    expected_git_commit: str,
+    expected_science_source_sha256: str,
+    expected_slurm_job_id: str,
+    expected_slurm_step_id: str,
+    expected_run_nonce: str,
+    expected_run_started_at_utc: str,
+    expected_bootstrap_sha256: str,
+) -> None:
+    """Independently validate one freshly published sanitized bundle."""
+    report_directory = qualification_report_directory().resolve(strict=True)
+    resolved_bundle_path = bundle_path.resolve(strict=True)
+    try:
+        resolved_bundle_path.relative_to(report_directory)
+    except ValueError as error:
+        raise AssertionError(f"Qualification bundle escapes the report directory: {bundle_path}") from error
+    payload = typing.cast(
+        "dict[str, object]",
+        json.loads(resolved_bundle_path.read_text(encoding="utf-8")),
+    )
+    tests.parity.harness.require_mapping_fields(
+        payload,
+        label="qualification bundle",
+        expected_fields={
+            "schema_version",
+            "generated_at_utc",
+            "qualified_git_commit",
+            "science_source_sha256",
+            "run",
+            "workflows",
+        },
+    )
+    if payload["schema_version"] != 2:
+        raise AssertionError("Unsupported qualification bundle schema")
+    if payload["qualified_git_commit"] != expected_git_commit:
+        raise AssertionError("Qualification bundle Git commit mismatch")
+    if payload["science_source_sha256"] != expected_science_source_sha256:
+        raise AssertionError("Qualification bundle science-source fingerprint mismatch")
+    expected_run_payload = {
+        "qualification_node": "landau",
+        "slurm_job_id": expected_slurm_job_id,
+        "slurm_step_id": expected_slurm_step_id,
+        "run_nonce": expected_run_nonce,
+        "run_started_at_utc": expected_run_started_at_utc,
+        "bootstrap_relative_path": tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH,
+        "bootstrap_sha256": expected_bootstrap_sha256,
+        "toolchain": None,
+    }
+    run_payload = tests.parity.harness.parse_mapping(payload["run"], label="qualification bundle.run")
+    tests.parity.harness.require_mapping_fields(
+        run_payload,
+        label="qualification bundle.run",
+        expected_fields=set(expected_run_payload),
+    )
+    expected_run_payload["toolchain"] = run_payload.get("toolchain")
+    if run_payload != expected_run_payload:
+        raise AssertionError("Qualification bundle scheduler run identity mismatch")
+    expected_toolchain = tests.parity.harness.parse_qualification_toolchain_evidence(run_payload["toolchain"])
+    if parity_data_is_required() and expected_toolchain != qualification_toolchain_evidence():
+        raise AssertionError("Qualification bundle host toolchain differs from the trusted environment")
+    generated_at = tests.parity.harness.parse_utc_datetime(
+        tests.parity.harness.parse_nonempty_string(
+            payload["generated_at_utc"],
+            label="qualification bundle.generated_at_utc",
+        ),
+        label="qualification bundle.generated_at_utc",
+    )
+    run_started_at = tests.parity.harness.parse_utc_datetime(
+        expected_run_started_at_utc,
+        label="expected run start",
+    )
+    if generated_at < run_started_at:
+        raise AssertionError("Qualification bundle predates the expected scheduler run")
+    if generated_at > datetime.datetime.now(datetime.UTC) + tests.parity.harness.QUALIFICATION_CLOCK_SKEW:
+        raise AssertionError("Qualification bundle timestamp is implausibly in the future")
+    workflow_values = tests.parity.harness.parse_list(
+        payload["workflows"],
+        label="qualification bundle.workflows",
+    )
+    observed_identifiers: set[str] = set()
+    for workflow_value in workflow_values:
+        workflow_payload = tests.parity.harness.parse_mapping(
+            workflow_value,
+            label="qualification bundle.workflow",
+        )
+        tests.parity.harness.require_mapping_fields(
+            workflow_payload,
+            label="qualification bundle.workflow",
+            expected_fields={
+                "identifier",
+                "regenie_version",
+                "reference_output_sha256",
+                "reference_log_sha256",
+                "input_sha256",
+                "prediction_file_sha256",
+                "qualification_report_relative_path",
+                "qualification_report_sha256",
+                "observed_output_sha256",
+                "qualification",
+            },
+        )
+        workflow_identifier = tests.parity.harness.parse_nonempty_string(
+            workflow_payload["identifier"],
+            label="qualification bundle.workflow.identifier",
+        )
+        if workflow_identifier in observed_identifiers:
+            raise AssertionError(f"Qualification bundle duplicates workflow {workflow_identifier}")
+        observed_identifiers.add(workflow_identifier)
+        workflow = PARITY_METADATA.workflow_by_identifier(workflow_identifier)
+        if workflow_payload["regenie_version"] != workflow.regenie_version:
+            raise AssertionError(f"Qualification bundle REGENIE version mismatch for {workflow_identifier}")
+        if workflow_payload["reference_output_sha256"] != workflow.expected_output_sha256:
+            raise AssertionError(f"Qualification bundle reference output mismatch for {workflow_identifier}")
+        if workflow_payload["reference_log_sha256"] != workflow.expected_log_sha256:
+            raise AssertionError(f"Qualification bundle reference log mismatch for {workflow_identifier}")
+        if workflow_payload["input_sha256"] != workflow.input_sha256:
+            raise AssertionError(f"Qualification bundle input digests mismatch for {workflow_identifier}")
+        if workflow_payload["prediction_file_sha256"] != workflow.prediction_file_sha256:
+            raise AssertionError(f"Qualification bundle prediction digests mismatch for {workflow_identifier}")
+        evidence = tests.parity.harness.parse_qualification_evidence(workflow_payload["qualification"])
+        if evidence is None:
+            raise AssertionError(f"Qualification bundle lacks evidence for {workflow_identifier}")
+        tests.parity.harness.assert_workflow_qualification_is_current(
+            workflow,
+            evidence,
+            git_commit=expected_git_commit,
+            science_source_sha256=expected_science_source_sha256,
+        )
+        if (
+            evidence.qualification_node != "landau"
+            or evidence.slurm_job_id != expected_slurm_job_id
+            or evidence.slurm_step_id != expected_slurm_step_id
+            or evidence.run_nonce != expected_run_nonce
+            or evidence.run_started_at_utc != expected_run_started_at_utc
+            or evidence.bootstrap_relative_path != tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH
+            or evidence.bootstrap_sha256 != expected_bootstrap_sha256
+            or evidence.toolchain != expected_toolchain
+        ):
+            raise AssertionError(f"Qualification bundle has stale run evidence for {workflow_identifier}")
+        evidence_generated_at = tests.parity.harness.parse_utc_datetime(
+            evidence.qualification_generated_at_utc,
+            label=f"qualification bundle.workflow[{workflow_identifier}].qualification_generated_at_utc",
+        )
+        if evidence_generated_at > generated_at:
+            raise AssertionError(f"Qualification evidence postdates its bundle for {workflow_identifier}")
+        report_relative_path = Path(
+            tests.parity.harness.parse_nonempty_string(
+                workflow_payload["qualification_report_relative_path"],
+                label="qualification bundle.workflow.qualification_report_relative_path",
+            )
+        )
+        report_path = (report_directory / report_relative_path).resolve(strict=True)
+        try:
+            report_path.relative_to(report_directory)
+        except ValueError as error:
+            raise AssertionError(
+                f"Qualification report path escapes the report directory: {report_relative_path}"
+            ) from error
+        expected_report_sha256 = tests.parity.harness.parse_sha256(
+            workflow_payload["qualification_report_sha256"],
+            label="qualification bundle.workflow.qualification_report_sha256",
+        )
+        loaded_report = load_report_qualification_evidence(
+            WorkflowQualificationReport(
+                workflow_identifier=workflow_identifier,
+                report_path=report_path,
+            )
+        )
+        if loaded_report.report_sha256 != expected_report_sha256:
+            raise AssertionError(f"Qualification report digest mismatch for {workflow_identifier}")
+        if loaded_report.evidence != evidence:
+            raise AssertionError(f"Qualification report evidence mismatch for {workflow_identifier}")
+        expected_output_sha256 = tests.parity.harness.parse_sha256(
+            workflow_payload["observed_output_sha256"],
+            label="qualification bundle.workflow.observed_output_sha256",
+        )
+        if (
+            expected_output_sha256 != evidence.observed_output_sha256
+            or expected_output_sha256 != loaded_report.observed_output_sha256
+        ):
+            raise AssertionError(f"Qualification output digest mismatch for {workflow_identifier}")
+        snapshot_workflow_artifacts(workflow)
+    if observed_identifiers != tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS:
+        raise AssertionError(f"Qualification bundle workflow mismatch: observed={sorted(observed_identifiers)}")
+    source_state = tooling.science_gate.assert_clean_exact_source(
+        REPOSITORY_ROOT,
+        expected_git_commit,
+    )
+    if source_state.science_source_sha256 != expected_science_source_sha256:
+        raise AssertionError("Qualification bundle source fingerprint is stale")
 
 
 @pytest.fixture(scope="module")
@@ -1093,6 +2286,7 @@ def test_exact_head_qualification_bundle_covers_every_workflow(
     binary_approximate_firth_qualification_report: WorkflowQualificationReport,
 ) -> None:
     """Write the sanitized bundle consumed by the trusted status publisher."""
+    require_exact_bundle_mode()
     bundle_path = write_qualification_bundle(
         (
             quantitative_qualification_report,

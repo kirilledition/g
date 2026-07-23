@@ -14,5 +14,6 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add("__build_source_clean__", option_env!("GWAS_ENGINE_BUILD_SOURCE_CLEAN") == Some("1"))?;
     module.add("__build_profile__", if cfg!(debug_assertions) { "dev" } else { "release" })?;
+    module.add("__build_run_nonce__", option_env!("GWAS_ENGINE_BUILD_RUN_NONCE").unwrap_or("unavailable"))?;
     binding::register_module(module)
 }

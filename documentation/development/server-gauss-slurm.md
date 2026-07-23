@@ -15,14 +15,34 @@ This repository was originally developed inside the Nix flake on a personal mach
 
 Install or make available on `PATH`:
 
+- `bash`
 - `git`
-- `uv`
+- `scontrol`
 - `srun`
+- `uv`
 - `zstd`
 
 The repo-local dev-bootstrap installs `just`, Mold, `cargo`, `rustc`, `plink`,
 `plink2`, and `regenie` into `.tools/`. Python itself does not need to be
 preinstalled globally if `uv python install` works in your account.
+Exact-head qualification additionally requires trusted absolute paths for
+`uv`, `just`, `mold`, Python 3.14, and direct pinned `cargo` and `rustc`
+binaries, plus an absolute existing Rustup installation. It also requires an
+absolute scheduler-trusted Cargo-cache snapshot and, when needed, an explicit
+trusted CUDA library path. It fixes the C and C++ compilers to `/usr/bin/cc`
+and `/usr/bin/c++`, and fixes the native archive/assembly helpers to
+`/usr/bin/ar`, `/usr/bin/as`, and `/usr/bin/ranlib`; all five are serialized
+with the other fifteen primary tools. The bootstrap also resolves and records
+the exact GCC `cc1`, `cc1plus`, and `collect2` children from the sanitized
+system compiler, plus `env`, lock-installed Maturin, and the private-venv
+Python interpreter. It does not select these inputs from a mutable worktree's
+`PATH` or inherit loader/compiler overrides. An unselected `patchelf` on the
+fixed PATH is rejected before Maturin runs.
+`just doctor-server` probes the bootstrap's hardcoded login-host `/usr/bin`
+helpers, including `/usr/bin/srun`. Remaining unrecorded helpers remain part
+of the trusted host image; `/usr/bin/nvidia-smi` is allocation-local and is
+checked on `landau` by the qualification bootstrap
+rather than on the GPU-less login node.
 
 ## Bootstrap
 
@@ -83,17 +103,24 @@ just slurm-cpu-test
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
 just slurm-cpu-coverage
-G_REGENIE_PARITY_EXPECTED_GIT_COMMIT=<full scheduler-selected SHA> \
-  just slurm-gpu-test-parity-required
 ```
 
 `slurm-cpu-check` wraps `just check`. `slurm-cpu-test` runs the non-data Python
-suite with large-node pytest parallelism. External parity is deliberately a
-fresh GPU process: use the exact-head GPU recipe above when the required local
-fixtures are present. It builds and installs the stamped release extension
-before pytest inside the same allocation. Do not run full `just check`, full
+suite with large-node pytest parallelism. Do not run full `just check`, full
 `just test`, Rust dependency builds, or Rust test builds directly on the login
 node.
+
+External parity is deliberately a fresh GPU process. When the protected
+fixtures are present, use the
+[trusted scheduler launch](regenie-parity-suite.md#trusted-scheduler-launch).
+The scheduler selects a full commit, extracts and hashes that commit's
+`tooling/server/exact_parity_bootstrap.sh` with replacement-disabled system
+Git, and invokes the temporary executable on `landau` through
+`/usr/bin/bash --noprofile --norc` under a clean `env -i`. It supplies only the
+required home, Slurm, CUDA, data/report, bootstrap, and absolute trusted
+`uv`/`just`/Rust build-tool values. The mutable
+`just slurm-gpu-test-parity-required` recipe refuses qualification and evidence
+publication.
 
 `perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
 `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
@@ -178,9 +205,12 @@ Build-environment defaults:
 - SLURM jobs default to `target/slurm/<node>/` because `target-cpu=native`
   artifacts are not safe to reuse across heterogeneous nodes. Set
   `CARGO_TARGET_DIR` explicitly to override this location.
-- Exact-head REGENIE qualification uses the stricter
-  `target/qualification/<node>/` target and a node- and job-specific JAX cache
-  below `/tmp`; the recipe prints both locations before building.
+- Exact-head REGENIE qualification uses `mktemp` to create a mode-`0700`
+  `/tmp/g-parity-qualification-<uid>-<job>-<nonce>.<random>/` root. Its
+  detached non-local clone, copied Cargo cache, Rust target, private home,
+  uv/JAX caches, pytest base, and environment are private children. The
+  bootstrap prints the resolved locations before building and removes the
+  owned root after final independent bundle validation or failure.
 - Do not push every focused test through SLURM; local `check-local`,
   `test-local`, and targeted `uv run pytest ...` remain faster for small edits.
 - Cargo uses the repo-local `.cargo/config.toml` for Linux Rust builds:
@@ -230,6 +260,9 @@ just slurm-gpu-just matrix-chr22
 `gwas_engine_configure_rust_build_environment` before the requested command.
 That keeps GPU-side `maturin`, Cargo, clippy, or profiler-tool builds within the
 GPU allocation's CPU count instead of the repo's otherwise-default 30 jobs.
+These mutable worktree helpers are diagnostic and nonqualifying. Exact-head
+parity must use the extracted committed bootstrap described above; the
+worktree qualification wrappers exit without publishing evidence.
 
 Run standard performance harness entrypoints:
 

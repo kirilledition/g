@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import datetime
+import hashlib
 import json
+import os
 import subprocess
 import types
 import typing
@@ -56,6 +59,108 @@ def qualification_evidence(
 ) -> tests.parity.harness.QualificationEvidence:
     """Build complete synthetic evidence for focused metadata tests."""
     git_commit = "a" * 40
+    toolchain = tests.parity.harness.QualificationToolchainEvidence(
+        bash=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/bash",
+            sha256="2" * 64,
+            version="GNU bash 5",
+        ),
+        ar=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/ar",
+            sha256="0" * 64,
+            version="GNU ar 2",
+        ),
+        assembler=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/as",
+            sha256="1" * 64,
+            version="GNU assembler 2",
+        ),
+        cc=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/cc",
+            sha256="d" * 64,
+            version="cc 14",
+        ),
+        cc1=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/libexec/gcc/cc1",
+            sha256="a" * 64,
+            version="GNU C17 14",
+        ),
+        cc1plus=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/libexec/gcc/cc1plus",
+            sha256="b" * 64,
+            version="GNU C++17 14",
+        ),
+        cargo=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/cargo",
+            sha256="7" * 64,
+            version="cargo 1",
+        ),
+        collect2=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/libexec/gcc/collect2",
+            sha256="c" * 64,
+            version="collect2 14",
+        ),
+        cxx=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/c++",
+            sha256="f" * 64,
+            version="c++ 14",
+        ),
+        environment=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/env",
+            sha256="d" * 64,
+            version="env 9",
+        ),
+        git=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/git",
+            sha256="3" * 64,
+            version="git version 2",
+        ),
+        just=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/just",
+            sha256="4" * 64,
+            version="just 1",
+        ),
+        maturin=tests.parity.harness.QualificationToolEvidence(
+            path="/checkout/.venv/bin/maturin",
+            sha256="e" * 64,
+            version="maturin 1",
+        ),
+        mold=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/mold",
+            sha256="9" * 64,
+            version="mold 2",
+        ),
+        python=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/python3.14",
+            sha256="b" * 64,
+            version="Python 3.14",
+        ),
+        ranlib=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/ranlib",
+            sha256="c" * 64,
+            version="GNU ranlib 2",
+        ),
+        rustc=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/rustc",
+            sha256="8" * 64,
+            version="rustc 1",
+        ),
+        scontrol=tests.parity.harness.QualificationToolEvidence(
+            path="/usr/bin/scontrol",
+            sha256="5" * 64,
+            version="slurm-wlm 23",
+        ),
+        uv=tests.parity.harness.QualificationToolEvidence(
+            path="/opt/tools/uv",
+            sha256="6" * 64,
+            version="uv 0",
+        ),
+        venv_python=tests.parity.harness.QualificationToolEvidence(
+            path="/checkout/.venv/bin/python",
+            sha256="f" * 64,
+            version="Python 3.14",
+        ),
+    )
     return tests.parity.harness.QualificationEvidence(
         passed=True,
         qualified_git_commit=git_commit,
@@ -63,7 +168,24 @@ def qualification_evidence(
         working_tree_clean=True,
         qualification_generated_at_utc="2026-07-23T00:00:00+00:00",
         qualification_node="landau",
+        slurm_job_id="12345",
+        slurm_step_id="0",
+        run_nonce="1" * 32,
+        run_started_at_utc="2026-07-23T00:00:00+00:00",
+        bootstrap_relative_path=tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH,
+        bootstrap_sha256="9" * 64,
+        toolchain=toolchain,
         cargo_lock_sha256=tests.parity.harness.sha256_file(tests.parity.harness.REPOSITORY_ROOT / "Cargo.lock"),
+        cargo_configuration_sha256=tests.parity.harness.sha256_file(
+            tests.parity.harness.REPOSITORY_ROOT / ".cargo" / "config.toml"
+        ),
+        rust_toolchain_sha256=tests.parity.harness.sha256_file(
+            tests.parity.harness.REPOSITORY_ROOT / "rust-toolchain.toml"
+        ),
+        rustflags_environment="",
+        cargo_encoded_rustflags_environment="",
+        rustc_wrapper_environment="",
+        cargo_build_rustc_wrapper_environment="",
         uv_lock_sha256=tests.parity.harness.sha256_file(tests.parity.harness.REPOSITORY_ROOT / "uv.lock"),
         jax_version=tests.parity.harness.REQUIRED_JAX_VERSION,
         jaxlib_version=tests.parity.harness.REQUIRED_JAX_VERSION,
@@ -81,10 +203,12 @@ def qualification_evidence(
             science_source_sha256=science_source_sha256,
             source_clean=True,
             profile=tests.parity.harness.NativeBuildProfile.RELEASE,
+            run_nonce="1" * 32,
             library_sha256="b" * 64,
             library_size_bytes=1,
         ),
         observed_row_count=workflow.expected_row_count,
+        observed_output_sha256="e" * 64,
         output_fields=tests.parity.harness.PRODUCTION_OUTPUT_FIELDS,
         statistics=tuple(
             tests.parity.harness.QualificationStatisticEvidence(
@@ -201,6 +325,24 @@ def test_required_workflow_rejects_checked_in_or_stale_evidence() -> None:
         )
 
 
+def test_qualification_rejects_future_generated_timestamp() -> None:
+    workflow = tests.parity.harness.load_golden_metadata().workflow_by_identifier("binary_score_only")
+    science_source_sha256 = "c" * 64
+    evidence = qualification_evidence(workflow, science_source_sha256=science_source_sha256)
+    future_evidence = dataclasses.replace(
+        evidence,
+        qualification_generated_at_utc=(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)).isoformat(),
+    )
+
+    with pytest.raises(AssertionError, match="implausibly in the future"):
+        tests.parity.harness.assert_workflow_qualification_is_current(
+            workflow,
+            future_evidence,
+            git_commit=evidence.qualified_git_commit,
+            science_source_sha256=science_source_sha256,
+        )
+
+
 def test_qualification_rejects_wrong_host_or_non_cuda_device() -> None:
     workflow = tests.parity.harness.load_golden_metadata().workflow_by_identifier("binary_score_only")
     science_source_sha256 = "c" * 64
@@ -226,6 +368,15 @@ def test_qualification_rejects_wrong_host_or_non_cuda_device() -> None:
         tests.parity.harness.assert_workflow_qualification_is_current(
             workflow,
             cpu_evidence,
+            git_commit=evidence.qualified_git_commit,
+            science_source_sha256=science_source_sha256,
+        )
+
+    stale_run_evidence = dataclasses.replace(evidence, run_nonce="2" * 32)
+    with pytest.raises(AssertionError, match="run nonce differs"):
+        tests.parity.harness.assert_workflow_qualification_is_current(
+            workflow,
+            stale_run_evidence,
             git_commit=evidence.qualified_git_commit,
             science_source_sha256=science_source_sha256,
         )
@@ -300,6 +451,147 @@ def test_exact_source_rejects_wrong_commit_and_dirty_checkout(tmp_path: Path) ->
         tooling.science_gate.assert_clean_exact_source(repository_root, git_commit)
 
 
+@pytest.mark.parametrize("index_flag", ["--assume-unchanged", "--skip-worktree"])
+def test_exact_source_rejects_git_index_flags_hidden_from_status(
+    tmp_path: Path,
+    index_flag: str,
+) -> None:
+    repository_root = tmp_path / "repository"
+    git_commit = initialize_test_repository(repository_root)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "update-index", index_flag, "src/science.py"],
+        check=True,
+    )
+    (repository_root / "src" / "science.py").write_text("result = 2\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "-C", str(repository_root), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert status == b""
+
+    with pytest.raises(AssertionError, match="forbidden"):
+        tooling.science_gate.assert_clean_exact_source(repository_root, git_commit)
+
+
+def test_exact_source_byte_compares_head_index_and_disk_when_status_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    working_repository = tmp_path / "working"
+    working_commit = initialize_test_repository(working_repository)
+    (working_repository / "src" / "science.py").write_text("result = 2\n", encoding="utf-8")
+    monkeypatch.setattr(tooling.science_gate, "repository_working_tree_status", lambda _root: b"")
+    with pytest.raises(AssertionError, match="working-tree bytes differ"):
+        tooling.science_gate.assert_clean_exact_source(working_repository, working_commit)
+
+    index_repository = tmp_path / "index"
+    index_commit = initialize_test_repository(index_repository)
+    (index_repository / "src" / "science.py").write_text("result = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(index_repository), "add", "src/science.py"], check=True)
+    with pytest.raises(AssertionError, match="index differs from HEAD"):
+        tooling.science_gate.assert_clean_exact_source(index_repository, index_commit)
+
+
+def test_exact_source_rejects_hidden_imported_package_initializer(tmp_path: Path) -> None:
+    repository_root = tmp_path / "repository"
+    initialize_test_repository(repository_root)
+    initializer_path = repository_root / "tooling" / "__init__.py"
+    initializer_path.parent.mkdir()
+    initializer_path.write_text('"""Trusted package."""\n', encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository_root), "add", "tooling/__init__.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "commit", "--quiet", "-m", "add package initializer"],
+        check=True,
+    )
+    git_commit = tooling.science_gate.repository_git_commit(repository_root)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "update-index", "--skip-worktree", "tooling/__init__.py"],
+        check=True,
+    )
+    initializer_path.write_text("raise RuntimeError('untrusted')\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="forbidden"):
+        tooling.science_gate.assert_clean_exact_source(repository_root, git_commit)
+
+
+def test_exact_source_rejects_committed_science_symlink(tmp_path: Path) -> None:
+    repository_root = tmp_path / "repository"
+    initialize_test_repository(repository_root)
+    source_path = repository_root / "src" / "science.py"
+    source_path.unlink()
+    source_path.symlink_to("missing.py")
+    subprocess.run(["git", "-C", str(repository_root), "add", "src/science.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository_root), "commit", "--quiet", "-m", "replace source with symlink"],
+        check=True,
+    )
+    git_commit = tooling.science_gate.repository_git_commit(repository_root)
+
+    with pytest.raises(AssertionError, match="not a committed regular file"):
+        tooling.science_gate.assert_clean_exact_source(repository_root, git_commit)
+
+
+@pytest.mark.parametrize("forbidden_environment_name", ["BASH_ENV", "LD_PRELOAD"])
+def test_exact_bootstrap_rejects_pre_shell_injection_environment(
+    forbidden_environment_name: str,
+) -> None:
+    bootstrap_path = tests.parity.harness.REPOSITORY_ROOT / tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH
+    launch_environment = os.environ.copy()
+    launch_environment[forbidden_environment_name] = ""
+
+    completed_process = subprocess.run(
+        [
+            "/usr/bin/bash",
+            "--noprofile",
+            "--norc",
+            str(bootstrap_path),
+            str(tests.parity.harness.REPOSITORY_ROOT),
+            "a" * 40,
+        ],
+        env=launch_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed_process.returncode == 1
+    assert f"forbidden environment variable: {forbidden_environment_name}" in completed_process.stderr
+
+
+def test_exact_inner_maturin_never_selects_managed_base_interpreter() -> None:
+    justfile_text = (tests.parity.harness.REPOSITORY_ROOT / "Justfile").read_text(encoding="utf-8")
+    synchronization_offset = justfile_text.index('"${uv_project[@]}" sync')
+    virtual_environment_binding_offset = justfile_text.index(
+        'export VIRTUAL_ENV="${qualification_checkout}/.venv"',
+        synchronization_offset,
+    )
+    uv_python_binding_offset = justfile_text.index(
+        'export UV_PYTHON="${virtual_environment_python_path}"',
+        virtual_environment_binding_offset,
+    )
+    patchelf_rejection_offset = justfile_text.index(
+        "if command -v patchelf >/dev/null 2>&1",
+        uv_python_binding_offset,
+    )
+    maturin_offset = justfile_text.index(
+        '"${trusted_maturin_path}" develop --profile release --uv',
+        patchelf_rejection_offset,
+    )
+    build_environment_text = justfile_text[virtual_environment_binding_offset:maturin_offset]
+
+    assert (
+        synchronization_offset
+        < virtual_environment_binding_offset
+        < uv_python_binding_offset
+        < patchelf_rejection_offset
+        < maturin_offset
+    )
+    assert 'UV_PYTHON="${trusted_python_interpreter_path}"' not in build_environment_text
+    assert 'VIRTUAL_ENV}" != "${qualification_checkout}/.venv"' in build_environment_text
+    assert 'UV_PYTHON}" != "${virtual_environment_python_path}"' in build_environment_text
+
+
 def test_exact_qualification_rejects_stale_native_extension(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -320,12 +612,22 @@ def test_exact_qualification_rejects_stale_native_extension(
         __build_science_source_sha256__="c" * 64,
         __build_source_clean__=True,
         __build_profile__="release",
+        __build_run_nonce__="1" * 32,
     )
     monkeypatch.setenv(tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE, git_commit)
     monkeypatch.setenv(
         tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
         science_source_sha256,
     )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(native_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(native_library_path),
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, "1" * 32)
     monkeypatch.setattr(
         tooling.science_gate,
         "assert_clean_exact_source",
@@ -336,6 +638,102 @@ def test_exact_qualification_rejects_stale_native_extension(
         tests.test_regenie2_parity.assert_exact_qualification_source(
             typing.cast("tests.test_regenie2_parity.NativeCoreProtocol", native_core)
         )
+
+
+def test_exact_qualification_binds_loaded_native_path_and_run_nonce(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    loaded_library_path = tmp_path / "loaded_core.so"
+    expected_library_path = tmp_path / "expected_core.so"
+    loaded_library_path.write_bytes(b"native")
+    expected_library_path.write_bytes(b"native")
+    native_core = types.SimpleNamespace(
+        __file__=str(loaded_library_path),
+        __build_git_commit__=git_commit,
+        __build_science_source_sha256__=science_source_sha256,
+        __build_source_clean__=True,
+        __build_profile__="release",
+        __build_run_nonce__="1" * 32,
+    )
+    source_state = tooling.science_gate.ScienceSourceState(
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE, git_commit)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(expected_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(expected_library_path),
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, "1" * 32)
+    monkeypatch.setattr(
+        tooling.science_gate,
+        "assert_clean_exact_source",
+        lambda _repository_root, _expected_git_commit: source_state,
+    )
+
+    with pytest.raises(AssertionError, match="path differs"):
+        tests.test_regenie2_parity.assert_exact_qualification_source(
+            typing.cast("tests.test_regenie2_parity.NativeCoreProtocol", native_core)
+        )
+
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(loaded_library_path),
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, "2" * 32)
+    with pytest.raises(AssertionError, match="wrong qualification nonce"):
+        tests.test_regenie2_parity.assert_exact_qualification_source(
+            typing.cast("tests.test_regenie2_parity.NativeCoreProtocol", native_core)
+        )
+
+
+def test_required_native_import_rejects_wrong_spec_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    expected_library_path = tmp_path / "expected_core.so"
+    unexpected_library_path = tmp_path / "unexpected_core.so"
+    expected_library_path.write_bytes(b"expected")
+    unexpected_library_path.write_bytes(b"unexpected")
+    monkeypatch.setenv(tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE, "1")
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(expected_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(expected_library_path),
+    )
+    monkeypatch.setattr(
+        tests.test_regenie2_parity.importlib.util,
+        "find_spec",
+        lambda _module_name: types.SimpleNamespace(origin=str(unexpected_library_path)),
+    )
+    imported_modules: list[str] = []
+    monkeypatch.setattr(
+        tests.test_regenie2_parity.importlib,
+        "import_module",
+        lambda module_name: imported_modules.append(module_name),
+    )
+
+    with pytest.raises(AssertionError, match="import path differs"):
+        tests.test_regenie2_parity.load_native_core()
+    assert imported_modules == []
 
 
 def test_observed_qualification_device_requires_actual_jax_cuda(
@@ -395,22 +793,210 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
 ) -> None:
     import tests.test_regenie2_parity
 
+    def synthetic_input_paths(
+        workflow: tests.parity.harness.GoldenWorkflow,
+    ) -> dict[str, Path]:
+        return {
+            option_name: tmp_path / "protected" / workflow.identifier / "inputs" / option_name
+            for option_name in tests.parity.harness.REQUIRED_INPUT_OPTION_NAMES
+        }
+
+    def synthetic_prediction_paths(
+        workflow: tests.parity.harness.GoldenWorkflow,
+    ) -> dict[str, Path]:
+        return {
+            relative_path: tmp_path / "protected" / workflow.identifier / "predictions" / relative_path
+            for relative_path in workflow.prediction_file_sha256
+        }
+
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "workflow_input_paths",
+        synthetic_input_paths,
+    )
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "workflow_prediction_file_paths",
+        synthetic_prediction_paths,
+    )
     science_source_sha256 = "c" * 64
+    report_directory = tmp_path / "bundle"
+    report_directory.mkdir()
+    native_library_path = tmp_path / "protected" / "_core.so"
+    native_library_path.parent.mkdir()
+    native_library_path.write_bytes(b"x")
+    native_library_sha256 = tests.parity.harness.sha256_file(native_library_path)
     reports: list[tests.test_regenie2_parity.WorkflowQualificationReport] = []
     for workflow in tests.parity.harness.load_golden_metadata().workflows:
         evidence = qualification_evidence(
             workflow,
             science_source_sha256=science_source_sha256,
         )
-        report_path = tmp_path / f"{workflow.identifier}.json"
+        protected_directory = tmp_path / "protected" / workflow.identifier
+        output_root = protected_directory / "output"
+        output_dataset_directory = output_root / "run" / "parts"
+        output_dataset_directory.mkdir(parents=True)
+        parquet_path = output_dataset_directory / "part-0.parquet"
+        parquet_path.write_bytes(workflow.identifier.encode())
+        run_manifest_path = output_root / "run" / "run_manifest.json"
+        effective_config_path = output_root / "run" / "effective_config.toml"
+        run_manifest_path.write_text("{}\n", encoding="utf-8")
+        effective_config_path.write_text("[output]\n", encoding="utf-8")
+        configuration_path = protected_directory / "config.toml"
+        configuration_path.write_text("[parity]\n", encoding="utf-8")
+        observed_output_sha256 = tests.parity.harness.sha256_file_set(
+            (parquet_path,),
+            root=output_root,
+        )
+        evidence = dataclasses.replace(
+            evidence,
+            observed_output_sha256=observed_output_sha256,
+            native_build=dataclasses.replace(
+                evidence.native_build,
+                library_sha256=native_library_sha256,
+                library_size_bytes=native_library_path.stat().st_size,
+            ),
+        )
+        workflow_report_directory = report_directory / workflow.identifier
+        workflow_report_directory.mkdir()
+        report_path = workflow_report_directory / "report.json"
         report_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 2,
-                    "workflow": {"identifier": workflow.identifier},
+                    "schema_version": 3,
+                    "generated_at_utc": evidence.qualification_generated_at_utc,
+                    "run": {
+                        "qualification_node": evidence.qualification_node,
+                        "slurm_job_id": evidence.slurm_job_id,
+                        "slurm_step_id": evidence.slurm_step_id,
+                        "run_nonce": evidence.run_nonce,
+                        "run_started_at_utc": evidence.run_started_at_utc,
+                        "bootstrap_relative_path": evidence.bootstrap_relative_path,
+                        "bootstrap_sha256": evidence.bootstrap_sha256,
+                        "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(evidence.toolchain),
+                    },
+                    "workflow": {
+                        "identifier": workflow.identifier,
+                        "gate_status": workflow.gate_status.value,
+                        "regenie_version": workflow.regenie_version,
+                    },
                     "qualification": {"passed": True, "failure": None},
                     "qualification_evidence": tests.parity.harness.qualification_evidence_payload(evidence),
-                    "protected_path_that_must_not_propagate": str(tmp_path / "protected"),
+                    "source": {
+                        "git_commit": evidence.qualified_git_commit,
+                        "working_tree_dirty": False,
+                        "git_status_sha256": hashlib.sha256(b"").hexdigest(),
+                        "git_diff_sha256": hashlib.sha256(b"").hexdigest(),
+                        "science_source_sha256": evidence.science_source_sha256,
+                        "native_library_path": str(native_library_path),
+                        "native_library_sha256": evidence.native_build.library_sha256,
+                        "native_build_git_commit": evidence.native_build.git_commit,
+                        "native_build_science_source_sha256": evidence.native_build.science_source_sha256,
+                        "native_build_source_clean": evidence.native_build.source_clean,
+                        "native_build_profile": evidence.native_build.profile.value,
+                        "native_build_run_nonce": evidence.native_build.run_nonce,
+                        "cargo_lock_sha256": evidence.cargo_lock_sha256,
+                        "cargo_configuration_sha256": evidence.cargo_configuration_sha256,
+                        "rust_toolchain_sha256": evidence.rust_toolchain_sha256,
+                        "rustflags_environment": evidence.rustflags_environment,
+                        "cargo_encoded_rustflags_environment": evidence.cargo_encoded_rustflags_environment,
+                        "rustc_wrapper_environment": evidence.rustc_wrapper_environment,
+                        "cargo_build_rustc_wrapper_environment": (evidence.cargo_build_rustc_wrapper_environment),
+                        "uv_lock_sha256": evidence.uv_lock_sha256,
+                    },
+                    "runtime": {
+                        "jax_version": evidence.jax_version,
+                        "jaxlib_version": evidence.jaxlib_version,
+                        "configured_device": evidence.configured_device,
+                        "jax_platforms_environment": "cuda",
+                    },
+                    "configuration": {
+                        "metadata_options": workflow.g_cli_options,
+                        "toml_path": str(configuration_path),
+                        "toml_sha256": tests.parity.harness.sha256_file(configuration_path),
+                    },
+                    "inputs": {
+                        option_name: {
+                            "path": str(tests.test_regenie2_parity.workflow_input_paths(workflow)[option_name]),
+                            "sha256": workflow.input_sha256[option_name],
+                        }
+                        for option_name in tests.parity.harness.REQUIRED_INPUT_OPTION_NAMES
+                    },
+                    "prediction_files": {
+                        relative_path: {
+                            "path": str(
+                                tests.test_regenie2_parity.workflow_prediction_file_paths(workflow)[relative_path]
+                            ),
+                            "sha256": prediction_sha256,
+                        }
+                        for relative_path, prediction_sha256 in workflow.prediction_file_sha256.items()
+                    },
+                    "reference": {
+                        "output_path": str(
+                            tests.test_regenie2_parity.DATA_DIRECTORY / workflow.expected_output_relative_path
+                        ),
+                        "output_sha256": workflow.expected_output_sha256,
+                        "log_path": str(
+                            tests.test_regenie2_parity.DATA_DIRECTORY / workflow.expected_log_relative_path
+                        ),
+                        "log_sha256": workflow.expected_log_sha256,
+                        "corrections": tests.test_regenie2_parity.correction_summary_payload(
+                            None
+                            if workflow.expected_correction_count is None
+                            else tests.parity.harness.RegenieCorrectionSummary(
+                                correction_count=workflow.expected_correction_count,
+                                correction_failure_count=typing.cast(
+                                    "int",
+                                    workflow.expected_correction_failure_count,
+                                ),
+                            )
+                        ),
+                    },
+                    "output": {
+                        "root": str(output_root),
+                        "dataset_directory": str(output_dataset_directory),
+                        "completion_line": f"Parquet dataset saved to {output_dataset_directory}",
+                        "row_count": workflow.expected_row_count,
+                        "column_order": [field.name for field in evidence.output_fields],
+                        "schema": [
+                            {
+                                "name": field.name,
+                                "data_type": field.data_type.value,
+                                "nullable": field.nullable,
+                            }
+                            for field in evidence.output_fields
+                        ],
+                        "parquet_dataset_sha256": evidence.observed_output_sha256,
+                        "parquet_files": [
+                            {
+                                "relative_path": parquet_path.relative_to(output_root).as_posix(),
+                                "sha256": tests.parity.harness.sha256_file(parquet_path),
+                            }
+                        ],
+                        "run_metadata_files": [
+                            {
+                                "relative_path": metadata_path.relative_to(output_root).as_posix(),
+                                "sha256": tests.parity.harness.sha256_file(metadata_path),
+                            }
+                            for metadata_path in (effective_config_path, run_manifest_path)
+                        ],
+                        "corrections": tests.test_regenie2_parity.correction_summary_payload(
+                            tests.parity.harness.RegenieCorrectionSummary(
+                                correction_count=evidence.observed_correction_count,
+                                correction_failure_count=evidence.observed_correction_failure_count,
+                            )
+                        ),
+                    },
+                    "statistics": [
+                        {
+                            "observed_column": statistic.observed_column,
+                            "reference_column": statistic.baseline_column,
+                            "row_count": evidence.observed_row_count,
+                            "maximum_absolute_difference": statistic.maximum_absolute_difference,
+                            "absolute_tolerance": statistic.absolute_tolerance,
+                        }
+                        for statistic in evidence.statistics
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -423,7 +1009,12 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
         )
     monkeypatch.setenv(
         tests.test_regenie2_parity.REPORT_DIRECTORY_ENVIRONMENT_VARIABLE,
-        str(tmp_path / "bundle"),
+        str(report_directory),
+    )
+    expected_bundle_path = report_directory / (f"qualification_bundle_{'a' * 40}_{'12345'}_0_{'1' * 32}.json")
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_BUNDLE_PATH_ENVIRONMENT_VARIABLE,
+        str(expected_bundle_path),
     )
     monkeypatch.setattr(
         tooling.science_gate,
@@ -431,6 +1022,16 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
         lambda repository_root, expected_git_commit: tooling.science_gate.ScienceSourceState(
             git_commit=expected_git_commit,
             science_source_sha256=science_source_sha256,
+        ),
+    )
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "snapshot_workflow_artifacts",
+        lambda workflow: tests.test_regenie2_parity.WorkflowArtifactSnapshot(
+            input_sha256=workflow.input_sha256,
+            prediction_file_sha256=workflow.prediction_file_sha256,
+            reference_output_sha256=workflow.expected_output_sha256,
+            reference_log_sha256=workflow.expected_log_sha256,
         ),
     )
 
@@ -444,22 +1045,43 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
         workflow_payload["identifier"] for workflow_payload in json.loads(bundle_text)["workflows"]
     } == tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS
 
-    inconsistent_payload = typing.cast(
-        "dict[str, object]",
-        json.loads(reports[1].report_path.read_text(encoding="utf-8")),
-    )
-    inconsistent_evidence = typing.cast(
-        "dict[str, object]",
-        inconsistent_payload["qualification_evidence"],
-    )
-    inconsistent_native_build = typing.cast(
-        "dict[str, object]",
-        inconsistent_evidence["native_build"],
-    )
-    inconsistent_native_build["library_sha256"] = "d" * 64
-    reports[1].report_path.write_text(json.dumps(inconsistent_payload), encoding="utf-8")
-    with pytest.raises(AssertionError, match="one native/runtime build"):
+    with pytest.raises(FileExistsError):
         tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
+
+    original_bundle_text = bundle_path.read_text(encoding="utf-8")
+    future_bundle_payload = json.loads(original_bundle_text)
+    future_bundle_payload["generated_at_utc"] = (
+        datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)
+    ).isoformat()
+    bundle_path.write_text(json.dumps(future_bundle_payload), encoding="utf-8")
+    with pytest.raises(AssertionError, match="implausibly in the future"):
+        tests.test_regenie2_parity.validate_published_qualification_bundle(
+            bundle_path,
+            expected_git_commit="a" * 40,
+            expected_science_source_sha256=science_source_sha256,
+            expected_slurm_job_id="12345",
+            expected_slurm_step_id="0",
+            expected_run_nonce="1" * 32,
+            expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+            expected_bootstrap_sha256="9" * 64,
+        )
+    bundle_path.write_text(original_bundle_text, encoding="utf-8")
+
+    reports[1].report_path.write_text(
+        f"{reports[1].report_path.read_text(encoding='utf-8')}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(AssertionError, match="report digest mismatch"):
+        tests.test_regenie2_parity.validate_published_qualification_bundle(
+            bundle_path,
+            expected_git_commit="a" * 40,
+            expected_science_source_sha256=science_source_sha256,
+            expected_slurm_job_id="12345",
+            expected_slurm_step_id="0",
+            expected_run_nonce="1" * 32,
+            expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+            expected_bootstrap_sha256="9" * 64,
+        )
 
 
 def test_upstream_golden_workflows_record_commands_hashes_rows_and_tolerances() -> None:
@@ -555,6 +1177,86 @@ def test_validation_node_files_and_documentation_exist() -> None:
         "test_exact_head_qualification_bundle_covers_every_workflow",
     }
     assert required_marker_tests == expected_required_tests
+
+
+def test_completed_parquet_dataset_uses_exact_native_completion_path(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    selected_directory = output_root / "attempts" / "attempt-1" / "phenotype" / "parts"
+    selected_directory.mkdir(parents=True)
+    selected_part = selected_directory / "part-0000.parquet"
+    selected_part.touch()
+    decoy_directory = output_root / "decoy.run" / "parts"
+    decoy_directory.mkdir(parents=True)
+    (decoy_directory / "decoy.parquet").touch()
+    completion_line = f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{selected_directory}"
+
+    dataset = tests.parity.harness.completed_parquet_dataset(
+        output_root,
+        ("unrelated output\n", f"{completion_line}\n"),
+    )
+
+    assert dataset.directory == selected_directory
+    assert dataset.completion_line == completion_line
+    assert dataset.parquet_paths == (selected_part,)
+
+
+def test_completed_parquet_dataset_rejects_missing_duplicate_or_escaping_paths(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "output"
+    dataset_directory = output_root / "run" / "parts"
+    dataset_directory.mkdir(parents=True)
+    (dataset_directory / "part.parquet").touch()
+    completion_line = f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{dataset_directory}"
+    with pytest.raises(AssertionError, match="found 0"):
+        tests.parity.harness.completed_parquet_dataset(output_root, ("other output\n",))
+    with pytest.raises(AssertionError, match="found 2"):
+        tests.parity.harness.completed_parquet_dataset(
+            output_root,
+            (f"{completion_line}\n{completion_line}\n",),
+        )
+    with pytest.raises(AssertionError, match="must be absolute"):
+        tests.parity.harness.completed_parquet_dataset(
+            output_root,
+            (f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}relative/parts\n",),
+        )
+
+    outside_directory = tmp_path / "outside"
+    outside_directory.mkdir()
+    (outside_directory / "part.parquet").touch()
+    with pytest.raises(AssertionError, match="escapes"):
+        tests.parity.harness.completed_parquet_dataset(
+            output_root,
+            (f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{outside_directory}\n",),
+        )
+    escaping_link = output_root / "escaping-parts"
+    escaping_link.symlink_to(outside_directory, target_is_directory=True)
+    with pytest.raises(AssertionError, match="escapes"):
+        tests.parity.harness.completed_parquet_dataset(
+            output_root,
+            (f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{escaping_link}\n",),
+        )
+
+
+def test_output_artifact_snapshot_rejects_late_byte_or_file_set_changes(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    dataset_directory = output_root / "run" / "parts"
+    dataset_directory.mkdir(parents=True)
+    first_part = dataset_directory / "part-0000.parquet"
+    first_part.write_bytes(b"initial")
+    completion_line = f"{tests.parity.harness.PARQUET_DATASET_COMPLETION_PREFIX}{dataset_directory}"
+    dataset = tests.parity.harness.completed_parquet_dataset(output_root, (f"{completion_line}\n",))
+    snapshot = tests.test_regenie2_parity.snapshot_output_artifacts(dataset)
+
+    first_part.write_bytes(b"changed")
+    with pytest.raises(AssertionError, match="Production output changed"):
+        tests.test_regenie2_parity.assert_output_artifact_snapshot_unchanged(dataset, snapshot)
+
+    first_part.write_bytes(b"initial")
+    tests.test_regenie2_parity.assert_output_artifact_snapshot_unchanged(dataset, snapshot)
+    (dataset_directory / "part-0001.parquet").write_bytes(b"late")
+    with pytest.raises(AssertionError, match="Production output changed"):
+        tests.test_regenie2_parity.assert_output_artifact_snapshot_unchanged(dataset, snapshot)
 
 
 def test_approximate_firth_preserves_existing_full_upstream_golden() -> None:
@@ -737,6 +1439,62 @@ def test_prediction_list_members_cannot_escape_data_root(tmp_path: Path) -> None
         )
 
 
+def test_workflow_artifact_snapshot_rejects_mid_run_fixture_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    data_directory = tmp_path / "data"
+    data_directory.mkdir()
+    options = dict(
+        tests.parity.harness.load_golden_metadata()
+        .workflow_by_identifier("quantitative_single_bgen_loco")
+        .g_cli_options
+    )
+    relative_input_paths = {
+        "bgen": Path("input.bgen"),
+        "sample": Path("input.sample"),
+        "phenotype_file": Path("phenotype.txt"),
+        "covariate_file": Path("covariate.txt"),
+        "prediction_list": Path("prediction.list"),
+    }
+    for option_name, relative_path in relative_input_paths.items():
+        options[option_name] = relative_path.as_posix()
+        if option_name != "prediction_list":
+            (data_directory / relative_path).write_text(f"{option_name}\n", encoding="utf-8")
+    prediction_path = data_directory / "prediction.loco"
+    prediction_path.write_text("prediction\n", encoding="utf-8")
+    prediction_list_path = data_directory / relative_input_paths["prediction_list"]
+    prediction_list_path.write_text("phenotype prediction.loco\n", encoding="utf-8")
+    reference_output_path = data_directory / "reference.regenie"
+    reference_log_path = data_directory / "reference.log"
+    reference_output_path.write_text("reference\n", encoding="utf-8")
+    reference_log_path.write_text("log\n", encoding="utf-8")
+    workflow = dataclasses.replace(
+        tests.parity.harness.load_golden_metadata().workflow_by_identifier("quantitative_single_bgen_loco"),
+        g_cli_options=options,
+        expected_output_relative_path=Path("reference.regenie"),
+        expected_output_sha256=tests.parity.harness.sha256_file(reference_output_path),
+        expected_log_relative_path=Path("reference.log"),
+        expected_log_sha256=tests.parity.harness.sha256_file(reference_log_path),
+        input_sha256={
+            option_name: tests.parity.harness.sha256_file(data_directory / relative_path)
+            for option_name, relative_path in relative_input_paths.items()
+        },
+        prediction_file_sha256={
+            "prediction.loco": tests.parity.harness.sha256_file(prediction_path),
+        },
+    )
+    monkeypatch.setattr(tests.test_regenie2_parity, "DATA_DIRECTORY", data_directory)
+
+    snapshot = tests.test_regenie2_parity.snapshot_workflow_artifacts(workflow)
+    prediction_path.write_text("mutated\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="changed during qualification"):
+        tests.test_regenie2_parity.assert_workflow_artifact_snapshot_unchanged(workflow, snapshot)
+
+
 def test_missing_prediction_member_skips_optional_run_and_fails_required_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -768,6 +1526,39 @@ def test_missing_prediction_member_skips_optional_run_and_fails_required_run(
     monkeypatch.setenv(tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE, "1")
     with pytest.raises(pytest.fail.Exception, match="Missing prediction file"):
         tests.test_regenie2_parity.require_or_skip_workflow_data(workflow)
+
+
+def test_data_present_optional_mode_skips_exact_bundle_without_source_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    workflow = tests.parity.harness.load_golden_metadata().workflow_by_identifier("quantitative_single_bgen_loco")
+    fixture_path = tmp_path / "fixture"
+    fixture_path.write_bytes(b"present")
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "required_workflow_paths",
+        lambda _workflow: (fixture_path,),
+    )
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "workflow_prediction_file_paths",
+        lambda _workflow: {"prediction.loco": fixture_path},
+    )
+    for variable_name in (
+        tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE,
+        tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE,
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+    ):
+        monkeypatch.delenv(variable_name, raising=False)
+
+    tests.test_regenie2_parity.require_or_skip_workflow_data(workflow)
+    with pytest.raises(pytest.skip.Exception, match="required parity recipe"):
+        tests.test_regenie2_parity.require_exact_bundle_mode()
 
 
 def test_failure_reporting_never_masks_original_contract_error(
@@ -802,9 +1593,23 @@ def test_failure_reporting_never_masks_original_contract_error(
         observed_results=observed_results,
         baseline_results=baseline_results,
         output_root=tmp_path / "output",
+        output_dataset=tests.parity.harness.CompletedParquetDataset(
+            output_root=tmp_path / "output",
+            directory=tmp_path / "output" / "run" / "parts",
+            completion_line=f"Parquet dataset saved to {tmp_path / 'output' / 'run' / 'parts'}",
+            parquet_paths=(),
+        ),
         config_path=tmp_path / "config.toml",
-        observed_input_sha256={},
-        observed_prediction_file_sha256={},
+        artifact_snapshot=tests.test_regenie2_parity.WorkflowArtifactSnapshot(
+            input_sha256={},
+            prediction_file_sha256={},
+            reference_output_sha256="a" * 64,
+            reference_log_sha256="b" * 64,
+        ),
+        output_artifact_snapshot=tests.test_regenie2_parity.OutputArtifactSnapshot(
+            parquet_file_sha256={},
+            parquet_dataset_sha256="c" * 64,
+        ),
         reference_correction_summary=None,
         exact_qualification_source=None,
     )
@@ -813,6 +1618,16 @@ def test_failure_reporting_never_masks_original_contract_error(
         raise RuntimeError("report writer failed")
 
     monkeypatch.setattr(tests.test_regenie2_parity, "write_qualification_report", fail_report)
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "assert_workflow_artifact_snapshot_unchanged",
+        lambda *_arguments: None,
+    )
+    monkeypatch.setattr(
+        tests.test_regenie2_parity,
+        "assert_output_artifact_snapshot_unchanged",
+        lambda *_arguments: None,
+    )
     with pytest.raises(AssertionError, match="g result schema mismatch"):
         tests.test_regenie2_parity.assert_and_record_workflow_qualification(workflow, parity_results)
 

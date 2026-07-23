@@ -78,15 +78,27 @@ just slurm-cpu-check
 just slurm-cpu-test
 just slurm-cpu-rust-build
 just slurm-cpu-rust-test
-G_REGENIE_PARITY_EXPECTED_GIT_COMMIT=<full scheduler-selected SHA> \
-  just slurm-gpu-test-parity-required
 ```
 
 CPU and GPU correctness run in separate processes. The CPU recipe excludes
-data-dependent parity. The GPU recipe uses one allocation to sync GPU
-dependencies, build/install a clean exact-source release extension, run every
-required upstream-REGENIE workflow, and emit a sanitized ignored qualification
-bundle. Missing required local fixtures fail.
+data-dependent parity.
+
+Exact-head REGENIE evidence is the deliberate exception to the mutable
+Justfile entrypoint model. Use the
+[trusted scheduler launch](regenie-parity-suite.md#trusted-scheduler-launch):
+the scheduler selects a full commit, extracts and hashes that commit's
+qualification bootstrap with replacement-disabled `/usr/bin/git`, and invokes
+the temporary executable on `landau` under a clean environment. The bootstrap
+validates the live job and step, creates an isolated detached non-local clone,
+builds a nonce-stamped exact-source release extension, runs exactly every
+required upstream-REGENIE workflow plus the bundle node, and independently
+validates the unique immutable sanitized bundle. Missing required local
+fixtures fail.
+
+`just test-parity-required`, `just test-parity-required-exact`, and
+`just slurm-gpu-test-parity-required` intentionally refuse to run or publish
+qualification evidence from a mutable worktree. Other Justfile parity and
+SLURM recipes remain diagnostic and nonqualifying.
 
 ## Data
 

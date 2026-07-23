@@ -204,10 +204,28 @@ doctor-server:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
-    required_commands=(git just uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt cc mold ld.mold plink plink2 regenie)
+    required_commands=(bash git just scontrol uv srun zstd cargo cargo-clippy cargo-fmt rustc rustfmt ar as ranlib cc c++ mold ld.mold plink plink2 regenie)
     for command_name in "${required_commands[@]}"; do
       if ! command -v "${command_name}" >/dev/null 2>&1; then
         echo "Missing required server command: ${command_name}" >&2
+        exit 1
+      fi
+    done
+    required_qualification_executables=(/usr/bin/ar /usr/bin/as /usr/bin/bash /usr/bin/c++ /usr/bin/cc /usr/bin/chmod /usr/bin/cp /usr/bin/cut /usr/bin/date /usr/bin/dirname /usr/bin/env /usr/bin/git /usr/bin/git-upload-pack /usr/bin/head /usr/bin/hostname /usr/bin/id /usr/bin/ln /usr/bin/mkdir /usr/bin/mktemp /usr/bin/python3 /usr/bin/ranlib /usr/bin/realpath /usr/bin/rm /usr/bin/scontrol /usr/bin/sha256sum /usr/bin/srun /usr/bin/stat /usr/bin/tar)
+    for executable_path in "${required_qualification_executables[@]}"; do
+      if [[ ! -x "${executable_path}" ]]; then
+        echo "Missing exact-parity host executable: ${executable_path}" >&2
+        exit 1
+      fi
+    done
+    compiler_helper_paths=(
+      "$(/usr/bin/cc -print-prog-name=cc1)"
+      "$(/usr/bin/c++ -print-prog-name=cc1plus)"
+      "$(/usr/bin/cc -print-prog-name=collect2)"
+    )
+    for compiler_helper_path in "${compiler_helper_paths[@]}"; do
+      if [[ "${compiler_helper_path}" != /* || ! -x "${compiler_helper_path}" ]]; then
+        echo "Missing exact-parity compiler helper: ${compiler_helper_path}" >&2
         exit 1
       fi
     done
@@ -218,7 +236,7 @@ doctor-server:
     echo "hostname=$(hostname)"
     echo "tools_dir={{ tools_dir }}"
     echo "uv_cache_dir=${UV_CACHE_DIR}"
-    echo "Server development toolchain looks usable on this host."
+    echo "Server login-host toolchain looks usable; allocation-local GPU helpers are checked by their launch recipes."
 
 # Check external baseline tools used by data prep and comparison benchmarks
 doctor-baselines:
@@ -805,56 +823,190 @@ test-full:
 test-parity:
     JAX_PLATFORMS=cuda uv run pytest --confcutdir=tests/parity tests/parity tests/test_regenie2_parity.py
 
-# Run required external parity with an already stamped release extension
+# Refuse required evidence publication from a mutable worktree recipe
 test-parity-required:
-    G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda uv run --no-sync pytest --confcutdir=tests/parity tests/test_regenie2_parity.py -m parity_required
+    @echo "Required evidence runs only through the scheduler-selected exact bootstrap; see documentation/development/regenie-parity-suite.md." >&2
+    @exit 2
 
-# Build and run exact-source required parity inside an existing GPU allocation
-test-parity-required-exact:
+# Run exact required nodes with the bootstrap-stamped release extension
+test-parity-required-inner:
     #!/usr/bin/env bash
     set -euo pipefail
-    . tooling/server/server_env.sh
-    qualification_node="${SLURMD_NODENAME:-$(hostname -s)}"
-    qualification_run_identifier="${SLURM_JOB_ID:-manual-${BASHPID}}"
-    export CARGO_TARGET_DIR="${PWD}/target/qualification/${qualification_node}"
-    export G_REGENIE_PARITY_JAX_CACHE_DIRECTORY="${TMPDIR:-/tmp}/g-parity-jax-cache/${USER:-unknown}/${qualification_node}/${qualification_run_identifier}"
-    echo "qualification_node=${qualification_node}"
-    echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
-    echo "G_REGENIE_PARITY_JAX_CACHE_DIRECTORY=${G_REGENIE_PARITY_JAX_CACHE_DIRECTORY}"
-    if [[ "${qualification_node}" != "landau" ]]; then
-      echo "Required parity qualification must run on landau, observed ${qualification_node}." >&2
+    qualification_python_path="${G_REGENIE_PARITY_VENV_PYTHON_PATH:-}"
+    pytest_basetemp="${G_REGENIE_PARITY_PYTEST_BASETEMP:-}"
+    if [[ "${qualification_python_path}" != "${PWD}/.venv/bin/python" || ! -x "${qualification_python_path}" || "${pytest_basetemp}" != /* ]]; then
+      echo "Exact parity tests require the bootstrap-selected virtual environment and private pytest root." >&2
       exit 1
     fi
-    just dev-install-gpu-dependencies
-    expected_git_commit="${G_REGENIE_PARITY_EXPECTED_GIT_COMMIT:-}"
-    if [[ -z "${expected_git_commit}" ]]; then
-      echo "Set G_REGENIE_PARITY_EXPECTED_GIT_COMMIT to the scheduler-selected full Git SHA." >&2
-      exit 1
-    fi
-    observed_git_commit="$(git rev-parse HEAD)"
-    if [[ "${observed_git_commit}" != "${expected_git_commit}" ]]; then
-      echo "Required parity checkout is at the wrong Git commit:" >&2
-      echo "expected ${expected_git_commit}, observed ${observed_git_commit}" >&2
-      exit 1
-    fi
-    working_tree_status="$(git status --porcelain=v1 --untracked-files=normal)"
-    if [[ -n "${working_tree_status}" ]]; then
-      echo "Required parity refuses a dirty qualification checkout:" >&2
-      echo "${working_tree_status}" >&2
-      exit 1
-    fi
-    science_source_sha256="$(PYTHONPATH=. uv run --no-sync python -m tooling.science_gate)"
-    GWAS_ENGINE_BUILD_GIT_COMMIT="${expected_git_commit}" \
-      GWAS_ENGINE_BUILD_SCIENCE_SOURCE_SHA256="${science_source_sha256}" \
-      GWAS_ENGINE_BUILD_SOURCE_CLEAN=1 \
-      just dev-install-release
-    G_REGENIE_PARITY_EXPECTED_GIT_COMMIT="${expected_git_commit}" \
-      G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256="${science_source_sha256}" \
-      just test-parity-required
+    PYTEST_ADDOPTS="" PYTEST_PLUGINS="" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONSAFEPATH=1 G_REGENIE_PARITY_REQUIRE_DATA=1 JAX_PLATFORMS=cuda "${qualification_python_path}" -I -c 'import pathlib, sys; import pytest; repository_root = pathlib.Path.cwd(); sys.path[0:0] = [str(repository_root / "src"), str(repository_root)]; raise SystemExit(pytest.main(sys.argv[1:]))' \
+      -c "${PWD}/pyproject.toml" \
+      --import-mode=importlib \
+      --confcutdir=tests/parity \
+      --basetemp="${pytest_basetemp}" \
+      -m parity_required \
+      tests/test_regenie2_parity.py::test_quantitative_full_chr22_matches_upstream_regenie \
+      tests/test_regenie2_parity.py::test_binary_score_only_full_chr22_matches_upstream_regenie \
+      tests/test_regenie2_parity.py::test_binary_approximate_firth_full_chr22_matches_upstream_regenie \
+      tests/test_regenie2_parity.py::test_exact_head_qualification_bundle_covers_every_workflow
 
-# Build and run required-fixture qualification in one configured GPU allocation
+# Refuse evidence publication from a mutable worktree recipe
+test-parity-required-exact:
+    @echo "Exact-source evidence requires the scheduler-selected bootstrap blob; see documentation/development/regenie-parity-suite.md." >&2
+    @exit 2
+
+# Build and validate required parity only after the exact bootstrap detached HEAD
+test-parity-required-exact-inner:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    qualification_checkout="${G_REGENIE_PARITY_QUALIFICATION_CHECKOUT:-}"
+    if [[ -z "${qualification_checkout}" || "$(pwd -P)" != "$(/usr/bin/realpath "${qualification_checkout}")" ]]; then
+      echo "Exact parity inner recipe must run from its bootstrap-created checkout." >&2
+      exit 1
+    fi
+    expected_git_commit="${G_REGENIE_PARITY_EXPECTED_GIT_COMMIT:-}"
+    bootstrap_relative_path="${G_REGENIE_PARITY_BOOTSTRAP_RELATIVE_PATH:-}"
+    bootstrap_sha256="${G_REGENIE_PARITY_BOOTSTRAP_SHA256:-}"
+    if [[ "${bootstrap_relative_path}" != "tooling/server/exact_parity_bootstrap.sh" || ! "${bootstrap_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Exact parity inner recipe is missing its trusted bootstrap identity." >&2
+      exit 1
+    fi
+    observed_bootstrap_sha256="$(/usr/bin/git --no-replace-objects cat-file blob "HEAD:${bootstrap_relative_path}" | /usr/bin/sha256sum | /usr/bin/cut -d ' ' -f 1)"
+    if [[ "${observed_bootstrap_sha256}" != "${bootstrap_sha256}" ]]; then
+      echo "Exact parity inner recipe has the wrong bootstrap blob." >&2
+      exit 1
+    fi
+    trusted_uv_path="${G_REGENIE_PARITY_TOOL_UV_PATH:-}"
+    trusted_just_path="${G_REGENIE_PARITY_TOOL_JUST_PATH:-}"
+    trusted_cargo_path="${G_REGENIE_PARITY_TOOL_CARGO_PATH:-}"
+    trusted_mold_path="${G_REGENIE_PARITY_TOOL_MOLD_PATH:-}"
+    trusted_python_interpreter_path="${G_REGENIE_PARITY_TOOL_PYTHON_PATH:-}"
+    trusted_rustc_path="${G_REGENIE_PARITY_TOOL_RUSTC_PATH:-}"
+    if [[ "${trusted_uv_path}" != /* || "${trusted_just_path}" != /* || "${trusted_cargo_path}" != /* || "${trusted_mold_path}" != /* || "${trusted_python_interpreter_path}" != /* || "${trusted_rustc_path}" != /* ]]; then
+      echo "Exact parity inner recipe is missing trusted uv, just, cargo, mold, Python, or rustc paths." >&2
+      exit 1
+    fi
+    qualification_root="$(/usr/bin/dirname "${qualification_checkout}")"
+    expected_cargo_home="${qualification_root}/cargo-home"
+    expected_cargo_target_directory="${qualification_root}/target"
+    expected_trusted_path="${qualification_root}/trusted-bin:/usr/bin:/bin"
+    expected_uv_cache_directory="${qualification_root}/uv-cache"
+    expected_runtime_directory="${qualification_root}/runtime"
+    expected_temporary_directory="${qualification_root}/tmp"
+    expected_pytest_basetemp="${qualification_root}/pytest"
+    expected_home_directory="${qualification_root}/home"
+    if [[ "${UV_NO_CONFIG:-}" != "1" || "${UV_NO_MANAGED_PYTHON:-}" != "1" || "${UV_PYTHON_DOWNLOADS:-}" != "never" || "${UV_PYTHON:-}" != "${trusted_python_interpreter_path}" || "${UV_CACHE_DIR:-}" != "${expected_uv_cache_directory}" || "${AR:-}" != "/usr/bin/ar" || "${AS:-}" != "/usr/bin/as" || "${CC:-}" != "/usr/bin/cc" || "${CARGO:-}" != "${trusted_cargo_path}" || "${CARGO_HOME:-}" != "${expected_cargo_home}" || "${CARGO_TARGET_DIR:-}" != "${expected_cargo_target_directory}" || "${CXX:-}" != "/usr/bin/c++" || "${HOME:-}" != "${expected_home_directory}" || "${RANLIB:-}" != "/usr/bin/ranlib" || "${RUSTC:-}" != "${trusted_rustc_path}" || "${RUSTUP_HOME:-}" != /* || "${TMPDIR:-}" != "${expected_temporary_directory}" || "${XDG_RUNTIME_DIR:-}" != "${expected_runtime_directory}" || "${G_REGENIE_PARITY_PYTEST_BASETEMP:-}" != "${expected_pytest_basetemp}" || "${PATH}" != "${expected_trusted_path}" || -v PYTHONPATH || -v VIRTUAL_ENV ]]; then
+      echo "Exact parity inner recipe requires isolated uv/Cargo configuration and the selected Rust toolchain." >&2
+      exit 1
+    fi
+    if [[ ! "${CARGO_BUILD_JOBS:-}" =~ ^[1-9][0-9]*$ || "${CARGO_BUILD_JOBS}" != "${SLURM_CPUS_PER_TASK:-}" || "${GWAS_ENGINE_ALLOCATED_CPU_COUNT:-}" != "${SLURM_CPUS_PER_TASK:-}" ]]; then
+      echo "Exact parity inner recipe requires the scheduler CPU allocation for Cargo." >&2
+      exit 1
+    fi
+    trusted_bin_directory="${qualification_root}/trusted-bin"
+    for trusted_tool_name in ar as c++ cargo cc just mold python ranlib rustc uv; do
+      if [[ "$(command -v "${trusted_tool_name}")" != "${trusted_bin_directory}/${trusted_tool_name}" ]]; then
+        echo "Exact parity inner recipe resolved an untrusted ${trusted_tool_name} executable." >&2
+        exit 1
+      fi
+    done
+    if [[ "$(command -v ld.mold)" != "${trusted_bin_directory}/ld.mold" ]]; then
+      echo "Exact parity inner recipe resolved an untrusted ld.mold executable." >&2
+      exit 1
+    fi
+    if [[ "$(/usr/bin/realpath "${trusted_bin_directory}/cargo")" != "$(/usr/bin/realpath "${trusted_cargo_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/just")" != "$(/usr/bin/realpath "${trusted_just_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/mold")" != "$(/usr/bin/realpath "${trusted_mold_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/python")" != "$(/usr/bin/realpath "${trusted_python_interpreter_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/rustc")" != "$(/usr/bin/realpath "${trusted_rustc_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/uv")" != "$(/usr/bin/realpath "${trusted_uv_path}")" || "$(/usr/bin/realpath "${trusted_bin_directory}/ar")" != "$(/usr/bin/realpath /usr/bin/ar)" || "$(/usr/bin/realpath "${trusted_bin_directory}/as")" != "$(/usr/bin/realpath /usr/bin/as)" || "$(/usr/bin/realpath "${trusted_bin_directory}/cc")" != "$(/usr/bin/realpath /usr/bin/cc)" || "$(/usr/bin/realpath "${trusted_bin_directory}/c++")" != "$(/usr/bin/realpath /usr/bin/c++)" || "$(/usr/bin/realpath "${trusted_bin_directory}/ranlib")" != "$(/usr/bin/realpath /usr/bin/ranlib)" ]]; then
+      echo "Exact parity trusted-bin links do not resolve to the scheduler-selected tools." >&2
+      exit 1
+    fi
+    for trusted_tool_name in ar as bash cc cc1 cc1plus cargo collect2 cxx env git just mold python ranlib rustc scontrol uv; do
+      environment_tool_name="${trusted_tool_name^^}"
+      expected_tool_path_variable="G_REGENIE_PARITY_TOOL_${environment_tool_name}_PATH"
+      expected_tool_sha256_variable="G_REGENIE_PARITY_TOOL_${environment_tool_name}_SHA256"
+      expected_tool_path="${!expected_tool_path_variable:-}"
+      expected_tool_sha256="${!expected_tool_sha256_variable:-}"
+      if [[ "${expected_tool_path}" != /* || ! "${expected_tool_sha256}" =~ ^[0-9a-f]{64}$ || "$(/usr/bin/sha256sum "${expected_tool_path}" | /usr/bin/cut -d ' ' -f 1)" != "${expected_tool_sha256}" ]]; then
+        echo "Exact parity inner recipe observed a changed ${trusted_tool_name} executable." >&2
+        exit 1
+      fi
+    done
+    if [[ -v RUSTFLAGS || -v CARGO_ENCODED_RUSTFLAGS || -v RUSTC_WRAPPER || -v CARGO_BUILD_RUSTC_WRAPPER ]]; then
+      echo "Exact parity inner recipe rejects inherited Rust build flags and wrappers." >&2
+      exit 1
+    fi
+    pre_sync_science_source_sha256="$("${trusted_python_interpreter_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.science_gate as gate; state = gate.assert_clean_exact_source(repository_root, os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"]); print(state.science_source_sha256)')"
+    if [[ -e "${qualification_checkout}/.venv" ]]; then
+      echo "Exact parity checkout unexpectedly contains a preexisting Python environment." >&2
+      exit 1
+    fi
+    uv_project=("${trusted_uv_path}" --project "${PWD}" --no-config)
+    "${uv_project[@]}" sync --python "${trusted_python_interpreter_path}" --no-managed-python --no-python-downloads --no-cache --group dev --locked --no-install-project
+    virtual_environment_python_path="${qualification_checkout}/.venv/bin/python"
+    trusted_maturin_path="${qualification_checkout}/.venv/bin/maturin"
+    if [[ ! -x "${virtual_environment_python_path}" || ! -x "${trusted_maturin_path}" ]]; then
+      echo "Exact parity dependency synchronization did not create the pinned Python and Maturin executables." >&2
+      exit 1
+    fi
+    if [[ "$(/usr/bin/realpath "${virtual_environment_python_path}")" != "$(/usr/bin/realpath "${trusted_python_interpreter_path}")" ]]; then
+      echo "Exact parity virtual environment did not bind the scheduler-selected Python." >&2
+      exit 1
+    fi
+    export VIRTUAL_ENV="${qualification_checkout}/.venv"
+    export UV_PYTHON="${virtual_environment_python_path}"
+    export G_REGENIE_PARITY_TOOL_MATURIN_PATH="${trusted_maturin_path}"
+    export G_REGENIE_PARITY_TOOL_MATURIN_SHA256="$(
+      /usr/bin/sha256sum "${trusted_maturin_path}" | /usr/bin/cut -d ' ' -f 1
+    )"
+    export G_REGENIE_PARITY_TOOL_MATURIN_VERSION="$("${trusted_maturin_path}" --version)"
+    export G_REGENIE_PARITY_TOOL_VENV_PYTHON_PATH="${virtual_environment_python_path}"
+    export G_REGENIE_PARITY_TOOL_VENV_PYTHON_SHA256="$(
+      /usr/bin/sha256sum "${virtual_environment_python_path}" | /usr/bin/cut -d ' ' -f 1
+    )"
+    export G_REGENIE_PARITY_TOOL_VENV_PYTHON_VERSION="$("${virtual_environment_python_path}" -I --version)"
+    observed_python_version="$("${virtual_environment_python_path}" -I -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+    if [[ "${observed_python_version}" != "{{ python_version }}" ]]; then
+      echo "Exact parity Python version mismatch: ${observed_python_version}." >&2
+      exit 1
+    fi
+    export PYO3_PYTHON="${virtual_environment_python_path}"
+    python_library_directory="$("${virtual_environment_python_path}" -I -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')"
+    if [[ -n "${python_library_directory}" ]]; then
+      export LD_LIBRARY_PATH="${python_library_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+    fi
+    science_source_sha256="$("${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.science_gate as gate; state = gate.assert_clean_exact_source(repository_root, os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"]); print(state.science_source_sha256)')"
+    if [[ "${science_source_sha256}" != "${pre_sync_science_source_sha256}" ]]; then
+      echo "Dependency synchronization changed the exact science source." >&2
+      exit 1
+    fi
+    export G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256="${science_source_sha256}"
+    export GWAS_ENGINE_BUILD_GIT_COMMIT="${expected_git_commit}"
+    export GWAS_ENGINE_BUILD_SCIENCE_SOURCE_SHA256="${science_source_sha256}"
+    export GWAS_ENGINE_BUILD_SOURCE_CLEAN=1
+    export GWAS_ENGINE_BUILD_RUN_NONCE="${G_REGENIE_PARITY_RUN_NONCE}"
+    export G_REGENIE_PARITY_VENV_PYTHON_PATH="${virtual_environment_python_path}"
+    echo "GWAS_ENGINE_ALLOCATED_CPU_COUNT=${GWAS_ENGINE_ALLOCATED_CPU_COUNT}"
+    echo "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}"
+    echo "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}"
+    echo "RUSTC=${RUSTC}"
+    if [[ "${VIRTUAL_ENV}" != "${qualification_checkout}/.venv" || "${UV_PYTHON}" != "${virtual_environment_python_path}" ]]; then
+      echo "Exact parity Maturin build is not bound to the private virtual environment." >&2
+      exit 1
+    fi
+    if command -v patchelf >/dev/null 2>&1; then
+      echo "Exact parity build refuses an unselected patchelf executable on its fixed PATH." >&2
+      exit 1
+    fi
+    "${trusted_maturin_path}" develop --profile release --uv
+    native_library_path="$("${virtual_environment_python_path}" -I -c 'import pathlib; paths = list(pathlib.Path("src/g").glob("_core*.so")); assert len(paths) == 1, paths; print(paths[0].resolve(strict=True))')"
+    native_library_sha256="$(/usr/bin/sha256sum "${native_library_path}" | /usr/bin/cut -d ' ' -f 1)"
+    export G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_PATH="${native_library_path}"
+    export G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_SHA256="${native_library_sha256}"
+    "${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.science_gate as gate; gate.assert_clean_exact_source(repository_root, os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"])'
+    "${trusted_just_path}" test-parity-required-inner
+    "${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path[0:0] = [str(repository_root / "src"), str(repository_root)]; import tests.test_regenie2_parity as parity; parity.validate_published_qualification_bundle(pathlib.Path(os.environ["G_REGENIE_PARITY_EXPECTED_BUNDLE_PATH"]), expected_git_commit=os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"], expected_science_source_sha256=os.environ["G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256"], expected_slurm_job_id=os.environ["G_REGENIE_PARITY_SLURM_JOB_ID"], expected_slurm_step_id=os.environ["G_REGENIE_PARITY_SLURM_STEP_ID"], expected_run_nonce=os.environ["G_REGENIE_PARITY_RUN_NONCE"], expected_run_started_at_utc=os.environ["G_REGENIE_PARITY_RUN_STARTED_AT_UTC"], expected_bootstrap_sha256=os.environ["G_REGENIE_PARITY_BOOTSTRAP_SHA256"])'
+
+# Refuse qualification from the mutable convenience wrapper
 slurm-gpu-test-parity-required:
-    {{ server_env }} && just slurm-gpu-just test-parity-required-exact
+    @echo "This worktree recipe is non-qualifying. Launch the selected commit's exact_parity_bootstrap.sh through the trusted scheduler command documented in documentation/development/regenie-parity-suite.md." >&2
+    @exit 2
 
 # Generate a Python coverage report for the active non-data test surface
 coverage-python:

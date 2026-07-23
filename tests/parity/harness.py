@@ -32,9 +32,14 @@ REQUIRED_WORKFLOW_IDENTIFIERS = frozenset(
     }
 )
 REQUIRED_QUALIFICATION_HOSTS = ("landau",)
+QUALIFICATION_BOOTSTRAP_RELATIVE_PATH = "tooling/server/exact_parity_bootstrap.sh"
+QUALIFICATION_CLOCK_SKEW = datetime.timedelta(minutes=5)
+PARQUET_DATASET_COMPLETION_PREFIX = "Parquet dataset saved to "
 SIGNIFICANCE_P_VALUE_THRESHOLDS = (0.05, 5.0e-8)
 REQUIRED_JAX_VERSION = "0.11.0"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+RUN_NONCE_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+SLURM_JOB_ID_PATTERN = re.compile(r"^[0-9]+$")
 REGENIE_CORRECTION_COUNT_PATTERN = re.compile(
     r"^\s*Number of tests with Firth correction\s*:\s*(\d+)\s*$",
     flags=re.MULTILINE,
@@ -192,6 +197,16 @@ class StatisticComparison:
 
 
 @dataclass(frozen=True)
+class CompletedParquetDataset:
+    """One unambiguous production dataset selected from native CLI output."""
+
+    output_root: Path
+    directory: Path
+    completion_line: str
+    parquet_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class RegenieCorrectionSummary:
     """Aggregate approximate-Firth counts parsed from an upstream log."""
 
@@ -207,8 +222,44 @@ class QualificationNativeBuild:
     science_source_sha256: str
     source_clean: bool
     profile: NativeBuildProfile
+    run_nonce: str
     library_sha256: str
     library_size_bytes: int
+
+
+@dataclass(frozen=True)
+class QualificationToolEvidence:
+    """Absolute executable identity supplied by the trusted bootstrap."""
+
+    path: str
+    sha256: str
+    version: str
+
+
+@dataclass(frozen=True)
+class QualificationToolchainEvidence:
+    """Host tools trusted to create and execute the qualification checkout."""
+
+    bash: QualificationToolEvidence
+    ar: QualificationToolEvidence
+    assembler: QualificationToolEvidence
+    cc: QualificationToolEvidence
+    cc1: QualificationToolEvidence
+    cc1plus: QualificationToolEvidence
+    cargo: QualificationToolEvidence
+    collect2: QualificationToolEvidence
+    cxx: QualificationToolEvidence
+    environment: QualificationToolEvidence
+    git: QualificationToolEvidence
+    just: QualificationToolEvidence
+    maturin: QualificationToolEvidence
+    mold: QualificationToolEvidence
+    python: QualificationToolEvidence
+    ranlib: QualificationToolEvidence
+    rustc: QualificationToolEvidence
+    scontrol: QualificationToolEvidence
+    uv: QualificationToolEvidence
+    venv_python: QualificationToolEvidence
 
 
 @dataclass(frozen=True)
@@ -243,7 +294,20 @@ class QualificationEvidence:
     working_tree_clean: bool
     qualification_generated_at_utc: str
     qualification_node: str
+    slurm_job_id: str
+    slurm_step_id: str
+    run_nonce: str
+    run_started_at_utc: str
+    bootstrap_relative_path: str
+    bootstrap_sha256: str
+    toolchain: QualificationToolchainEvidence
     cargo_lock_sha256: str
+    cargo_configuration_sha256: str
+    rust_toolchain_sha256: str
+    rustflags_environment: str
+    cargo_encoded_rustflags_environment: str
+    rustc_wrapper_environment: str
+    cargo_build_rustc_wrapper_environment: str
     uv_lock_sha256: str
     jax_version: str
     jaxlib_version: str
@@ -251,6 +315,7 @@ class QualificationEvidence:
     actual_device: QualificationDeviceEvidence
     native_build: QualificationNativeBuild
     observed_row_count: int
+    observed_output_sha256: str
     output_fields: tuple[QualificationOutputField, ...]
     statistics: tuple[QualificationStatisticEvidence, ...]
     observed_correction_count: int
@@ -317,32 +382,67 @@ def read_regenie_table(table_path: Path) -> pl.DataFrame:
     return data_frame
 
 
-def read_direct_parquet_dataset(output_root: Path) -> pl.DataFrame:
+def read_direct_parquet_dataset(dataset: CompletedParquetDataset) -> pl.DataFrame:
     """Read the sole phenotype's production Parquet-parts dataset.
 
     Args:
-        output_root: Native CLI output root containing one phenotype run.
+        dataset: Dataset selected from the native CLI completion contract.
 
     Raises:
-        AssertionError: If the run or direct Parquet-parts contract is absent.
+        AssertionError: If the direct Parquet-parts contract is invalid.
     """
-    parquet_paths = direct_parquet_paths(output_root)
-    assert_direct_parquet_schema(parquet_paths)
-    data_frame = pl.concat((pl.read_parquet(path) for path in parquet_paths), how="vertical")
+    assert_direct_parquet_schema(dataset.parquet_paths)
+    data_frame = pl.concat((pl.read_parquet(path) for path in dataset.parquet_paths), how="vertical")
     expected_schema = tuple((field.name, field.data_type.value) for field in PRODUCTION_OUTPUT_FIELDS)
     assert_data_frame_schema(data_frame, expected_schema=expected_schema, label="g")
     return data_frame
 
 
-def direct_parquet_paths(output_root: Path) -> tuple[Path, ...]:
-    """Return the sole phenotype's ordered production Parquet parts."""
-    run_directories = sorted(path for path in output_root.rglob("*.run") if path.is_dir())
-    if len(run_directories) != 1:
-        raise AssertionError(f"Expected one phenotype run below {output_root}, found {len(run_directories)}")
-    parquet_paths = sorted((run_directories[0] / "parts").glob("*.parquet"))
+def completed_parquet_dataset(
+    output_root: Path,
+    stdout_chunks: tuple[str, ...],
+) -> CompletedParquetDataset:
+    """Select exactly one direct dataset path from native completion output."""
+    completion_lines = tuple(
+        line for line in "".join(stdout_chunks).splitlines() if line.startswith(PARQUET_DATASET_COMPLETION_PREFIX)
+    )
+    if len(completion_lines) != 1:
+        raise AssertionError(f"Expected one native Parquet completion line, found {len(completion_lines)}")
+    completion_line = completion_lines[0]
+    dataset_path_text = completion_line.removeprefix(PARQUET_DATASET_COMPLETION_PREFIX).strip()
+    dataset_path = Path(dataset_path_text)
+    if not dataset_path_text or not dataset_path.is_absolute():
+        raise AssertionError(f"Native Parquet completion path must be absolute: {completion_line}")
+    resolved_output_root = output_root.resolve(strict=True)
+    resolved_dataset_path = dataset_path.resolve(strict=True)
+    if not resolved_dataset_path.is_dir():
+        raise AssertionError(f"Native Parquet completion path is not a directory: {resolved_dataset_path}")
+    try:
+        dataset_relative_path = resolved_dataset_path.relative_to(resolved_output_root)
+    except ValueError as error:
+        raise AssertionError(
+            f"Native Parquet completion path escapes the requested output root: {resolved_dataset_path}"
+        ) from error
+    if dataset_relative_path == Path():
+        raise AssertionError("Native Parquet completion path must be below the requested output root")
+    parquet_paths = direct_parquet_paths(resolved_dataset_path)
+    return CompletedParquetDataset(
+        output_root=resolved_output_root,
+        directory=resolved_dataset_path,
+        completion_line=completion_line,
+        parquet_paths=parquet_paths,
+    )
+
+
+def direct_parquet_paths(dataset_directory: Path) -> tuple[Path, ...]:
+    """Return ordered parts directly below one selected production dataset."""
+    parquet_paths = tuple(sorted(dataset_directory.glob("*.parquet")))
     if not parquet_paths:
-        raise AssertionError(f"No direct Parquet parts found below {run_directories[0]}")
-    return tuple(parquet_paths)
+        raise AssertionError(f"No direct Parquet parts found below {dataset_directory}")
+    for parquet_path in parquet_paths:
+        if parquet_path.is_symlink() or not parquet_path.is_file():
+            raise AssertionError(f"Parquet part is not a direct regular file: {parquet_path}")
+    return parquet_paths
 
 
 def assert_data_frame_schema(
@@ -723,6 +823,51 @@ def assert_workflow_qualification_is_current(
             f"Qualification host is not allowed for {workflow.identifier}: "
             f"{qualification.qualification_node} not in {workflow.qualification_hosts}"
         )
+    if SLURM_JOB_ID_PATTERN.fullmatch(qualification.slurm_job_id) is None:
+        raise AssertionError(f"Qualification omitted a valid Slurm job ID for {workflow.identifier}")
+    if SLURM_JOB_ID_PATTERN.fullmatch(qualification.slurm_step_id) is None:
+        raise AssertionError(f"Qualification omitted a valid Slurm step ID for {workflow.identifier}")
+    if RUN_NONCE_PATTERN.fullmatch(qualification.run_nonce) is None:
+        raise AssertionError(f"Qualification omitted a valid run nonce for {workflow.identifier}")
+    if qualification.bootstrap_relative_path != QUALIFICATION_BOOTSTRAP_RELATIVE_PATH:
+        raise AssertionError(f"Qualification used an unknown bootstrap for {workflow.identifier}")
+    if SHA256_PATTERN.fullmatch(qualification.bootstrap_sha256) is None:
+        raise AssertionError(f"Qualification omitted a valid bootstrap digest for {workflow.identifier}")
+    for tool_name, tool_evidence in (
+        ("bash", qualification.toolchain.bash),
+        ("ar", qualification.toolchain.ar),
+        ("as", qualification.toolchain.assembler),
+        ("cc", qualification.toolchain.cc),
+        ("cargo", qualification.toolchain.cargo),
+        ("cxx", qualification.toolchain.cxx),
+        ("git", qualification.toolchain.git),
+        ("just", qualification.toolchain.just),
+        ("mold", qualification.toolchain.mold),
+        ("python", qualification.toolchain.python),
+        ("ranlib", qualification.toolchain.ranlib),
+        ("rustc", qualification.toolchain.rustc),
+        ("scontrol", qualification.toolchain.scontrol),
+        ("uv", qualification.toolchain.uv),
+    ):
+        if not Path(tool_evidence.path).is_absolute():
+            raise AssertionError(f"Qualification {tool_name} path is not absolute for {workflow.identifier}")
+        if SHA256_PATTERN.fullmatch(tool_evidence.sha256) is None or not tool_evidence.version:
+            raise AssertionError(f"Qualification omitted {tool_name} identity for {workflow.identifier}")
+    try:
+        run_started_at = parse_utc_datetime(
+            qualification.run_started_at_utc,
+            label="qualification.run_started_at_utc",
+        )
+        generated_at = parse_utc_datetime(
+            qualification.qualification_generated_at_utc,
+            label="qualification.qualification_generated_at_utc",
+        )
+    except ValueError as error:
+        raise AssertionError(f"Qualification has invalid run timestamps for {workflow.identifier}") from error
+    if generated_at < run_started_at:
+        raise AssertionError(f"Qualification predates its run for {workflow.identifier}")
+    if generated_at > datetime.datetime.now(datetime.UTC) + QUALIFICATION_CLOCK_SKEW:
+        raise AssertionError(f"Qualification timestamp is implausibly in the future for {workflow.identifier}")
     if qualification.science_source_sha256 != science_source_sha256:
         raise AssertionError(
             f"Stale science-source qualification for {workflow.identifier}: "
@@ -737,8 +882,22 @@ def assert_workflow_qualification_is_current(
         raise AssertionError(f"Native extension was built from dirty source for {workflow.identifier}")
     if native_build.profile != NativeBuildProfile.RELEASE:
         raise AssertionError(f"Native extension is not a release build for {workflow.identifier}")
+    if native_build.run_nonce != qualification.run_nonce:
+        raise AssertionError(f"Native extension run nonce differs for {workflow.identifier}")
     if qualification.cargo_lock_sha256 != sha256_file(REPOSITORY_ROOT / "Cargo.lock"):
         raise AssertionError(f"Cargo.lock changed since qualification for {workflow.identifier}")
+    if qualification.cargo_configuration_sha256 != sha256_file(REPOSITORY_ROOT / ".cargo" / "config.toml"):
+        raise AssertionError(f"Cargo configuration changed since qualification for {workflow.identifier}")
+    if qualification.rust_toolchain_sha256 != sha256_file(REPOSITORY_ROOT / "rust-toolchain.toml"):
+        raise AssertionError(f"Rust toolchain selection changed since qualification for {workflow.identifier}")
+    inherited_rust_overrides = (
+        qualification.rustflags_environment,
+        qualification.cargo_encoded_rustflags_environment,
+        qualification.rustc_wrapper_environment,
+        qualification.cargo_build_rustc_wrapper_environment,
+    )
+    if any(inherited_rust_overrides):
+        raise AssertionError(f"Qualification inherited Rust flags or wrappers for {workflow.identifier}")
     if qualification.uv_lock_sha256 != sha256_file(REPOSITORY_ROOT / "uv.lock"):
         raise AssertionError(f"uv.lock changed since qualification for {workflow.identifier}")
     if qualification.jax_version != REQUIRED_JAX_VERSION or qualification.jaxlib_version != REQUIRED_JAX_VERSION:
@@ -762,6 +921,8 @@ def assert_workflow_qualification_is_current(
         raise AssertionError(f"Qualification omitted CUDA device/runtime identity for {workflow.identifier}")
     if qualification.observed_row_count != workflow.expected_row_count:
         raise AssertionError(f"Qualified row count changed for {workflow.identifier}")
+    if SHA256_PATTERN.fullmatch(qualification.observed_output_sha256) is None:
+        raise AssertionError(f"Qualification omitted the output digest for {workflow.identifier}")
     if qualification.output_fields != PRODUCTION_OUTPUT_FIELDS:
         raise AssertionError(f"Qualified output schema/order/dtypes changed for {workflow.identifier}")
     expected_statistics = tuple(
@@ -880,7 +1041,20 @@ def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
             "working_tree_clean",
             "qualification_generated_at_utc",
             "qualification_node",
+            "slurm_job_id",
+            "slurm_step_id",
+            "run_nonce",
+            "run_started_at_utc",
+            "bootstrap_relative_path",
+            "bootstrap_sha256",
+            "toolchain",
             "cargo_lock_sha256",
+            "cargo_configuration_sha256",
+            "rust_toolchain_sha256",
+            "rustflags_environment",
+            "cargo_encoded_rustflags_environment",
+            "rustc_wrapper_environment",
+            "cargo_build_rustc_wrapper_environment",
             "uv_lock_sha256",
             "jax_version",
             "jaxlib_version",
@@ -888,6 +1062,7 @@ def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
             "actual_device",
             "native_build",
             "observed_row_count",
+            "observed_output_sha256",
             "output_fields",
             "statistics",
             "observed_correction_count",
@@ -902,9 +1077,20 @@ def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
         payload["qualification_generated_at_utc"],
         label="qualification.qualification_generated_at_utc",
     )
-    parsed_generated_at = datetime.datetime.fromisoformat(generated_at)
-    if parsed_generated_at.utcoffset() != datetime.timedelta(0):
-        raise ValueError("qualification.qualification_generated_at_utc must include UTC offset")
+    parsed_generated_at = parse_utc_datetime(
+        generated_at,
+        label="qualification.qualification_generated_at_utc",
+    )
+    run_started_at = parse_nonempty_string(
+        payload["run_started_at_utc"],
+        label="qualification.run_started_at_utc",
+    )
+    parsed_run_started_at = parse_utc_datetime(
+        run_started_at,
+        label="qualification.run_started_at_utc",
+    )
+    if parsed_generated_at < parsed_run_started_at:
+        raise ValueError("qualification.qualification_generated_at_utc predates the run start")
     return QualificationEvidence(
         passed=parse_boolean(payload["passed"], label="qualification.passed"),
         qualified_git_commit=parse_git_commit(
@@ -924,9 +1110,58 @@ def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
             payload["qualification_node"],
             label="qualification.qualification_node",
         ),
+        slurm_job_id=parse_pattern_string(
+            payload["slurm_job_id"],
+            pattern=SLURM_JOB_ID_PATTERN,
+            label="qualification.slurm_job_id",
+        ),
+        slurm_step_id=parse_pattern_string(
+            payload["slurm_step_id"],
+            pattern=SLURM_JOB_ID_PATTERN,
+            label="qualification.slurm_step_id",
+        ),
+        run_nonce=parse_pattern_string(
+            payload["run_nonce"],
+            pattern=RUN_NONCE_PATTERN,
+            label="qualification.run_nonce",
+        ),
+        run_started_at_utc=run_started_at,
+        bootstrap_relative_path=parse_nonempty_string(
+            payload["bootstrap_relative_path"],
+            label="qualification.bootstrap_relative_path",
+        ),
+        bootstrap_sha256=parse_sha256(
+            payload["bootstrap_sha256"],
+            label="qualification.bootstrap_sha256",
+        ),
+        toolchain=parse_qualification_toolchain_evidence(payload["toolchain"]),
         cargo_lock_sha256=parse_sha256(
             payload["cargo_lock_sha256"],
             label="qualification.cargo_lock_sha256",
+        ),
+        cargo_configuration_sha256=parse_sha256(
+            payload["cargo_configuration_sha256"],
+            label="qualification.cargo_configuration_sha256",
+        ),
+        rust_toolchain_sha256=parse_sha256(
+            payload["rust_toolchain_sha256"],
+            label="qualification.rust_toolchain_sha256",
+        ),
+        rustflags_environment=parse_string(
+            payload["rustflags_environment"],
+            label="qualification.rustflags_environment",
+        ),
+        cargo_encoded_rustflags_environment=parse_string(
+            payload["cargo_encoded_rustflags_environment"],
+            label="qualification.cargo_encoded_rustflags_environment",
+        ),
+        rustc_wrapper_environment=parse_string(
+            payload["rustc_wrapper_environment"],
+            label="qualification.rustc_wrapper_environment",
+        ),
+        cargo_build_rustc_wrapper_environment=parse_string(
+            payload["cargo_build_rustc_wrapper_environment"],
+            label="qualification.cargo_build_rustc_wrapper_environment",
         ),
         uv_lock_sha256=parse_sha256(
             payload["uv_lock_sha256"],
@@ -946,6 +1181,10 @@ def parse_qualification_evidence(value: object) -> QualificationEvidence | None:
         observed_row_count=parse_nonnegative_integer(
             payload["observed_row_count"],
             label="qualification.observed_row_count",
+        ),
+        observed_output_sha256=parse_sha256(
+            payload["observed_output_sha256"],
+            label="qualification.observed_output_sha256",
         ),
         output_fields=parse_qualification_output_fields(payload["output_fields"]),
         statistics=parse_qualification_statistics(payload["statistics"]),
@@ -985,7 +1224,20 @@ def qualification_evidence_payload(qualification: QualificationEvidence) -> dict
         "working_tree_clean": qualification.working_tree_clean,
         "qualification_generated_at_utc": qualification.qualification_generated_at_utc,
         "qualification_node": qualification.qualification_node,
+        "slurm_job_id": qualification.slurm_job_id,
+        "slurm_step_id": qualification.slurm_step_id,
+        "run_nonce": qualification.run_nonce,
+        "run_started_at_utc": qualification.run_started_at_utc,
+        "bootstrap_relative_path": qualification.bootstrap_relative_path,
+        "bootstrap_sha256": qualification.bootstrap_sha256,
+        "toolchain": qualification_toolchain_evidence_payload(qualification.toolchain),
         "cargo_lock_sha256": qualification.cargo_lock_sha256,
+        "cargo_configuration_sha256": qualification.cargo_configuration_sha256,
+        "rust_toolchain_sha256": qualification.rust_toolchain_sha256,
+        "rustflags_environment": qualification.rustflags_environment,
+        "cargo_encoded_rustflags_environment": qualification.cargo_encoded_rustflags_environment,
+        "rustc_wrapper_environment": qualification.rustc_wrapper_environment,
+        "cargo_build_rustc_wrapper_environment": qualification.cargo_build_rustc_wrapper_environment,
         "uv_lock_sha256": qualification.uv_lock_sha256,
         "jax_version": qualification.jax_version,
         "jaxlib_version": qualification.jaxlib_version,
@@ -1003,10 +1255,12 @@ def qualification_evidence_payload(qualification: QualificationEvidence) -> dict
             "science_source_sha256": qualification.native_build.science_source_sha256,
             "source_clean": qualification.native_build.source_clean,
             "profile": qualification.native_build.profile.value,
+            "run_nonce": qualification.native_build.run_nonce,
             "library_sha256": qualification.native_build.library_sha256,
             "library_size_bytes": qualification.native_build.library_size_bytes,
         },
         "observed_row_count": qualification.observed_row_count,
+        "observed_output_sha256": qualification.observed_output_sha256,
         "output_fields": [
             {
                 "name": field.name,
@@ -1031,6 +1285,174 @@ def qualification_evidence_payload(qualification: QualificationEvidence) -> dict
         "exact_nonfinite_classes": qualification.exact_nonfinite_classes,
         "exact_significance_classifications": qualification.exact_significance_classifications,
     }
+
+
+def qualification_tool_evidence_payload(tool: QualificationToolEvidence) -> dict[str, str]:
+    """Serialize one trusted host executable identity."""
+    return {
+        "path": tool.path,
+        "sha256": tool.sha256,
+        "version": tool.version,
+    }
+
+
+def qualification_toolchain_evidence_payload(
+    toolchain: QualificationToolchainEvidence,
+) -> dict[str, object]:
+    """Serialize the fixed qualification toolchain identity."""
+    return {
+        "bash": qualification_tool_evidence_payload(toolchain.bash),
+        "ar": qualification_tool_evidence_payload(toolchain.ar),
+        "as": qualification_tool_evidence_payload(toolchain.assembler),
+        "cc": qualification_tool_evidence_payload(toolchain.cc),
+        "cc1": qualification_tool_evidence_payload(toolchain.cc1),
+        "cc1plus": qualification_tool_evidence_payload(toolchain.cc1plus),
+        "cargo": qualification_tool_evidence_payload(toolchain.cargo),
+        "collect2": qualification_tool_evidence_payload(toolchain.collect2),
+        "cxx": qualification_tool_evidence_payload(toolchain.cxx),
+        "env": qualification_tool_evidence_payload(toolchain.environment),
+        "git": qualification_tool_evidence_payload(toolchain.git),
+        "just": qualification_tool_evidence_payload(toolchain.just),
+        "maturin": qualification_tool_evidence_payload(toolchain.maturin),
+        "mold": qualification_tool_evidence_payload(toolchain.mold),
+        "python": qualification_tool_evidence_payload(toolchain.python),
+        "ranlib": qualification_tool_evidence_payload(toolchain.ranlib),
+        "rustc": qualification_tool_evidence_payload(toolchain.rustc),
+        "scontrol": qualification_tool_evidence_payload(toolchain.scontrol),
+        "uv": qualification_tool_evidence_payload(toolchain.uv),
+        "venv_python": qualification_tool_evidence_payload(toolchain.venv_python),
+    }
+
+
+def parse_qualification_tool_evidence(value: object, *, label: str) -> QualificationToolEvidence:
+    """Parse one absolute executable identity."""
+    payload = parse_mapping(value, label=label)
+    require_mapping_fields(
+        payload,
+        label=label,
+        expected_fields={"path", "sha256", "version"},
+    )
+    path = parse_nonempty_string(payload["path"], label=f"{label}.path")
+    if not Path(path).is_absolute():
+        raise ValueError(f"{label}.path must be absolute")
+    return QualificationToolEvidence(
+        path=path,
+        sha256=parse_sha256(payload["sha256"], label=f"{label}.sha256"),
+        version=parse_nonempty_string(payload["version"], label=f"{label}.version"),
+    )
+
+
+def parse_qualification_toolchain_evidence(value: object) -> QualificationToolchainEvidence:
+    """Parse the fixed host toolchain trusted by qualification."""
+    payload = parse_mapping(value, label="qualification.toolchain")
+    require_mapping_fields(
+        payload,
+        label="qualification.toolchain",
+        expected_fields={
+            "bash",
+            "ar",
+            "as",
+            "cc",
+            "cc1",
+            "cc1plus",
+            "cargo",
+            "collect2",
+            "cxx",
+            "env",
+            "git",
+            "just",
+            "maturin",
+            "mold",
+            "python",
+            "ranlib",
+            "rustc",
+            "scontrol",
+            "uv",
+            "venv_python",
+        },
+    )
+    return QualificationToolchainEvidence(
+        bash=parse_qualification_tool_evidence(
+            payload["bash"],
+            label="qualification.toolchain.bash",
+        ),
+        ar=parse_qualification_tool_evidence(
+            payload["ar"],
+            label="qualification.toolchain.ar",
+        ),
+        assembler=parse_qualification_tool_evidence(
+            payload["as"],
+            label="qualification.toolchain.as",
+        ),
+        cc=parse_qualification_tool_evidence(
+            payload["cc"],
+            label="qualification.toolchain.cc",
+        ),
+        cc1=parse_qualification_tool_evidence(
+            payload["cc1"],
+            label="qualification.toolchain.cc1",
+        ),
+        cc1plus=parse_qualification_tool_evidence(
+            payload["cc1plus"],
+            label="qualification.toolchain.cc1plus",
+        ),
+        cargo=parse_qualification_tool_evidence(
+            payload["cargo"],
+            label="qualification.toolchain.cargo",
+        ),
+        collect2=parse_qualification_tool_evidence(
+            payload["collect2"],
+            label="qualification.toolchain.collect2",
+        ),
+        cxx=parse_qualification_tool_evidence(
+            payload["cxx"],
+            label="qualification.toolchain.cxx",
+        ),
+        environment=parse_qualification_tool_evidence(
+            payload["env"],
+            label="qualification.toolchain.env",
+        ),
+        git=parse_qualification_tool_evidence(
+            payload["git"],
+            label="qualification.toolchain.git",
+        ),
+        just=parse_qualification_tool_evidence(
+            payload["just"],
+            label="qualification.toolchain.just",
+        ),
+        maturin=parse_qualification_tool_evidence(
+            payload["maturin"],
+            label="qualification.toolchain.maturin",
+        ),
+        mold=parse_qualification_tool_evidence(
+            payload["mold"],
+            label="qualification.toolchain.mold",
+        ),
+        python=parse_qualification_tool_evidence(
+            payload["python"],
+            label="qualification.toolchain.python",
+        ),
+        ranlib=parse_qualification_tool_evidence(
+            payload["ranlib"],
+            label="qualification.toolchain.ranlib",
+        ),
+        rustc=parse_qualification_tool_evidence(
+            payload["rustc"],
+            label="qualification.toolchain.rustc",
+        ),
+        scontrol=parse_qualification_tool_evidence(
+            payload["scontrol"],
+            label="qualification.toolchain.scontrol",
+        ),
+        uv=parse_qualification_tool_evidence(
+            payload["uv"],
+            label="qualification.toolchain.uv",
+        ),
+        venv_python=parse_qualification_tool_evidence(
+            payload["venv_python"],
+            label="qualification.toolchain.venv_python",
+        ),
+    )
 
 
 def parse_qualification_device_evidence(value: object) -> QualificationDeviceEvidence:
@@ -1087,6 +1509,7 @@ def parse_qualification_native_build(value: object) -> QualificationNativeBuild:
             "science_source_sha256",
             "source_clean",
             "profile",
+            "run_nonce",
             "library_sha256",
             "library_size_bytes",
         },
@@ -1112,6 +1535,11 @@ def parse_qualification_native_build(value: object) -> QualificationNativeBuild:
         ),
         profile=NativeBuildProfile(
             parse_nonempty_string(payload["profile"], label="qualification.native_build.profile")
+        ),
+        run_nonce=parse_pattern_string(
+            payload["run_nonce"],
+            pattern=RUN_NONCE_PATTERN,
+            label="qualification.native_build.run_nonce",
         ),
         library_sha256=parse_sha256(
             payload["library_sha256"],
@@ -1249,11 +1677,38 @@ def parse_finite_float(value: object, *, label: str) -> float:
     return parsed_value
 
 
+def parse_string(value: object, *, label: str) -> str:
+    """Require one JSON string, including an explicitly empty value."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
 def parse_nonempty_string(value: object, *, label: str) -> str:
     """Require one nonempty JSON string."""
-    if not isinstance(value, str) or not value:
+    parsed_value = parse_string(value, label=label)
+    if not parsed_value:
         raise ValueError(f"{label} must be a nonempty string")
-    return value
+    return parsed_value
+
+
+def parse_pattern_string(value: object, *, pattern: re.Pattern[str], label: str) -> str:
+    """Require one nonempty string matching a closed lexical contract."""
+    parsed_value = parse_nonempty_string(value, label=label)
+    if pattern.fullmatch(parsed_value) is None:
+        raise ValueError(f"{label} has an invalid format")
+    return parsed_value
+
+
+def parse_utc_datetime(value: str, *, label: str) -> datetime.datetime:
+    """Parse an aware ISO-8601 timestamp whose offset is exactly UTC."""
+    try:
+        parsed_value = datetime.datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"{label} must be an ISO-8601 timestamp") from error
+    if parsed_value.utcoffset() != datetime.timedelta(0):
+        raise ValueError(f"{label} must include UTC offset")
+    return parsed_value
 
 
 def parse_sha256(value: object, *, label: str) -> str:

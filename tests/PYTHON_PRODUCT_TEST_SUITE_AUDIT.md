@@ -31,9 +31,28 @@ code. Product tests for deleted Python orchestration modules are not revived.
   package-install job remains the real installed-console-script smoke check.
 - Non-data CI still collects the active mathematical suite and the parity
   harness.
-- `just slurm-gpu-test-parity-required` builds the stamped release extension in
-  its allocation and turns absent protected fixtures into failures; ordinary
-  local parity runs may skip them.
+- Exact-head publication starts from a scheduler-selected full commit. The
+  trusted launcher extracts and hashes that commit's
+  `tooling/server/exact_parity_bootstrap.sh`, then invokes it on `landau`
+  through system Bash under `env -i`. The bootstrap validates the live Slurm
+  job/step/user/node/state, creates a unique detached non-local clone, invokes
+  exact required node IDs, and turns absent protected fixtures into failures.
+- Qualification evidence binds the job, step, nonce, bootstrap, and the
+  paths, versions, and SHA-256 digests of `bash`, `ar`, `as`, `cc`, GCC
+  `cc1`/`cc1plus`/`collect2`, `cargo`, `c++`, `env`, `git`, `just`, Maturin,
+  Mold, the selected and private-venv Python interpreters, `ranlib`, `rustc`,
+  `scontrol`, and `uv`, and records the four effective Rust
+  flag/wrapper overrides as empty strings. Its report layout is
+  `<base>/<job>/<step>/<nonce>/<workflow>/`; its bundle is named
+  `qualification_bundle_<Git SHA>_<job>_<step>_<nonce>.json`.
+- The scheduler-selected Cargo-cache snapshot, Rustup installation, and Python
+  installation are trusted inputs. Qualification copies Cargo cache content
+  into its private run root and uses a private uv environment with Python
+  downloads disabled.
+- Mutable Justfile parity recipes are diagnostic and nonqualifying.
+  `just test-parity-required`, `just test-parity-required-exact`, and
+  `just slurm-gpu-test-parity-required` deliberately refuse publication; ordinary
+  local parity may skip data and never emits an exact-source bundle.
 - Coverage recipes report the measured active surface without claiming an
   unsupported 90% product-coverage gate.
 

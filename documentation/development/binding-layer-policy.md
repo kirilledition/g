@@ -84,7 +84,8 @@ The complete production namespace is:
 
 ```text
 g._core           __build_git_commit__, __build_science_source_sha256__,
-                  __build_source_clean__, __build_profile__
+                  __build_source_clean__, __build_profile__,
+                  __build_run_nonce__
 g._core.cli       run, NativeCliRunResult
 ```
 
