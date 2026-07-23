@@ -439,7 +439,12 @@ mod tests {
     use super::finish_thread_count;
 
     fn output_plan(writer_thread_count: u32) -> g_plan::OutputPlan {
-        g_plan::OutputPlan { output_run_root: "unused".to_string(), resume: false, writer_thread_count }
+        g_plan::OutputPlan {
+            output_run_root: "unused".to_string(),
+            resume: false,
+            recover_attempt: None,
+            writer_thread_count,
+        }
     }
 
     #[test]

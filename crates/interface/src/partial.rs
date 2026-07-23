@@ -288,6 +288,7 @@ pub(crate) struct PartialOutputConfig {
     pub(crate) output_run_directory: Option<String>,
     pub(crate) writer_threads: Option<NonZeroU32>,
     pub(crate) resume: Option<bool>,
+    pub(crate) recover_attempt: Option<String>,
 }
 
 impl PartialOutputConfig {
@@ -297,6 +298,7 @@ impl PartialOutputConfig {
             output_run_directory: self.output_run_directory,
             writer_threads: required("writer_threads", self.writer_threads)?,
             resume: required("resume", self.resume)?,
+            recover_attempt: self.recover_attempt,
         })
     }
 }

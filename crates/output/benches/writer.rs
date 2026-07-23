@@ -111,6 +111,7 @@ fn benchmark_run_plan(
         output: g_plan::OutputPlan {
             output_run_root: output_root.display().to_string(),
             resume: false,
+            recover_attempt: None,
             writer_thread_count,
         },
         telemetry: g_plan::TelemetryMode::Off,

@@ -98,6 +98,7 @@ pub struct CorrectionPlan {
 pub struct OutputPlan {
     pub output_run_root: String,
     pub resume: bool,
+    pub recover_attempt: Option<String>,
     pub writer_thread_count: u32,
 }
 

@@ -14,6 +14,7 @@ pub(crate) fn validate_config(config: &RegenieConfigData) -> ConfigResult<()> {
     validate_required_input_config(config)?;
     validate_compute_config(config)?;
     validate_binary_config(config)?;
+    validate_output_config(config)?;
     Ok(())
 }
 
@@ -48,6 +49,24 @@ fn validate_compute_config(config: &RegenieConfigData) -> ConfigResult<()> {
 fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.binary.firth_se && config.binary.fallback_method != plan::BinaryFallbackMethod::FirthApproximate {
         return Err(ConfigError::new("--firth-se requires --binary-fallback=firth_approximate."));
+    }
+    Ok(())
+}
+
+fn validate_output_config(config: &RegenieConfigData) -> ConfigResult<()> {
+    let Some(attempt_identifier) = config.g_output.recover_attempt.as_deref() else {
+        return Ok(());
+    };
+    if !config.g_output.resume {
+        return Err(ConfigError::new("--recover-output-attempt requires [output].resume = true."));
+    }
+    if attempt_identifier.is_empty()
+        || attempt_identifier.len() > 128
+        || !attempt_identifier.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(ConfigError::new(
+            "--recover-output-attempt must be a non-empty path-safe identifier of at most 128 ASCII characters.",
+        ));
     }
     Ok(())
 }

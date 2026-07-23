@@ -204,6 +204,7 @@ not TOML aliases.
 | `--bt` | `[trait] bt = true` |
 | `--bsize N` | `[trait] bsize = N` |
 | `--out PATH` | `[output] out = "PATH"` |
+| `--recover-output-attempt ATTEMPT_ID` | `[output] recover_attempt = "ATTEMPT_ID"` |
 | `--binary-fallback METHOD` | `[binary] fallback_method = METHOD` |
 | `--pThresh VALUE` | `[binary] p_threshold = VALUE` |
 | `--firth-se` | `[binary] firth_se = true` |
@@ -218,7 +219,7 @@ Important keys include:
 | Binary compute | `[compute] firth_batch_size`, `firth_candidate_capacity`, and the documented null/Firth tolerances |
 | JAX cache | `[compute] jax_cache_dir` |
 | Output | `[output] output_run_directory`, `writer_threads` |
-| Resume | `[output] resume` |
+| Resume | `[output] resume`, `recover_attempt` |
 | Diagnostics | `[diagnostics] telemetry` (`off`, `progress`, or `profile`) |
 
 `[compute] firth_candidate_capacity` is the per-trait scaling value for an
@@ -232,6 +233,10 @@ Decode tiling, scheduler queue depths, Parquet grouping/compression, packed8
 BGEN compatibility validation, and packed8-versus-dosage delivery are internal
 implementation policies owned by the genotype, engine, and output crates. They
 are intentionally not accepted as configuration keys.
+
+`recover_attempt` is an emergency takeover control for a nonterminal output
+attempt. It requires `resume = true` and the exact path-safe attempt identifier.
+Normal resume after a durable interruption or failure terminal does not set it.
 
 ## Trait And Column Semantics
 

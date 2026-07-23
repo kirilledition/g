@@ -141,6 +141,7 @@ pub(crate) fn run_plan(root_path: &Path, association_mode: g_plan::AssociationMo
         output: OutputPlan {
             output_run_root: path_text(&root_path.join("output")),
             resume: false,
+            recover_attempt: None,
             writer_thread_count: 1,
         },
         telemetry: TelemetryMode::Off,

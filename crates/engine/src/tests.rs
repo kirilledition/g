@@ -844,7 +844,12 @@ fn valid_run_plan() -> g_plan::RunPlan {
             p_threshold: g_plan::Probability::try_from(0.05).expect("probability test value"),
             firth_se: false,
         },
-        output: g_plan::OutputPlan { output_run_root: "output".to_string(), resume: false, writer_thread_count: 8 },
+        output: g_plan::OutputPlan {
+            output_run_root: "output".to_string(),
+            resume: false,
+            recover_attempt: None,
+            writer_thread_count: 8,
+        },
         telemetry: g_plan::TelemetryMode::Off,
         phenotype_runs: vec![g_plan::PhenotypeRunPlan {
             phenotype_name: "trait".to_string(),

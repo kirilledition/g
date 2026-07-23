@@ -155,6 +155,7 @@ fn defaults_toml_and_cli_layers_follow_precedence() {
     assert_eq!(compiled_run.run_plan.compute.kernels.firth.candidate_capacity, 128);
     assert_eq!(compiled_run.run_plan.output.writer_thread_count, 8);
     assert!(compiled_run.run_plan.output.resume);
+    assert_eq!(compiled_run.run_plan.output.recover_attempt, None);
     assert_eq!(compiled_run.run_plan.output.output_run_root, toml_output_root.display().to_string());
     assert!(compiled_run.effective_config_toml.contains(path_text(&cli_output_prefix)));
     assert_eq!(
@@ -162,6 +163,43 @@ fn defaults_toml_and_cli_layers_follow_precedence() {
         ["cli-a", "cli-b"]
     );
     assert!(compiled_run.effective_config_toml.contains("option-schema-version = 0"));
+}
+
+#[test]
+fn exact_output_recovery_is_explicit_and_resume_gated() {
+    let fixture = CliFixture::new("recover-output-attempt");
+    let mut arguments = fixture.valid_cli_arguments(&["trait-a"], "recover-output");
+    arguments.extend(["--recover-output-attempt".to_string(), "attempt_0123".to_string()]);
+    let (_, _, without_resume_error) = match dispatch_cli(&arguments) {
+        CliDispatch::Exit { exit_code, stdout, stderr } => (exit_code, stdout, stderr),
+        dispatch @ CliDispatch::Runs(_) => panic!("expected resume-gating error, observed {dispatch:?}"),
+    };
+    assert!(without_resume_error.contains("requires [output].resume = true"));
+
+    let config_path = fixture.write_config(
+        "recover.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("recover-root"),
+        "resume = true\n",
+    );
+    let recovered = one_compiled_run(&[
+        "regenie".to_string(),
+        "--config".to_string(),
+        path_text(&config_path).to_string(),
+        "--recover-output-attempt".to_string(),
+        "attempt_0123".to_string(),
+    ]);
+    assert_eq!(recovered.run_plan.output.recover_attempt.as_deref(), Some("attempt_0123"));
+    assert!(recovered.effective_config_toml.contains("recover_attempt = \"attempt_0123\""));
+
+    let invalid_config_path = fixture.write_config(
+        "invalid-recover.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("invalid-recover-root"),
+        "resume = true\nrecover_attempt = \"../escape\"\n",
+    );
+    let (_, _, invalid_error) = exit_dispatch(&["regenie", "--config", path_text(&invalid_config_path)]);
+    assert!(invalid_error.contains("path-safe identifier"));
 }
 
 #[test]

@@ -140,6 +140,7 @@ fn run_plan(
         output: g_plan::OutputPlan {
             output_run_root: directory.path.join("results").display().to_string(),
             resume,
+            recover_attempt: None,
             writer_thread_count,
         },
         telemetry: g_plan::TelemetryMode::Off,

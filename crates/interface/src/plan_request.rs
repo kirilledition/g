@@ -120,6 +120,7 @@ fn build_output_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputPla
     Ok(plan::OutputPlan {
         output_run_root,
         resume: config.g_output.resume,
+        recover_attempt: config.g_output.recover_attempt.clone(),
         writer_thread_count: config.g_output.writer_threads.get(),
     })
 }

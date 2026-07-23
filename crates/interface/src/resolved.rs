@@ -113,6 +113,8 @@ pub(crate) struct GOutputConfigData {
     pub output_run_directory: Option<String>,
     pub writer_threads: NonZeroU32,
     pub resume: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recover_attempt: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

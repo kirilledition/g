@@ -39,6 +39,8 @@ pub(crate) struct RegenieCli {
     pub(crate) binary: BinaryCli,
     #[arg(long = "out", help_heading = "Output")]
     pub(crate) out: Option<String>,
+    #[arg(long = "recover-output-attempt", value_name = "ATTEMPT_ID", help_heading = "Output")]
+    pub(crate) recover_output_attempt: Option<String>,
 }
 
 #[derive(Parser)]

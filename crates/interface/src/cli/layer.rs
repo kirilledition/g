@@ -8,7 +8,7 @@ use super::parser::RegenieCli;
 
 impl RegenieCli {
     pub(crate) fn into_config_layer(self) -> ConfigResult<ConfigLayer> {
-        let RegenieCli { trait_options, input, binary, out, .. } = self;
+        let RegenieCli { trait_options, input, binary, out, recover_output_attempt, .. } = self;
         let partial_config = PartialConfig {
             input: PartialInputConfig {
                 bgen: input.bgen,
@@ -30,7 +30,11 @@ impl RegenieCli {
                 p_threshold: binary.p_threshold,
                 firth_se: binary.firth_se.then_some(true),
             },
-            output: PartialOutputConfig { out, ..PartialOutputConfig::default() },
+            output: PartialOutputConfig {
+                out,
+                recover_attempt: recover_output_attempt,
+                ..PartialOutputConfig::default()
+            },
             ..PartialConfig::default()
         };
         Ok(ConfigLayer::from_partial_config(partial_config))
