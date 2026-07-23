@@ -8,7 +8,7 @@ use std::sync::Arc;
 use g_genotype::Packed8Compatibility;
 use g_input::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest};
 use g_output::{CompletedOutputRun, ManifestFileFingerprintCache, OutputDeliveryState, OutputManager};
-use g_plan::{GpuGenotypeFormat, RunPlan};
+use g_plan::{APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS, GpuGenotypeFormat, RunPlan};
 
 use crate::backend::AssociationBackend;
 use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
@@ -46,9 +46,9 @@ pub(crate) enum RunPreparationError {
     #[error("{field_name} exceeds the JAX int32 domain.")]
     JaxIntegerOverflow { field_name: &'static str },
     #[error(
-        "Firth maximum iterations must be at least 4 when approximate Firth correction is active; observed {observed}."
+        "Firth maximum iterations must be at least {minimum} when approximate Firth correction is active; observed {observed}."
     )]
-    ApproximateFirthIterationBudgetTooSmall { observed: u32 },
+    ApproximateFirthIterationBudgetTooSmall { minimum: u32, observed: u32 },
     #[error("The resumed output requires packed8 delivery, but the current BGEN requires dosage delivery.")]
     ResumedPacked8Incompatible,
 }
@@ -282,9 +282,10 @@ pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunP
     let kernels = &run_plan.compute.kernels;
     if run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
         && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate
-        && kernels.firth.maximum_iterations < 4
+        && kernels.firth.maximum_iterations < APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS
     {
         return Err(RunPreparationError::ApproximateFirthIterationBudgetTooSmall {
+            minimum: APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS,
             observed: kernels.firth.maximum_iterations,
         });
     }

@@ -224,10 +224,12 @@ The determinant term is the Jeffreys-prior penalty used by Firth’s bias-reduct
 5. report the penalized likelihood-ratio statistic for successful corrected rows.
 
 The total `[compute].firth_maximum_iterations` budget is floor-divided between
-the scalar pseudo-Firth and Newton-Raphson phases. The pseudo-Firth phase is
-also capped by `[compute].firth_pseudo_maximum_iterations`. Active approximate
-Firth therefore requires a total budget of at least `4`, which leaves at least
-two iterations in each phase; an odd remainder is not redistributed.
+the scalar pseudo-Firth and Newton-Raphson phases. The uncapped half-budget must
+leave at least two iterations for each phase, so active approximate Firth
+requires a total budget of at least `4`; an odd remainder is not redistributed.
+The dense pseudo-Firth half is then capped by
+`[compute].firth_pseudo_maximum_iterations`, which may intentionally be `1` to
+move quickly to Newton-Raphson fallback.
 
 Newton line search accepts only a numerically valid proposal that lowers the
 penalized deviance. An invalid or non-improving proposal leaves the last trusted

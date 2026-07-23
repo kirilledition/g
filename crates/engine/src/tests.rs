@@ -861,7 +861,10 @@ fn run_plan_jax_integer_validation_accepts_production_values_and_rejects_boundar
     undersized_firth_plan.compute.kernels.firth.maximum_iterations = 3;
     assert!(matches!(
         validate_jax_integer_domain(&undersized_firth_plan),
-        Err(RunPreparationError::ApproximateFirthIterationBudgetTooSmall { observed: 3 })
+        Err(RunPreparationError::ApproximateFirthIterationBudgetTooSmall {
+            minimum: g_plan::APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS,
+            observed: 3,
+        })
     ));
 
     let mut score_only_plan = valid_run_plan();

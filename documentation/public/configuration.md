@@ -229,13 +229,15 @@ If a batch exceeds the aggregate capacity, the run fails after normal batch
 synchronization instead of truncating candidates; increase the value and rerun.
 
 When `[binary] fallback_method = "firth_approximate"` is active,
-`[compute] firth_maximum_iterations` must be at least `4`. The solver assigns
-`floor(firth_maximum_iterations / 2)` iterations to Newton-Raphson and at most
-that many to pseudo-Firth, subject to
-`[compute] firth_pseudo_maximum_iterations`; an odd remainder is not
-redistributed. The minimum is conditional on active approximate Firth, so a
-score-only binary run may retain a lower positive value without constructing
-the Firth solver.
+`[compute] firth_maximum_iterations` must be at least `4`, ensuring its
+floor-divided half-budget has at least two iterations before any per-phase cap.
+The solver assigns `floor(firth_maximum_iterations / 2)` iterations to
+Newton-Raphson and at most that many to dense pseudo-Firth, subject to
+`[compute] firth_pseudo_maximum_iterations`. The dense pseudo cap may
+intentionally be `1` to move quickly to Newton-Raphson fallback, and an odd
+remainder is not redistributed. The minimum is conditional on active
+approximate Firth, so a score-only binary run may retain a lower positive value
+without constructing the Firth solver.
 
 Decode tiling, scheduler queue depths, Parquet grouping/compression, packed8
 BGEN compatibility validation, and packed8-versus-dosage delivery are internal

@@ -36,6 +36,19 @@ class ScalarFirthComponentReference:
     score_adjustment: float
     penalized_deviance: float
     score: float
+    valid: bool
+
+
+@dataclass(frozen=True)
+class ScalarLineSearchReference:
+    """Independent upstream-style scalar step-halving result."""
+
+    beta: float
+    step_size: float
+    components: ScalarFirthComponentReference
+    attempt_count: int
+    accepted: bool
+    valid: bool
 
 
 def build_scalar_firth_fixture() -> ScalarFirthFixture:
@@ -93,45 +106,115 @@ def build_binary_kernel_config(
 
 def compute_scalar_firth_component_reference(
     fixture: ScalarFirthFixture,
+    *,
+    minimum_variance: float = 0.0,
 ) -> ScalarFirthComponentReference:
     """Evaluate the scalar penalized likelihood and adjusted score in NumPy."""
     linear_predictor = fixture.offset_vector + fixture.genotype_vector * fixture.beta
-    probability = np.reciprocal(1.0 + np.exp(-linear_predictor))
-    weight = probability * (1.0 - probability)
-    active_weight = np.where(fixture.active_sample_mask, weight, 0.0)
-    information_diagonal = fixture.genotype_vector**2 * active_weight
-    genotype_information = float(np.sum(information_diagonal))
-    negative_log_likelihood = -np.where(
-        fixture.phenotype_vector > 0.5,
-        np.log(probability),
-        np.log1p(-probability),
-    )
-    active_deviance = 2.0 * np.sum(np.where(fixture.active_sample_mask, negative_log_likelihood, 0.0))
-    score_adjustment = float(
-        np.sum(
+    epsilon = regenie2_binary_config.REGENIE_NUMERICAL_EPSILON_MULTIPLIER * np.finfo(np.float64).eps
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        ordinary_probability = np.reciprocal(1.0 + np.exp(-np.clip(linear_predictor, -30.0, 30.0)))
+        probability = np.where(
+            linear_predictor < regenie2_binary_config.REGENIE_LOGISTIC_MINIMUM_ETA,
+            epsilon / (1.0 + epsilon),
             np.where(
-                fixture.active_sample_mask,
-                fixture.genotype_vector * information_diagonal * (0.5 - probability),
-                0.0,
-            )
+                linear_predictor > regenie2_binary_config.REGENIE_LOGISTIC_MAXIMUM_ETA,
+                1.0 / (1.0 + epsilon),
+                ordinary_probability,
+            ),
         )
-        / genotype_information
-    )
-    score = float(
-        np.sum(
-            np.where(
-                fixture.active_sample_mask,
-                fixture.genotype_vector * (fixture.phenotype_vector - probability),
-                0.0,
-            )
+        weight = probability * (1.0 - probability)
+        active_weight = np.where(fixture.active_sample_mask, weight, 0.0)
+        information_diagonal = fixture.genotype_vector**2 * active_weight
+        genotype_information = float(np.sum(information_diagonal))
+        negative_log_likelihood = -np.where(
+            fixture.phenotype_vector > 0.5,
+            np.log(probability),
+            np.log1p(-probability),
         )
-        + score_adjustment
+        active_deviance = 2.0 * np.sum(np.where(fixture.active_sample_mask, negative_log_likelihood, 0.0))
+        score_adjustment = float(
+            np.sum(
+                np.where(
+                    fixture.active_sample_mask,
+                    fixture.genotype_vector * information_diagonal * (0.5 - probability),
+                    0.0,
+                )
+            )
+            / genotype_information
+        )
+        score = float(
+            np.sum(
+                np.where(
+                    fixture.active_sample_mask,
+                    fixture.genotype_vector * (fixture.phenotype_vector - probability),
+                    0.0,
+                )
+            )
+            + score_adjustment
+        )
+        penalized_deviance = float(fixture.non_active_deviance + active_deviance - np.log(genotype_information))
+    valid = (
+        np.isfinite(genotype_information)
+        and genotype_information > minimum_variance
+        and np.isfinite(penalized_deviance)
+        and np.isfinite(score)
     )
     return ScalarFirthComponentReference(
         genotype_information=genotype_information,
         score_adjustment=score_adjustment,
-        penalized_deviance=fixture.non_active_deviance + active_deviance - math.log(genotype_information),
+        penalized_deviance=penalized_deviance,
         score=score,
+        valid=bool(valid),
+    )
+
+
+def run_scalar_line_search_reference(
+    *,
+    fixture: ScalarFirthFixture,
+    initial_step_size: float,
+    maximum_attempts: int,
+    minimum_variance: float,
+) -> ScalarLineSearchReference:
+    """Apply REGENIE's scalar half-step recurrence to independent components."""
+    current_components = compute_scalar_firth_component_reference(
+        fixture,
+        minimum_variance=minimum_variance,
+    )
+    retained_beta = fixture.beta
+    retained_components = current_components
+    step_size = initial_step_size
+    accepted = False
+    attempt_count = 0
+    for attempt_count in range(1, maximum_attempts + 1):
+        if attempt_count > 1:
+            step_size /= 2.0
+        candidate_beta = fixture.beta + step_size
+        candidate_components = compute_scalar_firth_component_reference(
+            ScalarFirthFixture(
+                phenotype_vector=fixture.phenotype_vector,
+                genotype_vector=fixture.genotype_vector,
+                offset_vector=fixture.offset_vector,
+                active_sample_mask=fixture.active_sample_mask,
+                non_active_deviance=fixture.non_active_deviance,
+                beta=candidate_beta,
+            ),
+            minimum_variance=minimum_variance,
+        )
+        accepted = candidate_components.valid and (
+            candidate_components.penalized_deviance < current_components.penalized_deviance
+        )
+        if accepted:
+            retained_beta = candidate_beta
+            retained_components = candidate_components
+            break
+    return ScalarLineSearchReference(
+        beta=retained_beta,
+        step_size=step_size,
+        components=retained_components,
+        attempt_count=attempt_count,
+        accepted=accepted,
+        valid=current_components.valid,
     )
 
 
@@ -174,6 +257,7 @@ def test_scalar_firth_components_match_independent_numpy_formula() -> None:
         1.0e-12,
     )
     tests.numerical.assert_absolute_difference_less_than(observed.score, reference.score, 1.0e-12)
+    assert reference.valid
     assert bool(np.asarray(observed.valid))
 
 
@@ -265,148 +349,180 @@ def test_scalar_line_search_with_zero_attempts_retains_trusted_state() -> None:
 
 def test_scalar_line_search_accepts_valid_half_step_after_invalid_full_step() -> None:
     """Continue real step-halving after saturation invalidates the full proposal."""
-    phenotype_vector = jnp.ones((4,), dtype=jnp.float64)
-    genotype_vector = jnp.ones((4,), dtype=jnp.float64)
-    offset_vector = jnp.zeros((4,), dtype=jnp.float64)
-    active_sample_mask = jnp.ones((4,), dtype=jnp.bool_)
-    current_beta = jnp.asarray(-10.0, dtype=jnp.float64)
-    initial_step_size = jnp.asarray(60.0, dtype=jnp.float64)
-    minimum_variance = jnp.asarray(1.0e-10, dtype=jnp.float64)
-    current_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        beta=current_beta,
-        minimum_variance=minimum_variance,
-        use_cuda_components=False,
+    fixture = ScalarFirthFixture(
+        phenotype_vector=np.ones((4,), dtype=np.float64),
+        genotype_vector=np.ones((4,), dtype=np.float64),
+        offset_vector=np.zeros((4,), dtype=np.float64),
+        active_sample_mask=np.ones((4,), dtype=np.bool_),
+        non_active_deviance=0.0,
+        beta=-10.0,
     )
-    full_step_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        beta=current_beta + initial_step_size,
+    initial_step_size = 60.0
+    minimum_variance = 1.0e-10
+    current_reference = compute_scalar_firth_component_reference(
+        fixture,
         minimum_variance=minimum_variance,
-        use_cuda_components=False,
     )
-    half_step_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        beta=current_beta + initial_step_size / 2.0,
+    full_step_reference = compute_scalar_firth_component_reference(
+        ScalarFirthFixture(
+            phenotype_vector=fixture.phenotype_vector,
+            genotype_vector=fixture.genotype_vector,
+            offset_vector=fixture.offset_vector,
+            active_sample_mask=fixture.active_sample_mask,
+            non_active_deviance=fixture.non_active_deviance,
+            beta=fixture.beta + initial_step_size,
+        ),
         minimum_variance=minimum_variance,
-        use_cuda_components=False,
     )
-    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        current_beta=current_beta,
-        current_penalized_deviance=current_components.penalized_deviance,
-        current_genotype_information=current_components.genotype_information,
-        current_score=current_components.score,
-        current_valid=current_components.valid,
+    half_step_reference = compute_scalar_firth_component_reference(
+        ScalarFirthFixture(
+            phenotype_vector=fixture.phenotype_vector,
+            genotype_vector=fixture.genotype_vector,
+            offset_vector=fixture.offset_vector,
+            active_sample_mask=fixture.active_sample_mask,
+            non_active_deviance=fixture.non_active_deviance,
+            beta=fixture.beta + initial_step_size / 2.0,
+        ),
+        minimum_variance=minimum_variance,
+    )
+    line_search_reference = run_scalar_line_search_reference(
+        fixture=fixture,
         initial_step_size=initial_step_size,
         maximum_attempts=2,
         minimum_variance=minimum_variance,
+    )
+    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        genotype_vector=jnp.asarray(fixture.genotype_vector),
+        offset_vector=jnp.asarray(fixture.offset_vector),
+        active_sample_mask=jnp.asarray(fixture.active_sample_mask),
+        non_active_deviance=jnp.asarray(fixture.non_active_deviance),
+        current_beta=jnp.asarray(fixture.beta),
+        current_penalized_deviance=jnp.asarray(current_reference.penalized_deviance),
+        current_genotype_information=jnp.asarray(current_reference.genotype_information),
+        current_score=jnp.asarray(current_reference.score),
+        current_valid=jnp.asarray(current_reference.valid),
+        initial_step_size=jnp.asarray(initial_step_size),
+        maximum_attempts=2,
+        minimum_variance=jnp.asarray(minimum_variance),
         use_cuda_components=False,
     )
 
-    assert bool(np.asarray(current_components.valid))
-    assert not bool(np.asarray(full_step_components.valid))
-    assert bool(np.asarray(half_step_components.valid))
-    assert float(np.asarray(half_step_components.penalized_deviance)) < float(
-        np.asarray(current_components.penalized_deviance)
+    assert current_reference.valid
+    assert not full_step_reference.valid
+    assert half_step_reference.valid
+    assert half_step_reference.penalized_deviance < current_reference.penalized_deviance
+    assert line_search_reference.attempt_count == 2
+    assert line_search_reference.accepted
+    assert line_search_reference.valid
+    assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
+    assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
+    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
+    tests.numerical.assert_absolute_difference_less_than(observed.beta, line_search_reference.beta, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.step_size,
+        line_search_reference.step_size,
+        1.0e-15,
     )
-    assert int(np.asarray(observed.attempt_count)) == 2
-    assert bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
-    tests.numerical.assert_absolute_difference_less_than(observed.beta, 20.0, 1.0e-15)
     tests.numerical.assert_absolute_difference_less_than(
         observed.penalized_deviance,
-        half_step_components.penalized_deviance,
+        line_search_reference.components.penalized_deviance,
         1.0e-12,
     )
     tests.numerical.assert_absolute_difference_less_than(
         observed.genotype_information,
-        half_step_components.genotype_information,
+        line_search_reference.components.genotype_information,
         1.0e-15,
     )
-    tests.numerical.assert_absolute_difference_less_than(observed.score, half_step_components.score, 1.0e-12)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.score,
+        line_search_reference.components.score,
+        1.0e-12,
+    )
 
 
 def test_scalar_line_search_all_invalid_candidates_retain_trusted_state() -> None:
     """Exhaust real saturated proposals without corrupting trusted quantities."""
-    phenotype_vector = jnp.ones((4,), dtype=jnp.float64)
-    genotype_vector = jnp.ones((4,), dtype=jnp.float64)
-    offset_vector = jnp.zeros((4,), dtype=jnp.float64)
-    active_sample_mask = jnp.ones((4,), dtype=jnp.bool_)
-    current_beta = jnp.asarray(-10.0, dtype=jnp.float64)
-    minimum_variance = jnp.asarray(1.0e-10, dtype=jnp.float64)
-    current_components = regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        beta=current_beta,
+    fixture = ScalarFirthFixture(
+        phenotype_vector=np.ones((4,), dtype=np.float64),
+        genotype_vector=np.ones((4,), dtype=np.float64),
+        offset_vector=np.zeros((4,), dtype=np.float64),
+        active_sample_mask=np.ones((4,), dtype=np.bool_),
+        non_active_deviance=0.0,
+        beta=-10.0,
+    )
+    initial_step_size = 1_000.0
+    minimum_variance = 1.0e-10
+    current_reference = compute_scalar_firth_component_reference(
+        fixture,
         minimum_variance=minimum_variance,
-        use_cuda_components=False,
     )
     for candidate_step_scale in (1.0, 0.5, 0.25):
-        candidate_components = (
-            regenie2_binary_firth_scalar_approx.compute_scalar_firth_components_with_minimum_variance(
-                phenotype_vector=phenotype_vector,
-                genotype_vector=genotype_vector,
-                offset_vector=offset_vector,
-                active_sample_mask=active_sample_mask,
-                non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-                beta=current_beta + jnp.asarray(1_000.0 * candidate_step_scale, dtype=jnp.float64),
-                minimum_variance=minimum_variance,
-                use_cuda_components=False,
-            )
+        candidate_reference = compute_scalar_firth_component_reference(
+            ScalarFirthFixture(
+                phenotype_vector=fixture.phenotype_vector,
+                genotype_vector=fixture.genotype_vector,
+                offset_vector=fixture.offset_vector,
+                active_sample_mask=fixture.active_sample_mask,
+                non_active_deviance=fixture.non_active_deviance,
+                beta=fixture.beta + initial_step_size * candidate_step_scale,
+            ),
+            minimum_variance=minimum_variance,
         )
-        assert not bool(np.asarray(candidate_components.valid))
+        assert not candidate_reference.valid
 
-    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
-        phenotype_vector=phenotype_vector,
-        genotype_vector=genotype_vector,
-        offset_vector=offset_vector,
-        active_sample_mask=active_sample_mask,
-        non_active_deviance=jnp.asarray(0.0, dtype=jnp.float64),
-        current_beta=current_beta,
-        current_penalized_deviance=current_components.penalized_deviance,
-        current_genotype_information=current_components.genotype_information,
-        current_score=current_components.score,
-        current_valid=current_components.valid,
-        initial_step_size=jnp.asarray(1_000.0, dtype=jnp.float64),
+    line_search_reference = run_scalar_line_search_reference(
+        fixture=fixture,
+        initial_step_size=initial_step_size,
         maximum_attempts=3,
         minimum_variance=minimum_variance,
+    )
+
+    observed = regenie2_binary_firth_scalar_approx.run_scalar_line_search_with_minimum_variance(
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        genotype_vector=jnp.asarray(fixture.genotype_vector),
+        offset_vector=jnp.asarray(fixture.offset_vector),
+        active_sample_mask=jnp.asarray(fixture.active_sample_mask),
+        non_active_deviance=jnp.asarray(fixture.non_active_deviance),
+        current_beta=jnp.asarray(fixture.beta),
+        current_penalized_deviance=jnp.asarray(current_reference.penalized_deviance),
+        current_genotype_information=jnp.asarray(current_reference.genotype_information),
+        current_score=jnp.asarray(current_reference.score),
+        current_valid=jnp.asarray(current_reference.valid),
+        initial_step_size=jnp.asarray(initial_step_size),
+        maximum_attempts=3,
+        minimum_variance=jnp.asarray(minimum_variance),
         use_cuda_components=False,
     )
 
-    assert int(np.asarray(observed.attempt_count)) == 3
-    assert not bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
-    tests.numerical.assert_absolute_difference_less_than(observed.beta, current_beta, 1.0e-15)
+    assert current_reference.valid
+    assert line_search_reference.attempt_count == 3
+    assert not line_search_reference.accepted
+    assert line_search_reference.valid
+    assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
+    assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
+    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
+    tests.numerical.assert_absolute_difference_less_than(observed.beta, line_search_reference.beta, 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.step_size,
+        line_search_reference.step_size,
+        1.0e-15,
+    )
     tests.numerical.assert_absolute_difference_less_than(
         observed.penalized_deviance,
-        current_components.penalized_deviance,
+        line_search_reference.components.penalized_deviance,
         1.0e-12,
     )
     tests.numerical.assert_absolute_difference_less_than(
         observed.genotype_information,
-        current_components.genotype_information,
+        line_search_reference.components.genotype_information,
         1.0e-15,
     )
-    tests.numerical.assert_absolute_difference_less_than(observed.score, current_components.score, 1.0e-12)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.score,
+        line_search_reference.components.score,
+        1.0e-12,
+    )
 
 
 def test_sparse_initialization_accounts_for_inactive_null_deviance() -> None:

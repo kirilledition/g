@@ -51,11 +51,12 @@ fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
     }
     if config.trait_config.trait_type == plan::RegenieTraitType::Binary
         && config.binary.fallback_method == plan::BinaryFallbackMethod::FirthApproximate
-        && config.g_compute.firth_maximum_iterations.get() < 4
+        && config.g_compute.firth_maximum_iterations.get() < plan::APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS
     {
-        return Err(ConfigError::new(
-            "[compute].firth_maximum_iterations must be at least 4 when approximate Firth correction is active.",
-        ));
+        return Err(ConfigError::new(format!(
+            "[compute].firth_maximum_iterations must be at least {} when approximate Firth correction is active.",
+            plan::APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS,
+        )));
     }
     Ok(())
 }
