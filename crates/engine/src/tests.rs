@@ -19,6 +19,8 @@ use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GroupPreparationInput, MaterializedAssociationBatch,
     MaterializedGenotypeStatistics, PreparedChromosome,
 };
+use crate::delivery::AssociationDeliverySettings;
+use crate::delivery_execution::{DeliveryError, retry_pending_batch, transition_chromosome};
 use crate::genotype_buffer::homogeneous_chunk_chromosome;
 use crate::null_logistic_policy::{
     NullLogisticNonconvergenceAction, NullLogisticPolicyError, plan_null_logistic_nonconvergence,
@@ -51,6 +53,10 @@ enum TestFailureStage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("test backend failed during {0}")]
 struct TestBackendError(&'static str);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("test delivery interruption")]
+struct TestInterruption;
 
 struct TestDeviceResult {
     variant_start_index: usize,
@@ -338,6 +344,20 @@ fn build_prediction_matrix(chromosome_state: usize) -> g_input::ChromosomePredic
     }
 }
 
+fn empty_delivery_settings() -> AssociationDeliverySettings {
+    AssociationDeliverySettings {
+        writer_sessions: Vec::new(),
+        committed_chunk_identifier_sets: Vec::new(),
+        null_logistic_nonconvergence_policy: g_plan::NullLogisticNonconvergencePolicy::Fail,
+        progress: None,
+        gpu_genotype_format: g_plan::GpuGenotypeFormat::Dosage,
+        statistics_policy: g_genotype::ChunkStatisticsPolicy {
+            retain_imputed_dosage_square_sum: true,
+            collect_sparse_candidate_mask: false,
+        },
+    }
+}
+
 fn drain_pipeline(
     pipeline: &mut AssociationBatchPipeline<TestBackend>,
 ) -> Vec<crate::association_scheduler::CompletedAssociationBatch> {
@@ -473,6 +493,97 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
     );
     assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 3);
     finish_pipeline(&mut pipeline);
+}
+
+#[test]
+fn delivery_interruption_after_full_queue_receive_stops_pending_batch_launch() {
+    let (compute_started_sender, compute_started_receiver) = crossbeam_channel::bounded(1);
+    let (compute_gate_sender, compute_gate_receiver) = crossbeam_channel::bounded(1);
+    let backend = Arc::new(TestBackend::with_first_compute_gate(compute_started_sender, compute_gate_receiver));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
+    let mut compute_gate_release = ComputeGateRelease::new(compute_gate_sender);
+
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("first batch is submitted")
+            .is_none()
+    );
+    assert_eq!(
+        compute_started_receiver
+            .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("first compute starts before the timeout"),
+        0
+    );
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(2, 2, 2, ActiveTraitSelection::All))
+            .expect("second batch is queued")
+            .is_none()
+    );
+    let pending_batch = pipeline
+        .try_submit(build_scheduled_batch(4, 2, 2, ActiveTraitSelection::All))
+        .expect("full queue reports backpressure")
+        .expect("third batch remains pending before transfer");
+    assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 2);
+
+    compute_gate_release.release();
+    let mut interruption_check_count = 0_usize;
+    let error = retry_pending_batch(&mut pipeline, pending_batch, &empty_delivery_settings(), &mut || {
+        interruption_check_count += 1;
+        Err(TestInterruption)
+    })
+    .expect_err("interruption after the receive stops the pending submission");
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert_eq!(interruption_check_count, 1);
+
+    drop(pipeline);
+    assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 2);
+    let events = backend.events.lock().expect("test events are available");
+    assert!(!events.iter().any(|event| event == "transfer:4" || event.ends_with(":4")));
+}
+
+#[test]
+fn delivery_interruption_at_chromosome_boundary_stops_next_prepare() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(21)).expect("first chromosome is prepared");
+    let mut interruption_check_count = 0_usize;
+    let mut next_prepare_launched = false;
+
+    let error = transition_chromosome(
+        &mut pipeline,
+        &empty_delivery_settings(),
+        &mut || {
+            interruption_check_count += 1;
+            Err(TestInterruption)
+        },
+        |_pipeline| -> Result<(), DeliveryError<TestBackendError, TestInterruption>> {
+            next_prepare_launched = true;
+            Ok(())
+        },
+    )
+    .expect_err("interruption prevents the next chromosome preparation");
+
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert_eq!(interruption_check_count, 1);
+    assert!(!next_prepare_launched);
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        backend
+            .events
+            .lock()
+            .expect("test events are available")
+            .iter()
+            .filter(|event| *event == "prepare_chromosome")
+            .count(),
+        1
+    );
+    pipeline.close_submission();
+    pipeline.join().expect("interrupted boundary leaves workers joinable");
 }
 
 #[test]

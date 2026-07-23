@@ -156,15 +156,15 @@ where
                     .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
                 let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
                 if current_chromosome.as_deref() != Some(chromosome.as_ref()) {
-                    drain_pending_batches(&mut pipeline, &request.settings)?;
-                    pipeline.release_chromosome()?;
-                    prepare_chromosome_state(
-                        &mut pipeline,
-                        &mut request.group,
-                        &request.settings,
-                        &chromosome,
-                        &mut warnings,
-                    )?;
+                    transition_chromosome(&mut pipeline, &request.settings, check_interruption, |pipeline| {
+                        prepare_chromosome_state(
+                            pipeline,
+                            &mut request.group,
+                            &request.settings,
+                            &chromosome,
+                            &mut warnings,
+                        )
+                    })?;
                     current_chromosome = Some(chromosome);
                 }
 
@@ -211,12 +211,12 @@ where
                     metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
                     active_trait_selection,
                 };
-                submit_batch(&mut pipeline, scheduled_batch, &request.settings)?;
+                submit_batch(&mut pipeline, scheduled_batch, &request.settings, check_interruption)?;
                 processed_chunk_count += 1;
-                drain_available_batches(&mut pipeline, &request.settings)?;
+                drain_available_batches(&mut pipeline, &request.settings, check_interruption)?;
             }
 
-            finish_and_drain_pipeline(&mut pipeline, &request.settings)?;
+            finish_and_drain_pipeline(&mut pipeline, &request.settings, check_interruption)?;
             check_interruption().map_err(DeliveryError::Interrupted)?;
             Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
         },
@@ -249,20 +249,33 @@ where
     match (delivery_outcome, release_outcome) {
         (Ok(Ok(value)), Ok(())) => Ok(value),
         (Ok(Ok(_)), Err(release_panic)) => {
-            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            observe_cleanup_panic_safely(&mut observe_cleanup_panic, "release_group", release_panic.as_ref());
             std::panic::resume_unwind(release_panic);
         }
         (Ok(Err(error)), Ok(())) => Err(error),
         (Ok(Err(error)), Err(release_panic)) => {
-            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            observe_cleanup_panic_safely(&mut observe_cleanup_panic, "release_group", release_panic.as_ref());
             Err(error)
         }
         (Err(delivery_panic), Ok(())) => std::panic::resume_unwind(delivery_panic),
         (Err(delivery_panic), Err(release_panic)) => {
-            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            observe_cleanup_panic_safely(&mut observe_cleanup_panic, "release_group", release_panic.as_ref());
             std::panic::resume_unwind(delivery_panic);
         }
     }
+}
+
+fn observe_cleanup_panic_safely<ObserveCleanupPanic>(
+    observe_cleanup_panic: &mut ObserveCleanupPanic,
+    cleanup_stage: &'static str,
+    panic_payload: &(dyn std::any::Any + Send),
+) where
+    ObserveCleanupPanic: FnMut(&'static str, &str),
+{
+    let panic_message = panic_payload_message(panic_payload);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        observe_cleanup_panic(cleanup_stage, &panic_message);
+    }));
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -443,60 +456,106 @@ fn validate_delivery_request<BackendError, InterruptionError>(
     Ok(())
 }
 
-fn drain_available_batches<Backend, InterruptionError>(
+fn drain_available_batches<Backend, CheckInterruption, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     while let Some(completed_batch) = pipeline.try_receive()? {
+        check_interruption().map_err(DeliveryError::Interrupted)?;
         write_completed_batch(completed_batch, settings)?;
     }
     Ok(())
 }
 
-fn submit_batch<Backend, InterruptionError>(
+fn submit_batch<Backend, CheckInterruption, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<Backend>,
     scheduled_batch: ScheduledAssociationBatch,
     settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
-    let mut pending_batch = scheduled_batch;
+    match pipeline.try_submit(scheduled_batch)? {
+        None => Ok(()),
+        Some(pending_batch) => retry_pending_batch(pipeline, pending_batch, settings, check_interruption),
+    }
+}
+
+pub(crate) fn retry_pending_batch<Backend, CheckInterruption, InterruptionError>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    mut pending_batch: ScheduledAssociationBatch,
+    settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<(), Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
     loop {
+        let completed_batch = pipeline.receive()?;
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        write_completed_batch(completed_batch, settings)?;
+        check_interruption().map_err(DeliveryError::Interrupted)?;
         match pipeline.try_submit(pending_batch)? {
             None => return Ok(()),
-            Some(returned_batch) => {
-                write_completed_batch(pipeline.receive()?, settings)?;
-                pending_batch = returned_batch;
-            }
+            Some(returned_batch) => pending_batch = returned_batch,
         }
     }
 }
 
-fn drain_pending_batches<Backend, InterruptionError>(
+fn drain_pending_batches<Backend, CheckInterruption, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     while !pipeline.is_drained() {
-        write_completed_batch(pipeline.receive()?, settings)?;
+        let completed_batch = pipeline.receive()?;
+        check_interruption().map_err(DeliveryError::Interrupted)?;
+        write_completed_batch(completed_batch, settings)?;
     }
     Ok(())
 }
 
-fn finish_and_drain_pipeline<Backend, InterruptionError>(
+pub(crate) fn transition_chromosome<Backend, CheckInterruption, InterruptionError, PrepareChromosome>(
     pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
+    prepare_chromosome: PrepareChromosome,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+    PrepareChromosome:
+        FnOnce(&mut AssociationBatchPipeline<Backend>) -> DeliveryResult<(), Backend::Error, InterruptionError>,
 {
-    drain_pending_batches(pipeline, settings)?;
+    drain_pending_batches(pipeline, settings, check_interruption)?;
+    pipeline.release_chromosome()?;
+    check_interruption().map_err(DeliveryError::Interrupted)?;
+    prepare_chromosome(pipeline)?;
+    check_interruption().map_err(DeliveryError::Interrupted)
+}
+
+fn finish_and_drain_pipeline<Backend, CheckInterruption, InterruptionError>(
+    pipeline: &mut AssociationBatchPipeline<Backend>,
+    settings: &AssociationDeliverySettings,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<(), Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
+    drain_pending_batches(pipeline, settings, check_interruption)?;
     pipeline.release_chromosome()?;
     pipeline.close_submission();
     pipeline.join()?;
@@ -670,5 +729,56 @@ mod tests {
         assert_eq!(panic_message, "intentional delivery panic");
         assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(cleanup_panics, vec![("release_group".to_string(), "intentional group-release panic".to_string())]);
+    }
+
+    #[test]
+    fn delivery_error_remains_primary_when_release_and_observer_panic() {
+        let release_count = std::sync::atomic::AtomicUsize::new(0);
+        let observer_count = std::sync::atomic::AtomicUsize::new(0);
+        let delivery_result = run_with_explicit_group_release(
+            (),
+            |_group_state| Err::<(), _>(TestInterruption),
+            |()| {
+                release_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                panic!("intentional group-release panic");
+            },
+            |_cleanup_stage, _panic_message| {
+                observer_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                panic!("intentional cleanup-observer panic");
+            },
+        );
+
+        assert_eq!(delivery_result, Err(TestInterruption));
+        assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(observer_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn delivery_panic_remains_primary_when_release_and_observer_panic() {
+        let release_count = std::sync::atomic::AtomicUsize::new(0);
+        let observer_count = std::sync::atomic::AtomicUsize::new(0);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_explicit_group_release(
+                (),
+                |_group_state| -> Result<(), TestInterruption> {
+                    panic!("intentional delivery panic");
+                },
+                |()| {
+                    release_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    panic!("intentional group-release panic");
+                },
+                |_cleanup_stage, _panic_message| {
+                    observer_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    panic!("intentional cleanup-observer panic");
+                },
+            )
+        }));
+
+        let panic_payload = outcome.expect_err("primary delivery panic is resumed");
+        let panic_message =
+            panic_payload.downcast_ref::<&str>().copied().expect("test panic payload is a string literal");
+        assert_eq!(panic_message, "intentional delivery panic");
+        assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(observer_count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

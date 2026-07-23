@@ -83,7 +83,7 @@ pub trait AssociationBackend: Send + Sync {
     /// Returns an error when the phenotype or covariate data cannot be prepared.
     fn prepare_group(&self, input: GroupPreparationInput) -> Result<Self::GroupState, Self::Error>;
 
-    /// Release group state after its final chromosome has been prepared.
+    /// Release group state after final chromosome completion and worker teardown.
     fn release_group(&self, group: Self::GroupState) {
         drop(group);
     }
