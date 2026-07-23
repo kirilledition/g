@@ -94,13 +94,16 @@ executables.
 
 The native association scheduler starts one compute thread, one host-result
 materialization thread, and one bounded channel set for each direct delivery.
-At a chromosome boundary, all results drain and the compute worker acknowledges
-destruction of the replaced JAX state before its successor is built, avoiding
-both per-chromosome worker churn and overlapping chromosome-state device
-memory. Group-level device state is created at first use and released after its
-final chromosome preparation. Fully resumed phenotype groups initialize
-progress but do not select BGEN samples, prepare JAX state, or start scheduler
-workers; every remaining group uses the same direct delivery path.
+The compute worker prepares, uses, and releases each chromosome's JAX state,
+including explicit release after a caught worker failure. At a chromosome
+boundary, all results drain and state destruction completes before its
+successor is built, avoiding both per-chromosome worker churn and overlapping
+chromosome-state device memory. Host-to-device genotype transfer remains on
+the delivery thread and can overlap the preceding compute batch. Group-level
+device state is created at first use and released after its final chromosome
+completes. Fully resumed phenotype groups initialize progress but do not select
+BGEN samples, prepare JAX state, or start scheduler workers; every remaining
+group uses the same direct delivery path.
 
 ## Runtime Knobs
 

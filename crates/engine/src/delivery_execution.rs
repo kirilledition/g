@@ -136,90 +136,140 @@ where
     let group_state = backend
         .prepare_group(group_preparation_input(&mut request.group, genotype_transfer))
         .map_err(|source| DeliveryError::Backend { stage: "prepare_group", source })?;
-    let delivery_result: DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError> = (|| {
-        let mut pipeline = AssociationBatchPipeline::new(Arc::clone(backend), &group_state)?;
-        let mut current_chromosome = None;
-        let mut processed_chunk_count = 0_usize;
-        let mut warnings = Vec::new();
-        let compute_variant_count = genotype_input.chunk_size.min(genotype_input.reader.variant_count());
+    run_with_explicit_group_release(
+        group_state,
+        |shared_group_state| {
+            let mut pipeline = AssociationBatchPipeline::new(Arc::clone(backend), shared_group_state)?;
+            let mut current_chromosome = None;
+            let mut processed_chunk_count = 0_usize;
+            let mut warnings = Vec::new();
+            let compute_variant_count = genotype_input.chunk_size.min(genotype_input.reader.variant_count());
 
-        for chunk_spec in chunk_specs {
-            check_interruption().map_err(DeliveryError::Interrupted)?;
-            let variant_count = chunk_spec
-                .variant_stop_index
-                .checked_sub(chunk_spec.variant_start_index)
-                .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
-            let metadata = genotype_input
-                .reader
-                .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
-            let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
-            if current_chromosome.as_deref() != Some(chromosome.as_ref()) {
-                drain_pending_batches(&mut pipeline, &request.settings)?;
-                pipeline.release_chromosome()?;
-                let chromosome_state = prepare_chromosome_state(
-                    backend.as_ref(),
-                    &group_state,
-                    &mut request.group,
-                    &request.settings,
-                    &chromosome,
-                    &mut warnings,
-                )?;
-                pipeline.prepare_chromosome(chromosome_state)?;
-                current_chromosome = Some(chromosome);
-            }
-
-            let active_trait_selection = active_trait_selection_for_chunk(
-                request.settings.writer_sessions.len(),
-                chunk_spec.variant_start_index,
-                &request.settings.committed_chunk_identifier_sets,
-            )
-            .map_err(DeliveryError::InvalidInput)?;
-            if matches!(&active_trait_selection, ActiveTraitSelection::Indices(indices) if indices.is_empty()) {
-                return Err(DeliveryError::InvalidInput(
-                    "planned a chunk already committed by every output writer".to_string(),
-                ));
-            }
-            let sample_count = request.group.sample_indices.len();
-            let genotypes = match &genotype_delivery {
-                PlannedGenotypeDelivery::Host => read_session.decode_variant_major_batch(
-                    chunk_spec.variant_start_index,
-                    chunk_spec.variant_stop_index,
-                    compute_variant_count,
-                    request.settings.gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8,
-                    request.settings.statistics_policy,
-                )?,
-                PlannedGenotypeDelivery::CompressedPacked8(layout) => {
-                    let logical_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
-                    GenotypeBatch {
-                        variant_start_index: chunk_spec.variant_start_index,
-                        logical_variant_count,
-                        compute_variant_count,
-                        sample_count,
-                        payload: GenotypeBatchPayload::CompressedPacked8(read_session.pack_compressed_packed8_batch(
-                            layout,
-                            chunk_spec.variant_start_index,
-                            chunk_spec.variant_stop_index,
-                        )?),
-                    }
+            for chunk_spec in chunk_specs {
+                check_interruption().map_err(DeliveryError::Interrupted)?;
+                let variant_count = chunk_spec
+                    .variant_stop_index
+                    .checked_sub(chunk_spec.variant_start_index)
+                    .ok_or_else(|| DeliveryError::InvalidInput("BGEN chunk stop precedes its start.".to_string()))?;
+                let metadata = genotype_input
+                    .reader
+                    .variant_metadata_slice(chunk_spec.variant_start_index, chunk_spec.variant_stop_index)?;
+                let chromosome = homogeneous_chunk_chromosome(&metadata, variant_count)?;
+                if current_chromosome.as_deref() != Some(chromosome.as_ref()) {
+                    drain_pending_batches(&mut pipeline, &request.settings)?;
+                    pipeline.release_chromosome()?;
+                    prepare_chromosome_state(
+                        &mut pipeline,
+                        &mut request.group,
+                        &request.settings,
+                        &chromosome,
+                        &mut warnings,
+                    )?;
+                    current_chromosome = Some(chromosome);
                 }
-            };
-            debug_assert_eq!(genotypes.sample_count, sample_count);
-            let scheduled_batch = ScheduledAssociationBatch {
-                genotypes,
-                metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
-                active_trait_selection,
-            };
-            submit_batch(&mut pipeline, scheduled_batch, &request.settings)?;
-            processed_chunk_count += 1;
-            drain_available_batches(&mut pipeline, &request.settings)?;
-        }
 
-        finish_and_drain_pipeline(&mut pipeline, &request.settings)?;
-        check_interruption().map_err(DeliveryError::Interrupted)?;
-        Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
-    })();
-    backend.release_group(group_state);
-    delivery_result
+                let active_trait_selection = active_trait_selection_for_chunk(
+                    request.settings.writer_sessions.len(),
+                    chunk_spec.variant_start_index,
+                    &request.settings.committed_chunk_identifier_sets,
+                )
+                .map_err(DeliveryError::InvalidInput)?;
+                if matches!(&active_trait_selection, ActiveTraitSelection::Indices(indices) if indices.is_empty()) {
+                    return Err(DeliveryError::InvalidInput(
+                        "planned a chunk already committed by every output writer".to_string(),
+                    ));
+                }
+                let sample_count = request.group.sample_indices.len();
+                let genotypes = match &genotype_delivery {
+                    PlannedGenotypeDelivery::Host => read_session.decode_variant_major_batch(
+                        chunk_spec.variant_start_index,
+                        chunk_spec.variant_stop_index,
+                        compute_variant_count,
+                        request.settings.gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8,
+                        request.settings.statistics_policy,
+                    )?,
+                    PlannedGenotypeDelivery::CompressedPacked8(layout) => {
+                        let logical_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
+                        GenotypeBatch {
+                            variant_start_index: chunk_spec.variant_start_index,
+                            logical_variant_count,
+                            compute_variant_count,
+                            sample_count,
+                            payload: GenotypeBatchPayload::CompressedPacked8(
+                                read_session.pack_compressed_packed8_batch(
+                                    layout,
+                                    chunk_spec.variant_start_index,
+                                    chunk_spec.variant_stop_index,
+                                )?,
+                            ),
+                        }
+                    }
+                };
+                debug_assert_eq!(genotypes.sample_count, sample_count);
+                let scheduled_batch = ScheduledAssociationBatch {
+                    genotypes,
+                    metadata: NativeVariantMetadataHandle::try_new(&metadata)?,
+                    active_trait_selection,
+                };
+                submit_batch(&mut pipeline, scheduled_batch, &request.settings)?;
+                processed_chunk_count += 1;
+                drain_available_batches(&mut pipeline, &request.settings)?;
+            }
+
+            finish_and_drain_pipeline(&mut pipeline, &request.settings)?;
+            check_interruption().map_err(DeliveryError::Interrupted)?;
+            Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+        },
+        |group_state| backend.release_group(group_state),
+        |cleanup_stage, panic_message| {
+            tracing::error!(cleanup_stage, panic_message, "association backend cleanup panicked");
+        },
+    )
+}
+
+fn run_with_explicit_group_release<GroupState, Value, Error, RunDelivery, ReleaseGroup, ObserveCleanupPanic>(
+    group_state: GroupState,
+    run_delivery: RunDelivery,
+    release_group: ReleaseGroup,
+    mut observe_cleanup_panic: ObserveCleanupPanic,
+) -> Result<Value, Error>
+where
+    GroupState: Send + Sync,
+    RunDelivery: FnOnce(Arc<GroupState>) -> Result<Value, Error>,
+    ReleaseGroup: FnOnce(GroupState),
+    ObserveCleanupPanic: FnMut(&'static str, &str),
+{
+    let shared_group_state = Arc::new(group_state);
+    let delivery_outcome =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_delivery(Arc::clone(&shared_group_state))));
+    let Ok(group_state) = Arc::try_unwrap(shared_group_state) else {
+        panic!("association scheduler retained group state after joining its workers");
+    };
+    let release_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| release_group(group_state)));
+    match (delivery_outcome, release_outcome) {
+        (Ok(Ok(value)), Ok(())) => Ok(value),
+        (Ok(Ok(_)), Err(release_panic)) => {
+            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            std::panic::resume_unwind(release_panic);
+        }
+        (Ok(Err(error)), Ok(())) => Err(error),
+        (Ok(Err(error)), Err(release_panic)) => {
+            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            Err(error)
+        }
+        (Err(delivery_panic), Ok(())) => std::panic::resume_unwind(delivery_panic),
+        (Err(delivery_panic), Err(release_panic)) => {
+            observe_cleanup_panic("release_group", panic_payload_message(release_panic.as_ref()).as_str());
+            std::panic::resume_unwind(delivery_panic);
+        }
+    }
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload.downcast_ref::<&str>().map_or_else(
+        || payload.downcast_ref::<String>().cloned().unwrap_or_else(|| "unknown panic payload".to_string()),
+        |message| (*message).to_string(),
+    )
 }
 
 fn plan_genotype_delivery<Backend, InterruptionError>(
@@ -303,22 +353,19 @@ fn planned_chromosome_blocks(
 }
 
 fn prepare_chromosome_state<Backend, InterruptionError>(
-    backend: &Backend,
-    group_state: &Backend::GroupState,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     group: &mut g_input::AlignedPhenotypeGroup,
     settings: &AssociationDeliverySettings,
     chromosome: &str,
     warnings: &mut Vec<DeliveryWarning>,
-) -> DeliveryResult<Backend::ChromosomeState, Backend::Error, InterruptionError>
+) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
 {
     let predictions = group.take_chromosome_prediction_matrix(chromosome)?;
-    let prepared_chromosome = backend
-        .prepare_chromosome(group_state, predictions)
-        .map_err(|source| DeliveryError::Backend { stage: "prepare_chromosome", source })?;
-    if let Some(logistic_converged) = prepared_chromosome.null_logistic_converged.as_ref()
-        && let Err(error) = enforce_null_logistic_policy::<Backend::Error, InterruptionError>(
+    let null_logistic_converged = pipeline.prepare_chromosome(predictions)?;
+    if let Some(logistic_converged) = null_logistic_converged.as_ref()
+        && let Err(policy_error) = enforce_null_logistic_policy::<Backend::Error, InterruptionError>(
             chromosome,
             logistic_converged,
             &group.phenotype_group.phenotype_names,
@@ -326,10 +373,16 @@ where
             warnings,
         )
     {
-        backend.release_chromosome(prepared_chromosome.state);
-        return Err(error);
+        if let Err(release_error) = pipeline.release_chromosome() {
+            tracing::error!(
+                cleanup_stage = "release_chromosome_after_null_policy_rejection",
+                cleanup_error = %release_error,
+                "association backend cleanup failed"
+            );
+        }
+        return Err(policy_error);
     }
-    Ok(prepared_chromosome.state)
+    Ok(())
 }
 
 fn enforce_null_logistic_policy<BackendError, InterruptionError>(
@@ -391,7 +444,7 @@ fn validate_delivery_request<BackendError, InterruptionError>(
 }
 
 fn drain_available_batches<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -404,7 +457,7 @@ where
 }
 
 fn submit_batch<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     scheduled_batch: ScheduledAssociationBatch,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
@@ -424,7 +477,7 @@ where
 }
 
 fn drain_pending_batches<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -437,7 +490,7 @@ where
 }
 
 fn finish_and_drain_pipeline<Backend, InterruptionError>(
-    pipeline: &mut AssociationBatchPipeline<'_, Backend>,
+    pipeline: &mut AssociationBatchPipeline<Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
 where
@@ -541,5 +594,81 @@ mod tests {
                 if message.contains("chromosome 1: trait-b")
         ));
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn group_release_runs_once_after_delivery_panic() {
+        let release_count = std::sync::atomic::AtomicUsize::new(0);
+        let cleanup_panic_count = std::sync::atomic::AtomicUsize::new(0);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_explicit_group_release(
+                (),
+                |_group_state| -> Result<(), TestInterruption> {
+                    panic!("intentional delivery panic");
+                },
+                |()| {
+                    release_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                },
+                |_cleanup_stage, _panic_message| {
+                    cleanup_panic_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                },
+            )
+        }));
+
+        let panic_payload = outcome.expect_err("delivery panic is resumed after group release");
+        let panic_message =
+            panic_payload.downcast_ref::<&str>().copied().expect("test panic payload is a string literal");
+        assert_eq!(panic_message, "intentional delivery panic");
+        assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cleanup_panic_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn delivery_error_remains_primary_when_group_release_panics() {
+        let release_count = std::sync::atomic::AtomicUsize::new(0);
+        let mut cleanup_panics = Vec::new();
+        let delivery_result = run_with_explicit_group_release(
+            (),
+            |_group_state| Err::<(), _>(TestInterruption),
+            |()| {
+                release_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                panic!("intentional group-release panic");
+            },
+            |cleanup_stage, panic_message| {
+                cleanup_panics.push((cleanup_stage.to_string(), panic_message.to_string()));
+            },
+        );
+
+        assert_eq!(delivery_result, Err(TestInterruption));
+        assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cleanup_panics, vec![("release_group".to_string(), "intentional group-release panic".to_string())]);
+    }
+
+    #[test]
+    fn delivery_panic_remains_primary_and_observes_group_release_panic() {
+        let release_count = std::sync::atomic::AtomicUsize::new(0);
+        let mut cleanup_panics = Vec::new();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_explicit_group_release(
+                (),
+                |_group_state| -> Result<(), TestInterruption> {
+                    panic!("intentional delivery panic");
+                },
+                |()| {
+                    release_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    panic!("intentional group-release panic");
+                },
+                |cleanup_stage, panic_message| {
+                    cleanup_panics.push((cleanup_stage.to_string(), panic_message.to_string()));
+                },
+            )
+        }));
+
+        let panic_payload = outcome.expect_err("primary delivery panic is resumed");
+        let panic_message =
+            panic_payload.downcast_ref::<&str>().copied().expect("test panic payload is a string literal");
+        assert_eq!(panic_message, "intentional delivery panic");
+        assert_eq!(release_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cleanup_panics, vec![("release_group".to_string(), "intentional group-release panic".to_string())]);
     }
 }

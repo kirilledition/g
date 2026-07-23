@@ -67,7 +67,7 @@ pub enum MaterializedGenotypeStatistics {
 
 /// Chunk-oriented association compute implemented by the device runtime.
 pub trait AssociationBackend: Send + Sync {
-    type GroupState: Send;
+    type GroupState: Send + Sync + 'static;
     type ChromosomeState: Send + 'static;
     type TransferredInput: Send + 'static;
     type DeviceResult: Send + 'static;
@@ -89,6 +89,10 @@ pub trait AssociationBackend: Send + Sync {
     }
 
     /// Prepare reusable state and null-logistic policy input for one chromosome.
+    ///
+    /// The association scheduler invokes this hook on the same backend
+    /// execution worker that invokes `compute_batch` and
+    /// `release_chromosome`.
     ///
     /// # Errors
     ///

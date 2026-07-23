@@ -164,9 +164,15 @@ fn build_batches(metadata: &VariantMetadataColumns) -> Vec<ScheduledAssociationB
 }
 
 fn run_pipeline(batches: Vec<ScheduledAssociationBatch>) -> usize {
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::new(MockBackend), &group).expect("benchmark pipeline starts");
-    pipeline.prepare_chromosome(()).expect("benchmark chromosome is prepared");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::new(MockBackend), group).expect("benchmark pipeline starts");
+    pipeline
+        .prepare_chromosome(g_input::ChromosomePredictionMatrix {
+            trait_count: 1,
+            sample_count: 1,
+            prediction_values: vec![0.0],
+        })
+        .expect("benchmark chromosome is prepared");
     let mut completed_batch_count = 0_usize;
     for batch in batches {
         let mut pending_batch = batch;

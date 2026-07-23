@@ -81,6 +81,7 @@ pub(crate) struct CompletedAssociationBatch {
 #[allow(clippy::large_enum_variant)]
 enum AssociationSchedulerEvent {
     Completed(CompletedAssociationBatch),
+    ChromosomePrepared { null_logistic_converged: Option<Vec<bool>> },
     ChromosomeReleased,
 }
 
@@ -108,6 +109,8 @@ pub(crate) enum SchedulerError<BackendError> {
     ChromosomeNotPrepared,
     #[error("association scheduler already has a prepared chromosome")]
     ChromosomeAlreadyPrepared,
+    #[error("association scheduler chromosome preparation is already pending")]
+    ChromosomePreparePending,
     #[error("association scheduler chromosome release is already pending")]
     ChromosomeReleasePending,
     #[error(
@@ -142,8 +145,8 @@ struct TransferredAssociationBatch<TransferredInput> {
 
 // Keeping batches inline lets the bounded channel allocate its storage once;
 // boxing the hot variant would add one allocation to every submitted batch.
-enum ComputeCommand<ChromosomeState, TransferredInput> {
-    PrepareChromosome { state: ChromosomeState },
+enum ComputeCommand<TransferredInput> {
+    PrepareChromosome { predictions: g_input::ChromosomePredictionMatrix },
     ReleaseChromosome,
     ComputeBatch { batch: TransferredAssociationBatch<TransferredInput> },
 }
@@ -152,6 +155,7 @@ enum ComputeCommand<ChromosomeState, TransferredInput> {
 struct PipelineSchedulerState {
     submitted_batch_count: usize,
     completed_batch_count: usize,
+    chromosome_prepare_pending: bool,
     chromosome_prepared: bool,
     chromosome_release_pending: bool,
 }
@@ -159,12 +163,21 @@ struct PipelineSchedulerState {
 #[derive(Debug)]
 struct SchedulerControl<BackendError> {
     aborted: std::sync::atomic::AtomicBool,
-    first_error: Mutex<Option<SchedulerError<BackendError>>>,
+    failure: Mutex<SchedulerFailure<BackendError>>,
+}
+
+#[derive(Debug)]
+struct SchedulerFailure<BackendError> {
+    first_error: Option<SchedulerError<BackendError>>,
+    recorded: bool,
 }
 
 impl<BackendError> SchedulerControl<BackendError> {
     const fn new() -> Self {
-        Self { aborted: std::sync::atomic::AtomicBool::new(false), first_error: Mutex::new(None) }
+        Self {
+            aborted: std::sync::atomic::AtomicBool::new(false),
+            failure: Mutex::new(SchedulerFailure { first_error: None, recorded: false }),
+        }
     }
 
     fn abort(&self) {
@@ -177,27 +190,28 @@ impl<BackendError> SchedulerControl<BackendError> {
 
     fn record_error(&self, error: SchedulerError<BackendError>) {
         {
-            let mut first_error = self.first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if first_error.is_none() {
-                *first_error = Some(error);
+            let mut failure = self.failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !failure.recorded {
+                failure.first_error = Some(error);
+                failure.recorded = true;
             }
         }
         self.abort();
     }
 
     fn take_error(&self) -> Option<SchedulerError<BackendError>> {
-        self.first_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+        self.failure.lock().unwrap_or_else(std::sync::PoisonError::into_inner).first_error.take()
     }
 }
 
 /// One bounded decoded-to-device-to-host delivery pipeline.
-pub(crate) struct AssociationBatchPipeline<'group, Backend>
+pub(crate) struct AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
 {
     backend: Arc<Backend>,
-    group: &'group Backend::GroupState,
-    compute_sender: Option<Sender<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>>,
+    group: Arc<Backend::GroupState>,
+    compute_sender: Option<Sender<ComputeCommand<Backend::TransferredInput>>>,
     event_receiver: Receiver<AssociationSchedulerEvent>,
     compute_worker: Option<thread::JoinHandle<()>>,
     materialization_worker: Option<thread::JoinHandle<()>>,
@@ -205,7 +219,7 @@ where
     state: PipelineSchedulerState,
 }
 
-impl<'group, Backend> AssociationBatchPipeline<'group, Backend>
+impl<Backend> AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
 {
@@ -214,10 +228,7 @@ where
     /// # Errors
     ///
     /// Returns an error when a worker thread cannot be started.
-    pub(crate) fn new(
-        backend: Arc<Backend>,
-        group: &'group Backend::GroupState,
-    ) -> SchedulerResult<Self, Backend::Error> {
+    pub(crate) fn new(backend: Arc<Backend>, group: Arc<Backend::GroupState>) -> SchedulerResult<Self, Backend::Error> {
         let (compute_sender, compute_receiver) = crossbeam_channel::bounded(TRANSFERRED_BATCH_CAPACITY);
         let (device_sender, device_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
         let (event_sender, event_receiver) = crossbeam_channel::bounded(DEVICE_RESULT_CAPACITY);
@@ -252,23 +263,16 @@ where
         let compute_control = Arc::clone(&control);
         let compute_event_sender = event_sender;
         let pipeline_backend = Arc::clone(&backend);
+        let pipeline_group = Arc::clone(&group);
         let compute_worker = match thread::Builder::new().name(COMPUTE_WORKER_NAME.to_string()).spawn(move || {
-            let worker_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_compute_worker(
-                    backend.as_ref(),
-                    &compute_receiver,
-                    &device_sender,
-                    &compute_event_sender,
-                    &compute_control,
-                );
-            }));
-            if let Err(payload) = worker_result {
-                compute_control.record_error(SchedulerError::WorkerPanicked {
-                    worker: COMPUTE_WORKER,
-                    message: panic_message(payload.as_ref()),
-                });
-                drain_command_states(backend.as_ref(), &compute_receiver);
-            }
+            run_compute_worker(
+                backend.as_ref(),
+                group.as_ref(),
+                &compute_receiver,
+                &device_sender,
+                &compute_event_sender,
+                &compute_control,
+            );
         }) {
             Ok(worker) => worker,
             Err(source) => {
@@ -281,7 +285,7 @@ where
 
         Ok(Self {
             backend: pipeline_backend,
-            group,
+            group: pipeline_group,
             compute_sender: Some(compute_sender),
             event_receiver,
             compute_worker: Some(compute_worker),
@@ -291,7 +295,7 @@ where
         })
     }
 
-    /// Install an owned chromosome state after the shared pipeline is drained.
+    /// Prepare and install chromosome state on the backend execution worker.
     ///
     /// # Errors
     ///
@@ -299,12 +303,15 @@ where
     /// been closed, aborted, or failed.
     pub(crate) fn prepare_chromosome(
         &mut self,
-        chromosome_state: Backend::ChromosomeState,
-    ) -> SchedulerResult<(), Backend::Error> {
+        predictions: g_input::ChromosomePredictionMatrix,
+    ) -> SchedulerResult<Option<Vec<bool>>, Backend::Error> {
         self.ensure_running()?;
         if !self.is_drained() {
             let (submitted, completed) = self.batch_counts();
             return Err(SchedulerError::ChromosomeTransitionPending { submitted, completed });
+        }
+        if self.state.chromosome_prepare_pending {
+            return Err(SchedulerError::ChromosomePreparePending);
         }
         if self.state.chromosome_release_pending {
             return Err(SchedulerError::ChromosomeReleasePending);
@@ -313,13 +320,18 @@ where
             return Err(SchedulerError::ChromosomeAlreadyPrepared);
         }
         let sender = self.compute_sender.as_ref().ok_or(SchedulerError::Closed)?;
-        if let Err(error) = sender.send(ComputeCommand::PrepareChromosome { state: chromosome_state }) {
-            let scheduler_error = self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE);
-            release_command_state(self.backend.as_ref(), error.0);
-            return Err(scheduler_error);
+        sender
+            .send(ComputeCommand::PrepareChromosome { predictions })
+            .map_err(|_| self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE))?;
+        self.state.chromosome_prepare_pending = true;
+        match self.receive_scheduler_event()? {
+            AssociationSchedulerEvent::ChromosomePrepared { null_logistic_converged } => Ok(null_logistic_converged),
+            AssociationSchedulerEvent::Completed(_) | AssociationSchedulerEvent::ChromosomeReleased => {
+                Err(SchedulerError::InvalidBatch {
+                    message: "received an unexpected event at the chromosome-prepare barrier".to_string(),
+                })
+            }
         }
-        self.state.chromosome_prepared = true;
-        Ok(())
     }
 
     /// Release one prepared chromosome and wait until backend destruction has completed.
@@ -348,9 +360,11 @@ where
         self.state.chromosome_release_pending = true;
         match self.receive_scheduler_event()? {
             AssociationSchedulerEvent::ChromosomeReleased => Ok(()),
-            AssociationSchedulerEvent::Completed(_) => Err(SchedulerError::InvalidBatch {
-                message: "received a completed batch after the drained chromosome-release barrier".to_string(),
-            }),
+            AssociationSchedulerEvent::Completed(_) | AssociationSchedulerEvent::ChromosomePrepared { .. } => {
+                Err(SchedulerError::InvalidBatch {
+                    message: "received an unexpected event at the drained chromosome-release barrier".to_string(),
+                })
+            }
         }
     }
 
@@ -384,7 +398,7 @@ where
         let variant_start_index = genotypes.variant_start_index;
         let input = self
             .backend
-            .transfer_batch(self.group, genotypes)
+            .transfer_batch(self.group.as_ref(), genotypes)
             .map_err(|source| SchedulerError::Backend { stage: TRANSFER_STAGE, source })?;
         let context = AssociationBatchContext { variant_start_index, metadata, active_trait_selection };
         sender
@@ -402,9 +416,11 @@ where
     pub(crate) fn receive(&mut self) -> SchedulerResult<CompletedAssociationBatch, Backend::Error> {
         match self.receive_scheduler_event()? {
             AssociationSchedulerEvent::Completed(completed_batch) => Ok(completed_batch),
-            AssociationSchedulerEvent::ChromosomeReleased => Err(SchedulerError::InvalidBatch {
-                message: "unexpected chromosome release outside a drained transition".to_string(),
-            }),
+            AssociationSchedulerEvent::ChromosomePrepared { .. } | AssociationSchedulerEvent::ChromosomeReleased => {
+                Err(SchedulerError::InvalidBatch {
+                    message: "unexpected chromosome lifecycle event outside a drained transition".to_string(),
+                })
+            }
         }
     }
 
@@ -416,8 +432,10 @@ where
     pub(crate) fn try_receive(&mut self) -> SchedulerResult<Option<CompletedAssociationBatch>, Backend::Error> {
         match self.try_receive_scheduler_event()? {
             Some(AssociationSchedulerEvent::Completed(completed_batch)) => Ok(Some(completed_batch)),
-            Some(AssociationSchedulerEvent::ChromosomeReleased) => Err(SchedulerError::InvalidBatch {
-                message: "unexpected chromosome release outside a drained transition".to_string(),
+            Some(
+                AssociationSchedulerEvent::ChromosomePrepared { .. } | AssociationSchedulerEvent::ChromosomeReleased,
+            ) => Err(SchedulerError::InvalidBatch {
+                message: "unexpected chromosome lifecycle event outside a drained transition".to_string(),
             }),
             None => Ok(None),
         }
@@ -482,6 +500,7 @@ where
 
     /// Close the transferred-batch input so queued work can complete.
     pub(crate) fn close_submission(&mut self) {
+        self.state.chromosome_prepare_pending = false;
         self.state.chromosome_prepared = false;
         self.state.chromosome_release_pending = false;
         self.compute_sender.take();
@@ -503,6 +522,7 @@ where
         self.join_workers();
         match self.control.take_error() {
             Some(error) => Err(error),
+            None if self.control.is_aborted() => Err(SchedulerError::Aborted),
             None => Ok(()),
         }
     }
@@ -529,7 +549,9 @@ where
     }
 
     fn has_pending_event(&self) -> bool {
-        self.state.submitted_batch_count != self.state.completed_batch_count || self.state.chromosome_release_pending
+        self.state.submitted_batch_count != self.state.completed_batch_count
+            || self.state.chromosome_prepare_pending
+            || self.state.chromosome_release_pending
     }
 
     fn record_event(
@@ -545,6 +567,15 @@ where
                 }
                 self.state.completed_batch_count =
                     self.state.completed_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
+            }
+            AssociationSchedulerEvent::ChromosomePrepared { .. } => {
+                if !self.state.chromosome_prepare_pending {
+                    return Err(SchedulerError::InvalidBatch {
+                        message: "unexpected chromosome preparation".to_string(),
+                    });
+                }
+                self.state.chromosome_prepare_pending = false;
+                self.state.chromosome_prepared = true;
             }
             AssociationSchedulerEvent::ChromosomeReleased => {
                 if !self.state.chromosome_release_pending {
@@ -576,7 +607,7 @@ where
     }
 }
 
-impl<Backend> Drop for AssociationBatchPipeline<'_, Backend>
+impl<Backend> Drop for AssociationBatchPipeline<Backend>
 where
     Backend: AssociationBackend + 'static,
 {
@@ -589,35 +620,96 @@ where
 
 fn run_compute_worker<Backend>(
     backend: &Backend,
-    compute_receiver: &Receiver<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>,
+    group: &Backend::GroupState,
+    compute_receiver: &Receiver<ComputeCommand<Backend::TransferredInput>>,
     device_sender: &Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
     event_sender: &Sender<AssociationSchedulerEvent>,
     control: &SchedulerControl<Backend::Error>,
 ) where
     Backend: AssociationBackend,
 {
-    let mut chromosome = ChromosomeStateGuard { backend, state: None };
+    let mut chromosome_state = None;
+    let worker_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_compute_worker_commands(
+            backend,
+            group,
+            compute_receiver,
+            device_sender,
+            event_sender,
+            control,
+            &mut chromosome_state,
+        );
+    }));
+    if let Err(payload) = worker_result {
+        control.record_error(SchedulerError::WorkerPanicked {
+            worker: COMPUTE_WORKER,
+            message: panic_message(payload.as_ref()),
+        });
+    }
+    let release_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        release_active_chromosome(backend, &mut chromosome_state);
+    }));
+    if let Err(payload) = release_result {
+        let panic_message = panic_message(payload.as_ref());
+        tracing::error!(
+            worker = COMPUTE_WORKER,
+            cleanup_stage = "release_chromosome",
+            panic_message,
+            "association backend cleanup panicked"
+        );
+        control.record_error(SchedulerError::WorkerPanicked {
+            worker: COMPUTE_WORKER,
+            message: format!("chromosome release panicked: {panic_message}"),
+        });
+    }
+}
+
+fn run_compute_worker_commands<Backend>(
+    backend: &Backend,
+    group: &Backend::GroupState,
+    compute_receiver: &Receiver<ComputeCommand<Backend::TransferredInput>>,
+    device_sender: &Sender<DeviceAssociationBatch<Backend::DeviceResult>>,
+    event_sender: &Sender<AssociationSchedulerEvent>,
+    control: &SchedulerControl<Backend::Error>,
+    chromosome_state: &mut Option<Backend::ChromosomeState>,
+) where
+    Backend: AssociationBackend,
+{
     while let Ok(command) = compute_receiver.recv() {
         if control.is_aborted() {
-            release_command_state(backend, command);
             break;
         }
         let transferred_batch = match command {
-            ComputeCommand::PrepareChromosome { state } => {
-                if chromosome.state.is_some() {
-                    backend.release_chromosome(state);
+            ComputeCommand::PrepareChromosome { predictions } => {
+                if chromosome_state.is_some() {
                     control.record_error(SchedulerError::ChromosomeAlreadyPrepared);
                     break;
                 }
-                chromosome.state = Some(state);
+                let prepared_chromosome = match backend.prepare_chromosome(group, predictions) {
+                    Ok(prepared_chromosome) => prepared_chromosome,
+                    Err(source) => {
+                        control.record_error(SchedulerError::Backend { stage: "prepare chromosome", source });
+                        break;
+                    }
+                };
+                *chromosome_state = Some(prepared_chromosome.state);
+                if !send_scheduler_event(
+                    event_sender,
+                    AssociationSchedulerEvent::ChromosomePrepared {
+                        null_logistic_converged: prepared_chromosome.null_logistic_converged,
+                    },
+                    control,
+                ) {
+                    break;
+                }
                 continue;
             }
             ComputeCommand::ReleaseChromosome => {
-                let Some(chromosome_state) = chromosome.state.take() else {
+                let Some(active_chromosome_state) = chromosome_state.take() else {
                     control.record_error(SchedulerError::ChromosomeNotPrepared);
                     break;
                 };
-                backend.release_chromosome(chromosome_state);
+                backend.release_chromosome(active_chromosome_state);
                 if !send_scheduler_event(event_sender, AssociationSchedulerEvent::ChromosomeReleased, control) {
                     break;
                 }
@@ -625,7 +717,7 @@ fn run_compute_worker<Backend>(
             }
             ComputeCommand::ComputeBatch { batch } => batch,
         };
-        let Some(active_chromosome_state) = chromosome.state.as_ref() else {
+        let Some(active_chromosome_state) = chromosome_state.as_ref() else {
             control.record_error(SchedulerError::ChromosomeNotPrepared);
             break;
         };
@@ -647,8 +739,15 @@ fn run_compute_worker<Backend>(
             break;
         }
     }
-    drop(chromosome);
-    drain_command_states(backend, compute_receiver);
+}
+
+fn release_active_chromosome<Backend>(backend: &Backend, chromosome_state: &mut Option<Backend::ChromosomeState>)
+where
+    Backend: AssociationBackend,
+{
+    if let Some(active_chromosome_state) = chromosome_state.take() {
+        backend.release_chromosome(active_chromosome_state);
+    }
 }
 
 fn run_materialization_worker<Backend>(
@@ -719,47 +818,6 @@ fn send_scheduler_event<BackendError>(
                 }
                 return false;
             }
-        }
-    }
-}
-
-fn release_command_state<Backend>(
-    backend: &Backend,
-    command: ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>,
-) where
-    Backend: AssociationBackend,
-{
-    if let ComputeCommand::PrepareChromosome { state } = command {
-        backend.release_chromosome(state);
-    }
-}
-
-fn drain_command_states<Backend>(
-    backend: &Backend,
-    receiver: &Receiver<ComputeCommand<Backend::ChromosomeState, Backend::TransferredInput>>,
-) where
-    Backend: AssociationBackend,
-{
-    while let Ok(command) = receiver.try_recv() {
-        release_command_state(backend, command);
-    }
-}
-
-struct ChromosomeStateGuard<'backend, Backend>
-where
-    Backend: AssociationBackend,
-{
-    backend: &'backend Backend,
-    state: Option<Backend::ChromosomeState>,
-}
-
-impl<Backend> Drop for ChromosomeStateGuard<'_, Backend>
-where
-    Backend: AssociationBackend,
-{
-    fn drop(&mut self) {
-        if let Some(state) = self.state.take() {
-            self.backend.release_chromosome(state);
         }
     }
 }
@@ -851,4 +909,29 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
         || payload.downcast_ref::<String>().cloned().unwrap_or_else(|| "unknown panic payload".to_string()),
         |message| (*message).to_string(),
     )
+}
+
+#[cfg(test)]
+pub(crate) fn assert_disconnected_event_send_for_test() {
+    let (event_sender, event_receiver) = crossbeam_channel::bounded(1);
+    drop(event_receiver);
+    let control = SchedulerControl::<std::convert::Infallible>::new();
+
+    assert!(!send_scheduler_event(&event_sender, AssociationSchedulerEvent::ChromosomeReleased, &control,));
+    assert!(matches!(control.take_error(), Some(SchedulerError::ChannelDisconnected { queue: COMPLETED_BATCH_QUEUE })));
+    assert!(control.is_aborted());
+}
+
+#[cfg(test)]
+pub(crate) fn assert_consumed_first_failure_for_test() {
+    let control = SchedulerControl::<std::convert::Infallible>::new();
+    control.record_error(SchedulerError::InvalidBatch { message: "first".to_string() });
+    assert!(matches!(
+        control.take_error(),
+        Some(SchedulerError::InvalidBatch { message }) if message == "first"
+    ));
+
+    control.record_error(SchedulerError::ChannelDisconnected { queue: DEVICE_RESULT_QUEUE });
+    assert!(control.take_error().is_none());
+    assert!(control.is_aborted());
 }

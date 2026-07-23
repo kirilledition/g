@@ -33,7 +33,11 @@ g.jax_backend -> JAX kernels
 The backend operations are `prepare_group`, `prepare_chromosome`,
 `compute_batch`, and `materialize_batch`. The first three may retain opaque JAX
 state. Materialization performs one batched device-to-host transfer and returns
-typed arrays to Rust.
+typed arrays to Rust. Chromosome preparation, batch computation, and
+chromosome release run on the same long-lived backend execution worker.
+Genotype transfer remains on the delivery thread so it can overlap preceding
+device computation; immutable group state is therefore required to support
+concurrent access.
 
 ## Ownership
 
