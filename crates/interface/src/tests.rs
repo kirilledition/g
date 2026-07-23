@@ -228,6 +228,37 @@ fn configuration_validation_rejects_conflicts_duplicates_and_missing_paths() {
 }
 
 #[test]
+fn approximate_firth_requires_four_total_iterations_but_score_only_allows_lower_values() {
+    let fixture = CliFixture::new("firth-iteration-budget");
+    let active_firth_config = fixture.write_config(
+        "active-firth.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("active-firth-output"),
+        "[trait]\ntrait_type = \"binary\"\n\n[binary]\nfallback_method = \"firth_approximate\"\n\n[compute]\nfirth_maximum_iterations = 3\n",
+    );
+    let active_firth_arguments =
+        vec!["regenie".to_string(), "--config".to_string(), path_text(&active_firth_config).to_string()];
+    match dispatch_cli(&active_firth_arguments) {
+        CliDispatch::Exit { exit_code: 1, stderr, .. } => {
+            assert!(stderr.contains("firth_maximum_iterations must be at least 4"));
+        }
+        dispatch => panic!("expected approximate-Firth iteration-budget error, observed {dispatch:?}"),
+    }
+
+    let score_only_config = fixture.write_config(
+        "score-only.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("score-only-output"),
+        "[trait]\ntrait_type = \"binary\"\n\n[binary]\nfallback_method = \"score_only\"\n\n[compute]\nfirth_maximum_iterations = 1\n",
+    );
+    let score_only_arguments =
+        vec!["regenie".to_string(), "--config".to_string(), path_text(&score_only_config).to_string()];
+    let compiled_run = one_compiled_run(&score_only_arguments);
+    assert_eq!(compiled_run.run_plan.compute.kernels.firth.maximum_iterations, 1);
+    assert_eq!(compiled_run.run_plan.correction.method, g_plan::BinaryFallbackMethod::ScoreOnly);
+}
+
+#[test]
 fn run_plan_and_batch_dispatch_preserve_geometry_and_disjoint_outputs() {
     let fixture = CliFixture::new("plan-batch");
     let mut arguments = fixture.valid_cli_arguments(&["alpha", "Beta / gamma"], "plan-output");

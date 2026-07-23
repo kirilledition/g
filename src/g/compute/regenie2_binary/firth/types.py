@@ -71,7 +71,17 @@ class NullFirthNewtonRaphsonState:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class NullFirthLineSearchState:
-    """Line-search state for covariate-only null Firth Newton-Raphson."""
+    """Line-search state for covariate-only null Firth Newton-Raphson.
+
+    Attributes:
+        attempt_count: Number of evaluated proposals.
+        next_coefficient_step: Step used for the next proposal.
+        accepted_coefficients: Last trusted coefficients.
+        accepted_deviance: Last trusted penalized deviance.
+        accepted: Whether a valid, improving proposal was accepted.
+        valid: Whether the retained coefficients and deviance remain trusted.
+
+    """
 
     attempt_count: jax.Array
     next_coefficient_step: jax.Array
@@ -84,7 +94,15 @@ class NullFirthLineSearchState:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class NullFirthLineSearchResult:
-    """Result of null Firth deviance-decreasing step-halving."""
+    """Result of null Firth deviance-decreasing step-halving.
+
+    Attributes:
+        coefficients: Accepted coefficients, or the unchanged trusted input.
+        deviance: Accepted deviance, or the unchanged trusted input.
+        accepted: Whether a valid, improving proposal was accepted.
+        valid: Whether the returned coefficients and deviance remain trusted.
+
+    """
 
     coefficients: jax.Array
     deviance: jax.Array
@@ -220,7 +238,19 @@ class ScalarNewtonRaphsonState:
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
 class ScalarLineSearchState:
-    """Line-search state for scalar Newton-Raphson Firth."""
+    """Line-search state for scalar Newton-Raphson Firth.
+
+    Attributes:
+        beta: Accepted beta, or the unchanged trusted input.
+        step_size: Step used by the most recent proposal.
+        penalized_deviance: Accepted deviance, or the unchanged trusted input.
+        genotype_information: Accepted information, or the unchanged trusted input.
+        score: Accepted score, or the unchanged trusted input.
+        attempt_count: Number of evaluated proposals.
+        accepted: Whether a valid, improving proposal was accepted.
+        valid: Whether the retained scalar fields remain trusted.
+
+    """
 
     beta: jax.Array
     step_size: jax.Array

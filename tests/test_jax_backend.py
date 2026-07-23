@@ -911,7 +911,10 @@ def test_binary_score_backend_packed8_route_matches_decoded_route() -> None:
     )
 
 
-def build_firth_backend() -> jax_backend.BinaryFirthJaxBackend:
+def build_firth_backend(
+    *,
+    firth_maximum_iterations: int = 100,
+) -> jax_backend.BinaryFirthJaxBackend:
     """Build a bounded CPU Firth adapter matching the independent oracle policy."""
     config = tests.test_regenie2_binary_pipeline.build_binary_kernel_config(candidate_capacity=2, batch_size=2)
     return jax_backend.BinaryFirthJaxBackend(
@@ -924,7 +927,7 @@ def build_firth_backend() -> jax_backend.BinaryFirthJaxBackend:
         null_logistic_coefficient_tolerance=config.null_logistic.coefficient_tolerance,
         firth_batch_size=config.firth_candidate.batch_size,
         firth_candidate_capacity=config.firth_candidate.candidate_capacity,
-        firth_maximum_iterations=config.approximate_firth.maximum_iterations,
+        firth_maximum_iterations=firth_maximum_iterations,
         firth_gradient_tolerance=config.approximate_firth.gradient_tolerance,
         firth_maximum_step_size=config.approximate_firth.maximum_step_size,
         firth_pseudo_maximum_iterations=config.approximate_firth.pseudo_maximum_iterations,
@@ -940,6 +943,12 @@ def build_firth_backend() -> jax_backend.BinaryFirthJaxBackend:
         null_firth_line_search_maximum_attempts=config.null_firth.line_search_maximum_attempts,
         null_firth_step_halving_scale=config.null_firth.step_halving_scale,
     )
+
+
+def test_firth_backend_rejects_total_iteration_budget_below_four() -> None:
+    """Defend direct Python construction from an unusable phase split."""
+    with pytest.raises(ValueError, match="must be at least 4"):
+        build_firth_backend(firth_maximum_iterations=3)
 
 
 def run_firth_backend_fixture(

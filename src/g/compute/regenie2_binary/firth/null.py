@@ -100,7 +100,7 @@ def run_null_firth_line_search(
             accepted_coefficients=jnp.where(accepted, candidate_coefficients, state.accepted_coefficients),
             accepted_deviance=jnp.where(accepted, candidate_components.deviance, state.accepted_deviance),
             accepted=accepted,
-            valid=state.valid & candidate_components.valid,
+            valid=state.valid,
         )
 
     final_state = jax.lax.while_loop(

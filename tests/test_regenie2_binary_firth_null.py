@@ -411,6 +411,100 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
     assert bool(np.asarray(observed.valid))
 
 
+def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step() -> None:
+    """Continue real step-halving after overflowing the full-step information."""
+    covariate_scale = 3.0e154
+    covariate_matrix = jnp.full((4, 1), covariate_scale, dtype=jnp.float64)
+    phenotype_vector = jnp.ones((4,), dtype=jnp.float64)
+    loco_offset = jnp.zeros((4,), dtype=jnp.float64)
+    current_coefficients = jnp.asarray([-10.0 / covariate_scale], dtype=jnp.float64)
+    coefficient_step = jnp.asarray([10.0 / covariate_scale], dtype=jnp.float64)
+    current_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        coefficients=current_coefficients,
+    )
+    full_step_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        coefficients=current_coefficients + coefficient_step,
+    )
+    half_step_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        coefficients=current_coefficients + coefficient_step * 0.5,
+    )
+
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        current_coefficients=current_coefficients,
+        current_deviance=current_components.deviance,
+        coefficient_step=coefficient_step,
+        maximum_attempts=2,
+        step_halving_scale=0.5,
+    )
+
+    assert bool(np.asarray(current_components.valid))
+    assert not bool(np.asarray(full_step_components.valid))
+    assert bool(np.asarray(half_step_components.valid))
+    assert float(np.asarray(half_step_components.deviance)) < float(np.asarray(current_components.deviance))
+    assert bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+    np.testing.assert_allclose(
+        np.asarray(observed.coefficients),
+        np.asarray(current_coefficients + coefficient_step * 0.5),
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+    tests.numerical.assert_absolute_difference_less_than(observed.deviance, half_step_components.deviance, 1.0e-12)
+
+
+def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() -> None:
+    """Exhaust real overflowing proposals without corrupting trusted quantities."""
+    covariate_scale = 4.0e155
+    covariate_matrix = jnp.full((4, 1), covariate_scale, dtype=jnp.float64)
+    phenotype_vector = jnp.ones((4,), dtype=jnp.float64)
+    loco_offset = jnp.zeros((4,), dtype=jnp.float64)
+    current_coefficients = jnp.asarray([-10.0 / covariate_scale], dtype=jnp.float64)
+    coefficient_step = jnp.asarray([10.0 / covariate_scale], dtype=jnp.float64)
+    current_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        coefficients=current_coefficients,
+    )
+    for candidate_step_scale in (1.0, 0.5, 0.25):
+        candidate_components = regenie2_binary_firth_null.compute_null_firth_components(
+            covariate_matrix=covariate_matrix,
+            phenotype_vector=phenotype_vector,
+            loco_offset=loco_offset,
+            coefficients=current_coefficients + coefficient_step * candidate_step_scale,
+        )
+        assert not bool(np.asarray(candidate_components.valid))
+
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        current_coefficients=current_coefficients,
+        current_deviance=current_components.deviance,
+        coefficient_step=coefficient_step,
+        maximum_attempts=3,
+        step_halving_scale=0.5,
+    )
+
+    assert bool(np.asarray(current_components.valid))
+    assert not bool(np.asarray(observed.accepted))
+    assert bool(np.asarray(observed.valid))
+    np.testing.assert_array_equal(np.asarray(observed.coefficients), np.asarray(current_coefficients))
+    tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-12)
+
+
 def test_null_firth_single_attempt_converges_to_a_small_modified_score() -> None:
     """Converge on a regular fixture under the production numerical policy."""
     fixture = build_null_firth_fixture()

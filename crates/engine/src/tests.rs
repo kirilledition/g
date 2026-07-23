@@ -857,6 +857,18 @@ fn valid_run_plan() -> g_plan::RunPlan {
 fn run_plan_jax_integer_validation_accepts_production_values_and_rejects_boundaries() {
     validate_jax_integer_domain(&valid_run_plan()).expect("production-sized plan fits JAX integers");
 
+    let mut undersized_firth_plan = valid_run_plan();
+    undersized_firth_plan.compute.kernels.firth.maximum_iterations = 3;
+    assert!(matches!(
+        validate_jax_integer_domain(&undersized_firth_plan),
+        Err(RunPreparationError::ApproximateFirthIterationBudgetTooSmall { observed: 3 })
+    ));
+
+    let mut score_only_plan = valid_run_plan();
+    score_only_plan.correction.method = g_plan::BinaryFallbackMethod::ScoreOnly;
+    score_only_plan.compute.kernels.firth.maximum_iterations = 1;
+    validate_jax_integer_domain(&score_only_plan).expect("inactive Firth budget may remain below four");
+
     let mut zero_chunk_plan = valid_run_plan();
     zero_chunk_plan.chunk_size = 0;
     assert!(matches!(

@@ -45,6 +45,10 @@ pub(crate) enum RunPreparationError {
     CapacityOverflow { field_name: &'static str },
     #[error("{field_name} exceeds the JAX int32 domain.")]
     JaxIntegerOverflow { field_name: &'static str },
+    #[error(
+        "Firth maximum iterations must be at least 4 when approximate Firth correction is active; observed {observed}."
+    )]
+    ApproximateFirthIterationBudgetTooSmall { observed: u32 },
     #[error("The resumed output requires packed8 delivery, but the current BGEN requires dosage delivery.")]
     ResumedPacked8Incompatible,
 }
@@ -276,6 +280,14 @@ fn positive_u32_as_usize(value: u32, field_name: &'static str) -> Result<usize, 
 /// domain used by JAX indices, reductions, and loop state.
 pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunPreparationError> {
     let kernels = &run_plan.compute.kernels;
+    if run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate
+        && kernels.firth.maximum_iterations < 4
+    {
+        return Err(RunPreparationError::ApproximateFirthIterationBudgetTooSmall {
+            observed: kernels.firth.maximum_iterations,
+        });
+    }
     let positive_values = [
         ("analysis chunk size", run_plan.chunk_size),
         ("binary null maximum iterations", kernels.binary_null.maximum_iterations),

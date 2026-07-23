@@ -49,6 +49,14 @@ fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
     if config.binary.firth_se && config.binary.fallback_method != plan::BinaryFallbackMethod::FirthApproximate {
         return Err(ConfigError::new("--firth-se requires --binary-fallback=firth_approximate."));
     }
+    if config.trait_config.trait_type == plan::RegenieTraitType::Binary
+        && config.binary.fallback_method == plan::BinaryFallbackMethod::FirthApproximate
+        && config.g_compute.firth_maximum_iterations.get() < 4
+    {
+        return Err(ConfigError::new(
+            "[compute].firth_maximum_iterations must be at least 4 when approximate Firth correction is active.",
+        ));
+    }
     Ok(())
 }
 

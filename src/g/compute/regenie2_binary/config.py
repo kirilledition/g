@@ -8,6 +8,24 @@ BINARY_CASE_THRESHOLD = 0.5
 REGENIE_LOGISTIC_MINIMUM_ETA = -30.0
 REGENIE_LOGISTIC_MAXIMUM_ETA = 30.0
 REGENIE_NUMERICAL_EPSILON_MULTIPLIER = 10.0
+APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS = 4
+
+
+def validate_approximate_firth_iteration_budget(maximum_iterations: int) -> None:
+    """Validate the total budget split between approximate-Firth solver phases.
+
+    Args:
+        maximum_iterations: Total configured outer-iteration budget.
+
+    Raises:
+        ValueError: If floor division would leave either solver phase fewer than two iterations.
+
+    """
+    if maximum_iterations < APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS:
+        raise ValueError(
+            "Approximate Firth maximum iterations must be at least "
+            f"{APPROXIMATE_FIRTH_MINIMUM_TOTAL_ITERATIONS}; observed {maximum_iterations}."
+        )
 
 
 @dataclass(frozen=True)

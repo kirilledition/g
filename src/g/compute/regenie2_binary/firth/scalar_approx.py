@@ -16,6 +16,9 @@ def build_scalar_approximate_firth_solver_parameters(
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
 ) -> regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters:
     """Build explicit scalar approximate-Firth policy operands."""
+    regenie2_binary_config.validate_approximate_firth_iteration_budget(
+        kernel_config.approximate_firth.maximum_iterations
+    )
     pseudo_maximum_iterations = min(
         kernel_config.approximate_firth.maximum_iterations // 2,
         kernel_config.approximate_firth.pseudo_maximum_iterations,
@@ -351,7 +354,7 @@ def run_scalar_line_search_with_minimum_variance(
             score=jnp.where(accepted, components.score, state.score),
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
             accepted=accepted,
-            valid=state.valid & components.valid,
+            valid=state.valid,
         )
 
     return jax.lax.while_loop(

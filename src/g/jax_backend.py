@@ -564,6 +564,7 @@ class BinaryFirthJaxBackend(BinaryJaxBackendBase):
         from g.compute.regenie2_binary import api as regenie2_binary
         from g.compute.regenie2_binary import config as regenie2_binary_config
 
+        regenie2_binary_config.validate_approximate_firth_iteration_budget(firth_maximum_iterations)
         super().__init__(
             minimum_probability=minimum_probability,
             minimum_variance=minimum_variance,
