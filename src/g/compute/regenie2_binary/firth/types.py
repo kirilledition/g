@@ -99,6 +99,7 @@ class NullFirthLineSearchResult:
     Attributes:
         coefficients: Accepted coefficients, or the unchanged trusted input.
         deviance: Accepted deviance, or the unchanged trusted input.
+        attempt_count: Number of evaluated proposals.
         accepted: Whether a valid, improving proposal was accepted.
         valid: Whether the returned coefficients and deviance remain trusted.
 
@@ -106,6 +107,7 @@ class NullFirthLineSearchResult:
 
     coefficients: jax.Array
     deviance: jax.Array
+    attempt_count: jax.Array
     accepted: jax.Array
     valid: jax.Array
 

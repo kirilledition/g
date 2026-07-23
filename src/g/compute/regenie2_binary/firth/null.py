@@ -118,6 +118,7 @@ def run_null_firth_line_search(
     return regenie2_binary_firth_types.NullFirthLineSearchResult(
         coefficients=final_state.accepted_coefficients,
         deviance=final_state.accepted_deviance,
+        attempt_count=final_state.attempt_count,
         accepted=final_state.accepted,
         valid=final_state.valid,
     )

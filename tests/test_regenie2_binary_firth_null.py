@@ -18,6 +18,7 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
 REGENIE_NULL_FIRTH_INITIAL_SCORE_MAXIMUM = 1.0e16
+UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES = 25
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,7 @@ def update_null_firth_score_history_reference(
         failed=state.failed
         or (
             check_score_increase
-            and score_increase_count > regenie2_binary_firth_null.NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES
+            and score_increase_count > UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES
         ),
     )
 
@@ -304,7 +305,7 @@ def test_null_firth_first_score_above_regenie_sentinel_counts_as_an_increase(
         phenotype_vector=jnp.ones((1,), dtype=jnp.float64),
         loco_offset=jnp.zeros((1,), dtype=jnp.float64),
         initial_coefficients=jnp.zeros((1,), dtype=jnp.float64),
-        maximum_iterations=26,
+        maximum_iterations=UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 1,
         maximum_step_size=1.0,
         tolerance=1.0,
         line_search_maximum_attempts=1,
@@ -313,7 +314,11 @@ def test_null_firth_first_score_above_regenie_sentinel_counts_as_an_increase(
     )
 
     assert not bool(np.asarray(observed.converged))
-    tests.numerical.assert_absolute_difference_less_than(observed.coefficients, np.asarray([25.0]), 1.0e-15)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        np.asarray([float(UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES)]),
+        1.0e-15,
+    )
 
 
 def test_null_firth_score_history_does_not_accumulate_nonconsecutive_increases() -> None:
@@ -333,35 +338,53 @@ def test_null_firth_score_history_does_not_accumulate_nonconsecutive_increases()
 
 def test_null_firth_score_history_fails_only_after_25_consecutive_increases() -> None:
     """Match REGENIE's strict greater-than-25 failure threshold."""
-    score_maxima = [float(score_maximum) for score_maximum in range(27)]
+    score_maxima = [
+        float(score_maximum)
+        for score_maximum in range(UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 2)
+    ]
     observed_states = compare_score_history_sequence_to_regenie(
         score_maxima=score_maxima,
         convergence_iteration=None,
         check_score_increase=True,
     )
 
-    assert int(np.asarray(observed_states[-2].score_increase_count)) == 25
+    assert (
+        int(np.asarray(observed_states[-2].score_increase_count))
+        == UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES
+    )
     assert not bool(np.asarray(observed_states[-2].failed))
-    assert int(np.asarray(observed_states[-1].score_increase_count)) == 26
+    assert (
+        int(np.asarray(observed_states[-1].score_increase_count))
+        == UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 1
+    )
     assert bool(np.asarray(observed_states[-1].failed))
 
 
 def test_null_firth_score_history_can_disable_the_increase_failure() -> None:
     """Track the recurrence without failing the final fallback policy."""
-    score_maxima = [float(score_maximum) for score_maximum in range(27)]
+    score_maxima = [
+        float(score_maximum)
+        for score_maximum in range(UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 2)
+    ]
     observed_states = compare_score_history_sequence_to_regenie(
         score_maxima=score_maxima,
         convergence_iteration=None,
         check_score_increase=False,
     )
 
-    assert int(np.asarray(observed_states[-1].score_increase_count)) == 26
+    assert (
+        int(np.asarray(observed_states[-1].score_increase_count))
+        == UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 1
+    )
     assert not bool(np.asarray(observed_states[-1].failed))
 
 
 def test_null_firth_convergence_precedes_the_increase_failure() -> None:
     """Accept convergence from iteration two onward before applying the heuristic."""
-    for convergence_iteration in (2, 27):
+    for convergence_iteration in (
+        2,
+        UPSTREAM_REGENIE_NULL_FIRTH_MAXIMUM_CONSECUTIVE_SCORE_INCREASES + 2,
+    ):
         score_maxima = [float(score_maximum) for score_maximum in range(convergence_iteration)]
         observed_states = compare_score_history_sequence_to_regenie(
             score_maxima=score_maxima,
@@ -441,6 +464,7 @@ def test_null_firth_line_search_accepts_a_deviance_decreasing_newton_step() -> N
 
     assert bool(np.asarray(observed.accepted))
     assert bool(np.asarray(observed.valid))
+    assert int(np.asarray(observed.attempt_count)) == 1
     assert float(np.asarray(observed.deviance)) < float(np.asarray(current_components.deviance))
 
 
@@ -467,6 +491,7 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
 
     tests.numerical.assert_absolute_difference_less_than(observed.coefficients, fixture.coefficients, 1.0e-15)
     tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-15)
+    assert int(np.asarray(observed.attempt_count)) == 0
     assert not bool(np.asarray(observed.accepted))
     assert bool(np.asarray(observed.valid))
 
@@ -515,6 +540,7 @@ def test_null_firth_line_search_rejects_valid_nonimproving_proposals(
 
     assert not bool(np.asarray(observed.accepted))
     assert bool(np.asarray(observed.valid))
+    assert int(np.asarray(observed.attempt_count)) == 1
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         np.asarray([0.0]),
@@ -573,6 +599,7 @@ def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step(
     assert half_step_reference.valid
     assert half_step_reference.deviance < current_reference.deviance
     assert line_search_reference.attempt_count == 2
+    assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
     assert line_search_reference.accepted
     assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
@@ -630,6 +657,7 @@ def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() ->
 
     assert current_reference.valid
     assert line_search_reference.attempt_count == 3
+    assert int(np.asarray(observed.attempt_count)) == line_search_reference.attempt_count
     assert not line_search_reference.accepted
     assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
