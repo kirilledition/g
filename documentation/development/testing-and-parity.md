@@ -79,11 +79,41 @@ temporary directory.
 
 ## Coverage Reports
 
-`just coverage-python` and `just coverage-rust` generate reports for the active
-test surface. They are not advertised as percentage gates while the product
-suite is being rebuilt around the current native boundary. Restore a threshold
-only with a measured baseline and tests for real supported contracts; do not
-meet a number by adding placeholder product tests.
+Coverage generation is a required CI contract. `just coverage-python` enforces
+95% combined Python line-and-branch coverage and writes XML and JSON reports
+under `artifacts/coverage/python/`. The recipe first builds the Maturin
+extension with LLVM coverage instrumentation, runs a tiny valid CPU lifecycle
+through the real `g._core.cli.run` boundary, and requires nonzero
+line execution in:
+
+- `src/lib.rs`;
+- `src/binding/mod.rs`;
+- `src/binding/cli.rs`;
+- `src/binding/engine.rs`;
+- `src/binding/jax_runtime.rs`;
+- `src/binding/logging.rs`.
+
+The generated one-variant BGEN and three-sample phenotype/LOCO inputs reach
+module registration, CLI forwarding, Python logging, JAX CPU runtime setup,
+backend construction, association, and output completion without protected
+data or GPU work.
+
+`just coverage-rust` writes JSON and LCOV reports under
+`artifacts/coverage/rust/` and enforces 78% line, 77% region, and 72% function
+coverage. Both report validators reject malformed or empty reports. Their unit
+tests deliberately pass below-floor synthetic reports to prove each threshold
+fails closed.
+
+PR CI runs Python and Rust generation as separate required jobs, uploads their
+artifacts, and includes both results in the aggregate `ci` job. Only the
+external Codecov uploads are best effort. CUDA qualification remains a
+real-device test contract and is not converted into a percentage target.
+
+On gauss, run the combined workflow only through the exclusive CPU allocation:
+
+```bash
+just slurm-cpu-coverage
+```
 
 ## Documentation Changes
 

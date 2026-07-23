@@ -526,12 +526,10 @@ jobs:
         continue-on-error: true
         run: cargo check --workspace --all-targets
 
-  coverage:
-    name: coverage
+  python-coverage:
+    name: python-coverage
     needs:
       - python-tests
-      - rust-tests
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -568,6 +566,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - name: Set up Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
@@ -589,30 +589,106 @@ jobs:
           tool: cargo-llvm-cov@0.8.7
 
       - name: Install project and coverage dependencies
-        run: uv sync --group dev --frozen
+        run: uv sync --group dev --frozen --no-install-project
 
-      - name: Generate Python coverage
+      - name: Generate and enforce Python and native-binding coverage
+        run: just coverage-python
+
+      - name: Upload Python coverage reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: python-coverage
+          path: artifacts/coverage/python
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Python coverage to Codecov
+        if: always()
         continue-on-error: true
-        run: >
-          uv run --no-sync pytest tests/
-          -m "not phase0_data and not phase1_parity"
-          --cov=src/g
-          --cov-report=xml:coverage-python.xml
-          --cov-report=term-missing
-          --cov-fail-under=0
-
-      - name: Generate Rust coverage
-        continue-on-error: true
-        run: >
-          cargo llvm-cov --workspace --lcov
-          --output-path coverage-rust.lcov
-          --locked
-
-      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
-          files: coverage-python.xml,coverage-rust.lcov
-          flags: python,rust
+          files: artifacts/coverage/python/coverage.xml
+          flags: python
+          use_oidc: true
+          fail_ci_if_error: false
+
+  rust-coverage:
+    name: rust-coverage
+    needs:
+      - rust-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Export Python shared library path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "${GITHUB_ENV}"
+          import os
+          import sys
+          import sysconfig
+
+          library_dir = sysconfig.get_config_var("LIBDIR")
+          previous_path = os.environ.get("LD_LIBRARY_PATH", "")
+          print(f"PYO3_PYTHON={sys.executable}")
+          print(f"PYTHON_SYS_EXECUTABLE={sys.executable}")
+          print(f"PYTHON_LIBDIR={library_dir}")
+          print(f"LD_LIBRARY_PATH={library_dir}:{previous_path}")
+          PY
+
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Mold linker
+        uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+        with:
+          mold-version: "2.41.0"
+          make-default: false
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2
+        with:
+          tool: cargo-llvm-cov@0.8.7
+
+      - name: Generate and enforce Rust coverage
+        run: just coverage-rust
+
+      - name: Upload Rust coverage reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage
+          path: artifacts/coverage/rust
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Rust coverage to Codecov
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        with:
+          files: artifacts/coverage/rust/coverage.lcov
+          flags: rust
           use_oidc: true
           fail_ci_if_error: false
 
@@ -626,7 +702,9 @@ jobs:
       - python-lint
       - typecheck
       - python-tests
+      - python-coverage
       - rust-clippy
+      - rust-coverage
       - rust-docs
       - rust-features
       - rust-tests
@@ -643,7 +721,9 @@ jobs:
           echo "python-lint: ${{ needs['python-lint'].result }}"
           echo "typecheck: ${{ needs.typecheck.result }}"
           echo "python-tests: ${{ needs['python-tests'].result }}"
+          echo "python-coverage: ${{ needs['python-coverage'].result }}"
           echo "rust-clippy: ${{ needs['rust-clippy'].result }}"
+          echo "rust-coverage: ${{ needs['rust-coverage'].result }}"
           echo "rust-docs: ${{ needs['rust-docs'].result }}"
           echo "rust-features: ${{ needs['rust-features'].result }}"
           echo "rust-tests: ${{ needs['rust-tests'].result }}"
@@ -653,7 +733,9 @@ jobs:
           test "${{ needs['python-lint'].result }}" = "success"
           test "${{ needs.typecheck.result }}" = "success"
           test "${{ needs['python-tests'].result }}" = "success"
+          test "${{ needs['python-coverage'].result }}" = "success"
           test "${{ needs['rust-clippy'].result }}" = "success"
+          test "${{ needs['rust-coverage'].result }}" = "success"
           test "${{ needs['rust-docs'].result }}" = "success"
           test "${{ needs['rust-features'].result }}" = "success"
           test "${{ needs['rust-tests'].result }}" = "success"

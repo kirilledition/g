@@ -813,21 +813,73 @@ test-parity-required:
 slurm-gpu-test-parity-required:
     {{ server_env }} && just slurm-gpu-just test-parity-required
 
-# Generate a Python coverage report for the active non-data test surface
+# Generate and enforce branch-aware Python and native-binding coverage
 coverage-python:
     #!/usr/bin/env bash
     set -euo pipefail
     . tooling/server/server_env.sh
+    gwas_engine_configure_rust_build_environment
+    gwas_engine_log_rust_build_environment
+    report_directory="artifacts/coverage/python"
+    mkdir -p "${report_directory}"
+    cargo llvm-cov clean --workspace
+    source <(cargo llvm-cov show-env --sh)
+    uv run --no-sync maturin develop --profile dev --uv --locked
+    uv run --no-sync python tests/coverage/native_binding_smoke.py
+    cargo llvm-cov report \
+      --package g \
+      --features extension-module \
+      --json \
+      --summary-only \
+      --output-path "${report_directory}/native-bindings.json" \
+      --ignore-filename-regex '(^|/)(benches|tests)/'
+    uv run --no-sync python -m tooling.debug.check_coverage_reports \
+      bindings "${report_directory}/native-bindings.json"
     pytest_arguments=()
     if gwas_engine_is_positive_integer "${GWAS_ENGINE_PYTEST_WORKERS:-}" && [[ "${GWAS_ENGINE_PYTEST_WORKERS}" -gt 1 ]]; then
       gwas_engine_configure_parallel_pytest_thread_limits
       pytest_arguments+=("-n" "${GWAS_ENGINE_PYTEST_WORKERS}")
     fi
-    uv run pytest tests/ -m "not phase0_data and not phase1_parity" --cov=src/g --cov-report=term-missing --cov-fail-under=0 "${pytest_arguments[@]}"
+    uv run --no-sync pytest tests/ \
+      -m "not phase0_data and not phase1_parity" \
+      --cov=src/g \
+      --cov-report="xml:${report_directory}/coverage.xml" \
+      --cov-report="json:${report_directory}/coverage.json" \
+      --cov-report=term-missing \
+      --cov-fail-under=95 \
+      "${pytest_arguments[@]}"
+    uv run --no-sync python -m tooling.debug.check_coverage_reports \
+      python "${report_directory}/coverage.xml"
 
-# Generate a Rust line coverage report
+# Generate and enforce Rust line, region, and function coverage
 coverage-rust:
-    {{ server_env }} && gwas_engine_configure_rust_build_environment && gwas_engine_log_rust_build_environment && cargo llvm-cov --workspace --lib --tests --ignore-filename-regex '(^|/)(benches|tests)/'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    . tooling/server/server_env.sh
+    gwas_engine_configure_rust_build_environment
+    gwas_engine_log_rust_build_environment
+    report_directory="artifacts/coverage/rust"
+    mkdir -p "${report_directory}"
+    cargo llvm-cov \
+      --workspace \
+      --lib \
+      --tests \
+      --locked \
+      --no-report
+    cargo llvm-cov report \
+      --json \
+      --summary-only \
+      --output-path "${report_directory}/coverage.json" \
+      --ignore-filename-regex '(^|/)(benches|tests)/' \
+      --fail-under-lines 78 \
+      --fail-under-regions 77 \
+      --fail-under-functions 72
+    cargo llvm-cov report \
+      --lcov \
+      --output-path "${report_directory}/coverage.lcov" \
+      --ignore-filename-regex '(^|/)(benches|tests)/'
+    python -m tooling.debug.check_coverage_reports \
+      rust "${report_directory}/coverage.json" "${report_directory}/coverage.lcov"
 
 # Generate all coverage reports
 coverage: coverage-python coverage-rust

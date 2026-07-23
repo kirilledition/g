@@ -68,5 +68,11 @@ Rust coverage also requires `cargo-llvm-cov`:
 
 ```bash
 cargo install --locked --version 0.8.7 cargo-llvm-cov
-cargo llvm-cov --workspace --all-targets --ignore-filename-regex '(^|/)(benches|tests)/' --fail-under-lines 90
+just coverage-rust
 ```
+
+The authoritative Rust gate enforces 78% line, 77% region, and 72% function
+coverage. `just coverage-python` additionally needs Maturin because it rebuilds
+the PyO3 extension under LLVM instrumentation before enforcing the 95%
+branch-aware Python floor. On gauss, use `just slurm-cpu-coverage` for the
+combined workflow rather than compiling on the login node.

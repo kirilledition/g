@@ -3,6 +3,7 @@
 /outputs/
 /results/
 /documentation_rendered_website/
+/artifacts/coverage/
 /.tools/
 .skylos/
 .direnv/

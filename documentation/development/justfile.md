@@ -85,6 +85,25 @@ CPU and GPU correctness run in separate processes. The CPU recipe excludes
 data-dependent parity; the GPU recipe qualifies all blocking upstream-REGENIE
 workflows with required local fixtures.
 
+## Coverage
+
+```bash
+just coverage-python
+just coverage-rust
+just coverage
+just slurm-cpu-coverage
+```
+
+`coverage-python` builds the Maturin extension with LLVM instrumentation,
+asserts nonzero execution in every supported PyO3 binding source, and enforces
+95% combined Python line-and-branch coverage. `coverage-rust` enforces 78%
+line, 77% region, and 72% function coverage. Both recipes write validated,
+nonempty reports below `artifacts/coverage/`; `coverage` runs both.
+
+These workflows compile native dependencies and run broad suites. On gauss,
+invoke the combined gate through the exclusive CPU allocation with
+`slurm-cpu-coverage`.
+
 ## Data
 
 ```bash

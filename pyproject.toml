@@ -176,7 +176,7 @@ branch = true
 source = ["src/g"]
 
 [tool.coverage.report]
-fail_under = 0
+fail_under = 95
 omit = [
     # Internal package markers only; src/g/__init__.py has lazy public API logic.
     "src/g/**/*/__init__.py",
@@ -185,5 +185,6 @@ exclude_also = [
     # Annotation-only import blocks are not reachable at runtime.
     "if typing\\.TYPE_CHECKING\\s*:",
 ]
+precision = 2
 show_missing = true
 skip_covered = false

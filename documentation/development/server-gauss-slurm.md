@@ -93,6 +93,11 @@ fixtures are present. Do not run full `just check`, full
 `just test`, Rust dependency builds, or Rust test builds directly on the login
 node.
 
+`slurm-cpu-coverage` rebuilds the Maturin extension with LLVM instrumentation,
+requires nonzero execution in every supported PyO3 binding file, and enforces
+the 95% branch-aware Python plus 78% line, 77% region, and 72% function Rust
+floors. Reports are written below `artifacts/coverage/`.
+
 `perf-smoke` and `perf-compare` are intentionally login-node-safe. Do not run
 `perf-gpu`, full benchmark sweeps, or GPU commands directly on the
 login node.
@@ -265,8 +270,10 @@ Post-change timings on the same node and allocation:
 - `just slurm-cpu-rust-build`: 128.03 seconds.
 - `just slurm-cpu-rust-test`: 32.45 seconds after the strict-resume diagnostic
   fix.
-- `just slurm-cpu-coverage`: 408.87 seconds, with Python coverage at 92.73% and
-  Rust line coverage at 91.21%.
+- The pre-gate `just slurm-cpu-coverage` workflow took 408.87 seconds and
+  measured Python coverage at 92.73% plus Rust line coverage at 91.21%; the
+  authoritative workflow now also instruments the PyO3 extension and validates
+  branch, region, function, and binding-file coverage.
 
 Use large-node validation when the command will compile Rust dependencies, build
 Rust tests, run the full Python suite, or combine Python and Rust checks. For
