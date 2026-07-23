@@ -22,6 +22,10 @@ types, and scheduler reports remain internal implementation details.
 ## Public functions
 
 Invoke the coarse coordinated run entry point used by `g-runner`.
+Normal progress, lifecycle telemetry, and structured diagnostics are
+best-effort observers once execution begins. Observer emission or final progress
+reporting cannot replace completed phenotype artifacts or a primary execution
+failure.
 
 ## This crate must not expose
 

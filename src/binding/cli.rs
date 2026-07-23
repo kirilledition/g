@@ -58,12 +58,12 @@ impl native_runner::NativeRunHost for PythonRunHost {
         NativeSigtermRequested::new_err("SIGTERM requested graceful shutdown.")
     }
 
-    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error {
+    fn flushed_interruption_kind(&mut self, error: Self::Error) -> native_runner::NativeRunInterruption {
         Python::attach(|py| {
-            if error.is_instance_of::<PyKeyboardInterrupt>(py) {
-                NativeInterruptFlushed::new_err("SIGINT interrupted the run after resumable output was flushed.")
+            if error.is_instance_of::<NativeSigtermRequested>(py) {
+                native_runner::NativeRunInterruption::Sigterm
             } else {
-                error
+                native_runner::NativeRunInterruption::FlushedSigint
             }
         })
     }

@@ -849,6 +849,7 @@ dependencies = [
  "g-runtime",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

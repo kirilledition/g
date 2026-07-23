@@ -299,8 +299,13 @@ impl NativeRunHost for TestNativeRunHost {
         TestHostError { kind: TestErrorKind::Sigterm, message: "SIGTERM".to_string() }
     }
 
-    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error {
-        TestHostError { kind: TestErrorKind::FlushedSigint, message: error.message }
+    fn flushed_interruption_kind(&mut self, error: Self::Error) -> NativeRunInterruption {
+        match error.kind {
+            TestErrorKind::Sigterm => NativeRunInterruption::Sigterm,
+            TestErrorKind::Failure | TestErrorKind::Sigint | TestErrorKind::FlushedSigint => {
+                NativeRunInterruption::FlushedSigint
+            }
+        }
     }
 
     fn interruption_signal_name(error: &Self::Error) -> Option<&str> {

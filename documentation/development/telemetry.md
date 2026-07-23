@@ -68,6 +68,13 @@ construction. Active run failures produce a concise terminal error and a typed
 `run_failed` event. Graceful SIGINT/SIGTERM produces signal metadata and the
 signal-derived exit code after resumable writer flushing.
 
+Runner freezes execution into one typed primary outcome: completed,
+interrupted, or failed. A backend, output, or interruption outcome is never
+replaced by later timing, telemetry-close, logging-close, or signal
+observations. Required timing and close failures fail only an otherwise
+successful run, and completed artifact paths remain on standard output. A
+signal first observed after durable completion is warning-only.
+
 The `writer_finished` event reports `parquet_dataset_path` for one phenotype or
 `parquet_dataset_paths` for a multi-phenotype run. These required paths point to
 the completed `parts/` datasets; there is no optional derived-file path.
@@ -88,6 +95,9 @@ Runner holds process runtime state while `NativeRunSession` checks subscriber
 compatibility, constructs writers, installs the subscriber, and records the
 topology. The same resolved session policy drives every step, so an
 incompatible repeated run has no file-open or worker-start side effects.
+Subscriber installation errors are typed failures and leave the runtime's
+subscriber state uninitialized rather than recording a subscriber it did not
+install.
 
 When both telemetry and timing are disabled, the native session allocates no
 run ID or shared telemetry state. Enabled session clones share one run ID and
@@ -103,7 +113,12 @@ route instead. No diagnostic is sent through both routes, and progress
 bookkeeping is not constructed when telemetry is off. The persistent-cache
 diagnostic always reports `enabled=true`, the resolved directory,
 `min_entry_size_bytes=-1`, and `min_compile_time_seconds=0`. Auxiliary-cache and
-transfer-guard diagnostics report their fixed disabled policy.
+transfer-guard diagnostics report their fixed disabled policy. Diagnostic
+emission after runtime work starts is best-effort: failures are warned about but
+do not replace the primary run outcome. JAX setup is committed as process state
+before its completed-setup diagnostics are emitted. Progress and lifecycle
+telemetry emission follow the same best-effort rule, including the final
+progress update after durable output completion.
 
 Progress registers one uniquely owned counter entry per delivery; the joined
 phenotype label is payload text, not an identity key. Complete-plan totals are
@@ -118,7 +133,8 @@ to preserve the public JSON shape without duplicate maps. Engine stages record
 through the native host; final timing files are written on success, failure,
 and interruption. A timing
 write error fails an otherwise successful run but never masks the primary run
-or interruption error.
+or interruption error. Completed artifact paths remain visible when the timing
+write is the only failure.
 
 Stage timing records only host stages that have active production producers.
 

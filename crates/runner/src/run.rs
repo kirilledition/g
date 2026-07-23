@@ -63,6 +63,21 @@ struct RunnerProcessRuntimeState {
     jax: JaxRuntimeState,
 }
 
+enum PrimaryOutcome<Error> {
+    Completed { artifacts: Vec<g_engine::PhenotypeRunArtifact> },
+    Interrupted { interruption: NativeRunInterruption },
+    Failed { error: Error },
+}
+
+type EngineExecutionResult<Error> = Result<Vec<g_engine::PhenotypeRunArtifact>, g_engine::EngineRunError<Error>>;
+type HostExecutionResult<Error> = Result<EngineExecutionResult<Error>, Error>;
+
+#[derive(Debug, Eq, PartialEq)]
+struct AncillaryFailure {
+    error_type: &'static str,
+    error_message: String,
+}
+
 /// Operations the Python host must perform while Rust owns the run lifecycle.
 pub trait NativeRunHost: Send {
     /// Concrete association backend retaining opaque Python state.
@@ -113,8 +128,8 @@ pub trait NativeRunHost: Send {
     /// Construct the Python-host interruption used for a native SIGTERM request.
     fn sigterm_interruption_error(&mut self) -> Self::Error;
 
-    /// Mark an interrupted run whose resumable output was successfully flushed.
-    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error;
+    /// Classify an engine interruption after resumable output was successfully flushed.
+    fn flushed_interruption_kind(&mut self, error: Self::Error) -> NativeRunInterruption;
 
     /// Name the signal associated with an engine interruption, when known.
     fn interruption_signal_name(error: &Self::Error) -> Option<&str>;
@@ -285,7 +300,7 @@ where
         }
     };
     let thread_name = host.current_thread_name()?;
-    let mut execution_result = (|| {
+    let execution_result: Result<_, Host::Error> = (|| {
         host.install_python_logging()?;
         let runtime_start_time = Instant::now();
         configure_process_runtime(
@@ -305,7 +320,7 @@ where
         let telemetry_session = native_session.telemetry_session().clone();
         let stage_timing_recorder = native_session.stage_timing_recorder();
         let thread_name_for_run = thread_name.as_str();
-        let execution_result = Host::detach(|| {
+        Ok(Host::detach(|| {
             let mut hooks = HostRunHooks { host };
             g_engine::execute_coordinated_run(
                 run_plan,
@@ -316,42 +331,130 @@ where
                 thread_name_for_run,
                 stage_timing_recorder,
             )
-        });
-        execution_result.map_err(|error| match error {
-            g_engine::EngineRunError::Interrupted(error) => host.flushed_interruption_error(error),
-            g_engine::EngineRunError::Failure { message } => host.run_error(message),
-        })
+        }))
     })();
-    let timing_result = native_session.finish_timing().map_err(|error| host.run_error(error.to_string()));
-    if execution_result.is_ok()
-        && let Err(error) = timing_result
-    {
-        execution_result = Err(error);
+    let primary_outcome = resolve_primary_outcome(host, execution_result);
+    let mut ancillary_failure = None;
+    if let Err(error) = native_session.finish_timing() {
+        observe_ancillary_failure(
+            &mut ancillary_failure,
+            AncillaryFailure { error_type: "TimingFileError", error_message: error.to_string() },
+        );
     }
-    if execution_result.is_ok()
-        && let Err(error) = check_interruption(host)
-    {
-        execution_result = Err(error);
+    let late_interruption_observed = observe_late_interruption(host, &primary_outcome);
+    let mut terminal_result = terminal_result_from_primary_outcome(
+        host,
+        Some(native_session.telemetry_session()),
+        &thread_name,
+        &primary_outcome,
+        ancillary_failure.as_ref(),
+    );
+    if let Err(error) = native_session.telemetry_session().finish(&thread_name) {
+        let failure = AncillaryFailure { error_type: "TelemetryRunError", error_message: error.to_string() };
+        if observe_ancillary_failure(&mut ancillary_failure, failure) && primary_outcome.is_completed() {
+            let failure = ancillary_failure.as_ref().expect("the first ancillary failure was just recorded");
+            terminal_result.append(runtime_close_failure_result(0, failure.error_type, &failure.error_message));
+        }
     }
-    let mut terminal_result = match execution_result {
-        Ok(artifacts) => completed_terminal_result(host, &artifacts)?,
-        Err(error) => terminal_result_from_error(host, Some(native_session.telemetry_session()), &thread_name, &error),
-    };
-    let mut close_result =
-        finish_telemetry_result(native_session.telemetry_session(), &thread_name, terminal_result.exit_code);
-    let mut logging_result = match native_session.finish_logging() {
-        Ok(()) => CliRunResult { exit_code: close_result.exit_code, ..CliRunResult::default() },
-        Err(error) => runtime_close_failure_result(close_result.exit_code, "LoggingSinkError", &error.to_string()),
-    };
-    if let Err(error) = check_interruption(host) {
-        terminal_result = terminal_result_from_error(host, None, &thread_name, &error);
-        close_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
-        logging_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
+    let logging_result = finish_logging_after_late_interruption_observation(
+        late_interruption_observed,
+        || {
+            let _ = observe_late_interruption(host, &primary_outcome);
+        },
+        || native_session.finish_logging(),
+    );
+    if let Err(error) = logging_result {
+        let failure = AncillaryFailure { error_type: "LoggingSinkError", error_message: error.to_string() };
+        if observe_ancillary_failure(&mut ancillary_failure, failure) && primary_outcome.is_completed() {
+            let failure = ancillary_failure.as_ref().expect("the first ancillary failure was just recorded");
+            terminal_result.append(runtime_close_failure_result(0, failure.error_type, &failure.error_message));
+        }
     }
     output.append(terminal_result);
-    output.append(close_result);
-    output.append(logging_result);
     Ok(output)
+}
+
+fn finish_logging_after_late_interruption_observation<ObserveInterruption, FinishLogging>(
+    late_interruption_observed: bool,
+    observe_interruption: ObserveInterruption,
+    finish_logging: FinishLogging,
+) -> Result<(), g_runtime::LoggingSinkError>
+where
+    ObserveInterruption: FnOnce(),
+    FinishLogging: FnOnce() -> Result<(), g_runtime::LoggingSinkError>,
+{
+    if !late_interruption_observed {
+        observe_interruption();
+    }
+    finish_logging()
+}
+
+fn resolve_primary_outcome<Host>(
+    host: &mut Host,
+    execution_result: HostExecutionResult<Host::Error>,
+) -> PrimaryOutcome<Host::Error>
+where
+    Host: NativeRunHost,
+{
+    match execution_result {
+        Ok(Ok(artifacts)) => PrimaryOutcome::Completed { artifacts },
+        Ok(Err(g_engine::EngineRunError::Interrupted(error))) => {
+            PrimaryOutcome::Interrupted { interruption: host.flushed_interruption_kind(error) }
+        }
+        Ok(Err(g_engine::EngineRunError::Failure { message })) => {
+            PrimaryOutcome::Failed { error: host.run_error(message) }
+        }
+        Err(error) => match host.interruption_kind(&error) {
+            Some(interruption) => PrimaryOutcome::Interrupted { interruption },
+            None => PrimaryOutcome::Failed { error },
+        },
+    }
+}
+
+impl<Error> PrimaryOutcome<Error> {
+    const fn is_completed(&self) -> bool {
+        matches!(self, Self::Completed { .. })
+    }
+
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Completed { .. } => "completed",
+            Self::Interrupted { .. } => "interrupted",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+fn observe_ancillary_failure(first_failure: &mut Option<AncillaryFailure>, failure: AncillaryFailure) -> bool {
+    tracing::warn!(
+        target: "g.runner",
+        error_type = failure.error_type,
+        error_message = failure.error_message,
+        "Observed an ancillary native run failure after the primary execution outcome."
+    );
+    if first_failure.is_some() {
+        return false;
+    }
+    *first_failure = Some(failure);
+    true
+}
+
+fn observe_late_interruption<Host>(host: &mut Host, primary_outcome: &PrimaryOutcome<Host::Error>) -> bool
+where
+    Host: NativeRunHost,
+{
+    if let Err(error) = check_interruption(host) {
+        let failure = host.failed_event(&error);
+        tracing::warn!(
+            target: "g.runner",
+            primary_outcome = primary_outcome.name(),
+            error_type = failure.error_type,
+            error_message = failure.error_message,
+            "Ignored an interruption observed after the primary execution outcome was fixed."
+        );
+        return true;
+    }
+    false
 }
 
 fn check_interruption<Host>(host: &mut Host) -> Result<(), Host::Error>
@@ -387,6 +490,21 @@ fn configure_process_runtime<Host>(
 where
     Host: NativeRunHost,
 {
+    configure_process_runtime_with_jax_diagnostics(host, run_plan, logging_policy, |setup_session| {
+        emit_jax_runtime_setup_diagnostics(setup_session, telemetry_session, thread_name)
+    })
+}
+
+fn configure_process_runtime_with_jax_diagnostics<Host, EmitDiagnostics>(
+    host: &mut Host,
+    run_plan: &g_plan::RunPlan,
+    logging_policy: &NativeRunSessionPolicy,
+    emit_diagnostics: EmitDiagnostics,
+) -> Result<(), Host::Error>
+where
+    Host: NativeRunHost,
+    EmitDiagnostics: FnOnce(&JaxRuntimeSetupSession<'_>) -> Result<(), String>,
+{
     let rayon_thread_count = run_plan.compute.cpu_thread_count.map(i64::from);
     let jax_policy = build_jax_runtime_policy(run_plan).map_err(|error| host.run_error(error.to_string()))?;
     let runtime_state = global_process_runtime_state();
@@ -398,13 +516,18 @@ where
             .map_err(|error| host.run_error(error.to_string()))?;
         state.jax.require_compatible(&jax_policy).map_err(|error| host.run_error(error.to_string()))?;
     }
-    g_runtime::emit_diagnostic_event(
+    if let Err(error) = g_runtime::emit_diagnostic_event(
         "debug",
         "native_runtime_knobs_configured",
         "Configuring native runtime knobs.",
         &NativeRuntimeKnobsDiagnosticFields { threads: rayon_thread_count },
-    )
-    .map_err(|error| host.run_error(format!("Failed to serialize runtime diagnostic event: {error}")))?;
+    ) {
+        tracing::warn!(
+            target: "g.runner",
+            error = %error,
+            "Failed to emit native runtime-knob diagnostic event."
+        );
+    }
     let setup_preparation_required = {
         let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
         if let Some(thread_count) = rayon_thread_count {
@@ -423,20 +546,29 @@ where
         state.jax.reserve_setup(&jax_policy).map_err(|error| host.run_error(error.to_string()))?
     };
     let should_configure_jax = setup_session.should_configure;
-    configure_jax_runtime(host, &mut setup_session, telemetry_session, thread_name)?;
+    configure_jax_runtime(host, &mut setup_session)?;
     let gpu_validation_status = setup_session.gpu_validation_status;
-    let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
-    state
-        .native
-        .require_compatible_runtime_policy(logging_policy, rayon_thread_count)
-        .map_err(|error| host.run_error(error.to_string()))?;
-    if should_configure_jax {
+    {
+        let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
         state
-            .jax
-            .complete_setup(jax_policy, gpu_validation_status)
+            .native
+            .require_compatible_runtime_policy(logging_policy, rayon_thread_count)
             .map_err(|error| host.run_error(error.to_string()))?;
-    } else {
-        state.jax.require_compatible(&jax_policy).map_err(|error| host.run_error(error.to_string()))?;
+        if should_configure_jax {
+            state
+                .jax
+                .complete_setup(jax_policy.clone(), gpu_validation_status)
+                .map_err(|error| host.run_error(error.to_string()))?;
+        } else {
+            state.jax.require_compatible(&jax_policy).map_err(|error| host.run_error(error.to_string()))?;
+        }
+    }
+    if should_configure_jax && let Err(error) = emit_diagnostics(&setup_session) {
+        tracing::warn!(
+            target: "g.runner",
+            error,
+            "Failed to emit completed JAX runtime setup diagnostics."
+        );
     }
     Ok(())
 }
@@ -444,8 +576,6 @@ where
 fn configure_jax_runtime<Host>(
     host: &mut Host,
     setup_session: &mut JaxRuntimeSetupSession<'_>,
-    telemetry_session: &TelemetryRunSession,
-    thread_name: &str,
 ) -> Result<(), Host::Error>
 where
     Host: NativeRunHost,
@@ -471,8 +601,7 @@ where
         }
         setup_session.complete_gpu_validation(validation_plan.status, validation_plan.message);
     }
-    emit_jax_runtime_setup_diagnostics(setup_session, telemetry_session, thread_name)
-        .map_err(|message| host.run_error(message))
+    Ok(())
 }
 
 fn global_process_runtime_state() -> &'static Mutex<RunnerProcessRuntimeState> {
@@ -485,32 +614,38 @@ fn lock_runtime_state(
     runtime_state.lock().map_err(|_| "Runtime state mutex was poisoned.".to_string())
 }
 
-fn completed_terminal_result<Host>(
-    host: &mut Host,
-    artifacts: &[g_engine::PhenotypeRunArtifact],
-) -> Result<CliRunResult, Host::Error>
-where
-    Host: NativeRunHost,
-{
+fn completed_terminal_result(artifacts: &[g_engine::PhenotypeRunArtifact]) -> CliRunResult {
     let stdout_lines = render_completed_lines(artifacts);
-    record_terminal_lines(&stdout_lines, "info", "native_cli_completed_line", "Native CLI completion detail.")
-        .map_err(|message| host.run_error(message))?;
-    Ok(CliRunResult::from_lines(0, stdout_lines, Vec::new()))
+    record_terminal_lines_best_effort(
+        &stdout_lines,
+        "info",
+        "native_cli_completed_line",
+        "Native CLI completion detail.",
+    );
+    CliRunResult::from_lines(0, stdout_lines, Vec::new())
 }
 
-fn terminal_result_from_error<Host>(
+fn terminal_result_from_primary_outcome<Host>(
     host: &mut Host,
     telemetry_session: Option<&TelemetryRunSession>,
     thread_name: &str,
-    error: &Host::Error,
+    primary_outcome: &PrimaryOutcome<Host::Error>,
+    ancillary_failure: Option<&AncillaryFailure>,
 ) -> CliRunResult
 where
     Host: NativeRunHost,
 {
-    if let Some(interruption) = host.interruption_kind(error) {
-        return interrupted_terminal_result(interruption);
+    match primary_outcome {
+        PrimaryOutcome::Completed { artifacts } => {
+            let mut result = completed_terminal_result(artifacts);
+            if let Some(failure) = ancillary_failure {
+                result.append(runtime_close_failure_result(0, failure.error_type, &failure.error_message));
+            }
+            result
+        }
+        PrimaryOutcome::Interrupted { interruption } => interrupted_terminal_result(*interruption),
+        PrimaryOutcome::Failed { error } => failed_terminal_result(host, telemetry_session, error, Some(thread_name)),
     }
-    failed_terminal_result(host, telemetry_session, error, Some(thread_name))
 }
 
 fn interrupted_terminal_result(interruption: NativeRunInterruption) -> CliRunResult {
@@ -520,8 +655,12 @@ fn interrupted_terminal_result(interruption: NativeRunInterruption) -> CliRunRes
         NativeRunInterruption::FlushedSigint => ("SIGINT", 130, true),
     };
     let stderr_lines = render_interrupted_lines(signal_name, flushed_for_resume);
-    let _ =
-        record_terminal_lines(&stderr_lines, "warn", "native_cli_interrupted_line", "Native CLI interruption detail.");
+    record_terminal_lines_best_effort(
+        &stderr_lines,
+        "warn",
+        "native_cli_interrupted_line",
+        "Native CLI interruption detail.",
+    );
     CliRunResult::from_lines(exit_code, Vec::new(), stderr_lines)
 }
 
@@ -550,37 +689,38 @@ where
         );
     }
     let stderr_lines = render_failed_lines(&failure.error_type, &failure.error_message);
-    let _ = record_terminal_lines(&stderr_lines, "error", "native_cli_failed_line", "Native CLI failure detail.");
+    record_terminal_lines_best_effort(&stderr_lines, "error", "native_cli_failed_line", "Native CLI failure detail.");
     CliRunResult::from_lines(CLI_RUNTIME_FAILURE_EXIT_CODE, Vec::new(), stderr_lines)
-}
-
-fn finish_telemetry_result(
-    telemetry_session: &TelemetryRunSession,
-    thread_name: &str,
-    current_exit_code: i32,
-) -> CliRunResult {
-    match telemetry_session.finish(thread_name) {
-        Ok(()) => CliRunResult { exit_code: current_exit_code, ..CliRunResult::default() },
-        Err(error) => runtime_close_failure_result(current_exit_code, "TelemetryRunError", &error.to_string()),
-    }
 }
 
 fn runtime_close_failure_result(current_exit_code: i32, error_type: &str, error_message: &str) -> CliRunResult {
     if current_exit_code == 0 {
         let stderr_lines = render_failed_lines(error_type, error_message);
-        let _ = record_terminal_lines(&stderr_lines, "error", "native_cli_failed_line", "Native CLI failure detail.");
+        record_terminal_lines_best_effort(
+            &stderr_lines,
+            "error",
+            "native_cli_failed_line",
+            "Native CLI failure detail.",
+        );
         CliRunResult::from_lines(CLI_RUNTIME_FAILURE_EXIT_CODE, Vec::new(), stderr_lines)
     } else {
         CliRunResult { exit_code: current_exit_code, ..CliRunResult::default() }
     }
 }
 
-fn record_terminal_lines(lines: &[String], level: &str, event_name: &str, message: &str) -> Result<(), String> {
+fn record_terminal_lines_best_effort(lines: &[String], level: &str, event_name: &str, message: &str) {
     for line in lines {
-        g_runtime::emit_diagnostic_event(level, event_name, message, &TerminalLineDiagnosticFields { line })
-            .map_err(|error| format!("Failed to serialize terminal diagnostic event: {error}"))?;
+        if let Err(error) =
+            g_runtime::emit_diagnostic_event(level, event_name, message, &TerminalLineDiagnosticFields { line })
+        {
+            tracing::warn!(
+                target: "g.runner",
+                error = %error,
+                terminal_event = event_name,
+                "Failed to emit native terminal diagnostic event."
+            );
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -592,9 +732,12 @@ mod tests {
     use g_interface::CompiledCliRun;
 
     use super::{
-        HostRunHooks, RunnerProcessRuntimeState, check_interruption, completed_terminal_result, configure_jax_runtime,
-        failed_terminal_result, interrupted_terminal_result, lock_runtime_state, preflight_compiled_runs, run_cli,
-        run_compiled_cli, run_compiled_runs, runtime_close_failure_result, terminal_result_from_error,
+        AncillaryFailure, HostRunHooks, PrimaryOutcome, RunnerProcessRuntimeState, check_interruption,
+        completed_terminal_result, configure_jax_runtime, configure_process_runtime_with_jax_diagnostics,
+        failed_terminal_result, finish_logging_after_late_interruption_observation, global_process_runtime_state,
+        interrupted_terminal_result, lock_runtime_state, observe_ancillary_failure, observe_late_interruption,
+        preflight_compiled_runs, resolve_primary_outcome, run_cli, run_compiled_cli, run_compiled_runs,
+        runtime_close_failure_result, terminal_result_from_primary_outcome,
     };
     use crate::jax_runtime::{JaxRuntimeSetupSession, build_jax_runtime_policy};
     use crate::test_support::{
@@ -711,14 +854,10 @@ mod tests {
     #[test]
     fn terminal_results_distinguish_success_failure_and_interruptions() {
         let mut host = TestNativeRunHost::default();
-        let completion = completed_terminal_result(
-            &mut host,
-            &[g_engine::PhenotypeRunArtifact {
-                output_run_directory: "run".to_string(),
-                parquet_dataset_directory: "run/parquet".to_string(),
-            }],
-        )
-        .expect("completion output should render");
+        let completion = completed_terminal_result(&[g_engine::PhenotypeRunArtifact {
+            output_run_directory: "run".to_string(),
+            parquet_dataset_directory: "run/parquet".to_string(),
+        }]);
         assert_eq!(completion.exit_code, 0);
         assert_eq!(
             completion.stdout_chunks,
@@ -734,8 +873,6 @@ mod tests {
                 stderr_chunks: vec!["Error: backend failed\n".to_string()],
             }
         );
-        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &failure).exit_code, 1);
-
         for (interruption, expected_exit_code, expected_resume_text) in [
             (NativeRunInterruption::Sigint, 130, false),
             (NativeRunInterruption::FlushedSigint, 130, true),
@@ -748,9 +885,6 @@ mod tests {
                 expected_resume_text
             );
         }
-
-        let sigint_error = TestHostError::sigint("interrupted");
-        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &sigint_error).exit_code, 130);
     }
 
     #[test]
@@ -765,6 +899,146 @@ mod tests {
     }
 
     #[test]
+    fn primary_outcome_resolution_preserves_failures_artifacts_and_first_ancillary_error() {
+        let artifacts = vec![g_engine::PhenotypeRunArtifact {
+            output_run_directory: "completed-run".to_string(),
+            parquet_dataset_directory: "completed-run/parquet".to_string(),
+        }];
+        let mut completed_host = TestNativeRunHost {
+            interruption_results: [Err(TestHostError::sigint("late signal"))].into(),
+            ..TestNativeRunHost::default()
+        };
+        let completed_outcome = resolve_primary_outcome(&mut completed_host, Ok(Ok(artifacts)));
+        let mut ancillary_failure = None;
+        assert!(observe_ancillary_failure(
+            &mut ancillary_failure,
+            AncillaryFailure { error_type: "TimingFileError", error_message: "timing write failed".to_string() },
+        ));
+        assert!(!observe_ancillary_failure(
+            &mut ancillary_failure,
+            AncillaryFailure { error_type: "TelemetryRunError", error_message: "telemetry close failed".to_string() },
+        ));
+        assert_eq!(
+            ancillary_failure,
+            Some(AncillaryFailure { error_type: "TimingFileError", error_message: "timing write failed".to_string() })
+        );
+
+        assert!(observe_late_interruption(&mut completed_host, &completed_outcome));
+        let completed_result = terminal_result_from_primary_outcome(
+            &mut completed_host,
+            None,
+            "test-thread",
+            &completed_outcome,
+            ancillary_failure.as_ref(),
+        );
+        assert_eq!(completed_result.exit_code, 1);
+        assert_eq!(
+            completed_result.stdout_chunks,
+            ["Success. Run saved to completed-run\n", "Parquet dataset saved to completed-run/parquet\n",]
+        );
+        assert_eq!(completed_result.stderr_chunks, ["Error: timing write failed\n"]);
+        assert!(!completed_result.stderr_chunks.concat().contains("late signal"));
+
+        for primary_message in ["backend failed first", "output failed first"] {
+            let mut failed_host = TestNativeRunHost {
+                interruption_results: [Err(TestHostError::sigint("later signal"))].into(),
+                ..TestNativeRunHost::default()
+            };
+            let failed_outcome =
+                resolve_primary_outcome(&mut failed_host, Err(TestHostError::failure(primary_message)));
+            assert!(observe_late_interruption(&mut failed_host, &failed_outcome));
+            let failed_result = terminal_result_from_primary_outcome(
+                &mut failed_host,
+                None,
+                "test-thread",
+                &failed_outcome,
+                ancillary_failure.as_ref(),
+            );
+            assert_eq!(failed_result.exit_code, 1);
+            assert_eq!(failed_result.stdout_chunks, Vec::<String>::new());
+            assert_eq!(failed_result.stderr_chunks, [format!("Error: {primary_message}\n")]);
+            assert!(!failed_result.stderr_chunks.concat().contains("timing write failed"));
+            assert!(!failed_result.stderr_chunks.concat().contains("later signal"));
+        }
+
+        for (interruption_error, expected_interruption, expected_exit_code) in [
+            (TestHostError::sigint("SIGINT"), NativeRunInterruption::Sigint, 130),
+            (
+                TestHostError { kind: TestErrorKind::FlushedSigint, message: "flushed SIGINT".to_string() },
+                NativeRunInterruption::FlushedSigint,
+                130,
+            ),
+            (
+                TestHostError { kind: TestErrorKind::Sigterm, message: "SIGTERM".to_string() },
+                NativeRunInterruption::Sigterm,
+                143,
+            ),
+        ] {
+            let mut interrupted_host = TestNativeRunHost::default();
+            let interrupted_outcome = resolve_primary_outcome(&mut interrupted_host, Err(interruption_error));
+            assert!(matches!(
+                interrupted_outcome,
+                PrimaryOutcome::Interrupted { interruption }
+                    if interruption == expected_interruption
+            ));
+            let interrupted_result = terminal_result_from_primary_outcome(
+                &mut interrupted_host,
+                None,
+                "test-thread",
+                &interrupted_outcome,
+                ancillary_failure.as_ref(),
+            );
+            assert_eq!(interrupted_result.exit_code, expected_exit_code);
+            assert!(!interrupted_result.stderr_chunks.concat().contains("timing write failed"));
+        }
+    }
+
+    #[test]
+    fn engine_proven_interruption_is_structural() {
+        let mut host = TestNativeRunHost::default();
+        let outcome = resolve_primary_outcome(
+            &mut host,
+            Ok(Err(g_engine::EngineRunError::Interrupted(TestHostError::failure("unclassified hook interruption")))),
+        );
+        assert!(matches!(outcome, PrimaryOutcome::Interrupted { interruption: NativeRunInterruption::FlushedSigint }));
+    }
+
+    #[test]
+    fn fallback_late_interruption_observation_precedes_logging_finish() {
+        let events = std::cell::RefCell::new(Vec::new());
+        finish_logging_after_late_interruption_observation(
+            false,
+            || events.borrow_mut().push("observe_interruption"),
+            || {
+                events.borrow_mut().push("finish_logging");
+                Ok(())
+            },
+        )
+        .expect("test logging finish should succeed");
+        assert_eq!(events.into_inner(), ["observe_interruption", "finish_logging"]);
+    }
+
+    #[test]
+    fn completed_primary_outcome_ignores_late_signal_without_an_ancillary_failure() {
+        let mut host = TestNativeRunHost {
+            interruption_results: [Err(TestHostError::sigint("too late"))].into(),
+            ..TestNativeRunHost::default()
+        };
+        let completed_outcome = resolve_primary_outcome(
+            &mut host,
+            Ok(Ok(vec![g_engine::PhenotypeRunArtifact {
+                output_run_directory: "durable-run".to_string(),
+                parquet_dataset_directory: "durable-run/parquet".to_string(),
+            }])),
+        );
+        assert!(observe_late_interruption(&mut host, &completed_outcome));
+        let result = terminal_result_from_primary_outcome(&mut host, None, "test-thread", &completed_outcome, None);
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stderr_chunks.is_empty());
+        assert!(result.stdout_chunks.concat().contains("durable-run/parquet"));
+    }
+
+    #[test]
     fn jax_configuration_skips_reconfiguration_and_applies_cpu_policy_once() {
         let mut run_plan =
             crate::test_support::run_plan(Path::new("jax-configuration"), g_plan::AssociationMode::Regenie2Linear);
@@ -772,20 +1046,52 @@ mod tests {
         let policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
         let mut host = TestNativeRunHost::default();
         let mut skipped_session = JaxRuntimeSetupSession::new(false, &policy);
-        configure_jax_runtime(
-            &mut host,
-            &mut skipped_session,
-            &g_runtime::TelemetryRunSession::default(),
-            "test-thread",
-        )
-        .expect("configured runtime should be reused");
+        configure_jax_runtime(&mut host, &mut skipped_session).expect("configured runtime should be reused");
         assert!(host.calls.is_empty());
 
         let mut setup_session = JaxRuntimeSetupSession::new(true, &policy);
-        configure_jax_runtime(&mut host, &mut setup_session, &g_runtime::TelemetryRunSession::default(), "test-thread")
-            .expect("CPU runtime should configure");
+        configure_jax_runtime(&mut host, &mut setup_session).expect("CPU runtime should configure");
         assert_eq!(host.calls, ["apply_jax_config_updates"]);
         assert_eq!(host.config_update_names.len(), 7);
+    }
+
+    #[test]
+    fn jax_setup_is_committed_before_best_effort_diagnostic_failure() {
+        if !execute_isolated_test_body(
+            "run::tests::jax_setup_is_committed_before_best_effort_diagnostic_failure",
+            "G_RUNNER_JAX_DIAGNOSTIC_FAILURE_TEST_CHILD",
+        ) {
+            return;
+        }
+        let fixture = TemporaryRunFixture::new();
+        let mut run_plan = fixture.run_plan(g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.jax_cache_directory = Some(fixture.root_path().join("jax-cache").display().to_string());
+        let expected_policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
+        let logging_policy = crate::native_session_policy::project_native_run_session_policy(&run_plan);
+        let mut host = TestNativeRunHost::default();
+
+        configure_process_runtime_with_jax_diagnostics(&mut host, &run_plan, &logging_policy, |_setup_session| {
+            let state = lock_runtime_state(global_process_runtime_state())
+                .expect("runner runtime state should be available during diagnostic emission");
+            state
+                .jax
+                .require_compatible(&expected_policy)
+                .expect("JAX setup must be committed before diagnostics are emitted");
+            Err("intentional completed-setup diagnostic failure".to_string())
+        })
+        .expect("diagnostic failure should not fail completed JAX setup");
+        assert_eq!(host.calls, ["apply_jax_config_updates"]);
+
+        configure_process_runtime_with_jax_diagnostics(
+            &mut host,
+            &run_plan,
+            &logging_policy,
+            |_setup_session| -> Result<(), String> {
+                panic!("compatible configured JAX runtime should not re-emit setup diagnostics")
+            },
+        )
+        .expect("compatible JAX setup should remain reusable");
+        assert_eq!(host.calls, ["apply_jax_config_updates"]);
     }
 
     #[test]
@@ -853,11 +1159,17 @@ mod tests {
     }
 
     #[test]
-    fn host_error_classification_covers_all_error_kinds() {
+    fn primary_outcome_classification_covers_remaining_interruption_kinds() {
         let mut host = TestNativeRunHost::default();
         let sigterm_error = TestHostError { kind: TestErrorKind::Sigterm, message: "term".to_string() };
         let flushed_error = TestHostError { kind: TestErrorKind::FlushedSigint, message: "flushed".to_string() };
-        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &sigterm_error).exit_code, 143);
-        assert_eq!(terminal_result_from_error(&mut host, None, "thread", &flushed_error).exit_code, 130);
+        assert!(matches!(
+            resolve_primary_outcome(&mut host, Err(sigterm_error)),
+            PrimaryOutcome::Interrupted { interruption: NativeRunInterruption::Sigterm }
+        ));
+        assert!(matches!(
+            resolve_primary_outcome(&mut host, Err(flushed_error)),
+            PrimaryOutcome::Interrupted { interruption: NativeRunInterruption::FlushedSigint }
+        ));
     }
 }

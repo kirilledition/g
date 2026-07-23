@@ -1,3 +1,30 @@
+use std::error::Error;
+use std::fmt;
+
+/// Failure to serialize one structured runtime diagnostic event.
+#[derive(Debug)]
+pub struct DiagnosticEventError {
+    source: serde_json::Error,
+}
+
+impl fmt::Display for DiagnosticEventError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl Error for DiagnosticEventError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+impl From<serde_json::Error> for DiagnosticEventError {
+    fn from(source: serde_json::Error) -> Self {
+        Self { source }
+    }
+}
+
 /// Emit a structured diagnostic through the process tracing subscriber.
 ///
 /// # Errors
@@ -8,7 +35,7 @@ pub fn emit_diagnostic_event<Fields>(
     event_name: &str,
     message: &str,
     fields: &Fields,
-) -> Result<(), serde_json::Error>
+) -> Result<(), DiagnosticEventError>
 where
     Fields: serde::Serialize,
 {
@@ -23,7 +50,7 @@ where
     if !enabled {
         return Ok(());
     }
-    let fields_json = serde_json::to_string(fields)?;
+    let fields_json = serde_json::to_string(fields).map_err(DiagnosticEventError::from)?;
     match level {
         "error" => {
             tracing::error!(target: "g.native.diagnostic", g_event = event_name, g_fields = %fields_json, "{message}");
@@ -49,6 +76,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
     use serde::Serializer;
     use serde::ser::Error as _;
     use tracing_subscriber::prelude::*;
@@ -84,6 +113,11 @@ mod tests {
             let error = emit_diagnostic_event("info", "invalid", "invalid", &SerializationFailure)
                 .expect_err("enabled diagnostic should serialize fields");
             assert!(error.to_string().contains("intentional diagnostic serialization failure"));
+            assert!(
+                error
+                    .source()
+                    .is_some_and(|source| source.to_string().contains("intentional diagnostic serialization failure"))
+            );
 
             for level in ["error", "warn", "warning", "info", "debug", "trace", "notice"] {
                 emit_diagnostic_event(level, "test_event", "diagnostic", &serde_json::json!({"value": 1}))

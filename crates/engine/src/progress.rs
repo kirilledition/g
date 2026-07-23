@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use g_genotype::ChunkSpec;
-use g_runtime::{TelemetryRunError, TelemetryRunSession};
+use g_runtime::TelemetryRunSession;
 use serde::Serialize;
 
 const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_secs(5);
@@ -34,8 +34,6 @@ pub(crate) enum RunProgressError {
     StateLockPoisoned,
     #[error("Progress group '{group_name}' was not initialized.")]
     UninitializedGroup { group_name: String },
-    #[error(transparent)]
-    Telemetry(#[from] TelemetryRunError),
 }
 
 pub(crate) struct DeliveryProgress {
@@ -135,7 +133,7 @@ impl RunProgressReporter {
     ///
     /// # Errors
     ///
-    /// Returns an error when telemetry output cannot be written.
+    /// Returns an error when progress state is unavailable or counters cannot be represented.
     pub(crate) fn finish(&self) -> Result<(), RunProgressError> {
         let groups = self.groups.lock().map_err(|_| RunProgressError::StateLockPoisoned)?;
         for group in groups.iter() {
@@ -184,7 +182,16 @@ impl RunProgressReporter {
             elapsed_seconds,
             final_update,
         };
-        self.telemetry_session.emit_current_event(&self.thread_name, PROGRESS_EVENT_NAME, "info", &fields)?;
+        if let Err(error) =
+            self.telemetry_session.emit_current_event(&self.thread_name, PROGRESS_EVENT_NAME, "info", &fields)
+        {
+            tracing::warn!(
+                target: "g.engine",
+                error = %error,
+                telemetry_event = PROGRESS_EVENT_NAME,
+                "Failed to emit native run progress telemetry event."
+            );
+        }
         Ok(())
     }
 }

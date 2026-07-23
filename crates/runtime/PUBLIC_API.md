@@ -9,11 +9,12 @@ checks for native process-global settings.
 ## Public types
 
 The resolved `NativeRunSessionPolicy`, opaque `NativeRunSession`,
-`ProcessRuntimeState`, `TelemetryRunSession`, `StageTimingRecorder`, and errors
-that appear in their public signatures. The session policy is the single
-logging/telemetry policy representation shared by compatibility checks,
-subscriber setup, and run-owned writer construction. Runtime has no dependency
-on application planning types.
+`ProcessRuntimeState`, `TelemetryRunSession`, `StageTimingRecorder`, and
+crate-owned errors that appear in their public signatures, including the opaque
+`DiagnosticEventError`. The session policy is the single logging/telemetry
+policy representation shared by compatibility checks, subscriber setup, and
+run-owned writer construction. Runtime has no dependency on application
+planning types.
 
 ## Public functions
 
@@ -30,6 +31,8 @@ every run can drain its queues without leaving the subscriber bound to a dead
 writer. `NativeRunSession` checks compatibility before creating resources and
 records the installed topology only after successful subscriber initialization;
 the runner holds its process-state lock across that constructor.
+Failed global subscriber installation returns a typed logging error and leaves
+runtime subscriber state uninitialized.
 
 ## This crate must not expose
 

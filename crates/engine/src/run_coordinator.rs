@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use g_runtime::{StageTimingRecorder, TelemetryRunError, TelemetryRunSession};
+use g_runtime::{StageTimingRecorder, TelemetryRunSession};
 use serde::Serialize;
 
 use crate::backend::AssociationBackend;
@@ -77,12 +77,6 @@ pub(crate) enum CoordinatedRunDetailError<BackendError, HookError> {
     Preparation(#[from] RunPreparationError),
     #[error("Native run execution failed: {0}")]
     Execution(#[from] RunExecutionError<BackendError, HookError>),
-    #[error("Native run telemetry failed: {0}")]
-    Telemetry(#[from] TelemetryRunError),
-    #[error("Native run progress reporting failed: {0}")]
-    Progress(#[from] RunProgressError),
-    #[error("Native run diagnostic serialization failed: {0}")]
-    Diagnostic(#[from] serde_json::Error),
     #[error("Phenotype count exceeds native int64 telemetry capacity.")]
     PhenotypeCountOutOfRange,
     #[error("Processed chunk count exceeds native int64 telemetry capacity.")]
@@ -113,7 +107,8 @@ pub struct PhenotypeRunArtifact {
 ///
 /// # Errors
 ///
-/// Returns a typed preparation, execution, telemetry, or diagnostic error.
+/// Returns a typed preparation, execution, counter-capacity, or required-artifact error.
+/// Observer emission failures are recorded as warnings.
 pub fn execute_coordinated_run<Backend, Hooks>(
     run_plan: g_plan::RunPlan,
     effective_config_toml: String,
@@ -182,12 +177,15 @@ where
         Arc::new(RunProgressReporter::new(telemetry_session.clone(), thread_name.to_string(), association_mode))
     });
 
-    g_runtime::emit_diagnostic_event(
-        "debug",
+    record_diagnostic_result(
+        g_runtime::emit_diagnostic_event(
+            "debug",
+            "runner_execution_plan_build_started",
+            "Building REGENIE execution plan.",
+            &EmptyDiagnosticFields {},
+        ),
         "runner_execution_plan_build_started",
-        "Building REGENIE execution plan.",
-        &EmptyDiagnosticFields {},
-    )?;
+    );
     let preparation_start_time = Instant::now();
     let prepared_run = RunEngine::open(run_plan, effective_config_toml)?.prepare()?;
     let resolved_gpu_genotype_format = prepared_run.resolved_gpu_genotype_format();
@@ -203,57 +201,70 @@ where
         device: device.as_str(),
     };
     if telemetry_session.is_enabled() {
+        record_telemetry_result(
+            telemetry_session.emit_current_event(
+                thread_name,
+                EXECUTION_PLAN_PREPARED_EVENT_NAME,
+                "info",
+                &execution_plan_fields,
+            ),
+            EXECUTION_PLAN_PREPARED_EVENT_NAME,
+        );
+    } else {
+        record_diagnostic_result(
+            g_runtime::emit_diagnostic_event(
+                "info",
+                "runner_execution_plan_prepared",
+                "Prepared REGENIE execution plan.",
+                &execution_plan_fields,
+            ),
+            "runner_execution_plan_prepared",
+        );
+    }
+    record_telemetry_result(
         telemetry_session.emit_current_event(
             thread_name,
-            EXECUTION_PLAN_PREPARED_EVENT_NAME,
+            ASSOCIATION_BACKEND_SELECTED_EVENT_NAME,
             "info",
-            &execution_plan_fields,
-        )?;
-    } else {
-        g_runtime::emit_diagnostic_event(
-            "info",
-            "runner_execution_plan_prepared",
-            "Prepared REGENIE execution plan.",
-            &execution_plan_fields,
-        )?;
-    }
-    telemetry_session.emit_current_event(
-        thread_name,
+            &AssociationBackendSelectedTelemetryFields {
+                association_mode: association_mode.as_str(),
+                association_backend_kind,
+                device: device.as_str(),
+                genotype_format: resolved_gpu_genotype_format.as_str(),
+                phenotype: single_phenotype_name.as_deref(),
+                phenotype_count: (phenotype_count > 1).then_some(phenotype_count),
+            },
+        ),
         ASSOCIATION_BACKEND_SELECTED_EVENT_NAME,
-        "info",
-        &AssociationBackendSelectedTelemetryFields {
-            association_mode: association_mode.as_str(),
-            association_backend_kind,
-            device: device.as_str(),
-            genotype_format: resolved_gpu_genotype_format.as_str(),
-            phenotype: single_phenotype_name.as_deref(),
-            phenotype_count: (phenotype_count > 1).then_some(phenotype_count),
-        },
-    )?;
+    );
     record_stage_duration(stage_timing_recorder.as_deref_mut(), "native_run_preparation", preparation_start_time);
 
-    g_runtime::emit_diagnostic_event(
-        "debug",
+    record_diagnostic_result(
+        g_runtime::emit_diagnostic_event(
+            "debug",
+            "runner_execution_plan_dispatch_started",
+            "Dispatching REGENIE execution plan.",
+            &ExecutionPlanDispatchDiagnosticFields { phenotype_count, association_mode: association_mode.as_str() },
+        ),
         "runner_execution_plan_dispatch_started",
-        "Dispatching REGENIE execution plan.",
-        &ExecutionPlanDispatchDiagnosticFields { phenotype_count, association_mode: association_mode.as_str() },
-    )?;
+    );
     let execution_start_time = Instant::now();
     let execution = prepared_run.execute_with_progress(backend, hooks, progress_reporter.as_ref())?;
     record_stage_duration(stage_timing_recorder, "native_run_execution", execution_start_time);
 
     if let Some(progress_reporter) = progress_reporter {
-        progress_reporter.finish()?;
+        record_progress_result(progress_reporter.finish());
     }
 
     record_delivery_reports::<Backend::Error, Hooks::Error>(&execution.delivery_reports)?;
-    complete_artifacts::<Backend::Error, Hooks::Error>(
+    complete_artifacts::<Backend::Error, Hooks::Error, _>(
         execution.completed_outputs,
         telemetry_session,
         thread_name,
         association_mode,
         phenotype_count,
         single_phenotype_name.as_deref(),
+        emit_artifacts_completed_diagnostic,
     )
 }
 
@@ -263,12 +274,15 @@ fn record_delivery_reports<BackendError, HookError>(
     for (group_index, report) in delivery_reports.iter().enumerate() {
         let processed_chunk_count = i64::try_from(report.processed_chunk_count)
             .map_err(|_| CoordinatedRunDetailError::ProcessedChunkCountOutOfRange)?;
-        g_runtime::emit_diagnostic_event(
-            "debug",
+        record_diagnostic_result(
+            g_runtime::emit_diagnostic_event(
+                "debug",
+                "native_dispatch_delivery_finished",
+                "Association group delivery finished.",
+                &DeliveryFinishedDiagnosticFields { group_index, processed_chunk_count },
+            ),
             "native_dispatch_delivery_finished",
-            "Association group delivery finished.",
-            &DeliveryFinishedDiagnosticFields { group_index, processed_chunk_count },
-        )?;
+        );
         for warning in &report.warnings {
             let nonconverged_count = u64::try_from(warning.nonconverged_count)
                 .map_err(|_| CoordinatedRunDetailError::AssociationWarningCountOutOfRange)?;
@@ -288,14 +302,18 @@ fn record_delivery_reports<BackendError, HookError>(
     Ok(())
 }
 
-fn complete_artifacts<BackendError, HookError>(
+fn complete_artifacts<BackendError, HookError, EmitDiagnostic>(
     completed_outputs: Vec<g_output::CompletedOutputRun>,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
     association_mode: g_plan::AssociationMode,
     phenotype_count: i64,
     single_phenotype_name: Option<&str>,
-) -> Result<Vec<PhenotypeRunArtifact>, CoordinatedRunDetailError<BackendError, HookError>> {
+    emit_diagnostic: EmitDiagnostic,
+) -> Result<Vec<PhenotypeRunArtifact>, CoordinatedRunDetailError<BackendError, HookError>>
+where
+    EmitDiagnostic: FnOnce(&ArtifactsCompletedDiagnosticFields<'_>) -> Result<(), g_runtime::DiagnosticEventError>,
+{
     let artifacts = completed_outputs
         .into_iter()
         .map(|run| PhenotypeRunArtifact {
@@ -306,37 +324,87 @@ fn complete_artifacts<BackendError, HookError>(
     if phenotype_count == 1 {
         let phenotype_name = single_phenotype_name.ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
         let artifact = artifacts.first().ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
-        telemetry_session.emit_current_event(
-            thread_name,
+        record_telemetry_result(
+            telemetry_session.emit_current_event(
+                thread_name,
+                WRITER_FINISHED_EVENT_NAME,
+                "info",
+                &PhenotypeWriterFinishedTelemetryFields {
+                    association_mode: association_mode.as_str(),
+                    phenotype: phenotype_name,
+                    parquet_dataset_path: &artifact.parquet_dataset_directory,
+                },
+            ),
             WRITER_FINISHED_EVENT_NAME,
-            "info",
-            &PhenotypeWriterFinishedTelemetryFields {
-                association_mode: association_mode.as_str(),
-                phenotype: phenotype_name,
-                parquet_dataset_path: &artifact.parquet_dataset_directory,
-            },
-        )?;
+        );
     } else {
         let parquet_dataset_paths =
             artifacts.iter().map(|artifact| artifact.parquet_dataset_directory.as_str()).collect::<Vec<_>>();
-        telemetry_session.emit_current_event(
-            thread_name,
+        record_telemetry_result(
+            telemetry_session.emit_current_event(
+                thread_name,
+                WRITER_FINISHED_EVENT_NAME,
+                "info",
+                &MultiPhenotypeWriterFinishedTelemetryFields {
+                    association_mode: association_mode.as_str(),
+                    phenotype_count,
+                    parquet_dataset_paths: &parquet_dataset_paths,
+                },
+            ),
             WRITER_FINISHED_EVENT_NAME,
-            "info",
-            &MultiPhenotypeWriterFinishedTelemetryFields {
-                association_mode: association_mode.as_str(),
-                phenotype_count,
-                parquet_dataset_paths: &parquet_dataset_paths,
-            },
-        )?;
+        );
     }
+    record_diagnostic_result(
+        emit_diagnostic(&ArtifactsCompletedDiagnosticFields {
+            association_mode: association_mode.as_str(),
+            phenotype_count,
+        }),
+        "runner_metadata_artifacts_completed",
+    );
+    Ok(artifacts)
+}
+
+fn emit_artifacts_completed_diagnostic(
+    fields: &ArtifactsCompletedDiagnosticFields<'_>,
+) -> Result<(), g_runtime::DiagnosticEventError> {
     g_runtime::emit_diagnostic_event(
         "info",
         "runner_metadata_artifacts_completed",
         "Completed REGENIE run artifacts.",
-        &ArtifactsCompletedDiagnosticFields { association_mode: association_mode.as_str(), phenotype_count },
-    )?;
-    Ok(artifacts)
+        fields,
+    )
+}
+
+fn record_diagnostic_result(result: Result<(), g_runtime::DiagnosticEventError>, event_name: &str) {
+    if let Err(error) = result {
+        tracing::warn!(
+            target: "g.engine",
+            error = %error,
+            diagnostic_event = event_name,
+            "Failed to emit native engine diagnostic event."
+        );
+    }
+}
+
+fn record_telemetry_result(result: Result<(), g_runtime::TelemetryRunError>, event_name: &str) {
+    if let Err(error) = result {
+        tracing::warn!(
+            target: "g.engine",
+            error = %error,
+            telemetry_event = event_name,
+            "Failed to emit native engine telemetry event."
+        );
+    }
+}
+
+fn record_progress_result(result: Result<(), RunProgressError>) {
+    if let Err(error) = result {
+        tracing::warn!(
+            target: "g.engine",
+            error = %error,
+            "Failed to emit final native run progress update."
+        );
+    }
 }
 
 fn record_stage_duration(recorder: Option<&mut StageTimingRecorder>, stage_name: &str, start_time: Instant) {
@@ -347,7 +415,24 @@ fn record_stage_duration(recorder: Option<&mut StageTimingRecorder>, stage_name:
 
 #[cfg(test)]
 mod tests {
+    use serde::Serializer;
+    use serde::ser::Error as _;
+
     use super::*;
+
+    struct SerializationFailure;
+
+    impl Serialize for SerializationFailure {
+        fn serialize<SerializerType>(
+            &self,
+            _serializer: SerializerType,
+        ) -> Result<SerializerType::Ok, SerializerType::Error>
+        where
+            SerializerType: Serializer,
+        {
+            Err(SerializerType::Error::custom("intentional engine diagnostic serialization failure"))
+        }
+    }
 
     #[derive(Debug, Eq, PartialEq, thiserror::Error)]
     #[error("test backend failure")]
@@ -375,19 +460,47 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_serialization_failure_does_not_replace_completed_artifacts() {
+        let serialization_error =
+            serde_json::to_string(&SerializationFailure).expect_err("test serializer should fail");
+        let runtime_error = g_runtime::DiagnosticEventError::from(serialization_error);
+        let artifacts = complete_artifacts::<TestBackendError, TestInterruption, _>(
+            vec![g_output::CompletedOutputRun {
+                run_directory: "durable-run".into(),
+                parts_directory: "durable-run/parts".into(),
+            }],
+            &TelemetryRunSession::default(),
+            "test-thread",
+            g_plan::AssociationMode::Regenie2Linear,
+            1,
+            Some("trait"),
+            |_fields| Err(runtime_error),
+        )
+        .expect("diagnostic serialization failure must not replace completed artifacts");
+        assert_eq!(
+            artifacts,
+            [PhenotypeRunArtifact {
+                output_run_directory: "durable-run".to_string(),
+                parquet_dataset_directory: "durable-run/parts".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn artifact_completion_preserves_output_order_and_validates_single_output() {
         let telemetry_session = TelemetryRunSession::default();
         let outputs = vec![
             g_output::CompletedOutputRun { run_directory: "run-a".into(), parts_directory: "run-a/parts".into() },
             g_output::CompletedOutputRun { run_directory: "run-b".into(), parts_directory: "run-b/parts".into() },
         ];
-        let artifacts = complete_artifacts::<TestBackendError, TestInterruption>(
+        let artifacts = complete_artifacts::<TestBackendError, TestInterruption, _>(
             outputs,
             &telemetry_session,
             "test-thread",
             g_plan::AssociationMode::Regenie2Binary,
             2,
             None,
+            emit_artifacts_completed_diagnostic,
         )
         .expect("multi-phenotype artifacts complete");
         assert_eq!(
@@ -405,18 +518,19 @@ mod tests {
         );
 
         assert!(matches!(
-            complete_artifacts::<TestBackendError, TestInterruption>(
+            complete_artifacts::<TestBackendError, TestInterruption, _>(
                 Vec::new(),
                 &telemetry_session,
                 "test-thread",
                 g_plan::AssociationMode::Regenie2Linear,
                 1,
                 Some("trait"),
+                emit_artifacts_completed_diagnostic,
             ),
             Err(CoordinatedRunDetailError::MissingPhenotypeOutput)
         ));
 
-        let single_artifact = complete_artifacts::<TestBackendError, TestInterruption>(
+        let single_artifact = complete_artifacts::<TestBackendError, TestInterruption, _>(
             vec![g_output::CompletedOutputRun {
                 run_directory: "run-single".into(),
                 parts_directory: "run-single/parts".into(),
@@ -426,9 +540,29 @@ mod tests {
             g_plan::AssociationMode::Regenie2Linear,
             1,
             Some("trait"),
+            emit_artifacts_completed_diagnostic,
         )
         .expect("single-phenotype artifact completes");
         assert_eq!(single_artifact[0].output_run_directory, "run-single");
+    }
+
+    #[test]
+    fn final_progress_failure_does_not_replace_completed_artifacts() {
+        record_progress_result(Err(RunProgressError::UninitializedGroup { group_name: "trait".to_string() }));
+        let artifacts = complete_artifacts::<TestBackendError, TestInterruption, _>(
+            vec![g_output::CompletedOutputRun {
+                run_directory: "run-after-progress-error".into(),
+                parts_directory: "run-after-progress-error/parts".into(),
+            }],
+            &TelemetryRunSession::default(),
+            "test-thread",
+            g_plan::AssociationMode::Regenie2Linear,
+            1,
+            Some("trait"),
+            emit_artifacts_completed_diagnostic,
+        )
+        .expect("final progress failure must not replace completed artifacts");
+        assert_eq!(artifacts[0].output_run_directory, "run-after-progress-error");
     }
 
     #[test]

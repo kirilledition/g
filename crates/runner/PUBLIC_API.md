@@ -21,7 +21,10 @@ layout into a generic `g-runtime::NativeRunSessionPolicy`, owns process-global
 setup, constructs terminal output, and invokes the coordinated engine run
 exactly once per compiled run. It rejects an incompatible process-global
 logging topology under the runtime-state lock before opening run files or
-starting asynchronous writers.
+starting asynchronous writers. Execution freezes into completed, interrupted,
+or failed primary outcomes. Later observer failures cannot replace a primary
+failure or interruption, and completed artifact paths remain visible when a
+required timing or close observer is the only failure.
 
 ## This crate must not expose
 
