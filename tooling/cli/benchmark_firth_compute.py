@@ -34,7 +34,7 @@ from tooling.common import reports as tooling_reports
 if typing.TYPE_CHECKING:
     import omegaconf
 
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 0
 DEFAULT_OUTPUT_PARENT = Path("data/profiles")
 
 
@@ -180,6 +180,19 @@ def default_output_directory() -> Path:
     """Return a timestamped ignored output directory."""
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     return DEFAULT_OUTPUT_PARENT / f"firth_compute_{timestamp}_{os.getpid()}"
+
+
+def _validate_summary_schema_version(payload: dict[str, typing.Any]) -> None:
+    """Validate that CUDA qualification/report schema versions are strict integer zero."""
+    schema_version = payload.get("schema_version")
+    if type(schema_version) is not int:
+        raise ValueError(
+            f"schema_version for CUDA qualification report must be integer 0, got {schema_version!r}."
+        )
+    if schema_version != SUMMARY_SCHEMA_VERSION:
+        raise ValueError(
+            f"Expected CUDA qualification schema_version={SUMMARY_SCHEMA_VERSION}, got {schema_version!r}."
+        )
 
 
 def validate_arguments(arguments: BenchmarkArguments) -> None:
@@ -654,6 +667,7 @@ def run_tool(arguments: BenchmarkArguments) -> Path:
     """Run the focused benchmark and write its versioned summary."""
     summary = run_benchmark(arguments)
     summary_path = arguments.output_directory / "summary.json"
+    _validate_summary_schema_version(summary)
     tooling_reports.write_json_report(summary_path, summary, sort_keys=True)
     print(f"Wrote focused Firth evidence: {summary_path}")
     return summary_path
