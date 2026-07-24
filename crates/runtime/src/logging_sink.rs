@@ -15,7 +15,7 @@ const DEFAULT_LOG_FILTER: &str = "info";
 
 static LOGGING_SUBSCRIBER_STATE: Mutex<LoggingSubscriberState> = Mutex::new(LoggingSubscriberState::Uninitialized);
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LoggingSubscriberState {
     Uninitialized,
     Initialized,
@@ -36,6 +36,7 @@ struct RunLoggingWriter {
 #[derive(Debug)]
 pub enum LoggingSinkError {
     InvalidLogFilter { message: String },
+    SubscriberInstall(tracing_subscriber::util::TryInitError),
     Writer(std::io::Error),
     LoggingStateMutexPoisoned,
 }
@@ -106,12 +107,10 @@ pub(crate) fn initialize_logging_sinks(policy: &NativeRunSessionPolicy) -> Resul
         .with(stderr_layer)
         .with(file_layer)
         .with(structured_log_layer);
-    let subscriber_was_installed = subscriber.try_init().is_ok();
+    subscriber.try_init().map_err(LoggingSinkError::SubscriberInstall)?;
     *subscriber_state = LoggingSubscriberState::Initialized;
     drop(subscriber_state);
-    if subscriber_was_installed {
-        tracing::info!(target: "g.logging", "logging initialized");
-    }
+    tracing::info!(target: "g.logging", "logging initialized");
     Ok(())
 }
 
@@ -191,6 +190,7 @@ impl fmt::Display for LoggingSinkError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidLogFilter { message } => write!(formatter, "Invalid g log filter: {message}"),
+            Self::SubscriberInstall(error) => write!(formatter, "Failed to install g logging subscriber: {error}"),
             Self::Writer(error) => write!(formatter, "{error}"),
             Self::LoggingStateMutexPoisoned => formatter.write_str("Logging subscriber-state mutex was poisoned."),
         }
@@ -200,6 +200,7 @@ impl fmt::Display for LoggingSinkError {
 impl Error for LoggingSinkError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::SubscriberInstall(error) => Some(error),
             Self::Writer(error) => Some(error),
             Self::InvalidLogFilter { .. } | Self::LoggingStateMutexPoisoned => None,
         }
@@ -216,12 +217,40 @@ const fn resolve_span_events(include_span_events: bool) -> FmtSpan {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
     use std::io::Write as _;
 
     use tracing_subscriber::fmt::writer::MakeWriter as _;
 
     use super::*;
-    use crate::test_support::{RUNTIME_GLOBAL_TEST_MUTEX, TemporaryDirectory, disabled_session_policy};
+    use crate::test_support::{
+        RUNTIME_GLOBAL_TEST_MUTEX, TemporaryDirectory, disabled_session_policy, execute_isolated_test_body,
+    };
+
+    #[test]
+    fn preinstalled_subscriber_failure_remains_uninitialized_and_typed() {
+        if !execute_isolated_test_body(
+            "logging_sink::tests::preinstalled_subscriber_failure_remains_uninitialized_and_typed",
+            "G_RUNTIME_PREINSTALLED_SUBSCRIBER_TEST_CHILD",
+        ) {
+            return;
+        }
+        tracing::subscriber::set_global_default(tracing_subscriber::registry())
+            .expect("test subscriber should install first");
+        let policy = disabled_session_policy();
+
+        for _attempt in 0..2 {
+            let error = initialize_logging_sinks(&policy)
+                .expect_err("runtime subscriber installation should fail while another subscriber is installed");
+            assert!(matches!(&error, LoggingSinkError::SubscriberInstall(_)));
+            assert!(error.to_string().contains("Failed to install g logging subscriber"));
+            assert!(error.source().is_some());
+            assert_eq!(
+                *lock_subscriber_state().expect("subscriber state should remain observable"),
+                LoggingSubscriberState::Uninitialized
+            );
+        }
+    }
 
     #[test]
     fn run_logging_session_routes_flushes_and_releases_file_writer() {

@@ -1,6 +1,6 @@
 //! Public runtime crate facade.
 
-pub use crate::diagnostics::emit_diagnostic_event;
+pub use crate::diagnostics::{DiagnosticEventError, emit_diagnostic_event};
 pub use crate::error::RuntimeCompatibilityError;
 pub use crate::logging_sink::LoggingSinkError;
 pub use crate::native_run_session::{NativeRunSession, NativeRunSessionError};

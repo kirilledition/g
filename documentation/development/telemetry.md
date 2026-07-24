@@ -66,12 +66,32 @@ The native CLI owns:
 4. run, writer, and artifact events;
 5. timing/profile serialization;
 6. terminal result rendering;
-7. telemetry close and writer counters.
+7. telemetry close and writer counters;
+8. after successful telemetry and logging close, exactly one deferred output
+   action: claimed-state abort, pre-activation rollback, or terminal-produced
+   completed-resume cleanup.
 
 Help, parser errors, and validation failures return before JAX/backend
 construction. Active run failures produce a concise terminal error and a typed
 `run_failed` event. Graceful SIGINT/SIGTERM produces signal metadata and the
 signal-derived exit code after resumable writer flushing.
+
+Runner freezes execution into one typed primary outcome: completed,
+interrupted, or failed. A backend, output, or interruption outcome is never
+replaced by later timing, telemetry-close, logging-close, or signal
+observations. Required timing and close failures fail only an otherwise
+successful run, and completed artifact paths remain on standard output. A
+signal first observed after durable completion is warning-only.
+Deferred rollback runs only after timing plus successful telemetry and logging
+close. If either asynchronous close fails, output cleanup is skipped and the
+exact claim remains fail-closed for explicit fencing. If rollback itself fails,
+the primary terminal line and nonzero exit remain first and the rollback error
+is appended as secondary stderr.
+Completed-resume cleanup authority is neither available nor clonable before a
+terminal success or typed terminal error. Its cleanup failure preserves the
+fixed primary result and completed artifact paths, changing only an otherwise
+successful exit to failure. The runner attempts it once without a blind retry;
+the retained exact claim remains fence-recoverable on persistent failure.
 
 The `writer_finished` event reports `parquet_dataset_path` for one phenotype or
 `parquet_dataset_paths` for a multi-phenotype run. These required paths point to
@@ -93,6 +113,9 @@ Runner holds process runtime state while `NativeRunSession` checks subscriber
 compatibility, constructs writers, installs the subscriber, and records the
 topology. The same resolved session policy drives every step, so an
 incompatible repeated run has no file-open or worker-start side effects.
+Subscriber installation errors are typed failures and leave the runtime's
+subscriber state uninitialized rather than recording a subscriber it did not
+install.
 
 When both telemetry and timing are disabled, the native session allocates no
 run ID or shared telemetry state. Enabled session clones share one run ID and
@@ -108,12 +131,28 @@ route instead. No diagnostic is sent through both routes, and progress
 bookkeeping is not constructed when telemetry is off. The persistent-cache
 diagnostic always reports `enabled=true`, the resolved directory,
 `min_entry_size_bytes=-1`, and `min_compile_time_seconds=0`. Auxiliary-cache and
-transfer-guard diagnostics report their fixed disabled policy.
+transfer-guard diagnostics report their fixed disabled policy. Diagnostic
+emission after runtime work starts is best-effort: failures are warned about but
+do not replace the primary run outcome. JAX setup is committed as process state
+before its completed-setup diagnostics are emitted. Progress and lifecycle
+telemetry emission follow the same best-effort rule, including the final
+progress update after durable output completion. Observer calls and the warning
+path that reports their failure are panic-contained.
 
 Progress registers one uniquely owned counter entry per delivery; the joined
 phenotype label is payload text, not an identity key. Complete-plan totals are
 computed once per run, and writer completion updates lock only their delivery's
-counter entry rather than a process-wide group map.
+counter entry rather than a process-wide group map. The first totals,
+registration, initialization, update, final-emission, or observer-panic failure
+warns once and atomically disables the reporter. Later progress calls are
+no-ops, so progress can neither stop active execution nor hide durable output.
+
+Delivery-report and association-warning counters are observer-only unsigned
+64-bit values and are recorded infallibly, including native `usize::MAX` on
+64-bit hosts. Phenotype output-count validation uses the exact native count;
+conversion to the telemetry counter domain is separate and cannot abort
+structural artifact validation. These changes preserve the schema-version `0`
+JSON field names and shapes.
 
 ## Timing
 
@@ -123,7 +162,8 @@ to preserve the public JSON shape without duplicate maps. Engine stages record
 through the native host; final timing files are written on success, failure,
 and interruption. A timing
 write error fails an otherwise successful run but never masks the primary run
-or interruption error.
+or interruption error. Completed artifact paths remain visible when the timing
+write is the only failure.
 
 Stage timing records only host stages that have active production producers.
 Output-writer timing keeps the durability boundaries separately attributable:

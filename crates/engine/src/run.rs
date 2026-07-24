@@ -20,7 +20,7 @@ use crate::preflight::{PreflightError, validate_jax_index_capacity, validate_mul
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
-use crate::progress::{ProgressTotals, RunProgressReporter};
+use crate::progress::RunProgressReporter;
 
 /// Failure while converting a run plan into a fully prepared native run.
 #[derive(Debug, thiserror::Error)]
@@ -33,6 +33,12 @@ pub(crate) enum RunPreparationError {
     Input(#[from] g_input::InputError),
     #[error(transparent)]
     Output(#[from] g_output::OutputError),
+    #[error("Output delivery-token construction failed: {token}; active output abort also failed: {abort}")]
+    OutputDeliveryTokenAbort {
+        #[source]
+        token: g_output::OutputError,
+        abort: Box<g_output::OutputError>,
+    },
     #[error(transparent)]
     OutputPreparation(#[from] PipelineOutputPreparationError),
     #[error(transparent)]
@@ -49,6 +55,135 @@ pub(crate) enum RunPreparationError {
     JaxIntegerOverflow { field_name: &'static str },
     #[error("The resumed output requires packed8 delivery, but the current BGEN requires dosage delivery.")]
     ResumedPacked8Incompatible,
+}
+
+/// Failure while converting a claimed run into active output authority.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RunActivationError {
+    #[error("Output activation failed before attempt publication: {source}")]
+    Unpublished {
+        #[source]
+        source: g_output::OutputError,
+        rollback: Box<g_output::OutputClaimRollback>,
+    },
+    #[error(transparent)]
+    Published(#[from] RunPreparationError),
+}
+
+/// Why an engine-owned post-session cleanup obligation exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnginePostSessionCleanupPurpose {
+    /// Output activation never published attempt authority.
+    PreActivationRollback,
+    /// A completed read-only attempt produced removable claim diagnostics.
+    CompletedNoop,
+}
+
+/// Opaque output authority retained until claim-scoped diagnostics close.
+#[must_use = "post-session output cleanup authority must be handled after diagnostics close"]
+pub struct EnginePostSessionCleanup {
+    authority: EnginePostSessionCleanupAuthority,
+}
+
+enum EnginePostSessionCleanupAuthority {
+    PreActivationRollback(Box<g_output::OutputClaimRollback>),
+    CompletedNoop(Box<g_output::OutputPostSessionCleanup>),
+    #[cfg(test)]
+    RetrySentinel {
+        failed_once: bool,
+    },
+}
+
+/// Failure while applying engine-owned post-session cleanup.
+#[derive(Debug)]
+pub struct EnginePostSessionCleanupError {
+    message: String,
+    source: Option<g_output::OutputError>,
+}
+
+impl std::fmt::Debug for EnginePostSessionCleanup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("EnginePostSessionCleanup").field("purpose", &self.purpose()).finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for EnginePostSessionCleanupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(formatter)
+    }
+}
+
+impl std::error::Error for EnginePostSessionCleanupError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+impl EnginePostSessionCleanup {
+    pub(crate) fn pre_activation_rollback(rollback: Box<g_output::OutputClaimRollback>) -> Self {
+        Self { authority: EnginePostSessionCleanupAuthority::PreActivationRollback(rollback) }
+    }
+
+    pub(crate) fn completed_noop(cleanup: g_output::OutputPostSessionCleanup) -> Self {
+        Self { authority: EnginePostSessionCleanupAuthority::CompletedNoop(Box::new(cleanup)) }
+    }
+
+    /// Return the cleanup obligation category without exposing its authority.
+    #[must_use]
+    pub const fn purpose(&self) -> EnginePostSessionCleanupPurpose {
+        match &self.authority {
+            EnginePostSessionCleanupAuthority::PreActivationRollback(_) => {
+                EnginePostSessionCleanupPurpose::PreActivationRollback
+            }
+            EnginePostSessionCleanupAuthority::CompletedNoop(_) => EnginePostSessionCleanupPurpose::CompletedNoop,
+            #[cfg(test)]
+            EnginePostSessionCleanupAuthority::RetrySentinel { .. } => EnginePostSessionCleanupPurpose::CompletedNoop,
+        }
+    }
+
+    /// Apply post-session cleanup.
+    ///
+    /// Both completed-noop cleanup and pre-activation rollback remain retryable
+    /// after a failed attempt and idempotent after success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine-owned error when durable output cleanup fails.
+    pub fn cleanup(&mut self) -> Result<(), EnginePostSessionCleanupError> {
+        match &mut self.authority {
+            EnginePostSessionCleanupAuthority::PreActivationRollback(rollback) => {
+                rollback.abort_before_activation().map_err(EnginePostSessionCleanupError::from_output)
+            }
+            EnginePostSessionCleanupAuthority::CompletedNoop(cleanup) => {
+                cleanup.cleanup().map_err(EnginePostSessionCleanupError::from_output)
+            }
+            #[cfg(test)]
+            EnginePostSessionCleanupAuthority::RetrySentinel { failed_once } => {
+                if *failed_once {
+                    Ok(())
+                } else {
+                    *failed_once = true;
+                    Err(EnginePostSessionCleanupError::message("injected first cleanup failure"))
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn retry_sentinel() -> Self {
+        Self { authority: EnginePostSessionCleanupAuthority::RetrySentinel { failed_once: false } }
+    }
+}
+
+impl EnginePostSessionCleanupError {
+    fn from_output(source: g_output::OutputError) -> Self {
+        Self { message: source.to_string(), source: Some(source) }
+    }
+
+    #[cfg(test)]
+    fn message(message: &str) -> Self {
+        Self { message: message.to_string(), source: None }
+    }
 }
 
 /// Binding-owned hooks used at the native run boundary.
@@ -70,6 +205,26 @@ pub trait RunHooks {
 pub(crate) struct RunExecution {
     pub completed_outputs: Vec<CompletedOutputRun>,
     pub delivery_reports: Vec<AssociationDeliveryReport>,
+}
+
+/// One fixed activation result plus optional completed-noop cleanup authority.
+#[must_use = "the activation result and post-session cleanup must both be handled"]
+pub(crate) struct RunActivationOutcome {
+    pub result: Result<PreparedRun, RunActivationError>,
+    pub post_session_cleanup: Option<g_output::OutputPostSessionCleanup>,
+}
+
+/// One fixed execution result plus optional completed-noop cleanup authority.
+#[must_use = "the execution result and post-session cleanup must both be handled"]
+pub(crate) struct RunExecutionOutcome<BackendError, HookError, PostSessionCleanup = g_output::OutputPostSessionCleanup>
+{
+    pub result: Result<RunExecution, RunExecutionError<BackendError, HookError>>,
+    pub post_session_cleanup: Option<PostSessionCleanup>,
+}
+
+struct RunPreparationFailureOutcome<PostSessionCleanup = g_output::OutputPostSessionCleanup> {
+    error: RunPreparationError,
+    post_session_cleanup: Option<PostSessionCleanup>,
 }
 
 /// Failure while executing a fully prepared run.
@@ -208,15 +363,6 @@ impl ClaimedRun {
         self.output_manager.diagnostics_directory().map_err(Into::into)
     }
 
-    /// Return idempotent cleanup for staging that never becomes authoritative.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if claim staging is inconsistent.
-    pub(crate) fn cleanup_handle(&self) -> Result<g_output::OutputClaimCleanup, RunPreparationError> {
-        self.output_manager.cleanup_handle().map_err(Into::into)
-    }
-
     /// Remove unpublished diagnostics and release output ownership.
     ///
     /// # Errors
@@ -230,25 +376,88 @@ impl ClaimedRun {
     ///
     /// # Errors
     ///
-    /// Returns an error when output activation or delivery-token construction fails.
-    pub(crate) fn activate(self) -> Result<PreparedRun, RunPreparationError> {
+    /// The result records any output activation or delivery-token construction
+    /// failure. Completed-noop cleanup remains orthogonal to that result.
+    pub(crate) fn activate(self) -> RunActivationOutcome {
         let Self { run_plan, resolved_gpu_genotype_format, genotype_input, groups, header_inputs, output_manager } =
             self;
-        let output_manager = output_manager.activate(header_inputs)?;
-        let prepared_groups = groups
+        let output_manager = match output_manager.activate_with_deferred_completed_noop_cleanup(header_inputs) {
+            Ok(output_manager) => output_manager,
+            Err(error) => {
+                return RunActivationOutcome { result: Err(run_activation_error(error)), post_session_cleanup: None };
+            }
+        };
+        let prepared_groups_result = groups
             .into_iter()
             .map(|group| {
                 let output = output_manager.delivery_token_for_phenotypes(&group.phenotype_group.phenotype_names)?;
                 Ok(PreparedAssociationGroup { group, output })
             })
-            .collect::<Result<Vec<_>, RunPreparationError>>()?;
-        Ok(PreparedRun {
-            run_plan,
-            resolved_gpu_genotype_format,
-            genotype_input,
-            groups: prepared_groups,
-            output_manager,
-        })
+            .collect::<Result<Vec<_>, g_output::OutputError>>();
+        let prepared_groups = match prepared_groups_result {
+            Ok(prepared_groups) => prepared_groups,
+            Err(token_error) => {
+                let outcome = abort_active_output_after_delivery_token_error(token_error, |failure_reason| {
+                    output_manager.abort(failure_reason)
+                });
+                return RunActivationOutcome {
+                    result: Err(RunActivationError::Published(outcome.error)),
+                    post_session_cleanup: outcome.post_session_cleanup,
+                };
+            }
+        };
+        RunActivationOutcome {
+            result: Ok(PreparedRun {
+                run_plan,
+                resolved_gpu_genotype_format,
+                genotype_input,
+                groups: prepared_groups,
+                output_manager,
+            }),
+            post_session_cleanup: None,
+        }
+    }
+}
+
+fn run_activation_error(error: g_output::OutputActivationError) -> RunActivationError {
+    let g_output::OutputActivationFailureParts { source, rollback } = error.into_parts();
+    match rollback {
+        Some(rollback) => RunActivationError::Unpublished { source, rollback: Box::new(rollback) },
+        None => RunActivationError::Published(RunPreparationError::Output(source)),
+    }
+}
+
+fn abort_active_output_after_delivery_token_error<AbortOutput>(
+    token_error: g_output::OutputError,
+    abort_output: AbortOutput,
+) -> RunPreparationFailureOutcome
+where
+    AbortOutput: FnOnce(&str) -> Result<(), g_output::OutputTerminalError>,
+{
+    let failure_reason = format!("output delivery-token construction failed: {token_error}");
+    match abort_output(&failure_reason) {
+        Ok(()) => {
+            RunPreparationFailureOutcome { error: RunPreparationError::Output(token_error), post_session_cleanup: None }
+        }
+        Err(abort) => {
+            let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = abort.into_parts();
+            delivery_token_abort_failure_outcome(token_error, source, post_session_cleanup)
+        }
+    }
+}
+
+fn delivery_token_abort_failure_outcome<PostSessionCleanup>(
+    token_error: g_output::OutputError,
+    abort_error: g_output::OutputError,
+    post_session_cleanup: Option<PostSessionCleanup>,
+) -> RunPreparationFailureOutcome<PostSessionCleanup> {
+    if post_session_cleanup.is_some() {
+        RunPreparationFailureOutcome { error: RunPreparationError::Output(token_error), post_session_cleanup }
+    } else {
+        RunPreparationFailureOutcome {
+            error: RunPreparationError::OutputDeliveryTokenAbort { token: token_error, abort: Box::new(abort_error) },
+            post_session_cleanup,
+        }
     }
 }
 
@@ -263,13 +472,15 @@ impl PreparedRun {
     ///
     /// # Errors
     ///
-    /// Returns a typed backend, hook, delivery, or output completion error.
+    /// The result records any typed backend, hook, delivery, or output
+    /// completion error. Completed-noop cleanup remains orthogonal to that
+    /// result.
     pub(crate) fn execute_with_progress<Backend, Hooks>(
         self,
         backend: Arc<Backend>,
         hooks: &mut Hooks,
         progress_reporter: Option<&Arc<RunProgressReporter>>,
-    ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
+    ) -> RunExecutionOutcome<Backend::Error, Hooks::Error>
     where
         Backend: AssociationBackend + 'static,
         Hooks: RunHooks,
@@ -288,24 +499,21 @@ impl PreparedRun {
         };
         let delivery_result: Result<Vec<AssociationDeliveryReport>, DeliveryError<Backend::Error, Hooks::Error>> =
             (|| {
-                let progress_context = if let Some(reporter) = progress_reporter {
-                    let all_chunk_specs = genotype_input
-                        .reader
-                        .plan_chromosome_homogeneous_chunks(genotype_input.chunk_size, &BTreeSet::new())?;
-                    Some((reporter, ProgressTotals::from_chunk_specs(&all_chunk_specs)?))
-                } else {
-                    None
-                };
+                let progress_context = progress_reporter.and_then(|reporter| {
+                    reporter
+                        .totals_from_chunk_plan(|| {
+                            genotype_input
+                                .reader
+                                .plan_chromosome_homogeneous_chunks(genotype_input.chunk_size, &BTreeSet::new())
+                        })
+                        .map(|totals| (reporter, totals))
+                });
                 let mut reports = Vec::with_capacity(groups.len());
                 for prepared_group in groups {
-                    let progress = progress_context
-                        .map(|(reporter, totals)| {
-                            reporter.register_delivery(
-                                prepared_group.group.phenotype_group.phenotype_names.join(","),
-                                totals,
-                            )
-                        })
-                        .transpose()?;
+                    let progress = progress_context.map(|(reporter, totals)| {
+                        reporter
+                            .register_delivery(prepared_group.group.phenotype_group.phenotype_names.join(","), totals)
+                    });
                     let request = AssociationDeliveryRequest {
                         group: prepared_group.group,
                         settings: AssociationDeliverySettings {
@@ -503,30 +711,207 @@ fn prepare_output_claim(
 fn finish_execution<BackendError, Hooks>(
     delivery_result: Result<Vec<AssociationDeliveryReport>, DeliveryError<BackendError, Hooks::Error>>,
     output_manager: OutputManager<Active>,
-) -> Result<RunExecution, RunExecutionError<BackendError, Hooks::Error>>
+) -> RunExecutionOutcome<BackendError, Hooks::Error>
 where
     BackendError: std::error::Error,
     Hooks: RunHooks,
 {
     match delivery_result {
-        Ok(delivery_reports) => output_manager
-            .close_completed()
-            .and_then(OutputManager::finish)
-            .map(|completed_outputs| RunExecution { completed_outputs, delivery_reports })
-            .map_err(RunExecutionError::OutputFinish),
+        Ok(delivery_reports) => match output_manager.close_completed().and_then(OutputManager::finish) {
+            Ok(completion) => RunExecutionOutcome {
+                result: Ok(RunExecution { completed_outputs: completion.completed_outputs, delivery_reports }),
+                post_session_cleanup: completion.post_session_cleanup,
+            },
+            Err(output) => {
+                let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = output.into_parts();
+                RunExecutionOutcome { result: Err(RunExecutionError::OutputFinish(source)), post_session_cleanup }
+            }
+        },
         Err(DeliveryError::Interrupted(interruption)) => {
             let signal_name = Hooks::interruption_signal_name(&interruption).unwrap_or("unknown");
             match output_manager.finish_interrupted(signal_name) {
-                Ok(()) => Err(RunExecutionError::Interrupted(interruption)),
-                Err(output) => Err(RunExecutionError::InterruptedOutputFlush { interruption, output }),
+                Ok(()) => RunExecutionOutcome {
+                    result: Err(RunExecutionError::Interrupted(interruption)),
+                    post_session_cleanup: None,
+                },
+                Err(output) => {
+                    let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = output.into_parts();
+                    interrupted_output_failure_outcome(interruption, source, post_session_cleanup)
+                }
             }
         }
         Err(delivery) => {
             let failure_reason = format!("association delivery failed: {delivery}");
             match output_manager.abort(&failure_reason) {
-                Ok(()) => Err(RunExecutionError::Delivery(delivery)),
-                Err(output) => Err(RunExecutionError::DeliveryAbort { delivery: Box::new(delivery), output }),
+                Ok(()) => RunExecutionOutcome {
+                    result: Err(RunExecutionError::Delivery(delivery)),
+                    post_session_cleanup: None,
+                },
+                Err(output) => {
+                    let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = output.into_parts();
+                    delivery_abort_failure_outcome(delivery, source, post_session_cleanup)
+                }
             }
         }
+    }
+}
+
+fn interrupted_output_failure_outcome<BackendError, HookError, PostSessionCleanup>(
+    interruption: HookError,
+    output: g_output::OutputError,
+    post_session_cleanup: Option<PostSessionCleanup>,
+) -> RunExecutionOutcome<BackendError, HookError, PostSessionCleanup> {
+    let result = if post_session_cleanup.is_some() {
+        Err(RunExecutionError::Interrupted(interruption))
+    } else {
+        Err(RunExecutionError::InterruptedOutputFlush { interruption, output })
+    };
+    RunExecutionOutcome { result, post_session_cleanup }
+}
+
+fn delivery_abort_failure_outcome<BackendError, HookError, PostSessionCleanup>(
+    delivery: DeliveryError<BackendError, HookError>,
+    output: g_output::OutputError,
+    post_session_cleanup: Option<PostSessionCleanup>,
+) -> RunExecutionOutcome<BackendError, HookError, PostSessionCleanup> {
+    let result = if post_session_cleanup.is_some() {
+        Err(RunExecutionError::Delivery(delivery))
+    } else {
+        Err(RunExecutionError::DeliveryAbort { delivery: Box::new(delivery), output })
+    };
+    RunExecutionOutcome { result, post_session_cleanup }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_token_failure_explicitly_aborts_active_output_and_remains_primary() {
+        let token_error = g_output::OutputError::InvalidInput("token failure".to_string());
+        let mut observed_failure_reason = None;
+        let outcome = abort_active_output_after_delivery_token_error(token_error, |failure_reason| {
+            observed_failure_reason = Some(failure_reason.to_string());
+            Ok(())
+        });
+
+        assert!(observed_failure_reason.is_some_and(|reason| reason.contains("token failure")));
+        assert!(outcome.post_session_cleanup.is_none());
+        assert!(
+            matches!(outcome.error, RunPreparationError::Output(g_output::OutputError::InvalidInput(message)) if message == "token failure")
+        );
+    }
+
+    #[test]
+    fn delivery_token_failure_keeps_abort_failure_as_secondary_context() {
+        let outcome = abort_active_output_after_delivery_token_error(
+            g_output::OutputError::InvalidInput("token failure".to_string()),
+            |_failure_reason| {
+                Err(g_output::OutputTerminalError::from(g_output::OutputError::InvalidInput(
+                    "abort failure".to_string(),
+                )))
+            },
+        );
+
+        assert!(outcome.post_session_cleanup.is_none());
+        let RunPreparationError::OutputDeliveryTokenAbort { token, abort } = outcome.error else {
+            panic!("token and abort failures should retain combined context");
+        };
+        assert!(matches!(token, g_output::OutputError::InvalidInput(message) if message == "token failure"));
+        assert_eq!(abort.to_string(), "abort failure");
+    }
+
+    #[test]
+    fn completed_noop_token_abort_rejection_keeps_token_failure_primary() {
+        let outcome = delivery_token_abort_failure_outcome(
+            g_output::OutputError::InvalidInput("token failure".to_string()),
+            g_output::OutputError::InvalidInput("completed output cannot abort".to_string()),
+            Some("cleanup"),
+        );
+
+        assert_eq!(outcome.post_session_cleanup, Some("cleanup"));
+        assert!(
+            matches!(outcome.error, RunPreparationError::Output(g_output::OutputError::InvalidInput(message)) if message == "token failure")
+        );
+    }
+
+    #[test]
+    fn completed_noop_interrupt_rejection_keeps_interruption_primary() {
+        let outcome: RunExecutionOutcome<g_output::OutputError, g_output::OutputError, &str> =
+            interrupted_output_failure_outcome(
+                g_output::OutputError::InvalidInput("SIGTERM".to_string()),
+                g_output::OutputError::InvalidInput("completed output cannot interrupt".to_string()),
+                Some("cleanup"),
+            );
+
+        assert_eq!(outcome.post_session_cleanup, Some("cleanup"));
+        assert!(matches!(
+            outcome.result,
+            Err(RunExecutionError::Interrupted(g_output::OutputError::InvalidInput(message)))
+                if message == "SIGTERM"
+        ));
+    }
+
+    #[test]
+    fn writable_interrupt_flush_failure_keeps_output_context() {
+        let outcome: RunExecutionOutcome<g_output::OutputError, g_output::OutputError, ()> =
+            interrupted_output_failure_outcome(
+                g_output::OutputError::InvalidInput("SIGTERM".to_string()),
+                g_output::OutputError::InvalidInput("flush failure".to_string()),
+                None,
+            );
+
+        assert!(outcome.post_session_cleanup.is_none());
+        assert!(matches!(
+            outcome.result,
+            Err(RunExecutionError::InterruptedOutputFlush {
+                interruption: g_output::OutputError::InvalidInput(interruption),
+                output: g_output::OutputError::InvalidInput(output),
+            }) if interruption == "SIGTERM" && output == "flush failure"
+        ));
+    }
+
+    #[test]
+    fn completed_noop_abort_rejection_keeps_delivery_failure_primary() {
+        let outcome = delivery_abort_failure_outcome(
+            DeliveryError::<g_output::OutputError, g_output::OutputError>::InvalidInput("delivery failure".to_string()),
+            g_output::OutputError::InvalidInput("completed output cannot abort".to_string()),
+            Some("cleanup"),
+        );
+
+        assert_eq!(outcome.post_session_cleanup, Some("cleanup"));
+        assert!(matches!(
+            outcome.result,
+            Err(RunExecutionError::Delivery(DeliveryError::InvalidInput(message)))
+                if message == "delivery failure"
+        ));
+    }
+
+    #[test]
+    fn writable_abort_failure_keeps_delivery_and_output_context() {
+        let outcome = delivery_abort_failure_outcome(
+            DeliveryError::<g_output::OutputError, g_output::OutputError>::InvalidInput("delivery failure".to_string()),
+            g_output::OutputError::InvalidInput("abort failure".to_string()),
+            Option::<()>::None,
+        );
+
+        assert!(outcome.post_session_cleanup.is_none());
+        assert!(matches!(
+            outcome.result,
+            Err(RunExecutionError::DeliveryAbort {
+                delivery,
+                output: g_output::OutputError::InvalidInput(output),
+            }) if matches!(*delivery, DeliveryError::InvalidInput(ref message) if message == "delivery failure")
+                && output == "abort failure"
+        ));
+    }
+
+    #[test]
+    fn opaque_post_session_cleanup_retains_retry_authority_after_failure() {
+        let mut cleanup = EnginePostSessionCleanup::retry_sentinel();
+        assert_eq!(cleanup.purpose(), EnginePostSessionCleanupPurpose::CompletedNoop);
+        let first_error = cleanup.cleanup().expect_err("the first cleanup attempt is injected to fail");
+        assert_eq!(first_error.to_string(), "injected first cleanup failure");
+        cleanup.cleanup().expect("the same opaque cleanup authority remains retryable");
     }
 }

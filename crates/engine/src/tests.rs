@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -10,10 +11,17 @@ use g_genotype_contracts::{
 };
 use g_output::{ManifestFileFingerprintCache, NativeVariantMetadataHandle, Regenie2StatisticBatch};
 
-use crate::association_scheduler::{AssociationBatchPipeline, ScheduledAssociationBatch, SchedulerError};
+use crate::association_scheduler::{
+    AssociationBatchPipeline, ScheduledAssociationBatch, SchedulerError, assert_consumed_first_failure_for_test,
+    assert_disconnected_event_send_for_test, assert_materialization_quiescence_handshake_for_test,
+};
 use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GroupPreparationInput, MaterializedAssociationBatch,
     MaterializedGenotypeStatistics, PreparedChromosome,
+};
+use crate::delivery_execution::{
+    DeliveryError, prepare_group_after_interruption_check, retry_pending_batch, transition_drained_chromosome,
+    try_submit_after_interruption_check,
 };
 use crate::genotype_buffer::homogeneous_chunk_chromosome;
 use crate::null_logistic_policy::{
@@ -36,20 +44,32 @@ const TEST_VARIANT_COUNT: usize = 2;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestFailureStage {
     None,
+    Prepare,
     Transfer,
     Compute,
     Materialize,
     ComputePanic,
+    MaterializePanic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("test backend failed during {0}")]
 struct TestBackendError(&'static str);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("test delivery interruption")]
+struct TestInterruption;
+
 struct TestDeviceResult {
     variant_start_index: usize,
     logical_variant_count: usize,
     statistics: ChunkOutputStatistics,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BackendThreadEvent {
+    operation: &'static str,
+    thread_identifier: thread::ThreadId,
 }
 
 struct ComputeGateRelease {
@@ -82,12 +102,19 @@ impl Drop for ComputeGateRelease {
 struct TestBackend {
     failure_stage: TestFailureStage,
     events: Mutex<Vec<String>>,
+    backend_thread_events: Mutex<Vec<BackendThreadEvent>>,
     transfer_count: AtomicUsize,
     chromosome_release_count: AtomicUsize,
     materialized_trait_indices: Mutex<Vec<Option<Vec<usize>>>>,
     compute_started_sender: Option<Sender<usize>>,
     compute_gate_receiver: Option<Receiver<()>>,
     block_first_compute: AtomicBool,
+    compute_failure_variant_start_index: Option<usize>,
+    materialization_started_sender: Option<Sender<usize>>,
+    materialization_gate_receiver: Option<Receiver<()>>,
+    block_first_materialization: AtomicBool,
+    chromosome_released_sender: Option<Sender<()>>,
+    release_panics: bool,
 }
 
 impl TestBackend {
@@ -95,12 +122,19 @@ impl TestBackend {
         Self {
             failure_stage,
             events: Mutex::new(Vec::new()),
+            backend_thread_events: Mutex::new(Vec::new()),
             transfer_count: AtomicUsize::new(0),
             chromosome_release_count: AtomicUsize::new(0),
             materialized_trait_indices: Mutex::new(Vec::new()),
             compute_started_sender: None,
             compute_gate_receiver: None,
             block_first_compute: AtomicBool::new(false),
+            compute_failure_variant_start_index: None,
+            materialization_started_sender: None,
+            materialization_gate_receiver: None,
+            block_first_materialization: AtomicBool::new(false),
+            chromosome_released_sender: None,
+            release_panics: false,
         }
     }
 
@@ -113,8 +147,35 @@ impl TestBackend {
         }
     }
 
+    fn with_materialization_gate_and_compute_failure(
+        compute_failure_variant_start_index: usize,
+        materialization_started_sender: Sender<usize>,
+        materialization_gate_receiver: Receiver<()>,
+        chromosome_released_sender: Sender<()>,
+    ) -> Self {
+        Self {
+            compute_failure_variant_start_index: Some(compute_failure_variant_start_index),
+            materialization_started_sender: Some(materialization_started_sender),
+            materialization_gate_receiver: Some(materialization_gate_receiver),
+            block_first_materialization: AtomicBool::new(true),
+            chromosome_released_sender: Some(chromosome_released_sender),
+            ..Self::new(TestFailureStage::None)
+        }
+    }
+
+    fn with_release_panic(failure_stage: TestFailureStage) -> Self {
+        Self { release_panics: true, ..Self::new(failure_stage) }
+    }
+
     fn record_event(&self, event: String) {
         self.events.lock().expect("test event lock is available").push(event);
+    }
+
+    fn record_backend_thread(&self, operation: &'static str) {
+        self.backend_thread_events
+            .lock()
+            .expect("test backend-thread lock is available")
+            .push(BackendThreadEvent { operation, thread_identifier: thread::current().id() });
     }
 }
 
@@ -137,15 +198,24 @@ impl AssociationBackend for TestBackend {
     fn prepare_chromosome(
         &self,
         _group: &Self::GroupState,
-        _predictions: g_input::ChromosomePredictionMatrix,
+        predictions: g_input::ChromosomePredictionMatrix,
     ) -> Result<PreparedChromosome<Self::ChromosomeState>, Self::Error> {
+        self.record_backend_thread("prepare");
         self.record_event("prepare_chromosome".to_string());
-        Ok(PreparedChromosome { state: 0, null_logistic_converged: None })
+        if self.failure_stage == TestFailureStage::Prepare {
+            return Err(TestBackendError("prepare"));
+        }
+        Ok(PreparedChromosome { state: predictions.sample_count, null_logistic_converged: None })
     }
 
     fn release_chromosome(&self, chromosome: Self::ChromosomeState) {
+        self.record_backend_thread("release");
         self.chromosome_release_count.fetch_add(1, Ordering::SeqCst);
         self.record_event(format!("release:{chromosome}"));
+        if let Some(chromosome_released_sender) = self.chromosome_released_sender.as_ref() {
+            let _ = chromosome_released_sender.try_send(());
+        }
+        assert!(!self.release_panics, "intentional release panic");
     }
 
     fn transfer_batch(
@@ -166,10 +236,14 @@ impl AssociationBackend for TestBackend {
         chromosome: &Self::ChromosomeState,
         input: Self::TransferredInput,
     ) -> Result<Self::DeviceResult, Self::Error> {
+        self.record_backend_thread("compute");
         let variant_start_index = input.variant_start_index;
         self.record_event(format!("compute:{chromosome}:{variant_start_index}"));
         assert!(self.failure_stage != TestFailureStage::ComputePanic, "intentional compute panic");
         if self.failure_stage == TestFailureStage::Compute {
+            return Err(TestBackendError("compute"));
+        }
+        if self.compute_failure_variant_start_index == Some(variant_start_index) {
             return Err(TestBackendError("compute"));
         }
         if self.block_first_compute.swap(false, Ordering::SeqCst) {
@@ -202,6 +276,21 @@ impl AssociationBackend for TestBackend {
             .lock()
             .expect("test materialization lock is available")
             .push(active_trait_indices.map(<[usize]>::to_vec));
+        if self.block_first_materialization.swap(false, Ordering::SeqCst) {
+            self.record_event(format!("materialize_start:{}", result.variant_start_index));
+            self.materialization_started_sender
+                .as_ref()
+                .expect("gated materialization test has a start sender")
+                .send_timeout(result.variant_start_index, TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test receives the materialization-start notification before the timeout");
+            self.materialization_gate_receiver
+                .as_ref()
+                .expect("gated materialization test has a receiver")
+                .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+                .expect("test releases the materialization gate before the timeout");
+            self.record_event(format!("materialize_end:{}", result.variant_start_index));
+        }
+        assert!(self.failure_stage != TestFailureStage::MaterializePanic, "intentional materialization panic");
         if self.failure_stage == TestFailureStage::Materialize {
             return Err(TestBackendError("materialize"));
         }
@@ -295,8 +384,16 @@ fn build_output_statistics(variant_count: usize) -> ChunkOutputStatistics {
     }
 }
 
+fn build_prediction_matrix(chromosome_state: usize) -> g_input::ChromosomePredictionMatrix {
+    g_input::ChromosomePredictionMatrix {
+        trait_count: 1,
+        sample_count: chromosome_state,
+        prediction_values: vec![0.0; chromosome_state],
+    }
+}
+
 fn drain_pipeline(
-    pipeline: &mut AssociationBatchPipeline<'_, TestBackend>,
+    pipeline: &mut AssociationBatchPipeline<TestBackend>,
 ) -> Vec<crate::association_scheduler::CompletedAssociationBatch> {
     let mut completed_batches = Vec::new();
     while !pipeline.is_drained() {
@@ -305,25 +402,43 @@ fn drain_pipeline(
     completed_batches
 }
 
-fn finish_pipeline(pipeline: &mut AssociationBatchPipeline<'_, TestBackend>) {
+fn finish_pipeline(pipeline: &mut AssociationBatchPipeline<TestBackend>) {
     pipeline.release_chromosome().expect("test chromosome is released");
     pipeline.close_submission();
     pipeline.join().expect("test workers join");
 }
 
 #[test]
+fn scheduler_records_disconnected_event_send() {
+    assert_disconnected_event_send_for_test();
+}
+
+#[test]
+fn scheduler_consumed_first_failure_cannot_be_overwritten() {
+    assert_consumed_first_failure_for_test();
+}
+
+#[test]
+fn scheduler_waits_for_materialization_quiescence_before_cleanup() {
+    assert_materialization_quiescence_handshake_for_test();
+}
+
+#[test]
 fn scheduler_preserves_batch_order_context_and_chromosome_lifecycle() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
 
     assert!(matches!(pipeline.receive(), Err(SchedulerError::NoPendingBatch)));
     assert!(matches!(
         pipeline.try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All)),
         Err(SchedulerError::ChromosomeNotPrepared)
     ));
-    pipeline.prepare_chromosome(17).expect("chromosome is prepared");
-    assert!(matches!(pipeline.prepare_chromosome(18), Err(SchedulerError::ChromosomeAlreadyPrepared)));
+    pipeline.prepare_chromosome(build_prediction_matrix(17)).expect("chromosome is prepared");
+    assert!(matches!(
+        pipeline.prepare_chromosome(build_prediction_matrix(18)),
+        Err(SchedulerError::ChromosomeAlreadyPrepared)
+    ));
 
     let mut pending_batches = vec![
         build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All),
@@ -368,9 +483,9 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
     let (compute_started_sender, compute_started_receiver) = crossbeam_channel::bounded(1);
     let (compute_gate_sender, compute_gate_receiver) = crossbeam_channel::bounded(1);
     let backend = Arc::new(TestBackend::with_first_compute_gate(compute_started_sender, compute_gate_receiver));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
-    pipeline.prepare_chromosome(22).expect("chromosome is prepared");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
     let mut compute_gate_release = ComputeGateRelease::new(compute_gate_sender);
 
     assert!(
@@ -420,13 +535,147 @@ fn scheduler_applies_bounded_backpressure_before_a_third_transfer() {
 }
 
 #[test]
+fn delivery_interruption_precedes_group_preparation() {
+    let backend = TestBackend::new(TestFailureStage::None);
+    let mut input_built = false;
+    let error =
+        prepare_group_after_interruption_check(&backend, &mut || Err(TestInterruption), || -> GroupPreparationInput {
+            input_built = true;
+            panic!("group input must not be built after interruption")
+        })
+        .expect_err("interruption must stop delivery before group preparation");
+
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert!(!input_built);
+    assert!(!backend.events.lock().expect("test events are available").iter().any(|event| event == "prepare_group"));
+}
+
+#[test]
+fn delivery_interruption_after_decode_prevents_any_transfer() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
+
+    let error = try_submit_after_interruption_check(
+        &mut pipeline,
+        build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All),
+        &mut || Err(TestInterruption),
+    )
+    .expect_err("interruption after decode must stop the transfer boundary");
+
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 0);
+    assert!(
+        !backend.events.lock().expect("test events are available").iter().any(|event| event.starts_with("transfer:"))
+    );
+}
+
+#[test]
+fn delivery_interruption_after_full_queue_receive_stops_pending_batch_launch() {
+    let (compute_started_sender, compute_started_receiver) = crossbeam_channel::bounded(1);
+    let (compute_gate_sender, compute_gate_receiver) = crossbeam_channel::bounded(1);
+    let backend = Arc::new(TestBackend::with_first_compute_gate(compute_started_sender, compute_gate_receiver));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
+    let mut compute_gate_release = ComputeGateRelease::new(compute_gate_sender);
+
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("first batch is submitted")
+            .is_none()
+    );
+    assert_eq!(
+        compute_started_receiver
+            .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("first compute starts before the timeout"),
+        0
+    );
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(2, 2, 2, ActiveTraitSelection::All))
+            .expect("second batch is queued")
+            .is_none()
+    );
+    let pending_batch = pipeline
+        .try_submit(build_scheduled_batch(4, 2, 2, ActiveTraitSelection::All))
+        .expect("full queue reports backpressure")
+        .expect("third batch remains pending before transfer");
+    assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 2);
+
+    compute_gate_release.release();
+    let mut interruption_check_count = 0_usize;
+    let error = retry_pending_batch(
+        &mut pipeline,
+        pending_batch,
+        &mut || {
+            interruption_check_count += 1;
+            Err(TestInterruption)
+        },
+        &mut |_completed_batch| -> Result<(), DeliveryError<TestBackendError, TestInterruption>> {
+            panic!("interruption must precede completed-batch acceptance")
+        },
+    )
+    .expect_err("interruption after the receive stops the pending submission");
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert_eq!(interruption_check_count, 1);
+
+    drop(pipeline);
+    assert_eq!(backend.transfer_count.load(Ordering::SeqCst), 2);
+    let events = backend.events.lock().expect("test events are available");
+    assert!(!events.iter().any(|event| event == "transfer:4" || event.ends_with(":4")));
+}
+
+#[test]
+fn delivery_interruption_at_chromosome_boundary_stops_next_prepare() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(21)).expect("first chromosome is prepared");
+    let mut interruption_check_count = 0_usize;
+    let mut next_prepare_launched = false;
+
+    let error = transition_drained_chromosome(
+        &mut pipeline,
+        &mut || {
+            interruption_check_count += 1;
+            Err(TestInterruption)
+        },
+        |_pipeline| -> Result<(), DeliveryError<TestBackendError, TestInterruption>> {
+            next_prepare_launched = true;
+            Ok(())
+        },
+    )
+    .expect_err("interruption prevents the next chromosome preparation");
+
+    assert!(matches!(error, DeliveryError::Interrupted(TestInterruption)));
+    assert_eq!(interruption_check_count, 1);
+    assert!(!next_prepare_launched);
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        backend
+            .events
+            .lock()
+            .expect("test events are available")
+            .iter()
+            .filter(|event| *event == "prepare_chromosome")
+            .count(),
+        1
+    );
+    pipeline.close_submission();
+    pipeline.join().expect("interrupted boundary leaves workers joinable");
+}
+
+#[test]
 fn scheduler_reuses_steady_state_workers_across_drained_chromosome_lifecycles() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
 
     for (chromosome_state, variant_start_index) in [(21, 0), (22, 2)] {
-        pipeline.prepare_chromosome(chromosome_state).expect("chromosome is prepared");
+        pipeline.prepare_chromosome(build_prediction_matrix(chromosome_state)).expect("chromosome is prepared");
         assert!(
             pipeline
                 .try_submit(build_scheduled_batch(
@@ -452,11 +701,39 @@ fn scheduler_reuses_steady_state_workers_across_drained_chromosome_lifecycles() 
 }
 
 #[test]
+fn scheduler_runs_chromosome_lifecycle_on_one_backend_worker() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    let caller_thread_identifier = thread::current().id();
+
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, TEST_VARIANT_COUNT, TEST_VARIANT_COUNT, ActiveTraitSelection::All,))
+            .expect("batch is submitted")
+            .is_none()
+    );
+    pipeline.receive().expect("batch completes");
+    finish_pipeline(&mut pipeline);
+
+    let backend_thread_events =
+        backend.backend_thread_events.lock().expect("test backend-thread observations are available");
+    assert_eq!(
+        backend_thread_events.iter().map(|event| event.operation).collect::<Vec<_>>(),
+        vec!["prepare", "compute", "release"]
+    );
+    let execution_thread_identifier = backend_thread_events[0].thread_identifier;
+    assert_ne!(execution_thread_identifier, caller_thread_identifier);
+    assert!(backend_thread_events.iter().all(|event| event.thread_identifier == execution_thread_identifier));
+}
+
+#[test]
 fn scheduler_accepts_tail_padded_packed8_batches_without_optional_compute_columns() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(backend, &group).expect("scheduler starts");
-    pipeline.prepare_chromosome(22).expect("chromosome is prepared");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(backend, group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(22)).expect("chromosome is prepared");
     let mut batch = build_scheduled_batch(8, 1, 2, ActiveTraitSelection::All);
     let GenotypeBatchPayload::Decoded { genotypes, statistics } = &mut batch.genotypes.payload else {
         unreachable!("test builds decoded genotypes")
@@ -472,6 +749,23 @@ fn scheduler_accepts_tail_padded_packed8_batches_without_optional_compute_column
 }
 
 #[test]
+fn scheduler_propagates_prepare_failure_without_releasing_uncreated_state() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::Prepare));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+
+    let error = pipeline.prepare_chromosome(build_prediction_matrix(1)).expect_err("prepare failure reaches caller");
+    assert!(matches!(
+        error,
+        SchedulerError::Backend { stage: "prepare chromosome", source: TestBackendError("prepare") }
+    ));
+    pipeline.close_submission();
+    assert!(matches!(pipeline.join(), Err(SchedulerError::Aborted)));
+    drop(pipeline);
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn scheduler_propagates_each_backend_failure_stage() {
     let failure_cases = [
         (TestFailureStage::Transfer, "device transfer", false),
@@ -480,9 +774,9 @@ fn scheduler_propagates_each_backend_failure_stage() {
     ];
     for (failure_stage, expected_stage, asynchronously_submitted) in failure_cases {
         let backend = Arc::new(TestBackend::new(failure_stage));
-        let group = ();
-        let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
-        pipeline.prepare_chromosome(1).expect("chromosome is prepared");
+        let group = Arc::new(());
+        let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+        pipeline.prepare_chromosome(build_prediction_matrix(1)).expect("chromosome is prepared");
         let submission = pipeline.try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All));
         let error = if asynchronously_submitted {
             assert!(submission.expect("asynchronous batch submission succeeds").is_none());
@@ -501,11 +795,80 @@ fn scheduler_propagates_each_backend_failure_stage() {
 }
 
 #[test]
+fn scheduler_waits_for_in_flight_materialization_before_failure_cleanup() {
+    let (materialization_started_sender, materialization_started_receiver) = crossbeam_channel::bounded(1);
+    let (materialization_gate_sender, materialization_gate_receiver) = crossbeam_channel::bounded(1);
+    let (chromosome_released_sender, chromosome_released_receiver) = crossbeam_channel::bounded(1);
+    let backend = Arc::new(TestBackend::with_materialization_gate_and_compute_failure(
+        2,
+        materialization_started_sender,
+        materialization_gate_receiver,
+        chromosome_released_sender,
+    ));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(7)).expect("chromosome is prepared");
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("first batch is submitted")
+            .is_none()
+    );
+    assert_eq!(
+        materialization_started_receiver
+            .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+            .expect("first batch enters materialization before the timeout"),
+        0
+    );
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(2, 2, 2, ActiveTraitSelection::All))
+            .expect("failing second batch is submitted")
+            .is_none()
+    );
+
+    let error = pipeline.receive().expect_err("second-batch compute failure reaches the receiver");
+    assert!(matches!(error, SchedulerError::Backend { stage: "compute", source: TestBackendError("compute") }));
+    pipeline.wait_for_materialization_quiescence_for_test();
+    assert!(matches!(chromosome_released_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 0);
+
+    materialization_gate_sender
+        .send_timeout((), TEST_SYNCHRONIZATION_TIMEOUT)
+        .expect("materialization gate accepts its release signal before the timeout");
+    chromosome_released_receiver
+        .recv_timeout(TEST_SYNCHRONIZATION_TIMEOUT)
+        .expect("chromosome release follows materialization quiescence");
+    drop(pipeline);
+
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+    let events = backend.events.lock().expect("test events are available");
+    let materialization_end_index =
+        events.iter().position(|event| event == "materialize_end:0").expect("materialization completion is recorded");
+    let chromosome_release_index =
+        events.iter().position(|event| event == "release:7").expect("chromosome release is recorded");
+    assert!(materialization_end_index < chromosome_release_index);
+    let backend_thread_events =
+        backend.backend_thread_events.lock().expect("test backend-thread observations are available");
+    let prepare_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "prepare")
+        .expect("prepare thread is recorded")
+        .thread_identifier;
+    let release_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "release")
+        .expect("release thread is recorded")
+        .thread_identifier;
+    assert_eq!(release_thread_identifier, prepare_thread_identifier);
+}
+
+#[test]
 fn scheduler_reports_worker_panics_and_releases_owned_chromosome_state() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::ComputePanic));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
-    pipeline.prepare_chromosome(9).expect("chromosome is prepared");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(9)).expect("chromosome is prepared");
     assert!(
         pipeline
             .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
@@ -523,11 +886,70 @@ fn scheduler_reports_worker_panics_and_releases_owned_chromosome_state() {
 }
 
 #[test]
+fn scheduler_preserves_compute_panic_when_release_also_panics() {
+    let backend = Arc::new(TestBackend::with_release_panic(TestFailureStage::ComputePanic));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(9)).expect("chromosome is prepared");
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("batch is submitted before worker panic")
+            .is_none()
+    );
+
+    let error = pipeline.receive().expect_err("worker panic reaches receiver");
+    assert!(matches!(
+        error,
+        SchedulerError::WorkerPanicked { worker: "compute", message }
+            if message.contains("intentional compute panic")
+    ));
+    drop(pipeline);
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn scheduler_releases_chromosome_after_materialization_panic() {
+    let backend = Arc::new(TestBackend::new(TestFailureStage::MaterializePanic));
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(7)).expect("chromosome is prepared");
+    assert!(
+        pipeline
+            .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
+            .expect("batch is submitted before worker panic")
+            .is_none()
+    );
+
+    let error = pipeline.receive().expect_err("materialization panic reaches receiver");
+    assert!(matches!(
+        error,
+        SchedulerError::WorkerPanicked { worker: "materialization", message }
+            if message.contains("intentional materialization panic")
+    ));
+    drop(pipeline);
+    assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
+    let backend_thread_events =
+        backend.backend_thread_events.lock().expect("test backend-thread observations are available");
+    let prepare_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "prepare")
+        .expect("prepare thread is recorded")
+        .thread_identifier;
+    let release_thread_identifier = backend_thread_events
+        .iter()
+        .find(|event| event.operation == "release")
+        .expect("release thread is recorded")
+        .thread_identifier;
+    assert_eq!(release_thread_identifier, prepare_thread_identifier);
+}
+
+#[test]
 fn dropping_scheduler_cancels_workers_and_releases_chromosome_state() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), &group).expect("scheduler starts");
-    pipeline.prepare_chromosome(5).expect("chromosome is prepared");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(Arc::clone(&backend), group).expect("scheduler starts");
+    pipeline.prepare_chromosome(build_prediction_matrix(5)).expect("chromosome is prepared");
     drop(pipeline);
     assert_eq!(backend.chromosome_release_count.load(Ordering::SeqCst), 1);
 }
@@ -535,10 +957,10 @@ fn dropping_scheduler_cancels_workers_and_releases_chromosome_state() {
 #[test]
 fn scheduler_rejects_invalid_lifecycle_transitions() {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(backend, &group).expect("scheduler starts");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(backend, group).expect("scheduler starts");
     assert!(matches!(pipeline.join(), Err(SchedulerError::SubmissionOpen)));
-    pipeline.prepare_chromosome(3).expect("chromosome is prepared");
+    pipeline.prepare_chromosome(build_prediction_matrix(3)).expect("chromosome is prepared");
     assert!(
         pipeline
             .try_submit(build_scheduled_batch(0, 2, 2, ActiveTraitSelection::All))
@@ -562,8 +984,8 @@ fn scheduler_rejects_invalid_lifecycle_transitions() {
 
 fn assert_invalid_scheduled_batch(batch: ScheduledAssociationBatch, expected_message_fragment: &str) {
     let backend = Arc::new(TestBackend::new(TestFailureStage::None));
-    let group = ();
-    let mut pipeline = AssociationBatchPipeline::new(backend, &group).expect("scheduler starts");
+    let group = Arc::new(());
+    let mut pipeline = AssociationBatchPipeline::new(backend, group).expect("scheduler starts");
     let error = pipeline.try_submit(batch).expect_err("invalid batch is rejected before submission");
     let SchedulerError::InvalidBatch { message } = error else {
         panic!("expected invalid-batch error, observed {error}");

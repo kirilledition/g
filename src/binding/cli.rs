@@ -58,12 +58,12 @@ impl native_runner::NativeRunHost for PythonRunHost {
         NativeSigtermRequested::new_err("SIGTERM requested graceful shutdown.")
     }
 
-    fn flushed_interruption_error(&mut self, error: Self::Error) -> Self::Error {
+    fn flushed_interruption_kind(&mut self, error: Self::Error) -> native_runner::NativeRunInterruption {
         Python::attach(|py| {
-            if error.is_instance_of::<PyKeyboardInterrupt>(py) {
-                NativeInterruptFlushed::new_err("SIGINT interrupted the run after resumable output was flushed.")
+            if error.is_instance_of::<NativeSigtermRequested>(py) {
+                native_runner::NativeRunInterruption::Sigterm
             } else {
-                error
+                native_runner::NativeRunInterruption::FlushedSigint
             }
         })
     }
@@ -160,4 +160,47 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCliRunResult>()?;
     module.add_function(wrap_pyfunction!(run, module)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use g_runner::NativeRunHost as _;
+    use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError};
+
+    use super::{NativeInterruptFlushed, NativeSigtermRequested, PythonRunHost};
+
+    #[test]
+    fn python_interruption_errors_map_to_exact_terminal_categories() {
+        pyo3::Python::initialize();
+        let mut host = PythonRunHost;
+        assert_eq!(
+            host.flushed_interruption_kind(NativeSigtermRequested::new_err("SIGTERM")),
+            g_runner::NativeRunInterruption::Sigterm
+        );
+        assert_eq!(
+            host.flushed_interruption_kind(PyKeyboardInterrupt::new_err("SIGINT")),
+            g_runner::NativeRunInterruption::FlushedSigint
+        );
+
+        let sigterm = NativeSigtermRequested::new_err("SIGTERM");
+        let sigint = PyKeyboardInterrupt::new_err("SIGINT");
+        let failure = PyRuntimeError::new_err("failure");
+        assert_eq!(PythonRunHost::interruption_signal_name(&sigterm), Some("SIGTERM"));
+        assert_eq!(PythonRunHost::interruption_signal_name(&sigint), Some("SIGINT"));
+        assert_eq!(PythonRunHost::interruption_signal_name(&failure), None);
+
+        assert_eq!(
+            host.interruption_kind(&NativeInterruptFlushed::new_err("flushed SIGINT")),
+            Some(g_runner::NativeRunInterruption::FlushedSigint)
+        );
+        assert_eq!(
+            host.interruption_kind(&NativeSigtermRequested::new_err("SIGTERM")),
+            Some(g_runner::NativeRunInterruption::Sigterm)
+        );
+        assert_eq!(
+            host.interruption_kind(&PyKeyboardInterrupt::new_err("SIGINT")),
+            Some(g_runner::NativeRunInterruption::Sigint)
+        );
+        assert_eq!(host.interruption_kind(&PyRuntimeError::new_err("failure")), None);
+    }
 }

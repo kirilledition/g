@@ -166,7 +166,9 @@ impl NativeRunSession {
                 run_id,
             },
         ) {
-            tracing::warn!(target: "g.runtime", error = %error, "Failed to emit timing diagnostic event.");
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tracing::warn!(target: "g.runtime", error = %error, "Failed to emit timing diagnostic event.");
+            }));
         }
         timing_session.recorder.write_final_timing_outputs(
             self.policy.stage_timing_file.as_deref(),

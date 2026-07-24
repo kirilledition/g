@@ -67,7 +67,7 @@ pub enum MaterializedGenotypeStatistics {
 
 /// Chunk-oriented association compute implemented by the device runtime.
 pub trait AssociationBackend: Send + Sync {
-    type GroupState: Send;
+    type GroupState: Send + Sync + 'static;
     type ChromosomeState: Send + 'static;
     type TransferredInput: Send + 'static;
     type DeviceResult: Send + 'static;
@@ -83,12 +83,16 @@ pub trait AssociationBackend: Send + Sync {
     /// Returns an error when the phenotype or covariate data cannot be prepared.
     fn prepare_group(&self, input: GroupPreparationInput) -> Result<Self::GroupState, Self::Error>;
 
-    /// Release group state after its final chromosome has been prepared.
+    /// Release group state after final chromosome completion and worker teardown.
     fn release_group(&self, group: Self::GroupState) {
         drop(group);
     }
 
     /// Prepare reusable state and null-logistic policy input for one chromosome.
+    ///
+    /// The association scheduler invokes this hook on the same backend
+    /// execution worker that invokes `compute_batch` and
+    /// `release_chromosome`.
     ///
     /// # Errors
     ///
@@ -103,8 +107,10 @@ pub trait AssociationBackend: Send + Sync {
     /// Release one chromosome state on the backend execution thread.
     ///
     /// Backends with thread- or runtime-affine reference management can
-    /// override this hook. The scheduler calls it only after every submitted
-    /// batch using the state has been materialized and received.
+    /// override this hook. The scheduler calls it only after materialization
+    /// is quiescent and every produced device result has been materialized or
+    /// dropped. Graceful chromosome transitions additionally require every
+    /// submitted batch using the state to have been received.
     fn release_chromosome(&self, chromosome: Self::ChromosomeState) {
         drop(chromosome);
     }

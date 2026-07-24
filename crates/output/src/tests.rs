@@ -1242,6 +1242,7 @@ fn dropped_deferred_rollback_fails_closed_until_exactly_fenced() {
     drop(rollback);
 
     let output_root = directory.path.join("results");
+    assert!(diagnostics_directory.is_dir(), "dropped rollback retains claim-scoped diagnostics");
     let active_claim_id = owner_claim_identifier(&output_root);
     let contender_error =
         claim_error(Arc::clone(&plan), &single_chunk_ranges(2), "dropped rollback must leave a surviving claim");
@@ -1935,6 +1936,15 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
         .finish()
         .expect("completed output returns cleanup authority");
     drop(completion.post_session_cleanup.expect("completed no-op cleanup exists"));
+
+    assert!(diagnostics_directory.is_dir(), "dropped cleanup retains claim-scoped diagnostics");
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("retained staging reads"),
+        Some(staging_attempt_id.clone())
+    );
+    let contender_error =
+        claim_error(Arc::clone(&resume_plan), &chunk_ranges, "dropped cleanup must retain the exact owner claim");
+    assert_surviving_owner_claim(contender_error, &output_root);
 
     let contender_plan = authorize_fenced_owner_claim(resume_plan, predecessor_claim_id.clone());
     let contender = OutputManager::open(contender_plan, "# fenced contender\n".to_string())

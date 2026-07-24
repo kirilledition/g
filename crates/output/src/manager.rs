@@ -227,6 +227,82 @@ pub struct OutputDeliveryToken {
 }
 
 /// Typestate owner for one append-only output lineage.
+///
+/// State transitions consume their authority and expose only the operations
+/// valid for the resulting state:
+///
+/// ```no_run
+/// use g_output::{
+///     Active, Claimed, Covered, OutputError, OutputManager, OutputTerminalError, Planned,
+/// };
+/// use std::ops::Range;
+///
+/// fn claim(
+///     manager: OutputManager<Planned>,
+///     chunks: &[Range<usize>],
+/// ) -> Result<OutputManager<Claimed>, OutputError> {
+///     manager.claim(chunks, false)
+/// }
+///
+/// fn close(manager: OutputManager<Active>) -> Result<OutputManager<Covered>, OutputTerminalError> {
+///     manager.close_completed()
+/// }
+///
+/// fn complete(manager: OutputManager<Covered>) -> Result<(), OutputTerminalError> {
+///     manager.finish().map(|_outputs| ())
+/// }
+/// ```
+///
+/// Planned output cannot invoke an active terminal transition:
+///
+/// ```compile_fail,E0599
+/// use g_output::{OutputManager, Planned};
+///
+/// fn invalid(manager: OutputManager<Planned>) {
+///     let _ = manager.close_completed();
+/// }
+/// ```
+///
+/// Claimed output cannot publish an active terminal:
+///
+/// ```compile_fail,E0599
+/// use g_output::{Claimed, OutputManager};
+///
+/// fn invalid(manager: OutputManager<Claimed>) {
+///     let _ = manager.finish_interrupted("SIGTERM");
+/// }
+/// ```
+///
+/// Active output cannot bypass exact-coverage proof and finish directly:
+///
+/// ```compile_fail,E0599
+/// use g_output::{Active, OutputManager};
+///
+/// fn invalid(manager: OutputManager<Active>) {
+///     let _ = manager.finish();
+/// }
+/// ```
+///
+/// Covered output cannot be reclassified as failed:
+///
+/// ```compile_fail,E0599
+/// use g_output::{Covered, OutputManager};
+///
+/// fn invalid(manager: OutputManager<Covered>) {
+///     let _ = manager.abort("late failure");
+/// }
+/// ```
+///
+/// Consuming terminal authority cannot be used twice:
+///
+/// ```compile_fail,E0382
+/// use g_output::{Active, OutputManager};
+///
+/// fn invalid(manager: OutputManager<Active>) {
+///     let _ = manager.abort("first failure");
+///     let _ = manager.finish_interrupted("SIGTERM");
+/// }
+/// ```
 pub struct OutputManager<State = Planned> {
     core: Option<OutputManagerCore>,
     state: PhantomData<State>,

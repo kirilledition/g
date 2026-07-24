@@ -10,18 +10,43 @@ terminal writer completion/abort policy. Terminal rendering belongs to
 
 ## Public types
 
-`RunHooks`, `EngineRunError`, `AssociationBackend`, completed phenotype
+`RunHooks`, `EngineRunError`, `EngineExecutionOutcome`, the opaque
+`EnginePostSessionCleanup` protocol, `AssociationBackend`, completed phenotype
 artifacts, and the engine-owned group and materialization envelopes used by the
-private PyO3 JAX adapter. Backend capability and transfer-preparation enums are
-owned here with the backend lifecycle; genotype batches, compressed transfer
-descriptors, and raw statistics remain owned by `g-genotype`. Input and output
-payloads remain owned by their domain crates and are referenced directly rather
-than mirrored or re-exported. Run preparation/execution state, upstream error
-types, and scheduler reports remain internal implementation details.
+private PyO3 JAX adapter. The outcome keeps any post-session cleanup obligation
+orthogonal to its artifact-or-error result, including structural artifact
+conversion failures and output terminal rejections. Output authority remains
+private to the engine; `g-runner` observes only its purpose and engine-owned
+renderable error. Backend capability and transfer-preparation enums are owned
+here with the backend lifecycle;
+genotype batches, compressed transfer descriptors, and raw statistics remain
+owned by `g-genotype`. Input and output payloads remain owned by their domain
+crates and are referenced directly rather than mirrored or re-exported. Run
+preparation/execution state, upstream error types, and scheduler reports remain
+internal implementation details.
 
 ## Public functions
 
 Invoke the coarse coordinated run entry point used by `g-runner`.
+Normal progress, lifecycle telemetry, and structured diagnostics are
+best-effort observers once execution begins. Observer emission or final progress
+reporting cannot replace completed phenotype artifacts or a primary execution
+failure. The first progress setup, bookkeeping, emission, or observer panic is
+warned about and disables that run's reporter; every later progress call is a
+no-op. Delivery-report and warning-counter observation is likewise infallible.
+Structural phenotype-output cardinality validation retains the exact native
+count independently of telemetry representation.
+
+If activation fails before publishing attempt authority, the engine returns
+the primary activation failure together with exclusive rollback authority; the
+runner consumes that authority only after claim-scoped diagnostics close.
+Every completed-resume terminal success or typed terminal error carries any
+terminal-produced cleanup authority alongside its primary result. The runner
+attempts that distinct non-cloneable authority only after the same session-close
+boundary; claimed state cannot expose it before a terminal transition.
+Once activation publishes attempt authority, delivery-token construction
+failure explicitly aborts the active output lifecycle. The token failure remains
+primary, with any abort failure retained as secondary context.
 
 ## This crate must not expose
 

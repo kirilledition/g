@@ -185,11 +185,13 @@ full native config surface as command-line aliases.
 Logging sinks, native thread policy, and JAX runtime settings are process-global
 inside one Python process. Separate `g regenie` invocations are isolated by
 their process. `g batch` verifies these policies across every requested run
-before starting work. Once a
-JAX configuration attempt begins, a configuration update, device validation, or
-setup-diagnostic failure requires a fresh process because JAX may already be
-partially configured. Cache-directory creation occurs before that transition,
-so a directory-creation failure remains retryable. Device and the optional
+before starting work. Once a JAX configuration attempt begins, a
+configuration-update or device-validation failure requires a fresh process
+because JAX may already be partially configured. Cache-directory creation
+occurs before that transition, so a directory-creation failure remains
+retryable. Completed JAX setup is recorded before setup diagnostics are
+emitted; a diagnostic-emission failure is logged best-effort and does not
+invalidate the configured runtime. Device and the optional
 `[compute].jax_cache_dir` participate in batch compatibility; precision,
 persistent-cache thresholds, auxiliary caches, and transfer guards are fixed
 implementation policy rather than TOML settings.
@@ -217,6 +219,7 @@ For the supported compatibility surface, see [Compatibility](compatibility.md).
 | Per-entry preflight or runtime failure during `g batch` | Stop at the failing entry, preserve earlier completed outputs, and do not start later entries. |
 | Runtime failure during `g regenie` | Exit `1` and print a concise `Error: ...` line without a Python traceback. Configured logs and telemetry contain structured failure details. |
 | First SIGINT or SIGTERM during `g regenie` | Flush queued chunks for resume, print an interruption message, and exit with `128 + signal_number` such as `130` for SIGINT. |
+| Signal observed after durable run completion | Keep the completed result and artifact paths; record the late signal as a warning. |
 | Second SIGTERM during graceful drain | Terminate immediately with the operating system's default SIGTERM action. |
 
 Run outputs and resume metadata are documented in [Output Files](output-files.md)
