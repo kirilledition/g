@@ -147,10 +147,16 @@ If `--bgen` is also supplied, it overrides the locator while preserving the
 TOML selector.
 
 The selector does not replace the locator. `[input].bgen` remains required, and
-frontend run validation still requires that path to exist. In the current
-integration stage, the selector is validated and carried in the immutable
-input plan, but the engine does not yet consume it. Runs therefore continue to
-open the configured locator without content selection.
+frontend run validation requires its string value but does not probe BGEN
+existence. The engine reconciles the selector with any BGEN fingerprint
+required by existing output, then performs a content-selected open. Existing
+output supplies both its digest and expected byte count; a different configured
+digest is rejected before locator access or output ownership. A selected
+same-process snapshot-cache hit may reuse authenticated content without
+accessing a missing request locator. Selected cache misses and unselected opens
+still require an accessible locator. Content-selected inputs must fit the
+256 MiB owned-snapshot ceiling; a larger selected miss is rejected rather than
+falling back to unattested positioned I/O.
 
 ## Minimal Quantitative Config
 
@@ -320,11 +326,12 @@ Config construction rejects:
 - incompatible trait flags such as simultaneous quantitative and binary mode;
 - binary-only options explicitly supplied for a quantitative run.
 
-Run preflight then checks file availability, sample and column contracts,
-prediction-list compatibility, output directory state, and resume manifest
-compatibility. In batch mode these engine checks run when each entry starts;
-only frontend config construction, disjoint output roots, and process-global
-policy compatibility are checked across the complete batch before execution.
+Run preflight then acquires and authenticates BGEN as required, checks other
+input-file availability, sample and column contracts, prediction-list
+compatibility, output directory state, and resume manifest compatibility. In
+batch mode these engine checks run when each entry starts; only frontend config
+construction, disjoint output roots, and process-global policy compatibility
+are checked across the complete batch before execution.
 
 ## Defaults Policy
 

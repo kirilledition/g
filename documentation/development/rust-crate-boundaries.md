@@ -43,6 +43,11 @@ Rules:
 - `g-plan` depends directly on `g-genotype-contracts` for
   `BgenContentSha256`, embeds that owner-defined type in `InputPlan`, and does
   not re-export or redefine it.
+- `g-interface` requires the BGEN locator string but does not probe its
+  existence. `g-engine` owns reconciliation of configured selector policy with
+  persisted output agreement and calls `g-genotype::BgenReaderCore::open_request`.
+  Only actual reader content evidence, never the request locator or selector,
+  may become output authority.
 - Do not bind low-level Rust helper chains through Python when one Rust owner can call another directly.
 - `g-runner` invokes `g-engine::execute_coordinated_run` after its host creates
   the Python-backed `AssociationBackend`; the root never sequences domain

@@ -95,9 +95,12 @@ requires these run-specific inputs:
 There is no CLI flag for `[input].bgen_content_sha256`. That optional TOML
 selector must be exactly 64 lowercase hexadecimal characters. `--bgen`
 overrides only the BGEN locator and preserves a selector read from TOML. The
-locator remains required and must exist; the selector is not a locator-free
-mode. It is carried into the immutable input plan, but the current engine does
-not yet consume it.
+locator string remains required, but frontend validation does not require it
+to exist. The engine uses the selector when opening BGEN and reconciles it with
+any fingerprint required by existing output. A matching selected
+same-process snapshot-cache hit can succeed without accessing the supplied
+locator; a selected cache miss or unselected open still requires an accessible
+locator.
 
 ## Supported Modes
 
@@ -187,7 +190,7 @@ full native config surface as command-line aliases.
 
 | TOML setting | Meaning |
 | --- | --- |
-| `[input].bgen_content_sha256` | Optional canonical BGEN content selector; planning-only in the current integration stage. |
+| `[input].bgen_content_sha256` | Optional canonical BGEN content selector used for authenticated open and existing-output reconciliation. |
 | `[compute].cpu_threads` | Optional native Rayon worker count; when omitted, Rayon selects the CPU count. |
 
 Logging sinks, native thread policy, and JAX runtime settings are process-global

@@ -60,6 +60,9 @@ non-empty string `interrupted_signal`; failed manifests add one non-empty string
 device and writer-thread values must agree with the corresponding immutable
 execution-plan fields, and the execution-plan phenotype must equal the
 attempt/genesis phenotype; CPU-thread count remains runtime diagnostics.
+The `schema_version`, `output_schema_version`, and
+`attempt_manifest_schema_version` fields are JSON integers with value `0`, not
+strings.
 Schema zero intentionally preserves this flat, status-dependent JSON layout
 because its canonical bytes participate in terminal hashes. A tagged or nested
 status layout requires a future schema revision.
@@ -107,6 +110,16 @@ recovery has not materialized the claimed terminal bytes yet. After all
 manifest reads, one final lineage-snapshot equality check prevents a concurrent
 successor or terminal publication from turning stale reads into accepted
 agreement.
+
+The engine requests this whole-plan agreement before BGEN locator access. It
+rejects an existing null BGEN digest first, then reconciles any configured
+selector with the persisted digest and byte count. A configured/persisted
+digest mismatch also fails before locator access and before owner acquisition.
+The engine opens through the resulting selected request, preserves the
+persisted GPU format subject to current compatibility, and constructs output
+header inputs from the reader's actual content evidence. A matching
+same-process snapshot-cache hit may use a missing request locator; a selected
+miss still needs the locator.
 
 Recovery opens each `run_manifest.json` as a non-symlink regular file and
 accepts at most 1 GiB. The reader consumes one additional detection byte so
@@ -170,23 +183,27 @@ with `[output].resume = true` when the existing lineage belongs to the same
 planned run.
 
 Planning a new or resumed run only inspects the selected output paths. It does
-not create the output root. Claiming first validates plan-wide BGEN agreement,
-constructs and binds all phenotype headers, and rejects incompatible existing
-authority before taking ownership. It then publishes the permanent root or one
-immutable owner transition, repeats lineage and complete execution-plan
-validation under that authority, reserves a fresh staging-attempt identifier,
-and creates only ownership-private diagnostics. Activation accepts no new
-headers; it publishes genesis or a successor from the claim-bound headers for
-that same attempt identity before writers start. Completed read-only activation
-instead leaves the fresh staging attempt and its owner-staging intent
-unreferenced through final verification. After the runtime session closes, a
-non-cloneable, idempotent cleanup capability removes that staging and releases
-the exact owner, retiring the owner-staging intent between those operations.
-The same capability is retryable after a durability error and tolerates an
-already-retired intent. Every consuming terminal method returns its primary
-failure through `OutputTerminalError`; only completed read-only failures can
-also carry this cleanup capability. Callers must separate the error parts and
-run cleanup after closing claim-scoped sessions.
+not create the output root. After the initial agreement-guided BGEN open, the
+engine constructs all authority-complete header inputs from actual content
+evidence and calls output claim. Claim independently reinspects plan-wide BGEN
+agreement, constructs and binds all phenotype headers, and rejects incompatible
+existing authority before taking ownership. This second inspection prevents a
+concurrent lineage change from turning the earlier agreement into claim
+authority. Claim then publishes the permanent root or one immutable owner
+transition, repeats lineage and complete execution-plan validation under that
+authority, reserves a fresh staging-attempt identifier, and creates only
+ownership-private diagnostics. Activation accepts no new headers; it publishes
+genesis or a successor from the claim-bound headers for that same attempt
+identity before writers start. Completed read-only activation instead leaves
+the fresh staging attempt and its owner-staging intent unreferenced through
+final verification. After the runtime session closes, a non-cloneable,
+idempotent cleanup capability removes that staging and releases the exact
+owner, retiring the owner-staging intent between those operations. The same
+capability is retryable after a durability error and tolerates an already-retired
+intent. Every consuming terminal method returns its primary failure through
+`OutputTerminalError`; only completed read-only failures can also carry this
+cleanup capability. Callers must separate the error parts and run cleanup after
+closing claim-scoped sessions.
 Missing paths are treated as absent; other directory or lineage inspection
 errors stop planning.
 

@@ -37,6 +37,22 @@ no-op. Delivery-report and warning-counter observation is likewise infallible.
 Structural phenotype-output cardinality validation retains the exact native
 count independently of telemetry representation.
 
+Preparation first reads one whole-plan existing-output agreement before BGEN
+locator access. It reconciles the configured selector with the persisted
+content digest and byte count, opens through `BgenReaderCore::open_request`,
+preserves or negotiates the GPU genotype format, and constructs all output
+header inputs from the reader's actual content evidence. A configured/persisted
+digest mismatch or existing null BGEN authority therefore fails before locator
+access and before output ownership. A selected same-process snapshot-cache hit
+may use a missing request locator; selected misses and unselected opens still
+require the locator.
+
+After input preparation, output claim independently reinspects plan-wide
+agreement, validates the actual evidence and resolved format, and binds every
+manifest header before acquiring ownership. This second inspection prevents a
+lineage change between the initial agreement read and claim from authorizing
+stale preparation.
+
 If activation fails before publishing attempt authority, the engine returns
 the primary activation failure together with exclusive rollback authority; the
 runner consumes that authority only after claim-scoped diagnostics close.

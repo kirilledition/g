@@ -15,7 +15,6 @@ pub(crate) fn validate_config_for_run(config: &RegenieConfigData) -> ConfigResul
 }
 
 fn validate_existing_input_paths(config: &RegenieConfigData) -> ConfigResult<()> {
-    validate_existing_path("--bgen", config.input.bgen.as_ref())?;
     validate_existing_path("--sample", config.input.sample.as_ref())?;
     validate_existing_path("--phenoFile", config.input.pheno_file.as_ref())?;
     validate_existing_path("--covarFile", config.input.covar_file.as_ref())?;

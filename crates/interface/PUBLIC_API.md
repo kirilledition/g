@@ -29,9 +29,13 @@ Runtime setup, BGEN opening, sample alignment, output writing, JAX backend choic
 
 Keep work at config/build time only. Do not perform data-file scans or
 compute-side effects, and do not mirror fixed engine or reader policy as fake
-configuration fields. Run validation still requires the BGEN locator and uses
-`Path::exists`; the content selector does not make locator-free configuration
-valid. The current engine does not yet consume the planned selector.
+configuration fields. Run validation still requires a BGEN locator string but
+deliberately does not probe it with `Path::exists`; BGEN acquisition and
+content selection belong to the engine and genotype reader. Sample, phenotype,
+covariate, and prediction paths retain their frontend existence checks. This
+separation permits a selected same-process snapshot-cache hit to use a missing
+request locator, while an unselected open or selected cache miss must still
+open the locator during engine preparation.
 
 ## Allowed downstream users
 

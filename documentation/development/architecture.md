@@ -80,9 +80,20 @@ all services remain behind `g-engine` and `g-runner`.
 digest type owned by `g-genotype-contracts` and carries it in
 `g-plan::InputPlan`. The selector is TOML-only: the CLI layer can replace the
 BGEN locator with `--bgen` without clearing the TOML selector. Frontend run
-validation still requires the locator to pass `Path::exists`. In the current
-integration stage, `g-engine` does not forward the planned selector to the
-genotype open request, so execution remains an unselected locator-based open.
+validation requires a locator string but deliberately does not probe BGEN
+existence; sample, phenotype, covariate, and prediction inputs retain their
+existence checks.
+
+Before BGEN locator access, `g-engine` reads one whole-plan existing-output
+agreement. It reconciles the configured selector with the persisted digest and
+byte count, calls `BgenReaderCore::open_request`, resolves the GPU genotype
+format, and constructs output header inputs from the reader's actual content
+evidence. Existing null BGEN authority and configured/persisted digest
+mismatches fail before locator access or output ownership. A selected
+same-process cache hit may use a missing request locator; a selected miss or
+unselected open must still acquire the locator. Output claim independently
+reinspects agreement and binds the headers before ownership, closing the race
+between early resume planning and claim.
 
 Engine resolves the prediction list once into an input-owned path catalog.
 Input indexing/alignment and output-manifest fingerprinting borrow that same

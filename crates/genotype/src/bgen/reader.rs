@@ -217,15 +217,6 @@ impl BgenReaderCore {
         self.positioned_index.as_ref().expect("a BGEN reader without a parsed snapshot must own a positioned index")
     }
 
-    /// Return descriptor metadata from the source acquisition.
-    ///
-    /// On a process snapshot-cache hit this is the original capture identity,
-    /// not evidence that the current request locator was opened. This accessor
-    /// is provenance-only; use [`Self::content_evidence`] for content authority.
-    pub fn source_identity(&self) -> &g_genotype_contracts::BgenSourceIdentity {
-        self.source.identity()
-    }
-
     /// Return authoritative snapshot evidence or positioned unattested evidence.
     pub fn content_evidence(&self) -> &g_genotype_contracts::BgenContentEvidence {
         self.source.content_evidence()

@@ -8,7 +8,6 @@ const TEST_BGEN_CONTENT_SHA256: &str = "abababababababababababababababababababab
 struct CliFixture {
     directory: TemporaryDirectory,
     bgen_path: PathBuf,
-    alternate_bgen_path: PathBuf,
     sample_path: PathBuf,
     phenotype_path: PathBuf,
     prediction_list_path: PathBuf,
@@ -18,11 +17,10 @@ impl CliFixture {
     fn new(test_name: &str) -> Self {
         let directory = TemporaryDirectory::new(test_name);
         let bgen_path = directory.write("genotypes.bgen", "");
-        let alternate_bgen_path = directory.write("alternate-genotypes.bgen", "");
         let sample_path = directory.write("samples.sample", "");
         let phenotype_path = directory.write("phenotypes.tsv", "");
         let prediction_list_path = directory.write("pred.list", "");
-        Self { directory, bgen_path, alternate_bgen_path, sample_path, phenotype_path, prediction_list_path }
+        Self { directory, bgen_path, sample_path, phenotype_path, prediction_list_path }
     }
 
     fn valid_cli_arguments(&self, phenotype_names: &[&str], output_name: &str) -> Vec<String> {
@@ -315,15 +313,16 @@ fn toml_bgen_content_digest_round_trips_and_survives_locator_override() {
     let replay_run = one_compiled_run(&replay_arguments);
     assert_eq!(replay_run.run_plan, initial_run.run_plan);
 
+    let missing_bgen_path = fixture.directory.path().join("cached-content-without-locator.bgen");
     let override_arguments = vec![
         "regenie".to_string(),
         "--config".to_string(),
         path_text(&config_path).to_string(),
         "--bgen".to_string(),
-        path_text(&fixture.alternate_bgen_path).to_string(),
+        path_text(&missing_bgen_path).to_string(),
     ];
     let override_run = one_compiled_run(&override_arguments);
-    assert_eq!(override_run.run_plan.input.bgen_path, path_text(&fixture.alternate_bgen_path));
+    assert_eq!(override_run.run_plan.input.bgen_path, path_text(&missing_bgen_path));
     assert_eq!(
         override_run
             .run_plan
@@ -333,7 +332,8 @@ fn toml_bgen_content_digest_round_trips_and_survives_locator_override() {
             .to_string(),
         TEST_BGEN_CONTENT_SHA256,
     );
-    assert!(override_run.effective_config_toml.contains(path_text(&fixture.alternate_bgen_path)));
+    assert!(!missing_bgen_path.exists());
+    assert!(override_run.effective_config_toml.contains(path_text(&missing_bgen_path)));
     assert!(override_run.effective_config_toml.contains(&digest_toml));
 }
 
@@ -356,7 +356,7 @@ fn toml_rejects_boolean_bgen_content_digest() {
 }
 
 #[test]
-fn configuration_validation_rejects_conflicts_duplicates_and_missing_paths() {
+fn configuration_validation_rejects_conflicts_duplicates_and_missing_non_bgen_paths() {
     let fixture = CliFixture::new("validation");
     let duplicate_arguments = fixture.valid_cli_arguments(&["trait-a", "trait-a"], "duplicate-output");
     let (duplicate_code, _, duplicate_stderr) = match dispatch_cli(&duplicate_arguments) {
@@ -377,24 +377,34 @@ fn configuration_validation_rejects_conflicts_duplicates_and_missing_paths() {
     };
     assert!(binary_only_stderr.contains("can only be used with --bt"));
 
-    let missing_path_arguments = vec![
-        "regenie".to_string(),
-        "--bgen".to_string(),
-        path_text(&fixture.directory.path().join("missing.bgen")).to_string(),
-        "--sample".to_string(),
-        path_text(&fixture.sample_path).to_string(),
-        "--phenoFile".to_string(),
-        path_text(&fixture.phenotype_path).to_string(),
-        "--phenoCol".to_string(),
-        "trait-a".to_string(),
-        "--pred".to_string(),
-        path_text(&fixture.prediction_list_path).to_string(),
-        "--out".to_string(),
-        path_text(&fixture.directory.path().join("missing-output")).to_string(),
-    ];
-    match dispatch_cli(&missing_path_arguments) {
-        CliDispatch::Exit { exit_code: 1, stderr, .. } => assert!(stderr.contains("--bgen path does not exist")),
-        dispatch => panic!("expected missing-path error, observed {dispatch:?}"),
+    for option_name in ["--sample", "--phenoFile", "--pred"] {
+        let mut missing_path_arguments = fixture.valid_cli_arguments(&["trait-a"], "missing-path-output");
+        let option_index = missing_path_arguments
+            .iter()
+            .position(|argument| argument == option_name)
+            .expect("required path option should be present");
+        missing_path_arguments[option_index + 1] =
+            path_text(&fixture.directory.path().join(format!("missing-{option_name}.input"))).to_string();
+        match dispatch_cli(&missing_path_arguments) {
+            CliDispatch::Exit { exit_code: 1, stderr, .. } => {
+                assert!(stderr.contains(&format!("{option_name} path does not exist")));
+            }
+            dispatch => panic!("expected {option_name} missing-path error, observed {dispatch:?}"),
+        }
+    }
+
+    let mut missing_covariate_arguments = fixture.valid_cli_arguments(&["trait-a"], "missing-covariate-output");
+    missing_covariate_arguments.extend([
+        "--covarFile".to_string(),
+        path_text(&fixture.directory.path().join("missing-covariates.tsv")).to_string(),
+        "--covarCol".to_string(),
+        "age".to_string(),
+    ]);
+    match dispatch_cli(&missing_covariate_arguments) {
+        CliDispatch::Exit { exit_code: 1, stderr, .. } => {
+            assert!(stderr.contains("--covarFile path does not exist"));
+        }
+        dispatch => panic!("expected covariate missing-path error, observed {dispatch:?}"),
     }
 }
 

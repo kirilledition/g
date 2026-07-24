@@ -39,12 +39,11 @@ with a typed error rather than silently falling back to unattested positioned
 I/O.
 
 The reader exposes content evidence and request provenance separately.
-`source_identity()` temporarily returns the identity captured with the original
-source acquisition; on a selected cache hit it does not describe the current
-request locator. It is provenance-only and must not be used as content
+`content_evidence()` returns the authority for the source actually opened or
+reused. `source_provenance()` records both the original capture identity and
+the locator supplied by the current request. On a selected cache hit that
+request locator was not accessed and remains provenance rather than content
 authority.
-`source_provenance()` records both that capture identity and the locator supplied
-by the current request.
 
 `BgenReaderCore` reads metadata, plans full-scan chromosome-homogeneous chunks,
 resolves packed8 compatibility through a best-effort persistent fingerprint

@@ -64,6 +64,12 @@ acquires, captures or positions, hashes owned bytes, and parses its locator
 independently. It never consults or publishes the process snapshot registry.
 Callers with an authoritative SHA-256 use `BgenReaderCore::open_request` and
 `BgenContentSelector`; the optional expected byte count adds a second assertion.
+The engine obtains that selector either from the configured digest or from the
+content fingerprint in existing output agreement. When both exist, their
+digests must match; persisted authority also supplies the expected byte count.
+The agreement read and reconciliation precede locator access, so an existing
+null digest or a configured/persisted mismatch fails before any BGEN open or
+output ownership mutation.
 
 One private process-wide registry entry strongly owns the latest completely
 parsed content-selected small-file payload under a revision-0 key containing
@@ -140,12 +146,16 @@ optional `output_stage_timings.json`. The parts directory is the completed
 dataset; output does not require a consolidation pass.
 
 Output planning is read-only. The engine resolves every phenotype run path and
-inspects the immutable lineage before input preparation without creating the
-output root. Output claim validates BGEN agreement and constructs every
-phenotype manifest header before publishing the durable no-replace owner claim.
-It repeats complete execution-plan validation under that authority. Activation
-then consumes only those stored headers, publishes genesis or successor
-authority, and creates attempt-specific state.
+reads one whole-plan existing-output agreement before BGEN input preparation,
+without creating the output root. It opens through the reconciled request,
+resolves the GPU representation, and constructs every authority-complete
+manifest header input from the reader's actual content evidence. Output claim
+then independently reinspects BGEN agreement, validates that evidence and
+format, and constructs and binds every phenotype manifest header before
+publishing the durable no-replace owner claim. It repeats complete
+execution-plan validation under that authority. Activation then consumes only
+those stored headers, publishes genesis or successor authority, and creates
+attempt-specific state.
 
 ## Manifest And Resume Contract
 
@@ -157,6 +167,9 @@ input fingerprints, and Parquet writer settings in one canonical
 binds the attempt, status, receipts, and committed chunks. The pre-release
 Parquet output schema is version `0`; `INFO` is nullable when its
 expected-variance denominator is undefined.
+Persisted `schema_version`, `output_schema_version`, and
+`attempt_manifest_schema_version` values remain JSON integers with value `0`,
+not strings.
 
 Each compute group records a required fingerprint of its trait-major aligned
 phenotype matrix, including phenotype names, shape, and float32 values. Resume

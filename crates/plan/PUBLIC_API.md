@@ -14,9 +14,11 @@ immutable request policy. The digest has one canonical wire representation:
 exactly 64 lowercase hexadecimal characters. Association mode and chunk size
 live directly on `RunPlan`; they are not wrapped in a one-use analysis DTO.
 
-The selector is planning data only in the current integration stage.
-`g-engine` does not yet consume it and continues to open the BGEN locator
-without content selection.
+`g-engine` reconciles the configured selector with any fingerprint persisted
+by existing output authority, then passes the resulting request policy to
+`g-genotype`. The plan remains request data only: authoritative output identity
+comes from the content evidence returned by the reader, not from the configured
+selector or locator.
 
 ## Public functions
 
