@@ -9,6 +9,7 @@ mod association_implementation;
 mod chunk;
 mod digest;
 mod error;
+mod genotype_delivery_execution;
 mod manager;
 mod manifest;
 mod persistence;

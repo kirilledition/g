@@ -105,9 +105,31 @@ struct ExecutionPlanDispatchDiagnosticFields<'fields> {
 }
 
 #[derive(Serialize)]
-struct DeliveryFinishedDiagnosticFields {
+struct DeliveryFinishedDiagnosticFields<'fields> {
     group_index: usize,
+    phenotype_compute_group_id: &'fields str,
+    effective_path: &'fields str,
     processed_chunk_count: u64,
+    raw_nvcomp_chunk_count: u64,
+    host_chunk_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_ffi_target: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_ffi_api_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_handler_sha256: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_ptx_sha256: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_ptx_isa: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_ptx_target: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_minimum_cuda_driver_version: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_minimum_compute_capability_major: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_nvcomp_minimum_compute_capability_minor: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -524,13 +546,35 @@ fn coordinated_run_detail_outcome<BackendError, HookError, PostSessionCleanup>(
 
 fn record_delivery_reports(delivery_reports: &[AssociationDeliveryReport]) {
     for (group_index, report) in delivery_reports.iter().enumerate() {
-        let processed_chunk_count = telemetry_counter_from_usize(report.processed_chunk_count);
+        let execution = &report.genotype_delivery_execution;
+        let raw_nvcomp_artifact = execution.raw_deflate_packed8_artifact();
         record_diagnostic_observation("native_dispatch_delivery_finished", || {
             g_runtime::emit_diagnostic_event(
                 "debug",
                 "native_dispatch_delivery_finished",
                 "Association group delivery finished.",
-                &DeliveryFinishedDiagnosticFields { group_index, processed_chunk_count },
+                &DeliveryFinishedDiagnosticFields {
+                    group_index,
+                    phenotype_compute_group_id: execution.phenotype_compute_group_id(),
+                    effective_path: genotype_delivery_effective_path_name(execution.effective_path()),
+                    processed_chunk_count: execution.processed_chunk_count(),
+                    raw_nvcomp_chunk_count: execution.raw_deflate_nvcomp_chunk_count(),
+                    host_chunk_count: execution.host_chunk_count(),
+                    raw_nvcomp_ffi_target: raw_nvcomp_artifact.map(g_output::RawDeflatePacked8Artifact::ffi_target),
+                    raw_nvcomp_ffi_api_version: raw_nvcomp_artifact
+                        .map(g_output::RawDeflatePacked8Artifact::ffi_api_version),
+                    raw_nvcomp_handler_sha256: raw_nvcomp_artifact
+                        .map(g_output::RawDeflatePacked8Artifact::handler_sha256),
+                    raw_nvcomp_ptx_sha256: raw_nvcomp_artifact.map(g_output::RawDeflatePacked8Artifact::ptx_sha256),
+                    raw_nvcomp_ptx_isa: raw_nvcomp_artifact.map(g_output::RawDeflatePacked8Artifact::ptx_isa),
+                    raw_nvcomp_ptx_target: raw_nvcomp_artifact.map(g_output::RawDeflatePacked8Artifact::ptx_target),
+                    raw_nvcomp_minimum_cuda_driver_version: raw_nvcomp_artifact
+                        .map(g_output::RawDeflatePacked8Artifact::minimum_cuda_driver_version),
+                    raw_nvcomp_minimum_compute_capability_major: raw_nvcomp_artifact
+                        .map(g_output::RawDeflatePacked8Artifact::minimum_compute_capability_major),
+                    raw_nvcomp_minimum_compute_capability_minor: raw_nvcomp_artifact
+                        .map(g_output::RawDeflatePacked8Artifact::minimum_compute_capability_minor),
+                },
             )
         });
         for warning in &report.warnings {
@@ -548,6 +592,13 @@ fn record_delivery_reports(delivery_reports: &[AssociationDeliveryReport]) {
                 );
             });
         }
+    }
+}
+
+const fn genotype_delivery_effective_path_name(path: g_output::GenotypeDeliveryEffectivePath) -> &'static str {
+    match path {
+        g_output::GenotypeDeliveryEffectivePath::Host => "host",
+        g_output::GenotypeDeliveryEffectivePath::RawDeflateNvcomp => "raw_deflate_nvcomp",
     }
 }
 
@@ -1033,7 +1084,8 @@ mod tests {
     #[test]
     fn delivery_report_observation_handles_usize_max_counters_infallibly() {
         record_delivery_reports(&[AssociationDeliveryReport {
-            processed_chunk_count: usize::MAX,
+            genotype_delivery_execution: g_output::GenotypeDeliveryExecution::host("test-group".to_string(), u64::MAX)
+                .expect("maximum host delivery count is valid"),
             warnings: vec![crate::delivery_execution::DeliveryWarning {
                 chromosome: "22".to_string(),
                 message: "test warning".to_string(),

@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::association_implementation::AssociationImplementationCompatibility;
 use crate::error::{OutputError, OutputResult};
+use crate::genotype_delivery_execution::{GenotypeDeliveryEffectivePath, GenotypeDeliveryExecution};
 use crate::manifest::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, build_current_run_manifest_header_value_with_cache,
 };
@@ -237,8 +238,8 @@ pub struct OutputDeliveryToken {
 ///
 /// ```no_run
 /// use g_output::{
-///     Active, Claimed, Covered, CurrentRunManifestHeaderInput, OutputError, OutputManager,
-///     OutputTerminalError, Planned,
+///     Active, Claimed, Covered, CurrentRunManifestHeaderInput, GenotypeDeliveryExecution,
+///     OutputError, OutputManager, OutputTerminalError, Planned,
 /// };
 /// use std::ops::Range;
 ///
@@ -250,8 +251,11 @@ pub struct OutputDeliveryToken {
 ///     manager.claim(headers, chunks, false)
 /// }
 ///
-/// fn close(manager: OutputManager<Active>) -> Result<OutputManager<Covered>, OutputTerminalError> {
-///     manager.close_completed()
+/// fn close(
+///     manager: OutputManager<Active>,
+///     executions: Vec<GenotypeDeliveryExecution>,
+/// ) -> Result<OutputManager<Covered>, OutputTerminalError> {
+///     manager.close_completed(executions)
 /// }
 ///
 /// fn complete(manager: OutputManager<Covered>) -> Result<(), OutputTerminalError> {
@@ -265,7 +269,7 @@ pub struct OutputDeliveryToken {
 /// use g_output::{OutputManager, Planned};
 ///
 /// fn invalid(manager: OutputManager<Planned>) {
-///     let _ = manager.close_completed();
+///     let _ = manager.close_completed(Vec::new());
 /// }
 /// ```
 ///
@@ -393,6 +397,7 @@ struct ManagedOutputRun {
     receipts: Vec<OutputPartReceipt>,
     committed_chunk_identifiers: Arc<BTreeSet<usize>>,
     writer_session: Option<Arc<OutputWriterSession>>,
+    genotype_delivery_execution: Option<GenotypeDeliveryExecution>,
 }
 
 #[derive(Clone, Copy)]
@@ -421,6 +426,7 @@ struct PreparedAttemptRun {
     paths: AttemptRunPaths,
     receipts: Vec<OutputPartReceipt>,
     committed_chunk_identifiers: BTreeSet<usize>,
+    genotype_delivery_execution: Option<GenotypeDeliveryExecution>,
 }
 
 struct StagedTerminalRun {
@@ -483,6 +489,7 @@ impl OutputManager<Planned> {
                 receipts: Vec::new(),
                 committed_chunk_identifiers: Arc::new(BTreeSet::new()),
                 writer_session: None,
+                genotype_delivery_execution: None,
             });
         }
         let lineage_snapshot = lineage_paths.inspect()?;
@@ -1043,15 +1050,57 @@ impl OutputManager<Active> {
         Ok(OutputDeliveryToken { writer_sessions, committed_chunk_identifier_sets })
     }
 
+    #[cfg(test)]
+    pub(crate) fn close_completed_for_test(self) -> Result<OutputManager<Covered>, OutputTerminalError> {
+        let genotype_delivery_executions = self
+            .core()
+            .and_then(OutputManagerCore::host_genotype_delivery_executions_for_test)
+            .map_err(OutputTerminalError::from)?;
+        self.close_completed(genotype_delivery_executions)
+    }
+
     /// Drain all writers and prove exact coverage.
     ///
     /// # Errors
     ///
-    /// Returns an error when a writer, timing snapshot, or exact-coverage check
-    /// fails. A best-effort failed terminal is published before returning.
-    pub fn close_completed(mut self) -> Result<OutputManager<Covered>, OutputTerminalError> {
+    /// Returns an error unless the execution evidence covers every phenotype
+    /// compute group exactly once, satisfies the execution-plan device/format
+    /// constraints, and reports the resume-aware number of processed chunks.
+    /// Host fallback remains valid for a GPU packed8 plan. Writer, timing, and
+    /// exact-output-coverage failures also return an error. A best-effort
+    /// failed terminal is published before returning.
+    pub fn close_completed(
+        mut self,
+        genotype_delivery_executions: Vec<GenotypeDeliveryExecution>,
+    ) -> Result<OutputManager<Covered>, OutputTerminalError> {
         let mut core = self.take_core()?;
         let completed_noop = core.active_attempt()?.completed_noop;
+        if let Err(error) = core.install_genotype_delivery_executions(genotype_delivery_executions) {
+            if completed_noop {
+                return Err(core.completed_noop_terminal_error(
+                    error,
+                    "Completed output verification failure recovery also failed",
+                ));
+            }
+            let abort_result = core.abort_writers();
+            let reason = abort_result.as_ref().err().map_or_else(
+                || format!("output completion failed: {error}"),
+                |abort_error| format!("output completion failed: {error}; writer cleanup also reported: {abort_error}"),
+            );
+            let terminal_result =
+                core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason));
+            let recovery_result = combine_terminal_cleanup_result(
+                abort_result,
+                terminal_result,
+                "Output completion writer cleanup or terminal recovery also failed",
+            );
+            return return_primary_after_recovery(
+                error,
+                recovery_result,
+                "Output completion failure recovery also failed",
+            )
+            .map_err(OutputTerminalError::from);
+        }
         let close_result = if completed_noop { core.reverify_completed_noop() } else { core.close_writers_completed() };
         #[cfg(test)]
         let close_result = close_result.and(fail_lifecycle_at_test_point(if completed_noop {
@@ -1461,6 +1510,140 @@ impl OutputManagerCore {
         })
     }
 
+    fn install_genotype_delivery_executions(
+        &mut self,
+        genotype_delivery_executions: Vec<GenotypeDeliveryExecution>,
+    ) -> OutputResult<()> {
+        let run_indices_by_compute_group = self.run_indices_by_compute_group()?;
+        let mut executions_by_compute_group = BTreeMap::new();
+        for execution in genotype_delivery_executions {
+            let compute_group_id = execution.phenotype_compute_group_id().to_string();
+            if executions_by_compute_group.insert(compute_group_id.clone(), execution).is_some() {
+                return Err(OutputError::InvalidInput(format!(
+                    "Genotype-delivery execution contains duplicate compute group '{compute_group_id}'."
+                )));
+            }
+        }
+        if executions_by_compute_group.keys().collect::<BTreeSet<_>>()
+            != run_indices_by_compute_group.keys().collect::<BTreeSet<_>>()
+        {
+            return Err(OutputError::InvalidInput(
+                "Genotype-delivery execution compute-group coverage is not exact.".to_string(),
+            ));
+        }
+        for (compute_group_id, run_indices) in &run_indices_by_compute_group {
+            let execution = executions_by_compute_group.get(compute_group_id).ok_or_else(|| {
+                OutputError::Runtime("Validated genotype-delivery compute-group coverage changed.".to_string())
+            })?;
+            let expected_processed_chunk_count = self.expected_processed_chunk_count(run_indices)?;
+            if execution.processed_chunk_count() != expected_processed_chunk_count {
+                return Err(OutputError::InvalidInput(format!(
+                    "Genotype-delivery execution for compute group '{compute_group_id}' processed {} chunks; expected {expected_processed_chunk_count}.",
+                    execution.processed_chunk_count()
+                )));
+            }
+            for run_index in run_indices {
+                let run = self.runs.get(*run_index).ok_or_else(|| {
+                    OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+                })?;
+                validate_genotype_delivery_execution_plan_binding(&self.run_plan, run, execution)?;
+            }
+        }
+        if self.active_attempt()?.completed_noop {
+            return Ok(());
+        }
+        for (compute_group_id, run_indices) in run_indices_by_compute_group {
+            let execution = executions_by_compute_group.remove(&compute_group_id).ok_or_else(|| {
+                OutputError::Runtime("Validated genotype-delivery execution disappeared.".to_string())
+            })?;
+            for run_index in run_indices {
+                let run = self.runs.get_mut(run_index).ok_or_else(|| {
+                    OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+                })?;
+                run.genotype_delivery_execution = Some(execution.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn run_indices_by_compute_group(&self) -> OutputResult<BTreeMap<String, Vec<usize>>> {
+        let mut run_indices_by_compute_group = BTreeMap::<String, Vec<usize>>::new();
+        for (run_index, run) in self.runs.iter().enumerate() {
+            run_indices_by_compute_group
+                .entry(phenotype_compute_group_id(run)?.to_string())
+                .or_default()
+                .push(run_index);
+        }
+        Ok(run_indices_by_compute_group)
+    }
+
+    fn expected_processed_chunk_count(&self, run_indices: &[usize]) -> OutputResult<u64> {
+        let canonical_chunk_count = self.active_attempt()?.canonical_chunk_plan.chunk_count();
+        let first_run_index = *run_indices.first().ok_or_else(|| {
+            OutputError::Runtime("Genotype-delivery compute group contains no output runs.".to_string())
+        })?;
+        let mut smallest_run_index = first_run_index;
+        let mut smallest_committed_count = self
+            .runs
+            .get(first_run_index)
+            .ok_or_else(|| OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string()))?
+            .committed_chunk_identifiers
+            .len();
+        for run_index in run_indices.iter().skip(1).copied() {
+            let run = self.runs.get(run_index).ok_or_else(|| {
+                OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+            })?;
+            if run.committed_chunk_identifiers.len() < smallest_committed_count {
+                smallest_run_index = run_index;
+                smallest_committed_count = run.committed_chunk_identifiers.len();
+            }
+        }
+        let smallest_committed = &self
+            .runs
+            .get(smallest_run_index)
+            .ok_or_else(|| OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string()))?
+            .committed_chunk_identifiers;
+        let common_committed_count = if run_indices.len() == 1 {
+            smallest_committed_count
+        } else {
+            let mut common_committed_count = 0_usize;
+            'chunk: for chunk_identifier in smallest_committed.iter() {
+                for run_index in run_indices.iter().copied() {
+                    if run_index == smallest_run_index {
+                        continue;
+                    }
+                    let run = self.runs.get(run_index).ok_or_else(|| {
+                        OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+                    })?;
+                    if !run.committed_chunk_identifiers.contains(chunk_identifier) {
+                        continue 'chunk;
+                    }
+                }
+                common_committed_count += 1;
+            }
+            common_committed_count
+        };
+        let expected_processed_chunk_count =
+            canonical_chunk_count.checked_sub(common_committed_count).ok_or_else(|| {
+                OutputError::Runtime(
+                    "Initially committed genotype chunks exceed the canonical chunk count.".to_string(),
+                )
+            })?;
+        u64::try_from(expected_processed_chunk_count).map_err(|error| {
+            OutputError::Runtime(format!("Expected processed genotype chunk count does not fit uint64: {error}"))
+        })
+    }
+
+    #[cfg(test)]
+    fn host_genotype_delivery_executions_for_test(&self) -> OutputResult<Vec<GenotypeDeliveryExecution>> {
+        self.run_indices_by_compute_group()?
+            .into_iter()
+            .map(|(compute_group_id, run_indices)| {
+                GenotypeDeliveryExecution::host(compute_group_id, self.expected_processed_chunk_count(&run_indices)?)
+            })
+            .collect()
+    }
+
     fn install_prepared_attempt(
         &mut self,
         prepared_attempt: PreparedAttempt,
@@ -1476,6 +1659,7 @@ impl OutputManagerCore {
             run.paths = Some(prepared_run.paths);
             run.receipts = prepared_run.receipts;
             run.committed_chunk_identifiers = Arc::new(prepared_run.committed_chunk_identifiers);
+            run.genotype_delivery_execution = prepared_run.genotype_delivery_execution;
         }
         self.active_attempt = Some(ActiveAttempt {
             run_set_id: prepared_attempt.run_set_id,
@@ -1511,6 +1695,7 @@ impl OutputManagerCore {
             )?);
             run.receipts.clear();
             run.committed_chunk_identifiers = Arc::new(BTreeSet::new());
+            run.genotype_delivery_execution = None;
         }
         self.active_attempt = Some(ActiveAttempt {
             run_set_id,
@@ -2207,6 +2392,19 @@ fn validate_finalized_resume_manifest_binding(
             run.phenotype_name
         )));
     }
+    let terminal_execution = if terminal_phenotype.genotype_delivery_execution.is_null() {
+        None
+    } else {
+        Some(crate::persistence::attempt::genotype_delivery_execution_from_value(
+            terminal_phenotype.genotype_delivery_execution.clone(),
+        )?)
+    };
+    if terminal_execution != validated.genotype_delivery_execution {
+        return Err(OutputError::InvalidInput(format!(
+            "Output immutable terminal genotype-delivery execution for phenotype '{}' does not match its manifest.",
+            run.phenotype_name
+        )));
+    }
     Ok(())
 }
 
@@ -2341,6 +2539,61 @@ fn execution_plan_hash(run: &ManagedOutputRun) -> OutputResult<String> {
                 run.phenotype_name
             ))
         })
+}
+
+fn phenotype_compute_group_id(run: &ManagedOutputRun) -> OutputResult<&str> {
+    run.current_header
+        .as_ref()
+        .and_then(|header| header.pointer("/execution_plan/phenotype_compute_group_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!(
+                "Output header for phenotype '{}' has no phenotype compute-group identifier.",
+                run.phenotype_name
+            ))
+        })
+}
+
+fn execution_plan_gpu_genotype_format(run: &ManagedOutputRun) -> OutputResult<g_plan::GpuGenotypeFormat> {
+    let format_value = run
+        .current_header
+        .as_ref()
+        .and_then(|header| header.pointer("/execution_plan/association_backend/genotype_format"))
+        .cloned()
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!(
+                "Output header for phenotype '{}' has no association-backend genotype format.",
+                run.phenotype_name
+            ))
+        })?;
+    serde_json::from_value(format_value).map_err(|error| {
+        OutputError::InvalidInput(format!(
+            "Output header for phenotype '{}' has an invalid association-backend genotype format: {error}",
+            run.phenotype_name
+        ))
+    })
+}
+
+fn validate_genotype_delivery_execution_plan_binding(
+    run_plan: &g_plan::RunPlan,
+    run: &ManagedOutputRun,
+    execution: &GenotypeDeliveryExecution,
+) -> OutputResult<()> {
+    if execution.phenotype_compute_group_id() != phenotype_compute_group_id(run)? {
+        return Err(OutputError::InvalidInput(format!(
+            "Genotype-delivery execution compute group does not match phenotype '{}'.",
+            run.phenotype_name
+        )));
+    }
+    if execution.effective_path() == GenotypeDeliveryEffectivePath::RawDeflateNvcomp
+        && (run_plan.compute.device != g_plan::Device::Gpu
+            || execution_plan_gpu_genotype_format(run)? != g_plan::GpuGenotypeFormat::Packed8)
+    {
+        return Err(OutputError::InvalidInput(
+            "Raw-DEFLATE nvCOMP execution requires a GPU packed8 execution plan.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn initialize_genesis_attempt(
@@ -2573,6 +2826,8 @@ fn finalize_pending_terminal(
         OrphanPartPolicy::Observe,
     )?;
     install_verified_leaf_run_state(core, snapshot, canonical_chunk_plan, observed_runs)?;
+    install_terminal_genotype_delivery_executions(core, terminal, canonical_chunk_plan)?;
+    validate_terminal_genotype_delivery_execution_groups(core, terminal, canonical_chunk_plan)?;
     let association_implementation = core.association_implementation()?.clone();
     let StagedTerminalRuns { terminal: observed_terminal, .. } = stage_terminal_runs(
         &core.runs,
@@ -2651,8 +2906,138 @@ fn install_verified_leaf_run_state(
         )?);
         run.receipts = verified_run.receipts;
         run.committed_chunk_identifiers = Arc::new(verified_run.committed_chunk_identifiers);
+        if verified_run.genotype_delivery_execution.is_some() {
+            run.genotype_delivery_execution = verified_run.genotype_delivery_execution;
+        }
     }
     Ok(())
+}
+
+fn install_terminal_genotype_delivery_executions(
+    core: &mut OutputManagerCore,
+    terminal: &LineageTerminalRecord,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+) -> OutputResult<()> {
+    let canonical_chunk_count = u64::try_from(canonical_chunk_plan.chunk_count()).map_err(|error| {
+        OutputError::Runtime(format!("Canonical genotype chunk count does not fit uint64: {error}"))
+    })?;
+    for run in &mut core.runs {
+        let terminal_phenotype =
+            terminal.phenotypes.iter().find(|phenotype| phenotype.phenotype_name == run.phenotype_name).ok_or_else(
+                || {
+                    OutputError::InvalidInput(format!(
+                        "Pending output terminal is missing phenotype '{}'.",
+                        run.phenotype_name
+                    ))
+                },
+            )?;
+        let genotype_delivery_execution = if terminal_phenotype.genotype_delivery_execution.is_null() {
+            None
+        } else {
+            Some(crate::persistence::attempt::genotype_delivery_execution_from_value(
+                terminal_phenotype.genotype_delivery_execution.clone(),
+            )?)
+        };
+        if let Some(execution) = genotype_delivery_execution.as_ref() {
+            validate_genotype_delivery_execution_plan_binding(&core.run_plan, run, execution)?;
+            if execution.processed_chunk_count() > canonical_chunk_count {
+                return Err(OutputError::InvalidInput(
+                    "Pending terminal genotype-delivery execution exceeds the canonical chunk count.".to_string(),
+                ));
+            }
+        }
+        run.genotype_delivery_execution = genotype_delivery_execution;
+    }
+    Ok(())
+}
+
+fn validate_terminal_genotype_delivery_execution_groups(
+    core: &OutputManagerCore,
+    terminal: &LineageTerminalRecord,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+) -> OutputResult<()> {
+    for (compute_group_id, run_indices) in core.run_indices_by_compute_group()? {
+        let first_run_index = *run_indices.first().ok_or_else(|| {
+            OutputError::Runtime("Genotype-delivery compute group contains no output runs.".to_string())
+        })?;
+        let expected_execution = core
+            .runs
+            .get(first_run_index)
+            .ok_or_else(|| OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string()))?
+            .genotype_delivery_execution
+            .as_ref();
+        for run_index in &run_indices {
+            let run = core.runs.get(*run_index).ok_or_else(|| {
+                OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+            })?;
+            if run.genotype_delivery_execution.as_ref() != expected_execution {
+                return Err(OutputError::InvalidInput(format!(
+                    "Pending terminal genotype-delivery execution differs within compute group '{compute_group_id}'."
+                )));
+            }
+        }
+        let Some(execution) = expected_execution else {
+            if terminal.status == AttemptTerminalStatus::Completed {
+                return Err(OutputError::InvalidInput(format!(
+                    "Completed pending terminal compute group '{compute_group_id}' has no genotype-delivery execution."
+                )));
+            }
+            continue;
+        };
+        let receipt_groups = run_indices
+            .iter()
+            .map(|run_index| {
+                core.runs.get(*run_index).map(|run| run.receipts.as_slice()).ok_or_else(|| {
+                    OutputError::Runtime("Genotype-delivery output run index is inconsistent.".to_string())
+                })
+            })
+            .collect::<OutputResult<Vec<_>>>()?;
+        let expected_processed_chunk_count = expected_recovered_processed_chunk_count(
+            receipt_groups,
+            canonical_chunk_plan.chunk_count(),
+            &terminal.attempt_id,
+        )?;
+        if execution.processed_chunk_count() != expected_processed_chunk_count {
+            return Err(OutputError::InvalidInput(format!(
+                "Pending terminal genotype-delivery execution for compute group '{compute_group_id}' processed {} chunks; durable current-attempt receipts require {expected_processed_chunk_count}.",
+                execution.processed_chunk_count()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn expected_recovered_processed_chunk_count(
+    receipt_groups: Vec<&[OutputPartReceipt]>,
+    canonical_chunk_count: usize,
+    current_attempt_id: &AttemptIdentifier,
+) -> OutputResult<u64> {
+    let mut receipt_groups = receipt_groups.into_iter();
+    let first_receipts = receipt_groups.next().ok_or_else(|| {
+        OutputError::Runtime("Recovered genotype-delivery compute group contains no output runs.".to_string())
+    })?;
+    let collect_initially_committed_chunks = |receipts: &[OutputPartReceipt]| {
+        receipts
+            .iter()
+            .filter(|receipt| &receipt.footer.attempt_id != current_attempt_id)
+            .flat_map(|receipt| receipt.footer.chunks.iter().map(|chunk| chunk.chunk_identifier))
+            .collect::<BTreeSet<_>>()
+    };
+    let mut common_initially_committed_chunks = collect_initially_committed_chunks(first_receipts);
+    for receipts in receipt_groups {
+        let run_initially_committed_chunks = collect_initially_committed_chunks(receipts);
+        common_initially_committed_chunks
+            .retain(|chunk_identifier| run_initially_committed_chunks.contains(chunk_identifier));
+    }
+    let processed_chunk_count =
+        canonical_chunk_count.checked_sub(common_initially_committed_chunks.len()).ok_or_else(|| {
+            OutputError::InvalidInput(
+                "Recovered initially committed genotype chunks exceed the canonical chunk count.".to_string(),
+            )
+        })?;
+    u64::try_from(processed_chunk_count).map_err(|error| {
+        OutputError::Runtime(format!("Recovered genotype-delivery processed chunk count does not fit uint64: {error}"))
+    })
 }
 
 fn prepare_attempt(
@@ -2690,6 +3075,7 @@ fn prepare_attempt(
             receipts: &[],
             run_plan: &core.run_plan,
             association_implementation: core.association_implementation()?,
+            genotype_delivery_execution: None,
         })?;
         let receipts = if let Some((source_attempt_id, source_receipts)) = reuse_source {
             let source_paths = AttemptRunPaths::new(
@@ -2719,10 +3105,17 @@ fn prepare_attempt(
                 receipts: &receipts,
                 run_plan: &core.run_plan,
                 association_implementation: core.association_implementation()?,
+                genotype_delivery_execution: None,
             })?;
         }
         let committed_chunk_identifiers = receipt_chunk_identifiers(&receipts)?;
-        prepared_runs.push(PreparedAttemptRun { binding, paths, receipts, committed_chunk_identifiers });
+        prepared_runs.push(PreparedAttemptRun {
+            binding,
+            paths,
+            receipts,
+            committed_chunk_identifiers,
+            genotype_delivery_execution: None,
+        });
     }
     Ok(PreparedAttempt { run_set_id, attempt_id, runs: prepared_runs })
 }
@@ -2799,13 +3192,98 @@ fn verify_runs_against_snapshot(
                     run.phenotype_name
                 )));
             }
+            let terminal_execution = if terminal_record.genotype_delivery_execution.is_null() {
+                None
+            } else {
+                Some(crate::persistence::attempt::genotype_delivery_execution_from_value(
+                    terminal_record.genotype_delivery_execution.clone(),
+                )?)
+            };
+            if terminal_execution != verified.genotype_delivery_execution {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output terminal phenotype '{}' has stale genotype-delivery execution evidence.",
+                    run.phenotype_name
+                )));
+            }
         }
         verified_runs.push(verified);
     }
     if snapshot.leaf_terminal.is_some() && terminal_records.len() != runs.len() {
         return Err(OutputError::InvalidInput("Output terminal phenotype coverage is not exact.".to_string()));
     }
+    if let Some(terminal) = snapshot.leaf_terminal.as_ref() {
+        validate_verified_terminal_genotype_delivery_execution_groups(
+            runs,
+            &verified_runs,
+            terminal,
+            &snapshot.leaf_attempt_id,
+            canonical_chunk_plan,
+        )?;
+    }
     Ok(verified_runs)
+}
+
+fn validate_verified_terminal_genotype_delivery_execution_groups(
+    runs: &[ManagedOutputRun],
+    verified_runs: &[VerifiedAttemptRun],
+    terminal: &LineageTerminalRecord,
+    attempt_id: &AttemptIdentifier,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+) -> OutputResult<()> {
+    if runs.len() != verified_runs.len() {
+        return Err(OutputError::Runtime(
+            "Verified genotype-delivery run count does not match the current run plan.".to_string(),
+        ));
+    }
+    let mut run_indices_by_compute_group = BTreeMap::<String, Vec<usize>>::new();
+    for (run_index, run) in runs.iter().enumerate() {
+        run_indices_by_compute_group.entry(phenotype_compute_group_id(run)?.to_string()).or_default().push(run_index);
+    }
+    for (compute_group_id, run_indices) in run_indices_by_compute_group {
+        let first_run_index = *run_indices.first().ok_or_else(|| {
+            OutputError::Runtime("Verified genotype-delivery compute group contains no output runs.".to_string())
+        })?;
+        let expected_execution = verified_runs
+            .get(first_run_index)
+            .ok_or_else(|| OutputError::Runtime("Verified genotype-delivery run index is inconsistent.".to_string()))?
+            .genotype_delivery_execution
+            .as_ref();
+        for run_index in &run_indices {
+            let verified_run = verified_runs.get(*run_index).ok_or_else(|| {
+                OutputError::Runtime("Verified genotype-delivery run index is inconsistent.".to_string())
+            })?;
+            if verified_run.genotype_delivery_execution.as_ref() != expected_execution {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output terminal genotype-delivery execution differs within compute group '{compute_group_id}'."
+                )));
+            }
+        }
+        let Some(execution) = expected_execution else {
+            if terminal.status == AttemptTerminalStatus::Completed {
+                return Err(OutputError::InvalidInput(format!(
+                    "Completed output terminal compute group '{compute_group_id}' has no genotype-delivery execution."
+                )));
+            }
+            continue;
+        };
+        let receipt_groups = run_indices
+            .iter()
+            .map(|run_index| {
+                verified_runs.get(*run_index).map(|verified_run| verified_run.receipts.as_slice()).ok_or_else(|| {
+                    OutputError::Runtime("Verified genotype-delivery run index is inconsistent.".to_string())
+                })
+            })
+            .collect::<OutputResult<Vec<_>>>()?;
+        let expected_processed_chunk_count =
+            expected_recovered_processed_chunk_count(receipt_groups, canonical_chunk_plan.chunk_count(), attempt_id)?;
+        if execution.processed_chunk_count() != expected_processed_chunk_count {
+            return Err(OutputError::InvalidInput(format!(
+                "Output terminal genotype-delivery execution for compute group '{compute_group_id}' processed {} chunks; immutable current-attempt receipts require {expected_processed_chunk_count}.",
+                execution.processed_chunk_count()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn prepared_attempt_from_verified(
@@ -2837,6 +3315,7 @@ fn prepared_attempt_from_verified(
             paths,
             receipts: verified.receipts,
             committed_chunk_identifiers: verified.committed_chunk_identifiers,
+            genotype_delivery_execution: verified.genotype_delivery_execution,
         });
     }
     Ok(PreparedAttempt { run_set_id, attempt_id, runs: prepared_runs })
@@ -2877,12 +3356,22 @@ fn stage_terminal_runs(
             receipts: &run.receipts,
             run_plan,
             association_implementation,
+            genotype_delivery_execution: run.genotype_delivery_execution.as_ref(),
         })?;
         let manifest_sha256 = attempt_manifest_value_sha256(&manifest)?;
+        let genotype_delivery_execution = manifest
+            .pointer("/runtime/genotype_delivery_execution")
+            .ok_or_else(|| {
+                OutputError::Runtime(
+                    "Constructed output attempt manifest is missing genotype-delivery execution.".to_string(),
+                )
+            })?
+            .clone();
         phenotype_records.push(TerminalPhenotypeRecord {
             phenotype_name: run.phenotype_name.clone(),
             output_directory_name: run.output_directory_name.clone(),
             run_manifest_sha256: manifest_sha256.clone(),
+            genotype_delivery_execution,
         });
         staged_runs.push(StagedTerminalRun { manifest, manifest_sha256 });
     }

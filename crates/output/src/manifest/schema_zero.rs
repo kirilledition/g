@@ -362,6 +362,10 @@ impl ExecutionPlanSchemaZero {
             && self.binary_correction_plan.method == g_plan::BinaryFallbackMethod::FirthApproximate
     }
 
+    pub(crate) fn phenotype_compute_group_id(&self) -> &str {
+        &self.phenotype_compute_group_id
+    }
+
     pub(crate) fn validate(&self) -> OutputResult<()> {
         self.bgen.validate();
         self.sample.validate("sample")?;

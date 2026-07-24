@@ -10,8 +10,8 @@ use g_genotype_contracts::{
 };
 use g_output::{
     Active, AssociationImplementationCompatibility, CurrentRunManifestHeaderInput, FirthComponentsCompatibility,
-    NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken, OutputManager, Regenie2StatisticBatch,
-    write_regenie2_multi_trait_chunk_f32,
+    GenotypeDeliveryExecution, NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken, OutputManager,
+    Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 use sha2::{Digest, Sha256};
 
@@ -445,7 +445,13 @@ fn finish_benchmark_run(submitted_run: SubmittedBenchmarkRun) -> CompletedBenchm
     let SubmittedBenchmarkRun { output_manager, delivery_token, benchmark_root } = submitted_run;
     drop(delivery_token);
     let completion = output_manager
-        .close_completed()
+        .close_completed(vec![
+            GenotypeDeliveryExecution::host(
+                "benchmark_group".to_string(),
+                u64::try_from(BENCHMARK_CHUNK_COUNT).expect("benchmark chunk count should fit uint64"),
+            )
+            .expect("benchmark genotype-delivery execution should be valid"),
+        ])
         .expect("benchmark output should have exact coverage")
         .finish()
         .expect("benchmark output manager should finish");

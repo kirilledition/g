@@ -14,6 +14,10 @@ use crate::association_implementation::{
     RawCudaFirthCapabilityRequirementsCompatibility,
 };
 use crate::error::{OutputError, OutputResult};
+use crate::genotype_delivery_execution::{
+    GenotypeDeliveryEffectivePath, GenotypeDeliveryExecution, RawDeflatePacked8Artifact,
+    RawDeflatePacked8CapabilityRequirements,
+};
 use crate::manifest::{
     ExecutionPlanSchemaZero, OUTPUT_SCHEMA_VERSION, RUN_MANIFEST_SCHEMA_VERSION, build_manifest_value_sha256,
 };
@@ -58,7 +62,7 @@ const ATTEMPT_MANIFEST_BASE_FIELD_NAMES: [&str; 15] = [
     "runtime",
 ];
 const ATTEMPT_MANIFEST_COMMAND_FIELD_NAMES: [&str; 3] = ["interface", "phenotype", "effective_config"];
-const ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES: [&str; 7] = [
+const ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES: [&str; 8] = [
     "device",
     "cpu_threads",
     "writer_threads",
@@ -66,6 +70,26 @@ const ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES: [&str; 7] = [
     "chunks_per_parquet_file",
     "parquet_compression",
     "association_implementation",
+    "genotype_delivery_execution",
+];
+const GENOTYPE_DELIVERY_EXECUTION_FIELD_NAMES: [&str; 6] = [
+    "phenotype_compute_group_id",
+    "effective_path",
+    "processed_chunk_count",
+    "raw_deflate_nvcomp_chunk_count",
+    "host_chunk_count",
+    "raw_deflate_packed8_artifact",
+];
+const RAW_DEFLATE_PACKED8_ARTIFACT_FIELD_NAMES: [&str; 9] = [
+    "ffi_target",
+    "ffi_api_version",
+    "handler_sha256",
+    "ptx_sha256",
+    "ptx_isa",
+    "ptx_target",
+    "minimum_cuda_driver_version",
+    "minimum_compute_capability_major",
+    "minimum_compute_capability_minor",
 ];
 const ATTEMPT_MANIFEST_BOUNDED_READ_LIMIT_BYTES: u64 = ATTEMPT_MANIFEST_MAXIMUM_SIZE_BYTES + 1;
 const LINUX_OPEN_NO_FOLLOW_FLAG: i32 = 0o400_000;
@@ -161,6 +185,7 @@ struct AttemptManifestRuntimeSchemaZero {
     chunks_per_parquet_file: u64,
     parquet_compression: String,
     association_implementation: AssociationImplementationSchemaZero,
+    genotype_delivery_execution: RequiredNullableAttemptManifestSchemaZero<GenotypeDeliveryExecutionSchemaZero>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +212,31 @@ struct FirthComponentsSchemaZero {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCudaFirthArtifactSchemaZero {
+    ffi_target: String,
+    ffi_api_version: u32,
+    handler_sha256: String,
+    ptx_sha256: String,
+    ptx_isa: String,
+    ptx_target: String,
+    minimum_cuda_driver_version: i32,
+    minimum_compute_capability_major: i32,
+    minimum_compute_capability_minor: i32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GenotypeDeliveryExecutionSchemaZero {
+    phenotype_compute_group_id: String,
+    effective_path: GenotypeDeliveryEffectivePath,
+    processed_chunk_count: u64,
+    raw_deflate_nvcomp_chunk_count: u64,
+    host_chunk_count: u64,
+    raw_deflate_packed8_artifact: RequiredNullableAttemptManifestSchemaZero<RawDeflatePacked8ArtifactSchemaZero>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDeflatePacked8ArtifactSchemaZero {
     ffi_target: String,
     ffi_api_version: u32,
     handler_sha256: String,
@@ -230,6 +280,7 @@ pub(crate) struct ValidatedAttemptManifestSchemaZero {
     execution_plan: ExecutionPlanSchemaZero,
     command: AttemptManifestCommandSchemaZero,
     association_implementation: AssociationImplementationCompatibility,
+    pub(crate) genotype_delivery_execution: Option<GenotypeDeliveryExecution>,
 }
 
 impl ValidatedAttemptManifestSchemaZero {
@@ -255,6 +306,7 @@ pub(crate) struct VerifiedAttemptRun {
     pub(crate) receipts: Vec<OutputPartReceipt>,
     pub(crate) committed_chunk_identifiers: BTreeSet<usize>,
     pub(crate) manifest_sha256: String,
+    pub(crate) genotype_delivery_execution: Option<GenotypeDeliveryExecution>,
 }
 
 #[derive(Clone, Copy)]
@@ -277,6 +329,7 @@ pub(crate) struct AttemptManifestWrite<'value> {
     pub(crate) receipts: &'value [OutputPartReceipt],
     pub(crate) run_plan: &'value g_plan::RunPlan,
     pub(crate) association_implementation: &'value AssociationImplementationCompatibility,
+    pub(crate) genotype_delivery_execution: Option<&'value GenotypeDeliveryExecution>,
 }
 
 impl AttemptRunPaths {
@@ -371,6 +424,10 @@ pub(crate) fn build_attempt_manifest_value(input: &AttemptManifestWrite<'_>) -> 
             "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
             "parquet_compression": "zstd",
             "association_implementation": association_implementation_value(input.association_implementation)?,
+            "genotype_delivery_execution": input
+                .genotype_delivery_execution
+                .map(genotype_delivery_execution_value)
+                .transpose()?,
         }),
     );
     match input.interrupted_signal {
@@ -577,6 +634,7 @@ pub(crate) fn verify_attempt_run(
         status,
         committed_parts: sorted_manifest_receipts,
         committed_chunks: _manifest_chunks,
+        genotype_delivery_execution,
         ..
     } = validate_attempt_manifest_schema_zero(manifest, paths, binding)?;
     if require_terminal_manifest && status == AttemptManifestStatus::Running {
@@ -606,7 +664,13 @@ pub(crate) fn verify_attempt_run(
     canonical_chunk_plan
         .validate_exact_coverage(receipts.iter().flat_map(|receipt| receipt.footer.chunks.iter()))
         .or_else(|error| if status == AttemptManifestStatus::Completed { Err(error) } else { Ok(()) })?;
-    Ok(VerifiedAttemptRun { status, receipts, committed_chunk_identifiers, manifest_sha256 })
+    Ok(VerifiedAttemptRun {
+        status,
+        receipts,
+        committed_chunk_identifiers,
+        manifest_sha256,
+        genotype_delivery_execution,
+    })
 }
 
 pub(crate) fn inspect_unmaterialized_attempt_run(
@@ -633,6 +697,7 @@ pub(crate) fn inspect_unmaterialized_attempt_run(
         committed_chunk_identifiers: receipt_chunk_identifiers(&receipts)?,
         receipts,
         manifest_sha256: String::new(),
+        genotype_delivery_execution: None,
     })
 }
 
@@ -768,8 +833,12 @@ impl<'de> serde::de::Visitor<'de> for DuplicateRejectingJsonValueVisitor {
     }
 }
 
+pub(crate) fn parse_json_value_without_duplicate_keys(input_bytes: &[u8]) -> serde_json::Result<Value> {
+    serde_json::from_slice::<DuplicateRejectingJsonValue>(input_bytes).map(|value| value.0)
+}
+
 pub(crate) fn parse_attempt_manifest_json(manifest_bytes: &[u8], manifest_path: &Path) -> OutputResult<Value> {
-    serde_json::from_slice::<DuplicateRejectingJsonValue>(manifest_bytes).map(|manifest| manifest.0).map_err(|error| {
+    parse_json_value_without_duplicate_keys(manifest_bytes).map_err(|error| {
         OutputError::InvalidInput(format!(
             "Output attempt manifest '{}' is invalid JSON: {error}",
             manifest_path.display()
@@ -825,6 +894,12 @@ pub(crate) fn validate_attempt_manifest_schema_zero_shape(
     validate_attempt_manifest_schema_zero_semantics(&mut schema, &execution_plan_sha256)?;
     let attempt_id = AttemptIdentifier::parse(&schema.attempt_id)?;
     let association_implementation = schema.runtime.association_implementation.compatibility()?;
+    let genotype_delivery_execution = schema
+        .runtime
+        .genotype_delivery_execution
+        .as_ref()
+        .map(GenotypeDeliveryExecutionSchemaZero::execution)
+        .transpose()?;
     Ok(ValidatedAttemptManifestSchemaZero {
         status: schema.status,
         run_set_id: schema.run_set_id,
@@ -838,6 +913,7 @@ pub(crate) fn validate_attempt_manifest_schema_zero_shape(
         execution_plan: schema.execution_plan,
         command: schema.command,
         association_implementation,
+        genotype_delivery_execution,
     })
 }
 
@@ -857,6 +933,49 @@ fn validate_attempt_manifest_nested_field_sets(manifest_object: &serde_json::Map
         runtime_object,
         &ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES,
         "Output attempt manifest runtime",
+    )?;
+    let genotype_delivery_execution = runtime_object.get("genotype_delivery_execution").ok_or_else(|| {
+        OutputError::InvalidInput(
+            "Output attempt manifest runtime field 'genotype_delivery_execution' is missing.".to_string(),
+        )
+    })?;
+    validate_genotype_delivery_execution_value_shape(genotype_delivery_execution)
+}
+
+fn validate_genotype_delivery_execution_value_shape(genotype_delivery_execution: &Value) -> OutputResult<()> {
+    let Some(genotype_delivery_execution_object) = genotype_delivery_execution.as_object() else {
+        return if genotype_delivery_execution.is_null() {
+            Ok(())
+        } else {
+            Err(OutputError::InvalidInput(
+                "Output attempt manifest genotype-delivery execution must contain an object or null.".to_string(),
+            ))
+        };
+    };
+    validate_exact_object_fields(
+        genotype_delivery_execution_object,
+        &GENOTYPE_DELIVERY_EXECUTION_FIELD_NAMES,
+        "Output attempt manifest genotype-delivery execution",
+    )?;
+    let raw_artifact = genotype_delivery_execution_object.get("raw_deflate_packed8_artifact").ok_or_else(|| {
+        OutputError::InvalidInput(
+            "Output attempt manifest genotype-delivery execution field 'raw_deflate_packed8_artifact' is missing."
+                .to_string(),
+        )
+    })?;
+    let Some(raw_artifact_object) = raw_artifact.as_object() else {
+        return if raw_artifact.is_null() {
+            Ok(())
+        } else {
+            Err(OutputError::InvalidInput(
+                "Output attempt manifest raw-DEFLATE packed8 artifact must contain an object or null.".to_string(),
+            ))
+        };
+    };
+    validate_exact_object_fields(
+        raw_artifact_object,
+        &RAW_DEFLATE_PACKED8_ARTIFACT_FIELD_NAMES,
+        "Output attempt manifest raw-DEFLATE packed8 artifact",
     )
 }
 
@@ -929,6 +1048,12 @@ fn validate_attempt_manifest_schema_zero_semantics(
             "Output attempt manifest committed chunks do not match its committed part receipts.".to_string(),
         ));
     }
+    validate_genotype_delivery_execution_binding(
+        &schema.status,
+        schema.runtime.genotype_delivery_execution.as_ref(),
+        &schema.execution_plan,
+        schema.committed_chunks.len(),
+    )?;
     Ok(())
 }
 
@@ -1051,6 +1176,7 @@ fn validate_attempt_manifest_runtime(runtime: &AttemptManifestRuntimeSchemaZero)
         ));
     }
     runtime.association_implementation.compatibility()?;
+    runtime.genotype_delivery_execution.as_ref().map(GenotypeDeliveryExecutionSchemaZero::execution).transpose()?;
     Ok(())
 }
 
@@ -1072,6 +1198,52 @@ fn validate_attempt_manifest_runtime_execution_plan_binding(
     if association_implementation.firth_components().is_some() != execution_plan.uses_approximate_firth() {
         return Err(OutputError::InvalidInput(
             "Output attempt manifest runtime association implementation does not match its execution plan.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_genotype_delivery_execution_binding(
+    status: &AttemptManifestStatus,
+    execution_schema: Option<&GenotypeDeliveryExecutionSchemaZero>,
+    execution_plan: &ExecutionPlanSchemaZero,
+    committed_chunk_count: usize,
+) -> OutputResult<()> {
+    match status {
+        AttemptManifestStatus::Running | AttemptManifestStatus::Interrupted if execution_schema.is_some() => {
+            return Err(OutputError::InvalidInput(format!(
+                "{status:?} output attempt manifest genotype-delivery execution must be null."
+            )));
+        }
+        AttemptManifestStatus::Completed if execution_schema.is_none() => {
+            return Err(OutputError::InvalidInput(
+                "Completed output attempt manifest genotype-delivery execution must not be null.".to_string(),
+            ));
+        }
+        _ => {}
+    }
+    let Some(execution_schema) = execution_schema else {
+        return Ok(());
+    };
+    let execution = execution_schema.execution()?;
+    if execution.phenotype_compute_group_id() != execution_plan.phenotype_compute_group_id() {
+        return Err(OutputError::InvalidInput(
+            "Output attempt manifest genotype-delivery compute group does not match its execution plan.".to_string(),
+        ));
+    }
+    if execution.effective_path() == GenotypeDeliveryEffectivePath::RawDeflateNvcomp
+        && (execution_plan.runtime_device() != g_plan::Device::Gpu
+            || execution_plan.gpu_genotype_format() != g_plan::GpuGenotypeFormat::Packed8)
+    {
+        return Err(OutputError::InvalidInput(
+            "Raw-DEFLATE nvCOMP execution requires a GPU packed8 execution plan.".to_string(),
+        ));
+    }
+    let committed_chunk_count = u64::try_from(committed_chunk_count)
+        .map_err(|error| OutputError::Runtime(format!("Committed chunk count does not fit uint64: {error}")))?;
+    if status == &AttemptManifestStatus::Completed && execution.processed_chunk_count() > committed_chunk_count {
+        return Err(OutputError::InvalidInput(
+            "Completed output attempt manifest processed more genotype chunks than it committed.".to_string(),
         ));
     }
     Ok(())
@@ -1139,6 +1311,65 @@ impl RawCudaFirthArtifactSchemaZero {
     }
 }
 
+impl GenotypeDeliveryExecutionSchemaZero {
+    fn execution(&self) -> OutputResult<GenotypeDeliveryExecution> {
+        let artifact = self
+            .raw_deflate_packed8_artifact
+            .as_ref()
+            .map(RawDeflatePacked8ArtifactSchemaZero::artifact)
+            .transpose()?;
+        let execution = match (self.effective_path, artifact) {
+            (GenotypeDeliveryEffectivePath::Host, None) => {
+                GenotypeDeliveryExecution::host(self.phenotype_compute_group_id.clone(), self.processed_chunk_count)?
+            }
+            (GenotypeDeliveryEffectivePath::RawDeflateNvcomp, Some(artifact)) => {
+                GenotypeDeliveryExecution::raw_deflate_nvcomp(
+                    self.phenotype_compute_group_id.clone(),
+                    self.processed_chunk_count,
+                    artifact,
+                )?
+            }
+            (GenotypeDeliveryEffectivePath::Host, Some(_)) => {
+                return Err(OutputError::InvalidInput(
+                    "Host genotype delivery must not identify a raw-DEFLATE packed8 artifact.".to_string(),
+                ));
+            }
+            (GenotypeDeliveryEffectivePath::RawDeflateNvcomp, None) => {
+                return Err(OutputError::InvalidInput(
+                    "Raw-DEFLATE nvCOMP delivery must identify its packed8 artifact.".to_string(),
+                ));
+            }
+        };
+        if self.raw_deflate_nvcomp_chunk_count != execution.raw_deflate_nvcomp_chunk_count()
+            || self.host_chunk_count != execution.host_chunk_count()
+        {
+            return Err(OutputError::InvalidInput(
+                "Genotype-delivery path chunk counts do not match its processed chunk count.".to_string(),
+            ));
+        }
+        Ok(execution)
+    }
+}
+
+impl RawDeflatePacked8ArtifactSchemaZero {
+    fn artifact(&self) -> OutputResult<RawDeflatePacked8Artifact> {
+        let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(
+            self.minimum_cuda_driver_version,
+            self.minimum_compute_capability_major,
+            self.minimum_compute_capability_minor,
+        )?;
+        RawDeflatePacked8Artifact::new(
+            self.ffi_target.clone(),
+            self.ffi_api_version,
+            self.handler_sha256.clone(),
+            self.ptx_sha256.clone(),
+            self.ptx_isa.clone(),
+            self.ptx_target.clone(),
+            capability_requirements,
+        )
+    }
+}
+
 fn association_implementation_value(compatibility: &AssociationImplementationCompatibility) -> OutputResult<Value> {
     let firth_components = compatibility.firth_components().map(|firth_components| {
         let raw_cuda_artifact = firth_components.raw_cuda_artifact().map(|artifact| {
@@ -1170,6 +1401,39 @@ fn association_implementation_value(compatibility: &AssociationImplementationCom
         "jaxlib_version": compatibility.jaxlib_version(),
         "firth_components": firth_components.transpose()?,
     }))
+}
+
+pub(crate) fn genotype_delivery_execution_value(execution: &GenotypeDeliveryExecution) -> OutputResult<Value> {
+    let artifact = execution.raw_deflate_packed8_artifact().map(|artifact| {
+        json!({
+            "ffi_target": artifact.ffi_target(),
+            "ffi_api_version": artifact.ffi_api_version(),
+            "handler_sha256": artifact.handler_sha256(),
+            "ptx_sha256": artifact.ptx_sha256(),
+            "ptx_isa": artifact.ptx_isa(),
+            "ptx_target": artifact.ptx_target(),
+            "minimum_cuda_driver_version": artifact.minimum_cuda_driver_version(),
+            "minimum_compute_capability_major": artifact.minimum_compute_capability_major(),
+            "minimum_compute_capability_minor": artifact.minimum_compute_capability_minor(),
+        })
+    });
+    Ok(json!({
+        "phenotype_compute_group_id": execution.phenotype_compute_group_id(),
+        "effective_path": serde_json::to_value(execution.effective_path()).map_err(OutputError::runtime)?,
+        "processed_chunk_count": execution.processed_chunk_count(),
+        "raw_deflate_nvcomp_chunk_count": execution.raw_deflate_nvcomp_chunk_count(),
+        "host_chunk_count": execution.host_chunk_count(),
+        "raw_deflate_packed8_artifact": artifact,
+    }))
+}
+
+pub(crate) fn genotype_delivery_execution_from_value(value: Value) -> OutputResult<GenotypeDeliveryExecution> {
+    validate_genotype_delivery_execution_value_shape(&value)?;
+    serde_json::from_value::<GenotypeDeliveryExecutionSchemaZero>(value)
+        .map_err(|error| {
+            OutputError::InvalidInput(format!("Output genotype-delivery execution schema zero is invalid: {error}"))
+        })?
+        .execution()
 }
 
 fn validate_sha256(digest: &str, role: &str) -> OutputResult<()> {
@@ -1413,15 +1677,17 @@ mod tests {
         ATTEMPT_MANIFEST_MAXIMUM_SIZE_BYTES, ATTEMPT_MANIFEST_SCHEMA_VERSION, AttemptManifestBinding,
         AttemptManifestStatus, AttemptManifestWrite, AttemptRunPaths, MATERIALIZED_MANIFEST_TEST_REPLACEMENT,
         MaterializedManifestTestReplacement, OrphanPartPolicy, OutputPartReceipt, association_implementation_value,
-        attempt_manifest_value_sha256, build_attempt_manifest_value, materialize_attempt_manifest,
-        parse_attempt_manifest_json, read_optional_attempt_manifest_bytes, reject_or_ignore_uncommitted_parts,
-        validate_attempt_manifest_encoded_size, validate_attempt_manifest_schema_zero,
+        attempt_manifest_value_sha256, build_attempt_manifest_value, genotype_delivery_execution_value,
+        materialize_attempt_manifest, parse_attempt_manifest_json, read_optional_attempt_manifest_bytes,
+        reject_or_ignore_uncommitted_parts, validate_attempt_manifest_encoded_size,
+        validate_attempt_manifest_schema_zero, validate_attempt_manifest_schema_zero_shape,
     };
     use crate::association_implementation::{
         AssociationImplementationCompatibility, FirthComponentsCompatibility,
         FirthComponentsFallbackReasonCompatibility, RawCudaFirthArtifactCompatibility,
         RawCudaFirthCapabilityRequirementsCompatibility,
     };
+    use crate::genotype_delivery_execution::GenotypeDeliveryExecution;
     use crate::manifest::build_manifest_value_sha256;
     use crate::persistence::identifier::AttemptIdentifier;
     use crate::persistence::io::FileIntegrity;
@@ -1462,6 +1728,15 @@ mod tests {
             Some(FirthComponentsCompatibility::jax()),
         )
         .expect("schema test association implementation is valid")
+    }
+
+    fn schema_test_genotype_delivery_execution() -> GenotypeDeliveryExecution {
+        let phenotype_compute_group_id = schema_test_execution_plan()["phenotype_compute_group_id"]
+            .as_str()
+            .expect("schema test compute-group identifier is a string")
+            .to_string();
+        GenotypeDeliveryExecution::host(phenotype_compute_group_id, 0)
+            .expect("schema test genotype-delivery execution is valid")
     }
 
     fn schema_test_raw_cuda_artifact() -> RawCudaFirthArtifactCompatibility {
@@ -1549,6 +1824,12 @@ mod tests {
         let paths = schema_test_paths();
         let binding = schema_test_binding();
         let execution_plan = schema_test_execution_plan();
+        let genotype_delivery_execution = if status == &AttemptManifestStatus::Completed {
+            genotype_delivery_execution_value(&schema_test_genotype_delivery_execution())
+                .expect("schema test genotype-delivery execution serializes")
+        } else {
+            Value::Null
+        };
         let mut manifest = json!({
             "schema_version": 0,
             "output_schema_version": 0,
@@ -1585,6 +1866,7 @@ mod tests {
                         "raw_cuda_artifact": null,
                     },
                 },
+                "genotype_delivery_execution": genotype_delivery_execution,
             },
         });
         match status {
@@ -1656,6 +1938,7 @@ mod tests {
             receipts,
             run_plan: &schema_test_run_plan(),
             association_implementation: &schema_test_association_implementation(),
+            genotype_delivery_execution: None,
         })
         .expect("representative attempt manifest emits")
     }
@@ -1673,6 +1956,7 @@ mod tests {
             receipts: &[],
             run_plan: &schema_test_run_plan(),
             association_implementation,
+            genotype_delivery_execution: None,
         })
         .expect("schema test attempt manifest emits")
     }
@@ -1883,6 +2167,156 @@ mod tests {
     }
 
     #[test]
+    fn genotype_delivery_execution_schema_is_status_bound_closed_and_count_consistent() {
+        let completed_execution =
+            valid_schema_test_manifest(&AttemptManifestStatus::Completed)["runtime"]["genotype_delivery_execution"]
+                .clone();
+
+        let mut running_with_execution = valid_schema_test_manifest(&AttemptManifestStatus::Running);
+        running_with_execution["runtime"]["genotype_delivery_execution"] = completed_execution.clone();
+        assert!(
+            validate_schema_test_manifest(&running_with_execution)
+                .expect_err("running execution evidence is rejected")
+                .contains("Running output attempt manifest genotype-delivery execution must be null")
+        );
+
+        let mut interrupted_with_execution = valid_schema_test_manifest(&AttemptManifestStatus::Interrupted);
+        interrupted_with_execution["runtime"]["genotype_delivery_execution"] = completed_execution;
+        assert!(
+            validate_schema_test_manifest(&interrupted_with_execution)
+                .expect_err("interrupted execution evidence is rejected")
+                .contains("Interrupted output attempt manifest genotype-delivery execution must be null")
+        );
+
+        let mut completed_without_execution = valid_schema_test_manifest(&AttemptManifestStatus::Completed);
+        completed_without_execution["runtime"]["genotype_delivery_execution"] = Value::Null;
+        assert!(
+            validate_schema_test_manifest(&completed_without_execution)
+                .expect_err("completed null execution evidence is rejected")
+                .contains("Completed output attempt manifest genotype-delivery execution must not be null")
+        );
+
+        let mut mismatched_count = valid_schema_test_manifest(&AttemptManifestStatus::Completed);
+        mismatched_count["runtime"]["genotype_delivery_execution"]["host_chunk_count"] = Value::from(1);
+        assert!(
+            validate_schema_test_manifest(&mismatched_count)
+                .expect_err("path count mismatch is rejected")
+                .contains("path chunk counts do not match")
+        );
+
+        let mut mismatched_group = valid_schema_test_manifest(&AttemptManifestStatus::Completed);
+        mismatched_group["runtime"]["genotype_delivery_execution"]["phenotype_compute_group_id"] =
+            Value::String("other-group".to_string());
+        assert!(
+            validate_schema_test_manifest(&mismatched_group)
+                .expect_err("compute-group mismatch is rejected")
+                .contains("compute group does not match")
+        );
+
+        let mut unknown_nested_field = valid_schema_test_manifest(&AttemptManifestStatus::Completed);
+        unknown_nested_field["runtime"]["genotype_delivery_execution"]
+            .as_object_mut()
+            .expect("execution evidence is an object")
+            .insert("observed_device".to_string(), Value::String("GPU:0".to_string()));
+        assert!(
+            validate_schema_test_manifest(&unknown_nested_field)
+                .expect_err("unknown execution field is rejected")
+                .contains("unknown field")
+        );
+    }
+
+    #[test]
+    fn raw_nvcomp_execution_schema_requires_exact_artifact_and_packed8_plan() {
+        let mut raw_execution = valid_schema_test_manifest(&AttemptManifestStatus::Failed);
+        raw_execution["runtime"]["genotype_delivery_execution"] = json!({
+            "phenotype_compute_group_id": "group-id",
+            "effective_path": "raw_deflate_nvcomp",
+            "processed_chunk_count": 1,
+            "raw_deflate_nvcomp_chunk_count": 1,
+            "host_chunk_count": 0,
+            "raw_deflate_packed8_artifact": {
+                "ffi_target": "g.bgen.packed8_deflate.v1",
+                "ffi_api_version": 1,
+                "handler_sha256": "a".repeat(64),
+                "ptx_sha256": "b".repeat(64),
+                "ptx_isa": "8.2",
+                "ptx_target": "sm_70",
+                "minimum_cuda_driver_version": 12_020,
+                "minimum_compute_capability_major": 7,
+                "minimum_compute_capability_minor": 0,
+            },
+        });
+        validate_schema_test_manifest(&raw_execution).expect("exact raw-nvCOMP execution is valid");
+
+        let mut zero_work_raw_execution = raw_execution.clone();
+        zero_work_raw_execution["runtime"]["genotype_delivery_execution"]["processed_chunk_count"] = Value::from(0);
+        zero_work_raw_execution["runtime"]["genotype_delivery_execution"]["raw_deflate_nvcomp_chunk_count"] =
+            Value::from(0);
+        assert!(
+            validate_schema_test_manifest(&zero_work_raw_execution)
+                .expect_err("zero-work raw-nvCOMP execution is rejected")
+                .contains("must process at least one chunk")
+        );
+
+        for field_name in [
+            "ffi_target",
+            "ffi_api_version",
+            "handler_sha256",
+            "ptx_sha256",
+            "ptx_isa",
+            "ptx_target",
+            "minimum_cuda_driver_version",
+            "minimum_compute_capability_major",
+            "minimum_compute_capability_minor",
+        ] {
+            let mut missing_field = raw_execution.clone();
+            missing_field["runtime"]["genotype_delivery_execution"]["raw_deflate_packed8_artifact"]
+                .as_object_mut()
+                .expect("raw packed8 artifact is an object")
+                .remove(field_name);
+            assert!(
+                validate_schema_test_manifest(&missing_field)
+                    .expect_err("missing raw packed8 artifact field is rejected")
+                    .contains("is missing")
+            );
+        }
+
+        for (field_name, invalid_value) in [
+            ("minimum_cuda_driver_version", Value::from(0)),
+            ("minimum_compute_capability_major", Value::from(0)),
+            ("minimum_compute_capability_minor", Value::from(-1)),
+            ("ptx_target", Value::String("sm_80".to_string())),
+        ] {
+            let mut invalid_artifact = raw_execution.clone();
+            invalid_artifact["runtime"]["genotype_delivery_execution"]["raw_deflate_packed8_artifact"][field_name] =
+                invalid_value;
+            validate_schema_test_manifest(&invalid_artifact)
+                .expect_err("invalid raw packed8 capability requirements are rejected");
+        }
+
+        let mut unknown_artifact_field = raw_execution.clone();
+        unknown_artifact_field["runtime"]["genotype_delivery_execution"]["raw_deflate_packed8_artifact"]
+            .as_object_mut()
+            .expect("raw packed8 artifact is an object")
+            .insert("cuda_driver_version".to_string(), Value::from(12_020));
+        validate_schema_test_manifest(&unknown_artifact_field)
+            .expect_err("observational raw packed8 artifact field is rejected");
+
+        let mut dosage_plan = raw_execution;
+        dosage_plan["execution_plan"]["association_backend"]["kind"] = Value::String("jax_dosage".to_string());
+        dosage_plan["execution_plan"]["association_backend"]["genotype_format"] = Value::String("dosage".to_string());
+        dosage_plan["execution_plan_hash"] = Value::String(
+            build_manifest_value_sha256(&dosage_plan["execution_plan"]).expect("dosage execution plan rehashes"),
+        );
+        assert!(
+            validate_attempt_manifest_schema_zero_shape(dosage_plan)
+                .expect_err("raw execution under dosage plan is rejected")
+                .to_string()
+                .contains("requires a GPU packed8 execution plan")
+        );
+    }
+
+    #[test]
     fn attempt_manifest_emitter_and_strict_parser_remain_aligned_for_all_statuses() {
         let paths = schema_test_paths();
         let binding = schema_test_binding();
@@ -1895,6 +2329,8 @@ mod tests {
             (AttemptManifestStatus::Failed, None, Some("writer failed")),
         ] {
             let expected_status = status.clone();
+            let is_completed = status == AttemptManifestStatus::Completed;
+            let genotype_delivery_execution = schema_test_genotype_delivery_execution();
             let emitted = build_attempt_manifest_value(&AttemptManifestWrite {
                 paths: &paths,
                 binding: &binding,
@@ -1905,6 +2341,7 @@ mod tests {
                 receipts: &[],
                 run_plan: &run_plan,
                 association_implementation: &schema_test_association_implementation(),
+                genotype_delivery_execution: is_completed.then_some(&genotype_delivery_execution),
             })
             .expect("attempt manifest emits");
             let emitted_object = emitted.as_object().expect("emitted manifest is an object");

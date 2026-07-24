@@ -112,7 +112,11 @@ knowing Python or CUDA details. The root backend only lends the crate-owned
 slab and metadata to NumPy and calls the private JAX transfer method. The CUDA
 FFI handler and all raw-DEFLATE validation/finalization live in
 `g-genotype-cuda`; binding code performs only lazy library loading and target
-registration required by PyO3/JAX.
+registration required by PyO3/JAX. Its generated public identity includes the
+reviewed minimum CUDA driver and PTX-derived compute capability. The root
+adapter injects that grouped requirement with the FFI/handler/PTX identity into
+the engine, and output persists the same closed artifact after validating that
+the PTX target and minimum capability agree.
 
 Binary approximate-Firth GPU runs independently probe `g-compute-cuda` and
 register its private component-reduction target once. Compatible runs use the

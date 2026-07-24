@@ -11,6 +11,8 @@ use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_mai
 mod association_scheduler;
 #[path = "../src/backend.rs"]
 pub mod backend;
+#[path = "../src/cuda_capability.rs"]
+mod cuda_capability;
 #[path = "../src/output_schedule.rs"]
 mod output_schedule;
 

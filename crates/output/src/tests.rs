@@ -18,8 +18,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AssociationImplementationCompatibility, CurrentRunManifestHeaderInput, FirthComponentsCompatibility,
-    NativeChunkHandle, NativeVariantMetadataHandle, OutputManager, RawCudaFirthArtifactCompatibility,
-    RawCudaFirthCapabilityRequirementsCompatibility, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
+    GenotypeDeliveryExecution, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager,
+    RawCudaFirthArtifactCompatibility, RawCudaFirthCapabilityRequirementsCompatibility, RawDeflatePacked8Artifact,
+    RawDeflatePacked8CapabilityRequirements, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 
 const PHENOTYPE_NAME: &str = "trait_alpha";
@@ -303,6 +304,23 @@ fn test_raw_cuda_association_implementation_with_digests(
     .expect("test raw-CUDA association implementation is valid")
 }
 
+fn test_raw_packed8_delivery_execution(processed_chunk_count: u64) -> GenotypeDeliveryExecution {
+    let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+        .expect("test packed8 capability requirements are valid");
+    let artifact = RawDeflatePacked8Artifact::new(
+        "g.bgen.packed8_deflate.v1".to_string(),
+        1,
+        "a".repeat(64),
+        "b".repeat(64),
+        "8.2".to_string(),
+        "sm_70".to_string(),
+        capability_requirements,
+    )
+    .expect("test packed8 artifact is valid");
+    GenotypeDeliveryExecution::raw_deflate_nvcomp("group-id".to_string(), processed_chunk_count, artifact)
+        .expect("test raw-DEFLATE nvCOMP execution is valid")
+}
+
 #[test]
 fn raw_cuda_handler_digest_participates_in_exact_compatibility() {
     let first = test_raw_cuda_association_implementation_with_digests('a', 'c');
@@ -396,7 +414,7 @@ fn completed_noop_cleanup_fixture(label: &str) -> CompletedNoopCleanupFixture {
     drop(delivery_token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -415,7 +433,7 @@ fn completed_noop_cleanup_fixture(label: &str) -> CompletedNoopCleanupFixture {
     let completion = claimed_manager
         .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed resume reverifies")
         .finish()
         .expect("completed resume returns cleanup");
@@ -458,6 +476,14 @@ fn metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
 }
 
 fn write_chunk(token: &crate::OutputDeliveryToken, store: &Arc<VariantMetadataStore>, chunk_range: Range<usize>) {
+    write_chunk_result(token, store, chunk_range).expect("chunk is accepted");
+}
+
+fn write_chunk_result(
+    token: &crate::OutputDeliveryToken,
+    store: &Arc<VariantMetadataStore>,
+    chunk_range: Range<usize>,
+) -> crate::error::OutputResult<()> {
     let row_count = chunk_range.len();
     let metadata =
         VariantMetadataColumns::new(Arc::clone(store), chunk_range.clone()).expect("test metadata range is valid");
@@ -489,7 +515,6 @@ fn write_chunk(token: &crate::OutputDeliveryToken, store: &Arc<VariantMetadataSt
             correction_code: Some(vec![0; row_count]),
         },
     )
-    .expect("chunk is accepted");
 }
 
 fn read_json(path: &Path) -> Value {
@@ -794,8 +819,11 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
     }
     drop(token);
 
-    let completed =
-        manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes");
+    let completed = manager
+        .close_completed_for_test()
+        .expect("exact coverage closes")
+        .finish()
+        .expect("completed terminal publishes");
     assert!(completed.post_session_cleanup.is_none());
     assert_eq!(completed.completed_outputs.len(), 1);
     let run_directory = &completed.completed_outputs[0].run_directory;
@@ -809,6 +837,17 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
     assert_eq!(manifest["execution_plan"]["resume_policy"], "lineage_receipts_exact_coverage");
     assert_eq!(manifest["committed_chunks"].as_array().map(Vec::len), Some(2));
     assert_eq!(manifest["committed_parts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        manifest["runtime"]["genotype_delivery_execution"],
+        serde_json::json!({
+            "phenotype_compute_group_id": "group-id",
+            "effective_path": "host",
+            "processed_chunk_count": 2,
+            "raw_deflate_nvcomp_chunk_count": 0,
+            "host_chunk_count": 2,
+            "raw_deflate_packed8_artifact": null,
+        })
+    );
     assert!(run_directory.join("effective_config.toml").is_file());
     assert!(run_directory.join("output_stage_timings.json").is_file());
 
@@ -846,6 +885,86 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
             .len(),
         4
     );
+}
+
+#[test]
+fn completed_raw_nvcomp_attempt_binds_execution_to_manifest_and_terminal_claim() {
+    let directory = TestDirectory::new("raw-nvcomp-execution");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = vec![0..2, 2..4];
+    let run_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(run_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    let store = metadata_store(4);
+    for chunk_range in chunk_ranges {
+        write_chunk(&token, &store, chunk_range);
+    }
+    drop(token);
+
+    let completion = manager
+        .close_completed(vec![test_raw_packed8_delivery_execution(2)])
+        .expect("raw-nvCOMP exact coverage closes")
+        .finish()
+        .expect("raw-nvCOMP terminal publishes");
+    let run_directory = &completion.completed_outputs[0].run_directory;
+    let manifest = read_json(&run_directory.join("run_manifest.json"));
+    let expected_execution = serde_json::json!({
+        "phenotype_compute_group_id": "group-id",
+        "effective_path": "raw_deflate_nvcomp",
+        "processed_chunk_count": 2,
+        "raw_deflate_nvcomp_chunk_count": 2,
+        "host_chunk_count": 0,
+        "raw_deflate_packed8_artifact": {
+            "ffi_target": "g.bgen.packed8_deflate.v1",
+            "ffi_api_version": 1,
+            "handler_sha256": "a".repeat(64),
+            "ptx_sha256": "b".repeat(64),
+            "ptx_isa": "8.2",
+            "ptx_target": "sm_70",
+            "minimum_cuda_driver_version": 12_020,
+            "minimum_compute_capability_major": 7,
+            "minimum_compute_capability_minor": 0,
+        },
+    });
+    assert_eq!(manifest["runtime"]["genotype_delivery_execution"], expected_execution);
+
+    let output_root = directory.path.join("results");
+    let lineage_snapshot = crate::persistence::lineage::OutputLineagePaths::new(&output_root)
+        .inspect()
+        .expect("completed lineage reads")
+        .expect("completed lineage exists");
+    let terminal = lineage_snapshot.leaf_terminal.expect("completed terminal exists");
+    assert_eq!(terminal.phenotypes.len(), 1);
+    assert_eq!(terminal.phenotypes[0].genotype_delivery_execution, manifest["runtime"]["genotype_delivery_execution"]);
+}
+
+#[test]
+fn invalid_delivery_execution_aborts_writers_before_failed_terminal() {
+    let directory = TestDirectory::new("invalid-delivery-execution");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let run_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(run_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+
+    let Err(error) = manager.close_completed(Vec::new()) else {
+        panic!("missing compute-group execution must fail");
+    };
+    assert!(error.to_string().contains("compute-group coverage is not exact"));
+    let late_write_error =
+        write_chunk_result(&token, &metadata_store(2), 0..2).expect_err("retained token cannot write after failure");
+    assert!(late_write_error.to_string().contains("closed"));
+
+    let output_root = directory.path.join("results");
+    let snapshot = crate::persistence::lineage::OutputLineagePaths::new(&output_root)
+        .inspect()
+        .expect("failed lineage reads")
+        .expect("failed lineage exists");
+    assert_eq!(
+        snapshot.leaf_terminal.expect("failed terminal exists").status,
+        crate::persistence::lineage::AttemptTerminalStatus::Failed
+    );
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
@@ -1476,7 +1595,11 @@ fn existing_resume_agreement_requires_exact_immutable_lineage_bindings() {
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
     assert_no_post_session_cleanup(
-        manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes"),
+        manager
+            .close_completed_for_test()
+            .expect("exact coverage closes")
+            .finish()
+            .expect("completed terminal publishes"),
     );
 
     let output_root = directory.path.join("results");
@@ -1632,7 +1755,7 @@ fn interrupted_attempt_resumes_into_successor_with_verified_hardlink_reuse() {
     write_chunk(&token, &store, 2..4);
     drop(token);
     let completed = resume_manager
-        .close_completed()
+        .close_completed_for_test()
         .expect("resumed exact coverage closes")
         .finish()
         .expect("resumed completion publishes");
@@ -1668,7 +1791,7 @@ fn completed_resume_reverifies_payload_without_mutating_data() {
     drop(token);
     assert_no_post_session_cleanup(
         manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial completion publishes"),
@@ -1684,7 +1807,7 @@ fn completed_resume_reverifies_payload_without_mutating_data() {
     drop(token);
     assert_no_post_session_cleanup(
         resume_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("completed attempt reverifies")
             .finish()
             .expect("completed no-op finishes"),
@@ -1755,7 +1878,8 @@ fn relative_output_root_returns_absolute_completed_paths() {
     let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
-    let completed = manager.close_completed().expect("relative output closes").finish().expect("output completes");
+    let completed =
+        manager.close_completed_for_test().expect("relative output closes").finish().expect("output completes");
     assert!(completed.post_session_cleanup.is_none());
     assert_eq!(completed.completed_outputs.len(), 1);
     assert!(completed.completed_outputs[0].run_directory.is_absolute());
@@ -2338,7 +2462,7 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
     drop(token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2376,7 +2500,7 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
     assert!(token.is_read_only());
     drop(token);
     let completion = completed_manager
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed output reverifies")
         .finish()
         .expect("completed output returns cleanup authority");
@@ -2544,7 +2668,7 @@ fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
     drop(delivery_token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2558,7 +2682,7 @@ fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
         .expect("completed resume claims")
         .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed resume reverifies")
         .finish()
         .expect("completed resume returns cleanup");
@@ -2593,7 +2717,7 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
     drop(delivery_token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2617,7 +2741,7 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
         let lifecycle_guard =
             (operation == "close").then(|| crate::manager::install_lifecycle_failure_for_test("close_completed_noop"));
         let terminal_error = match operation {
-            "close" => manager.close_completed().err().expect("configured close failure fires"),
+            "close" => manager.close_completed_for_test().err().expect("configured close failure fires"),
             "interrupt-empty" => manager.finish_interrupted("").expect_err("empty signal is rejected"),
             "interrupt" => manager.finish_interrupted("SIGTERM").expect_err("completed output cannot interrupt"),
             "abort-empty" => manager.abort("").expect_err("empty failure reason is rejected"),
@@ -2641,7 +2765,7 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
         .expect("completed resume claims")
         .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed resume first verification succeeds");
     let completed_attempt_id = attempt_identifier(&output_root, None);
     let manifest_path =
@@ -2672,7 +2796,7 @@ fn immediate_completed_noop_finish_preserves_cleanup_authority_on_failure() {
     drop(delivery_token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2680,8 +2804,9 @@ fn immediate_completed_noop_finish_preserves_cleanup_authority_on_failure() {
 
     let output_root = directory.path.join("results");
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
-    let covered =
-        initialize_manager(resume_plan, &inputs, &chunk_ranges).close_completed().expect("completed no-op reverifies");
+    let covered = initialize_manager(resume_plan, &inputs, &chunk_ranges)
+        .close_completed_for_test()
+        .expect("completed no-op reverifies");
     let failure_guard = crate::manager::install_terminal_cleanup_failure_for_test("before_post_session_owner_release");
     let finish_error = covered.finish().expect_err("immediate post-session cleanup failure is returned");
     drop(failure_guard);
@@ -2707,7 +2832,7 @@ fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     drop(token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2726,7 +2851,7 @@ fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
         .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed predecessor activates");
     let completion = completed_manager
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed predecessor reverifies")
         .finish()
         .expect("completed predecessor finalizes read-only");
@@ -2768,7 +2893,7 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
     drop(token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -2794,7 +2919,7 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
         .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed output activates read-only");
     let completion = completed_manager
-        .close_completed()
+        .close_completed_for_test()
         .expect("completed output reverifies")
         .finish()
         .expect("completed output returns cleanup authority");
@@ -2842,7 +2967,7 @@ fn completed_preactivation_failure_returns_only_rollback_authority() {
     drop(token);
     assert_no_post_session_cleanup(
         initial_manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("initial exact coverage closes")
             .finish()
             .expect("initial output completes"),
@@ -3157,7 +3282,8 @@ fn consuming_terminal_failures_report_primary_and_cleanup_outcomes() {
     drop(close_token);
     let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("close_completed");
     let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("owner_claim_release_conflict");
-    let close_error = close_manager.close_completed().err().expect("close and cleanup failures are both reported");
+    let close_error =
+        close_manager.close_completed_for_test().err().expect("close and cleanup failures are both reported");
     drop(cleanup_guard);
     drop(lifecycle_guard);
     let close_error_text = close_error.to_string();
@@ -3194,13 +3320,18 @@ fn consuming_terminal_failures_report_primary_and_cleanup_outcomes() {
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
     assert_no_post_session_cleanup(
-        initial_manager.close_completed().expect("exact coverage closes").finish().expect("initial output completes"),
+        initial_manager
+            .close_completed_for_test()
+            .expect("exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
     );
     let resume_plan = run_plan(&noop_directory, &noop_inputs, true, None, g_plan::TelemetryMode::Off);
     let noop_manager = initialize_manager(resume_plan, &noop_inputs, &single_chunk_ranges(2));
     let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("close_completed_noop");
     let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("before_post_session_owner_release");
-    let noop_error = noop_manager.close_completed().err().expect("completed no-op cleanup failure is reported");
+    let noop_error =
+        noop_manager.close_completed_for_test().err().expect("completed no-op cleanup failure is reported");
     drop(cleanup_guard);
     drop(lifecycle_guard);
     let crate::OutputTerminalFailureParts { source, post_session_cleanup } = noop_error.into_parts();
@@ -3262,7 +3393,7 @@ fn completion_faults_do_not_strand_a_claim_across_terminal_publication() {
             manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
         write_chunk(&token, &metadata_store(2), 0..2);
         drop(token);
-        let covered = manager.close_completed().expect("exact coverage closes");
+        let covered = manager.close_completed_for_test().expect("exact coverage closes");
 
         let failure_guard = crate::manager::install_completion_failure_for_test(failure_point);
         let error = covered.finish().expect_err("configured completion stage fails");
@@ -3284,7 +3415,7 @@ fn completion_faults_do_not_strand_a_claim_across_terminal_publication() {
         if expected_status == "completed" {
             assert_no_post_session_cleanup(
                 resumed
-                    .close_completed()
+                    .close_completed_for_test()
                     .expect("completed terminal reverifies")
                     .finish()
                     .expect("completed terminal returns read-only outputs"),
@@ -3333,7 +3464,7 @@ fn output_transaction_subprocess_helper() {
             drop(token);
             assert_no_post_session_cleanup(
                 manager
-                    .close_completed()
+                    .close_completed_for_test()
                     .expect("exact coverage closes")
                     .finish()
                     .expect("completed terminal publishes"),
@@ -3940,7 +4071,7 @@ fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     drop(token);
     assert_no_post_session_cleanup(
         manager
-            .close_completed()
+            .close_completed_for_test()
             .expect("recovered completion reverifies")
             .finish()
             .expect("recovered terminal finishes"),

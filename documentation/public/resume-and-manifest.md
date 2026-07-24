@@ -42,6 +42,9 @@ optional TOML file, and explicit CLI overrides.
 - runtime-selected exact JAX/JAXlib versions and, for approximate Firth, the
   requested and effective component implementation, typed recoverable fallback
   reason, and raw-CUDA FFI/handler/PTX artifact identity when raw CUDA was requested;
+- required-nullable genotype-delivery execution evidence, including the
+  compute-group identity, effective host or raw-DEFLATE-nvCOMP path,
+  resume-aware chunk counts, and raw packed8 artifact identity;
 - output writer settings;
 - committed chunk identifiers and complete immutable Parquet receipts.
 
@@ -70,7 +73,23 @@ of six typed recoverable raw-CUDA-to-JAX fallback states. Every raw-CUDA request
 stores the exact FFI target/API, canonical lowercase framed source/ABI handler
 SHA-256, PTX SHA-256 plus PTX ISA and target, and reviewed minimum driver and
 compute-capability thresholds. Free-text errors and observed driver/device
-state are forbidden. The raw-CUDA form is exactly:
+state are forbidden. Runtime also requires
+`genotype_delivery_execution`: running manifests store explicit `null`, while
+completed manifests store exactly one execution object for their phenotype
+compute group. Interrupted manifests store `null`. Failed manifests store
+either `null` for every phenotype or an execution object for every phenotype
+when writer drain failed after successful compute; mixed presence is invalid. Host
+execution requires all lifecycle-processed chunks to be counted as host and a
+null raw artifact. Raw-DEFLATE-nvCOMP execution requires every processed chunk
+to be counted as raw, at least one processed chunk, a GPU packed8 execution
+plan, and the exact FFI, handler, PTX, and reviewed minimum CUDA driver and
+compute-capability identity. The PTX target must agree with that minimum
+compute capability. A fully resumed zero-work lifecycle is represented as
+host. The processed count excludes chunks reused from earlier attempts.
+Immutable terminal authority duplicates the execution object and recovery
+rejects disagreement with the bound manifest.
+
+The raw-CUDA association implementation form is exactly:
 
 ```json
 {

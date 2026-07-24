@@ -149,10 +149,7 @@ pub(crate) fn create_jax_backend(
 ) -> PyResult<PyJaxBackend> {
     let validated_runtime = validate_jax_runtime_versions(py)?;
     let execution_device = resolve_jax_execution_device(py, device, &validated_runtime)?;
-    let genotype_delivery_capability = match device {
-        g_plan::Device::Cpu => native_engine::GenotypeDeliveryCapability::HostOnly,
-        g_plan::Device::Gpu => native_engine::GenotypeDeliveryCapability::RawDeflatePacked8,
-    };
+    let genotype_delivery_capability = genotype_delivery_capability_for_device(device);
     let backend_module = PyModule::import(py, "g.jax_backend")?;
     match plan {
         g_runner::JaxAssociationBackendPlan::Linear(kernel) => {
@@ -411,6 +408,34 @@ fn register_nvcomp_ffi_target_address(
     Ok(())
 }
 
+fn packed8_deflate_artifact_identity() -> native_engine::RawDeflatePacked8ArtifactIdentity {
+    let capability_requirements = native_engine::RawDeflatePacked8CapabilityRequirements::new(
+        g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_CUDA_DRIVER_VERSION,
+        g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MAJOR,
+        g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MINOR,
+    )
+    .expect("build-verified packed8 capability requirements are invalid");
+    native_engine::RawDeflatePacked8ArtifactIdentity::new(
+        g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET,
+        g_genotype_cuda::PACKED8_DEFLATE_FFI_API_VERSION,
+        g_genotype_cuda::PACKED8_DEFLATE_HANDLER_SHA256,
+        g_genotype_cuda::PACKED8_DEFLATE_PTX_SHA256,
+        g_genotype_cuda::PACKED8_DEFLATE_PTX_ISA,
+        g_genotype_cuda::PACKED8_DEFLATE_PTX_TARGET,
+        capability_requirements,
+    )
+    .expect("build-verified packed8 artifact identity values are invalid")
+}
+
+fn genotype_delivery_capability_for_device(device: g_plan::Device) -> native_engine::GenotypeDeliveryCapability {
+    match device {
+        g_plan::Device::Cpu => native_engine::GenotypeDeliveryCapability::HostOnly,
+        g_plan::Device::Gpu => {
+            native_engine::GenotypeDeliveryCapability::RawDeflatePacked8(packed8_deflate_artifact_identity())
+        }
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn qualify_nvcomp_device(
     _py: Python<'_>,
@@ -442,16 +467,22 @@ fn select_firth_components_implementation(
         })
         .clone()
         .map_err(PyRuntimeError::new_err)?;
-    enforce_firth_components_selection_policy(selection, policy)
+    #[cfg(feature = "private-test-support")]
+    {
+        enforce_firth_components_selection_policy(selection, policy)
+    }
+    #[cfg(not(feature = "private-test-support"))]
+    {
+        let _ = policy;
+        Ok(selection)
+    }
 }
 
+#[cfg(feature = "private-test-support")]
 fn enforce_firth_components_selection_policy(
     selection: native_engine::FirthComponentsImplementationState,
     policy: FirthComponentsSelectionPolicy,
 ) -> PyResult<native_engine::FirthComponentsImplementationState> {
-    #[cfg(not(feature = "private-test-support"))]
-    let _ = policy;
-    #[cfg(feature = "private-test-support")]
     if policy == FirthComponentsSelectionPolicy::RequireRawCuda
         && selection.effective() != native_engine::FirthComponentsImplementation::RawCuda
     {
@@ -1266,9 +1297,9 @@ mod tests {
 
     use super::{
         JaxExecutionDeviceIdentity, Packed8TransferDiagnostics, SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION,
-        jax_runtime_version_error, lowest_jax_execution_device_index, packed8_descriptor_failure_message,
-        raw_cuda_firth_artifact_identity, recoverable_firth_components_initialization_fallback,
-        run_with_validated_jax_runtime,
+        genotype_delivery_capability_for_device, jax_runtime_version_error, lowest_jax_execution_device_index,
+        packed8_descriptor_failure_message, raw_cuda_firth_artifact_identity,
+        recoverable_firth_components_initialization_fallback, run_with_validated_jax_runtime,
     };
 
     #[test]
@@ -1459,6 +1490,31 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "private-test-support")]
+    #[test]
+    fn required_raw_cuda_rejects_a_typed_jax_fallback() {
+        let fallback = recoverable_firth_components_initialization_fallback(
+            &g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform,
+        )
+        .expect("unsupported platforms have a typed JAX fallback");
+        let selection = super::jax_firth_components_fallback(fallback);
+
+        assert!(
+            super::enforce_firth_components_selection_policy(
+                selection.clone(),
+                super::FirthComponentsSelectionPolicy::RequireRawCuda,
+            )
+            .is_err()
+        );
+        assert!(
+            super::enforce_firth_components_selection_policy(
+                selection,
+                super::FirthComponentsSelectionPolicy::PreferRawCuda,
+            )
+            .is_ok()
+        );
+    }
+
     #[test]
     fn raw_cuda_artifact_projection_uses_build_verified_constants() {
         let artifact = raw_cuda_firth_artifact_identity();
@@ -1480,6 +1536,42 @@ mod tests {
         assert_eq!(
             artifact.minimum_compute_capability_minor(),
             g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MINOR
+        );
+    }
+
+    #[test]
+    fn cpu_device_selects_host_only_genotype_delivery() {
+        assert_eq!(
+            genotype_delivery_capability_for_device(g_plan::Device::Cpu),
+            g_engine::GenotypeDeliveryCapability::HostOnly
+        );
+    }
+
+    #[test]
+    fn gpu_device_selects_packed8_delivery_with_build_verified_artifact() {
+        let g_engine::GenotypeDeliveryCapability::RawDeflatePacked8(artifact) =
+            genotype_delivery_capability_for_device(g_plan::Device::Gpu)
+        else {
+            panic!("GPU device should select raw-DEFLATE packed8 delivery");
+        };
+
+        assert_eq!(artifact.ffi_target(), g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET);
+        assert_eq!(artifact.ffi_api_version(), g_genotype_cuda::PACKED8_DEFLATE_FFI_API_VERSION);
+        assert_eq!(artifact.handler_sha256(), g_genotype_cuda::PACKED8_DEFLATE_HANDLER_SHA256);
+        assert_eq!(artifact.ptx_sha256(), g_genotype_cuda::PACKED8_DEFLATE_PTX_SHA256);
+        assert_eq!(artifact.ptx_isa(), g_genotype_cuda::PACKED8_DEFLATE_PTX_ISA);
+        assert_eq!(artifact.ptx_target(), g_genotype_cuda::PACKED8_DEFLATE_PTX_TARGET);
+        assert_eq!(
+            artifact.minimum_cuda_driver_version(),
+            g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_CUDA_DRIVER_VERSION
+        );
+        assert_eq!(
+            artifact.minimum_compute_capability_major(),
+            g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MAJOR
+        );
+        assert_eq!(
+            artifact.minimum_compute_capability_minor(),
+            g_genotype_cuda::PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MINOR
         );
     }
 

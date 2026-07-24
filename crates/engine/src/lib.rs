@@ -5,6 +5,7 @@ mod api;
 mod association_implementation;
 mod association_scheduler;
 mod backend;
+mod cuda_capability;
 mod delivery;
 mod delivery_execution;
 mod genotype_buffer;

@@ -277,7 +277,7 @@ impl RawCudaFirthArtifactCompatibility {
     }
 }
 
-fn ptx_target_matches_compute_capability(target: &str, expected_major: i32, expected_minor: i32) -> bool {
+pub(crate) fn ptx_target_matches_compute_capability(target: &str, expected_major: i32, expected_minor: i32) -> bool {
     let Some(compute_capability) = target.strip_prefix("sm_") else {
         return false;
     };

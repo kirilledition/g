@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
+use std::mem::size_of;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crossbeam_channel::{Receiver, Sender};
 use g_genotype::{ChunkComputeStatistics, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
@@ -10,7 +13,10 @@ use g_genotype_contracts::{
     BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, ChunkOutputStatistics, NullableFloat32Column,
     VariantMetadataColumns, VariantMetadataStore,
 };
-use g_output::{ManifestFileFingerprintCache, NativeVariantMetadataHandle, Regenie2StatisticBatch};
+use g_output::{
+    CurrentRunManifestHeaderInput, GenotypeDeliveryEffectivePath, GenotypeDeliveryExecution,
+    ManifestFileFingerprintCache, NativeVariantMetadataHandle, OutputManager, Regenie2StatisticBatch,
+};
 
 use crate::association_scheduler::{
     AssociationBatchPipeline, ScheduledAssociationBatch, SchedulerError, assert_consumed_first_failure_for_test,
@@ -18,11 +24,13 @@ use crate::association_scheduler::{
 };
 use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GroupPreparationInput, MaterializedAssociationBatch,
-    MaterializedGenotypeStatistics, PreparedChromosome,
+    MaterializedGenotypeStatistics, PreparedChromosome, RawDeflatePacked8ArtifactIdentity,
+    RawDeflatePacked8CapabilityRequirements,
 };
+use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
 use crate::delivery_execution::{
-    DeliveryError, prepare_group_after_interruption_check, retry_pending_batch, transition_drained_chromosome,
-    try_submit_after_interruption_check,
+    DeliveryError, prepare_group_after_interruption_check, retry_pending_batch, run_association_delivery,
+    transition_drained_chromosome, try_submit_after_interruption_check,
 };
 use crate::genotype_buffer::homogeneous_chunk_chromosome;
 use crate::null_logistic_policy::{
@@ -32,6 +40,7 @@ use crate::output_manifest::build_prediction_loco_file_fingerprints_with_cache;
 use crate::output_schedule::{
     ActiveTraitSelection, active_trait_selection_for_chunk, intersect_committed_chunk_identifier_sets,
 };
+use crate::output_write::write_host_association_batch;
 use crate::preflight::{PreflightError, validate_jax_index_capacity, validate_multi_trait_preflight_values};
 use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
@@ -42,6 +51,9 @@ use crate::{AssociationImplementationState, JaxRuntimeVersions};
 const TEST_SAMPLE_COUNT: usize = 3;
 const TEST_SYNCHRONIZATION_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_VARIANT_COUNT: usize = 2;
+const TEST_SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const TEST_NON_HEXADECIMAL_SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg";
+const TEST_UPPERCASE_SHA256: &str = "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestFailureStage {
@@ -52,6 +64,126 @@ enum TestFailureStage {
     Materialize,
     ComputePanic,
     MaterializePanic,
+}
+
+#[test]
+fn raw_deflate_packed8_artifact_identity_preserves_canonical_fields() {
+    let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+        .expect("complete packed8 capability requirements are valid");
+    let artifact = RawDeflatePacked8ArtifactIdentity::new(
+        "g.bgen.packed8_deflate.test.v0",
+        1,
+        TEST_SHA256,
+        TEST_SHA256,
+        "8.2",
+        "sm_70",
+        capability_requirements,
+    )
+    .expect("complete packed8 artifact identity is valid");
+    assert_eq!(artifact.ffi_target(), "g.bgen.packed8_deflate.test.v0");
+    assert_eq!(artifact.ffi_api_version(), 1);
+    assert_eq!(artifact.handler_sha256(), TEST_SHA256);
+    assert_eq!(artifact.ptx_sha256(), TEST_SHA256);
+    assert_eq!(artifact.ptx_isa(), "8.2");
+    assert_eq!(artifact.ptx_target(), "sm_70");
+    assert_eq!(artifact.minimum_cuda_driver_version(), 12_020);
+    assert_eq!(artifact.minimum_compute_capability_major(), 7);
+    assert_eq!(artifact.minimum_compute_capability_minor(), 0);
+}
+
+#[test]
+fn raw_deflate_packed8_artifact_identity_rejects_invalid_metadata() {
+    let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+        .expect("complete packed8 capability requirements are valid");
+    for invalid_artifact in [
+        RawDeflatePacked8ArtifactIdentity::new(
+            "",
+            1,
+            TEST_SHA256,
+            TEST_SHA256,
+            "8.2",
+            "sm_70",
+            capability_requirements,
+        ),
+        RawDeflatePacked8ArtifactIdentity::new(
+            "target",
+            0,
+            TEST_SHA256,
+            TEST_SHA256,
+            "8.2",
+            "sm_70",
+            capability_requirements,
+        ),
+        RawDeflatePacked8ArtifactIdentity::new(
+            "target",
+            1,
+            TEST_SHA256,
+            TEST_SHA256,
+            "",
+            "sm_70",
+            capability_requirements,
+        ),
+        RawDeflatePacked8ArtifactIdentity::new(
+            "target",
+            1,
+            TEST_SHA256,
+            TEST_SHA256,
+            "8.2",
+            "",
+            capability_requirements,
+        ),
+        RawDeflatePacked8ArtifactIdentity::new(
+            "target",
+            1,
+            TEST_SHA256,
+            TEST_SHA256,
+            "8.2",
+            "sm_70",
+            RawDeflatePacked8CapabilityRequirements::new(12_020, 8, 0)
+                .expect("mismatched requirements are well formed"),
+        ),
+    ] {
+        assert_eq!(invalid_artifact, None);
+    }
+}
+
+#[test]
+fn raw_deflate_packed8_artifact_identity_rejects_invalid_digests() {
+    let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+        .expect("complete packed8 capability requirements are valid");
+    for invalid_digest in ["ABC", TEST_UPPERCASE_SHA256, TEST_NON_HEXADECIMAL_SHA256] {
+        assert_eq!(
+            RawDeflatePacked8ArtifactIdentity::new(
+                "target",
+                1,
+                invalid_digest,
+                TEST_SHA256,
+                "8.2",
+                "sm_70",
+                capability_requirements,
+            ),
+            None
+        );
+        assert_eq!(
+            RawDeflatePacked8ArtifactIdentity::new(
+                "target",
+                1,
+                TEST_SHA256,
+                invalid_digest,
+                "8.2",
+                "sm_70",
+                capability_requirements,
+            ),
+            None
+        );
+    }
+}
+
+#[test]
+fn raw_deflate_packed8_capability_requirements_reject_invalid_domains() {
+    assert_eq!(RawDeflatePacked8CapabilityRequirements::new(0, 7, 0), None);
+    assert_eq!(RawDeflatePacked8CapabilityRequirements::new(12_020, 0, 0), None);
+    assert_eq!(RawDeflatePacked8CapabilityRequirements::new(12_020, 7, -1), None);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -66,6 +198,20 @@ struct TestDeviceResult {
     variant_start_index: usize,
     logical_variant_count: usize,
     statistics: ChunkOutputStatistics,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestGenotypePayload {
+    HostDosage,
+    HostPacked8,
+    RawDeflatePacked8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ObservedGenotypeDelivery {
+    variant_start_index: usize,
+    logical_variant_count: usize,
+    payload: TestGenotypePayload,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,8 +249,10 @@ impl Drop for ComputeGateRelease {
 
 struct TestBackend {
     failure_stage: TestFailureStage,
+    delivery_capability: GenotypeDeliveryCapability,
     events: Mutex<Vec<String>>,
     backend_thread_events: Mutex<Vec<BackendThreadEvent>>,
+    observed_genotype_deliveries: Mutex<Vec<ObservedGenotypeDelivery>>,
     transfer_count: AtomicUsize,
     chromosome_release_count: AtomicUsize,
     materialized_trait_indices: Mutex<Vec<Option<Vec<usize>>>>,
@@ -123,8 +271,10 @@ impl TestBackend {
     fn new(failure_stage: TestFailureStage) -> Self {
         Self {
             failure_stage,
+            delivery_capability: GenotypeDeliveryCapability::HostOnly,
             events: Mutex::new(Vec::new()),
             backend_thread_events: Mutex::new(Vec::new()),
+            observed_genotype_deliveries: Mutex::new(Vec::new()),
             transfer_count: AtomicUsize::new(0),
             chromosome_release_count: AtomicUsize::new(0),
             materialized_trait_indices: Mutex::new(Vec::new()),
@@ -138,6 +288,10 @@ impl TestBackend {
             chromosome_released_sender: None,
             release_panics: false,
         }
+    }
+
+    fn with_genotype_delivery_capability(delivery_capability: GenotypeDeliveryCapability) -> Self {
+        Self { delivery_capability, ..Self::new(TestFailureStage::None) }
     }
 
     fn with_first_compute_gate(compute_started_sender: Sender<usize>, compute_gate_receiver: Receiver<()>) -> Self {
@@ -196,7 +350,7 @@ impl AssociationBackend for TestBackend {
     }
 
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability {
-        GenotypeDeliveryCapability::HostOnly
+        self.delivery_capability
     }
 
     fn prepare_group(&self, _input: GroupPreparationInput) -> Result<Self::GroupState, Self::Error> {
@@ -268,10 +422,22 @@ impl AssociationBackend for TestBackend {
                 .expect("test releases the compute gate before the timeout");
         }
         let logical_variant_count = input.logical_variant_count;
-        let GenotypeBatchPayload::Decoded { statistics, .. } = input.payload else {
-            return Err(TestBackendError("unexpected compressed input"));
+        let (payload, statistics) = match input.payload {
+            GenotypeBatchPayload::Decoded { genotypes: OwnedGenotypeBuffer::Dosage(_), statistics } => {
+                (TestGenotypePayload::HostDosage, statistics.output)
+            }
+            GenotypeBatchPayload::Decoded { genotypes: OwnedGenotypeBuffer::Packed8(_), statistics } => {
+                (TestGenotypePayload::HostPacked8, statistics.output)
+            }
+            GenotypeBatchPayload::CompressedPacked8(_) => {
+                (TestGenotypePayload::RawDeflatePacked8, build_output_statistics(logical_variant_count))
+            }
         };
-        Ok(TestDeviceResult { variant_start_index, logical_variant_count, statistics: statistics.output })
+        self.observed_genotype_deliveries
+            .lock()
+            .expect("test genotype-delivery observation lock is available")
+            .push(ObservedGenotypeDelivery { variant_start_index, logical_variant_count, payload });
+        Ok(TestDeviceResult { variant_start_index, logical_variant_count, statistics })
     }
 
     fn materialize_batch(
@@ -391,6 +557,550 @@ fn build_output_statistics(variant_count: usize) -> ChunkOutputStatistics {
             validity_bytes: vec![u8::MAX; variant_count.div_ceil(8)],
         },
     }
+}
+
+const DELIVERY_TEST_PROBABILITY_BLOCKS: [[u8; 19]; 3] = [
+    [3, 0, 0, 0, 2, 0, 2, 2, 2, 2, 2, 0, 8, 0, 0, 255, 0, 0, 255],
+    [3, 0, 0, 0, 2, 0, 2, 2, 2, 2, 2, 0, 8, 255, 0, 0, 255, 0, 0],
+    [3, 0, 0, 0, 2, 0, 2, 2, 2, 2, 2, 0, 8, 128, 0, 0, 255, 255, 0],
+];
+const DELIVERY_TEST_ZLIB_FIRST: [u8; 23] =
+    [120, 1, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 14, 6, 134, 255, 64, 4, 0, 6, 11, 2, 22];
+const DELIVERY_TEST_ZLIB_SECOND: [u8; 23] =
+    [120, 218, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 255, 12, 12, 64, 4, 0, 10, 7, 2, 22];
+const DELIVERY_TEST_ZLIB_THIRD: [u8; 24] =
+    [120, 156, 99, 102, 96, 96, 96, 98, 96, 2, 1, 6, 142, 6, 6, 134, 255, 255, 25, 0, 9, 11, 2, 150];
+const DELIVERY_TEST_CHUNK_RANGES: [Range<usize>; 2] = [0..2, 2..3];
+const DELIVERY_TEST_PHENOTYPE_NAME: &str = "trait";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeliveryTestBgenCompression {
+    Uncompressed,
+    Zlib,
+}
+
+struct GenotypeDeliveryTestFixture {
+    root: PathBuf,
+    bgen: PathBuf,
+    sample: PathBuf,
+    phenotype: PathBuf,
+    prediction_list: PathBuf,
+}
+
+impl GenotypeDeliveryTestFixture {
+    fn new(label: &str, compression: DeliveryTestBgenCompression) -> Self {
+        static FIXTURE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("delivery test time follows the Unix epoch").as_nanos();
+        let root_path = std::env::temp_dir()
+            .join(format!("g-engine-genotype-delivery-{label}-{}-{timestamp}-{sequence}", std::process::id()));
+        std::fs::create_dir_all(&root_path).expect("delivery test directory is created");
+        let bgen_path = root_path.join("input.bgen");
+        std::fs::write(&bgen_path, delivery_test_bgen_bytes(compression)).expect("delivery test BGEN is written");
+        let sample_path = root_path.join("input.sample");
+        std::fs::write(
+            &sample_path,
+            "ID_1 ID_2\n0 0\nfamily-1 individual-1\nfamily-2 individual-2\nfamily-3 individual-3\n",
+        )
+        .expect("delivery test sample file is written");
+        let phenotype_path = root_path.join("phenotypes.tsv");
+        std::fs::write(
+            &phenotype_path,
+            "FID\tIID\ttrait\nfamily-1\tindividual-1\t1\nfamily-2\tindividual-2\t2\nfamily-3\tindividual-3\t3\n",
+        )
+        .expect("delivery test phenotype file is written");
+        std::fs::write(
+            root_path.join("trait.loco"),
+            "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3\n22 0 0 0\n",
+        )
+        .expect("delivery test LOCO file is written");
+        let prediction_list_path = root_path.join("predictions.list");
+        std::fs::write(&prediction_list_path, "trait trait.loco\n").expect("delivery test prediction list is written");
+        Self {
+            root: root_path,
+            bgen: bgen_path,
+            sample: sample_path,
+            phenotype: phenotype_path,
+            prediction_list: prediction_list_path,
+        }
+    }
+
+    fn aligned_group(&self) -> g_input::AlignedPhenotypeGroup {
+        let sample_identifiers = g_input::load_sample_identifier_data_from_sample_file(&self.sample, 3)
+            .expect("delivery test sample identifiers load");
+        let phenotype_names = vec![DELIVERY_TEST_PHENOTYPE_NAME.to_string()];
+        let prediction_loco_paths = g_input::resolve_prediction_loco_paths(&self.prediction_list, &phenotype_names)
+            .expect("delivery test prediction list resolves");
+        let mut groups = g_input::load_aligned_phenotype_groups(&g_input::PhenotypeGroupLoadRequest {
+            sample_identifiers: &sample_identifiers,
+            phenotype_path: delivery_test_path_text(&self.phenotype),
+            prediction_loco_paths: &prediction_loco_paths,
+            phenotype_names: &phenotype_names,
+            covariate_path: None,
+            covariate_names: None,
+            is_binary_trait: false,
+            sample_mode: g_plan::MultiPhenotypeSampleMode::CompleteCase,
+        })
+        .expect("delivery test phenotype group aligns");
+        assert_eq!(groups.len(), 1);
+        groups.pop().expect("delivery test contains one aligned group")
+    }
+
+    fn output_root_path(&self) -> PathBuf {
+        self.root.join("results")
+    }
+}
+
+impl Drop for GenotypeDeliveryTestFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn delivery_test_path_text(path: &Path) -> &str {
+    path.to_str().expect("delivery test paths are UTF-8")
+}
+
+fn append_delivery_test_bgen_string(bytes: &mut Vec<u8>, value: &str) {
+    let value_length = u16::try_from(value.len()).expect("delivery test BGEN string length fits uint16");
+    bytes.extend_from_slice(&value_length.to_le_bytes());
+    bytes.extend_from_slice(value.as_bytes());
+}
+
+fn delivery_test_zlib_payload(variant_index: usize) -> &'static [u8] {
+    match variant_index {
+        0 => &DELIVERY_TEST_ZLIB_FIRST,
+        1 => &DELIVERY_TEST_ZLIB_SECOND,
+        2 => &DELIVERY_TEST_ZLIB_THIRD,
+        _ => unreachable!("delivery test has exactly three variants"),
+    }
+}
+
+fn append_delivery_test_bgen_variant(
+    bytes: &mut Vec<u8>,
+    variant_index: usize,
+    compression: DeliveryTestBgenCompression,
+) {
+    append_delivery_test_bgen_string(bytes, &format!("variant-{variant_index}"));
+    append_delivery_test_bgen_string(bytes, &format!("rs-{variant_index}"));
+    append_delivery_test_bgen_string(bytes, "22");
+    bytes.extend_from_slice(
+        &u32::try_from(variant_index + 1).expect("delivery test variant position fits uint32").to_le_bytes(),
+    );
+    bytes.extend_from_slice(&2_u16.to_le_bytes());
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(b'A');
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.push(b'G');
+    match compression {
+        DeliveryTestBgenCompression::Uncompressed => {
+            let probability_block = &DELIVERY_TEST_PROBABILITY_BLOCKS[variant_index];
+            bytes.extend_from_slice(
+                &u32::try_from(probability_block.len())
+                    .expect("delivery test probability block length fits uint32")
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(probability_block);
+        }
+        DeliveryTestBgenCompression::Zlib => {
+            let zlib_payload = delivery_test_zlib_payload(variant_index);
+            let compressed_block_length = zlib_payload
+                .len()
+                .checked_add(size_of::<u32>())
+                .expect("delivery test compressed block length does not overflow");
+            bytes.extend_from_slice(
+                &u32::try_from(compressed_block_length)
+                    .expect("delivery test compressed block length fits uint32")
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(
+                &u32::try_from(DELIVERY_TEST_PROBABILITY_BLOCKS[variant_index].len())
+                    .expect("delivery test probability block length fits uint32")
+                    .to_le_bytes(),
+            );
+            bytes.extend_from_slice(zlib_payload);
+        }
+    }
+}
+
+fn delivery_test_bgen_bytes(compression: DeliveryTestBgenCompression) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 24];
+    bytes[0..4].copy_from_slice(&20_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&20_u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[16..20].copy_from_slice(b"bgen");
+    let compression_flag = match compression {
+        DeliveryTestBgenCompression::Uncompressed => 0_u32,
+        DeliveryTestBgenCompression::Zlib => 1_u32,
+    };
+    bytes[20..24].copy_from_slice(&(compression_flag | (2_u32 << 2)).to_le_bytes());
+    for variant_index in 0..3 {
+        append_delivery_test_bgen_variant(&mut bytes, variant_index, compression);
+    }
+    bytes
+}
+
+fn delivery_test_artifact() -> RawDeflatePacked8ArtifactIdentity {
+    let capability_requirements = RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+        .expect("delivery test packed8 requirements are valid");
+    RawDeflatePacked8ArtifactIdentity::new(
+        "g.bgen.packed8_deflate.test.v0",
+        1,
+        TEST_SHA256,
+        TEST_SHA256,
+        "8.2",
+        "sm_70",
+        capability_requirements,
+    )
+    .expect("delivery test raw-DEFLATE artifact identity is valid")
+}
+
+fn delivery_test_association_implementation() -> g_output::AssociationImplementationCompatibility {
+    AssociationImplementationState::jax(
+        JaxRuntimeVersions::new("0.11.0".to_string(), "0.11.0".to_string())
+            .expect("delivery test JAX versions are valid"),
+        None,
+    )
+    .output_compatibility()
+    .expect("delivery test association implementation projects to output compatibility")
+}
+
+fn delivery_test_run_plan(fixture: &GenotypeDeliveryTestFixture, resume: bool) -> Arc<g_plan::RunPlan> {
+    let mut run_plan = valid_run_plan();
+    run_plan.association_mode = g_plan::AssociationMode::Regenie2Linear;
+    run_plan.correction.method = g_plan::BinaryFallbackMethod::ScoreOnly;
+    run_plan.chunk_size = 2;
+    run_plan.input.bgen_path = fixture.bgen.display().to_string();
+    run_plan.input.bgen_content_sha256 = None;
+    run_plan.input.sample_path = fixture.sample.display().to_string();
+    run_plan.input.phenotype_path = fixture.phenotype.display().to_string();
+    run_plan.input.prediction_list_path = fixture.prediction_list.display().to_string();
+    run_plan.input.covariate_path = None;
+    run_plan.input.covariate_names.clear();
+    run_plan.compute.device = g_plan::Device::Gpu;
+    run_plan.compute.multi_phenotype_sample_mode = g_plan::MultiPhenotypeSampleMode::CompleteCase;
+    run_plan.output.output_run_root = fixture.output_root_path().display().to_string();
+    run_plan.output.resume = resume;
+    run_plan.output.recover_attempt = None;
+    run_plan.output.fenced_owner_claim_id = None;
+    run_plan.output.writer_thread_count = 1;
+    run_plan.phenotype_runs = vec![g_plan::PhenotypeRunPlan {
+        phenotype_name: DELIVERY_TEST_PHENOTYPE_NAME.to_string(),
+        output_directory_name: "trait_0001_trait".to_string(),
+    }];
+    Arc::new(run_plan)
+}
+
+fn delivery_test_header(
+    fixture: &GenotypeDeliveryTestFixture,
+    group: &g_input::AlignedPhenotypeGroup,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+) -> CurrentRunManifestHeaderInput {
+    let reader = g_genotype::BgenReaderCore::open(&fixture.bgen).expect("delivery test BGEN opens for its header");
+    CurrentRunManifestHeaderInput {
+        phenotype_name: DELIVERY_TEST_PHENOTYPE_NAME.to_string(),
+        bgen_content_evidence: Arc::new(reader.content_evidence().clone()),
+        covariate_names: Arc::from(group.covariate_names.clone()),
+        prediction_loco_files: Arc::from(Vec::new()),
+        sample_count: group.sample_indices.len(),
+        variant_count: reader.variant_count(),
+        resolved_gpu_genotype_format: gpu_genotype_format,
+        sample_mode: group.phenotype_group.sample_mode,
+        phenotype_compute_group_id: Arc::from(g_plan::build_phenotype_compute_group_id(&group.phenotype_group)),
+        sample_set_fingerprint: Arc::from(group.phenotype_group.sample_set_fingerprint.as_str()),
+        covariate_design_fingerprint: Arc::from(group.phenotype_group.covariate_design_fingerprint.as_str()),
+        phenotype_design_fingerprint: Arc::from(group.phenotype_group.phenotype_design_fingerprint.as_str()),
+        prediction_alignment_fingerprint: Arc::from(group.phenotype_group.prediction_alignment_fingerprint.as_str()),
+    }
+}
+
+fn initialize_delivery_test_output(
+    fixture: &GenotypeDeliveryTestFixture,
+    group: &g_input::AlignedPhenotypeGroup,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+    resume: bool,
+) -> g_output::OutputManager<g_output::Active> {
+    OutputManager::open(delivery_test_run_plan(fixture, resume), "# genotype delivery test\n".to_string())
+        .expect("delivery test output plans")
+        .initialize(
+            vec![delivery_test_header(fixture, group, gpu_genotype_format)],
+            &DELIVERY_TEST_CHUNK_RANGES,
+            false,
+            delivery_test_association_implementation(),
+        )
+        .expect("delivery test output initializes")
+}
+
+fn delivery_test_request(
+    group: g_input::AlignedPhenotypeGroup,
+    output: g_output::OutputDeliveryToken,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+) -> AssociationDeliveryRequest {
+    AssociationDeliveryRequest {
+        group,
+        settings: AssociationDeliverySettings {
+            output,
+            null_logistic_nonconvergence_policy: g_plan::NullLogisticNonconvergencePolicy::Fail,
+            progress: None,
+            gpu_genotype_format,
+            statistics_policy: g_genotype::ChunkStatisticsPolicy {
+                retain_imputed_dosage_square_sum: true,
+                collect_sparse_candidate_mask: false,
+            },
+        },
+    }
+}
+
+fn delivery_test_genotype_input(
+    fixture: &GenotypeDeliveryTestFixture,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+) -> PreparedGenotypeInput {
+    let reader = g_genotype::BgenReaderCore::open(&fixture.bgen).expect("delivery test BGEN opens");
+    if gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8 {
+        assert_eq!(
+            reader.packed8_compatibility_with_cache().expect("delivery test packed8 compatibility validates"),
+            g_genotype::Packed8Compatibility::Compatible,
+        );
+    }
+    PreparedGenotypeInput { reader, chunk_size: 2 }
+}
+
+fn complete_delivery_test_output(
+    manager: g_output::OutputManager<g_output::Active>,
+    execution: GenotypeDeliveryExecution,
+) {
+    let completion = manager
+        .close_completed(vec![execution])
+        .expect("delivery test output has exact execution evidence")
+        .finish()
+        .expect("delivery test output completes");
+    if let Some(mut cleanup) = completion.post_session_cleanup {
+        cleanup.cleanup().expect("delivery test completed-noop cleanup succeeds");
+    }
+}
+
+fn write_delivery_test_chunk(output: &g_output::OutputDeliveryToken, bgen_path: &Path, chunk_range: Range<usize>) {
+    let reader = g_genotype::BgenReaderCore::open(bgen_path).expect("delivery test BGEN opens for resume seeding");
+    let metadata = reader
+        .variant_metadata_slice(chunk_range.start, chunk_range.end)
+        .expect("delivery test resume metadata slice is valid");
+    let variant_count = chunk_range.len();
+    write_host_association_batch(
+        output,
+        None,
+        chunk_range.start,
+        NativeVariantMetadataHandle::try_new(&metadata).expect("delivery test resume metadata handle is valid"),
+        build_output_statistics(variant_count),
+        Regenie2StatisticBatch {
+            trait_count: 1,
+            variant_count,
+            beta: vec![0.0; variant_count],
+            standard_error: vec![1.0; variant_count],
+            chi_squared: vec![0.0; variant_count],
+            log10_p_value: vec![0.0; variant_count],
+            correction_code: None,
+        },
+    )
+    .expect("delivery test resume chunk is accepted");
+}
+
+fn expected_delivery_test_payload(
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+    uses_raw_deflate: bool,
+) -> TestGenotypePayload {
+    if uses_raw_deflate {
+        TestGenotypePayload::RawDeflatePacked8
+    } else {
+        match gpu_genotype_format {
+            g_plan::GpuGenotypeFormat::Dosage => TestGenotypePayload::HostDosage,
+            g_plan::GpuGenotypeFormat::Packed8 => TestGenotypePayload::HostPacked8,
+        }
+    }
+}
+
+fn assert_delivery_test_execution(
+    execution: &GenotypeDeliveryExecution,
+    phenotype_compute_group_id: &str,
+    processed_chunk_count: u64,
+    uses_raw_deflate: bool,
+) {
+    assert_eq!(execution.phenotype_compute_group_id(), phenotype_compute_group_id);
+    assert_eq!(execution.processed_chunk_count(), processed_chunk_count);
+    if uses_raw_deflate {
+        assert_eq!(execution.effective_path(), GenotypeDeliveryEffectivePath::RawDeflateNvcomp);
+        assert_eq!(execution.raw_deflate_nvcomp_chunk_count(), processed_chunk_count);
+        assert_eq!(execution.host_chunk_count(), 0);
+        let output_artifact =
+            execution.raw_deflate_packed8_artifact().expect("raw delivery execution carries its artifact");
+        let expected_artifact = delivery_test_artifact();
+        assert_eq!(output_artifact.ffi_target(), expected_artifact.ffi_target());
+        assert_eq!(output_artifact.ffi_api_version(), expected_artifact.ffi_api_version());
+        assert_eq!(output_artifact.handler_sha256(), expected_artifact.handler_sha256());
+        assert_eq!(output_artifact.ptx_sha256(), expected_artifact.ptx_sha256());
+        assert_eq!(output_artifact.ptx_isa(), expected_artifact.ptx_isa());
+        assert_eq!(output_artifact.ptx_target(), expected_artifact.ptx_target());
+    } else {
+        assert_eq!(execution.effective_path(), GenotypeDeliveryEffectivePath::Host);
+        assert_eq!(execution.raw_deflate_nvcomp_chunk_count(), 0);
+        assert_eq!(execution.host_chunk_count(), processed_chunk_count);
+        assert_eq!(execution.raw_deflate_packed8_artifact(), None);
+    }
+}
+
+#[test]
+fn genotype_delivery_selection_matrix_executes_full_and_tail_chunks() {
+    for compression in [DeliveryTestBgenCompression::Uncompressed, DeliveryTestBgenCompression::Zlib] {
+        for gpu_genotype_format in [g_plan::GpuGenotypeFormat::Dosage, g_plan::GpuGenotypeFormat::Packed8] {
+            for raw_capability in [false, true] {
+                let fixture = GenotypeDeliveryTestFixture::new(
+                    &format!("{compression:?}-{gpu_genotype_format:?}-raw-{raw_capability}"),
+                    compression,
+                );
+                let group = fixture.aligned_group();
+                let phenotype_compute_group_id = g_plan::build_phenotype_compute_group_id(&group.phenotype_group);
+                let output_manager = initialize_delivery_test_output(&fixture, &group, gpu_genotype_format, false);
+                let output = output_manager
+                    .delivery_token_for_phenotypes(&[DELIVERY_TEST_PHENOTYPE_NAME.to_string()])
+                    .expect("delivery matrix output token builds");
+                let delivery_capability = if raw_capability {
+                    GenotypeDeliveryCapability::RawDeflatePacked8(delivery_test_artifact())
+                } else {
+                    GenotypeDeliveryCapability::HostOnly
+                };
+                let backend = Arc::new(TestBackend::with_genotype_delivery_capability(delivery_capability));
+                let genotype_input = delivery_test_genotype_input(&fixture, gpu_genotype_format);
+                let report = run_association_delivery(
+                    &genotype_input,
+                    &backend,
+                    delivery_test_request(group, output, gpu_genotype_format),
+                    || Ok::<(), TestInterruption>(()),
+                )
+                .expect("delivery matrix case executes");
+                assert!(report.warnings.is_empty());
+                let uses_raw_deflate = compression == DeliveryTestBgenCompression::Zlib
+                    && gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8
+                    && raw_capability;
+                assert_delivery_test_execution(
+                    &report.genotype_delivery_execution,
+                    &phenotype_compute_group_id,
+                    2,
+                    uses_raw_deflate,
+                );
+                let expected_payload = expected_delivery_test_payload(gpu_genotype_format, uses_raw_deflate);
+                let mut observed_deliveries = backend
+                    .observed_genotype_deliveries
+                    .lock()
+                    .expect("delivery matrix observations are available")
+                    .clone();
+                observed_deliveries.sort_by_key(|delivery| delivery.variant_start_index);
+                assert_eq!(
+                    observed_deliveries,
+                    vec![
+                        ObservedGenotypeDelivery {
+                            variant_start_index: 0,
+                            logical_variant_count: 2,
+                            payload: expected_payload,
+                        },
+                        ObservedGenotypeDelivery {
+                            variant_start_index: 2,
+                            logical_variant_count: 1,
+                            payload: expected_payload,
+                        },
+                    ],
+                    "unexpected delivery selection for {compression:?}, {gpu_genotype_format:?}, raw capability {raw_capability}",
+                );
+                complete_delivery_test_output(output_manager, report.genotype_delivery_execution);
+            }
+        }
+    }
+}
+
+#[test]
+fn raw_genotype_delivery_partial_resume_processes_only_the_tail() {
+    let fixture = GenotypeDeliveryTestFixture::new("partial-resume", DeliveryTestBgenCompression::Zlib);
+    let initial_group = fixture.aligned_group();
+    let initial_manager =
+        initialize_delivery_test_output(&fixture, &initial_group, g_plan::GpuGenotypeFormat::Packed8, false);
+    let initial_output = initial_manager
+        .delivery_token_for_phenotypes(&[DELIVERY_TEST_PHENOTYPE_NAME.to_string()])
+        .expect("partial-resume initial output token builds");
+    write_delivery_test_chunk(&initial_output, &fixture.bgen, 0..2);
+    drop(initial_output);
+    initial_manager.finish_interrupted("TEST").expect("partial-resume seed attempt is published");
+
+    let resumed_group = fixture.aligned_group();
+    let phenotype_compute_group_id = g_plan::build_phenotype_compute_group_id(&resumed_group.phenotype_group);
+    let resumed_manager =
+        initialize_delivery_test_output(&fixture, &resumed_group, g_plan::GpuGenotypeFormat::Packed8, true);
+    let resumed_output = resumed_manager
+        .delivery_token_for_phenotypes(&[DELIVERY_TEST_PHENOTYPE_NAME.to_string()])
+        .expect("partial-resume output token builds");
+    assert_eq!(resumed_output.committed_chunk_identifier_sets()[0].as_ref(), &BTreeSet::from([0]));
+    let backend = Arc::new(TestBackend::with_genotype_delivery_capability(
+        GenotypeDeliveryCapability::RawDeflatePacked8(delivery_test_artifact()),
+    ));
+    let genotype_input = delivery_test_genotype_input(&fixture, g_plan::GpuGenotypeFormat::Packed8);
+    let report = run_association_delivery(
+        &genotype_input,
+        &backend,
+        delivery_test_request(resumed_group, resumed_output, g_plan::GpuGenotypeFormat::Packed8),
+        || Ok::<(), TestInterruption>(()),
+    )
+    .expect("partial-resume delivery executes");
+    assert!(report.warnings.is_empty());
+    assert_delivery_test_execution(&report.genotype_delivery_execution, &phenotype_compute_group_id, 1, true);
+    assert_eq!(
+        *backend.observed_genotype_deliveries.lock().expect("partial-resume observations are available"),
+        vec![ObservedGenotypeDelivery {
+            variant_start_index: 2,
+            logical_variant_count: 1,
+            payload: TestGenotypePayload::RawDeflatePacked8,
+        }]
+    );
+    complete_delivery_test_output(resumed_manager, report.genotype_delivery_execution);
+}
+
+#[test]
+fn genotype_delivery_full_resume_reports_zero_host_work_without_preparing_the_backend() {
+    let fixture = GenotypeDeliveryTestFixture::new("full-resume", DeliveryTestBgenCompression::Zlib);
+    let initial_group = fixture.aligned_group();
+    let initial_manager =
+        initialize_delivery_test_output(&fixture, &initial_group, g_plan::GpuGenotypeFormat::Packed8, false);
+    let initial_output = initial_manager
+        .delivery_token_for_phenotypes(&[DELIVERY_TEST_PHENOTYPE_NAME.to_string()])
+        .expect("full-resume initial output token builds");
+    for chunk_range in DELIVERY_TEST_CHUNK_RANGES {
+        write_delivery_test_chunk(&initial_output, &fixture.bgen, chunk_range);
+    }
+    drop(initial_output);
+    initial_manager.finish_interrupted("TEST").expect("full-resume seed attempt is published");
+
+    let resumed_group = fixture.aligned_group();
+    let phenotype_compute_group_id = g_plan::build_phenotype_compute_group_id(&resumed_group.phenotype_group);
+    let resumed_manager =
+        initialize_delivery_test_output(&fixture, &resumed_group, g_plan::GpuGenotypeFormat::Packed8, true);
+    let resumed_output = resumed_manager
+        .delivery_token_for_phenotypes(&[DELIVERY_TEST_PHENOTYPE_NAME.to_string()])
+        .expect("full-resume output token builds");
+    assert_eq!(resumed_output.committed_chunk_identifier_sets()[0].as_ref(), &BTreeSet::from([0, 2]));
+    let backend = Arc::new(TestBackend::with_genotype_delivery_capability(
+        GenotypeDeliveryCapability::RawDeflatePacked8(delivery_test_artifact()),
+    ));
+    let genotype_input = delivery_test_genotype_input(&fixture, g_plan::GpuGenotypeFormat::Packed8);
+    let report = run_association_delivery(
+        &genotype_input,
+        &backend,
+        delivery_test_request(resumed_group, resumed_output, g_plan::GpuGenotypeFormat::Packed8),
+        || Ok::<(), TestInterruption>(()),
+    )
+    .expect("full-resume delivery completes without work");
+    assert!(report.warnings.is_empty());
+    assert_delivery_test_execution(&report.genotype_delivery_execution, &phenotype_compute_group_id, 0, false);
+    assert!(backend.observed_genotype_deliveries.lock().expect("full-resume observations are available").is_empty());
+    assert!(backend.events.lock().expect("full-resume backend events are available").is_empty());
+    complete_delivery_test_output(resumed_manager, report.genotype_delivery_execution);
 }
 
 fn build_prediction_matrix(chromosome_state: usize) -> g_input::ChromosomePredictionMatrix {

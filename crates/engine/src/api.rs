@@ -7,7 +7,8 @@ pub use crate::association_implementation::{
 };
 pub use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GenotypeTransferPreparation, GroupPreparationInput,
-    MaterializedAssociationBatch, MaterializedGenotypeStatistics, PreparedChromosome, SampleMajorCovariateMatrix,
+    MaterializedAssociationBatch, MaterializedGenotypeStatistics, PreparedChromosome,
+    RawDeflatePacked8ArtifactIdentity, RawDeflatePacked8CapabilityRequirements, SampleMajorCovariateMatrix,
     TraitMajorMatrix,
 };
 pub use crate::run::{

@@ -186,9 +186,7 @@ def _validate_summary_schema_version(payload: dict[str, typing.Any]) -> None:
     """Validate that CUDA qualification/report schema versions are strict integer zero."""
     schema_version = payload.get("schema_version")
     if type(schema_version) is not int:
-        raise ValueError(
-            f"schema_version for CUDA qualification report must be integer 0, got {schema_version!r}."
-        )
+        raise ValueError(f"schema_version for CUDA qualification report must be integer 0, got {schema_version!r}.")
     if schema_version != SUMMARY_SCHEMA_VERSION:
         raise ValueError(
             f"Expected CUDA qualification schema_version={SUMMARY_SCHEMA_VERSION}, got {schema_version!r}."

@@ -174,8 +174,23 @@ Delivery-report and association-warning counters are observer-only unsigned
 64-bit values and are recorded infallibly, including native `usize::MAX` on
 64-bit hosts. Phenotype output-count validation uses the exact native count;
 conversion to the telemetry counter domain is separate and cannot abort
-structural artifact validation. These changes preserve the schema-version `0`
-JSON field names and shapes.
+structural artifact validation. `native_dispatch_delivery_finished` records the
+pre-existing zero-based `group_index` and unsigned `processed_chunk_count` plus
+`phenotype_compute_group_id`, `effective_path`, unsigned
+`raw_nvcomp_chunk_count`, and unsigned `host_chunk_count`. `effective_path` is
+exactly `host` or `raw_deflate_nvcomp`; the two path counts sum to the processed
+count, and only the effective path has a nonzero count. The telemetry name
+`raw_nvcomp_chunk_count` deliberately differs from the manifest field
+`raw_deflate_nvcomp_chunk_count`. When raw-DEFLATE nvCOMP was effective, the
+event also records
+`raw_nvcomp_ffi_target`, `raw_nvcomp_ffi_api_version`,
+`raw_nvcomp_handler_sha256`, `raw_nvcomp_ptx_sha256`, `raw_nvcomp_ptx_isa`,
+`raw_nvcomp_ptx_target`, `raw_nvcomp_minimum_cuda_driver_version`,
+`raw_nvcomp_minimum_compute_capability_major`, and
+`raw_nvcomp_minimum_compute_capability_minor`; those optional fields are absent
+for host execution. The diagnostic schema version remains `0`, and the
+pre-existing fields retain their names and types; this event now has the
+additional fields listed above.
 
 ## Timing
 

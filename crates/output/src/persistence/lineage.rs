@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::{OutputError, OutputResult};
 use crate::persistence::identifier::{
@@ -111,6 +113,7 @@ pub(crate) struct TerminalPhenotypeRecord {
     pub(crate) phenotype_name: String,
     pub(crate) output_directory_name: String,
     pub(crate) run_manifest_sha256: String,
+    pub(crate) genotype_delivery_execution: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -671,6 +674,7 @@ impl LineageTerminalRecord {
         }
         let mut names = BTreeSet::new();
         let mut output_names = BTreeSet::new();
+        let mut failed_execution_presence = None;
         for phenotype in &self.phenotypes {
             if phenotype.phenotype_name.is_empty() {
                 return Err(OutputError::InvalidInput(
@@ -684,6 +688,37 @@ impl LineageTerminalRecord {
                 ));
             }
             validate_sha256(&phenotype.run_manifest_sha256, "run manifest")?;
+            let execution_is_null = phenotype.genotype_delivery_execution.is_null();
+            let execution_is_present = !execution_is_null;
+            match (&self.status, execution_is_null) {
+                (AttemptTerminalStatus::Completed, true) => {
+                    return Err(OutputError::InvalidInput(
+                        "Completed output lineage terminal is missing genotype-delivery execution evidence."
+                            .to_string(),
+                    ));
+                }
+                (AttemptTerminalStatus::Interrupted, false) => {
+                    return Err(OutputError::InvalidInput(
+                        "Interrupted output lineage terminal must not contain genotype-delivery execution evidence."
+                            .to_string(),
+                    ));
+                }
+                (AttemptTerminalStatus::Failed, _) => {
+                    if failed_execution_presence.is_some_and(|presence| presence != execution_is_present) {
+                        return Err(OutputError::InvalidInput(
+                            "Failed output lineage terminal has inconsistent genotype-delivery execution presence."
+                                .to_string(),
+                        ));
+                    }
+                    failed_execution_presence = Some(execution_is_present);
+                }
+                _ => {}
+            }
+            if execution_is_present {
+                crate::persistence::attempt::genotype_delivery_execution_from_value(
+                    phenotype.genotype_delivery_execution.clone(),
+                )?;
+            }
         }
         Ok(())
     }
@@ -1870,12 +1905,15 @@ fn sync_existing_directory(path: &Path) -> OutputResult<()> {
 
 fn read_optional_json<ValueType>(path: &Path) -> OutputResult<Option<ValueType>>
 where
-    ValueType: for<'deserialize> Deserialize<'deserialize>,
+    ValueType: DeserializeOwned,
 {
     match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
-            OutputError::InvalidInput(format!("Output record '{}' is invalid JSON: {error}", path.display()))
-        }),
+        Ok(bytes) => crate::persistence::attempt::parse_json_value_without_duplicate_keys(&bytes)
+            .and_then(serde_json::from_value)
+            .map(Some)
+            .map_err(|error| {
+                OutputError::InvalidInput(format!("Output record '{}' is invalid JSON: {error}", path.display()))
+            }),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
         Err(error) => Err(OutputError::Runtime(format!("Failed to read output record '{}': {error}", path.display()))),
     }
@@ -1883,7 +1921,7 @@ where
 
 fn read_required_json<ValueType>(path: &Path) -> OutputResult<ValueType>
 where
-    ValueType: for<'deserialize> Deserialize<'deserialize>,
+    ValueType: DeserializeOwned,
 {
     read_optional_json(path)?.ok_or_else(|| {
         OutputError::Runtime(format!("Output record '{}' disappeared during publication.", path.display()))
@@ -1954,6 +1992,38 @@ mod tests {
             output_directory_name: "trait_0001_trait-a".to_string(),
             execution_plan_sha256: digest('a'),
         }
+    }
+
+    fn genotype_delivery_execution() -> Value {
+        serde_json::json!({
+            "phenotype_compute_group_id": "group-id",
+            "effective_path": "host",
+            "processed_chunk_count": 0,
+            "raw_deflate_nvcomp_chunk_count": 0,
+            "host_chunk_count": 0,
+            "raw_deflate_packed8_artifact": null,
+        })
+    }
+
+    fn raw_genotype_delivery_execution() -> Value {
+        serde_json::json!({
+            "phenotype_compute_group_id": "group-id",
+            "effective_path": "raw_deflate_nvcomp",
+            "processed_chunk_count": 1,
+            "raw_deflate_nvcomp_chunk_count": 1,
+            "host_chunk_count": 0,
+            "raw_deflate_packed8_artifact": {
+                "ffi_target": "g.bgen.packed8_deflate.v1",
+                "ffi_api_version": 1,
+                "handler_sha256": digest('a'),
+                "ptx_sha256": digest('b'),
+                "ptx_isa": "8.2",
+                "ptx_target": "sm_70",
+                "minimum_cuda_driver_version": 12_020,
+                "minimum_compute_capability_major": 7,
+                "minimum_compute_capability_minor": 0,
+            },
+        })
     }
 
     fn test_paths(label: &str) -> OutputLineagePaths {
@@ -3054,6 +3124,7 @@ mod tests {
                 phenotype_name: "trait-a".to_string(),
                 output_directory_name: "trait_0001_trait-a".to_string(),
                 run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: Value::Null,
             }],
         );
         paths.publish_terminal(&interrupted).expect("terminal publishes");
@@ -3151,6 +3222,7 @@ mod tests {
                 phenotype_name: "trait-a".to_string(),
                 output_directory_name: "trait_0001_trait-a".to_string(),
                 run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: Value::Null,
             }],
         );
         let successor = LineageSuccessorRecord::new(
@@ -3203,6 +3275,7 @@ mod tests {
                 phenotype_name: "trait-a".to_string(),
                 output_directory_name: "trait_0001_trait-a".to_string(),
                 run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: Value::Null,
             }],
         );
         paths.publish_terminal(&interrupted).expect("terminal publishes");
@@ -3274,6 +3347,7 @@ mod tests {
                 phenotype_name: "trait-a".to_string(),
                 output_directory_name: "trait_0001_trait-a".to_string(),
                 run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: genotype_delivery_execution(),
             }],
         );
         paths.publish_terminal(&completed).expect("completed outcome publishes");
@@ -3301,6 +3375,7 @@ mod tests {
             phenotype_name: "trait-a".to_string(),
             output_directory_name: "trait_0001_trait-a".to_string(),
             run_manifest_sha256: digest('c'),
+            genotype_delivery_execution: genotype_delivery_execution(),
         };
         let completed = LineageTerminalRecord::completed(
             "run-set-test".to_string(),
@@ -3317,6 +3392,137 @@ mod tests {
         );
         failed.validate().expect("failed terminal validates");
         assert_eq!(failed.status, AttemptTerminalStatus::Failed);
+    }
+
+    #[test]
+    fn terminal_genotype_execution_presence_matches_terminal_status() {
+        let execution_phenotype = TerminalPhenotypeRecord {
+            phenotype_name: "trait-a".to_string(),
+            output_directory_name: "trait_0001_trait-a".to_string(),
+            run_manifest_sha256: digest('c'),
+            genotype_delivery_execution: genotype_delivery_execution(),
+        };
+        let interrupted = LineageTerminalRecord::interrupted(
+            "run-set-test".to_string(),
+            AttemptIdentifier::for_test("attempt-interrupted-execution"),
+            "TEST".to_string(),
+            vec![execution_phenotype.clone()],
+        );
+        assert!(
+            interrupted
+                .validate()
+                .expect_err("interrupted terminal rejects execution evidence")
+                .to_string()
+                .contains("Interrupted output lineage terminal must not contain")
+        );
+
+        let null_phenotype = TerminalPhenotypeRecord {
+            phenotype_name: "trait-b".to_string(),
+            output_directory_name: "trait_0002_trait-b".to_string(),
+            run_manifest_sha256: digest('d'),
+            genotype_delivery_execution: Value::Null,
+        };
+        let failed = LineageTerminalRecord::failed(
+            "run-set-test".to_string(),
+            AttemptIdentifier::for_test("attempt-failed-mixed-execution"),
+            "delivery failed".to_string(),
+            vec![execution_phenotype, null_phenotype],
+        );
+        assert!(
+            failed
+                .validate()
+                .expect_err("failed terminal rejects mixed execution presence")
+                .to_string()
+                .contains("inconsistent genotype-delivery execution presence")
+        );
+
+        let malformed_failed = LineageTerminalRecord::failed(
+            "run-set-test".to_string(),
+            AttemptIdentifier::for_test("attempt-failed-malformed-execution"),
+            "delivery failed".to_string(),
+            vec![TerminalPhenotypeRecord {
+                phenotype_name: "trait-a".to_string(),
+                output_directory_name: "trait_0001_trait-a".to_string(),
+                run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: serde_json::json!({"unexpected": true}),
+            }],
+        );
+        assert!(
+            malformed_failed
+                .validate()
+                .expect_err("failed terminal parses nonnull execution evidence")
+                .to_string()
+                .contains("phenotype_compute_group_id")
+        );
+    }
+
+    #[test]
+    fn terminal_genotype_execution_is_required_nullable_and_duplicate_safe() {
+        let terminal = LineageTerminalRecord::completed(
+            "run-set-test".to_string(),
+            AttemptIdentifier::for_test("attempt-terminal-schema"),
+            vec![TerminalPhenotypeRecord {
+                phenotype_name: "trait-a".to_string(),
+                output_directory_name: "trait_0001_trait-a".to_string(),
+                run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: genotype_delivery_execution(),
+            }],
+        );
+        let outcome = AttemptOutcomeRecord::TerminalClaim(terminal);
+
+        let missing_paths = test_paths("terminal-missing-execution");
+        missing_paths.initialize_directories().expect("lineage directories initialize");
+        let missing_path = missing_paths.outcome_path(&AttemptIdentifier::for_test("attempt-terminal-schema"));
+        let mut missing_value = serde_json::to_value(&outcome).expect("terminal outcome serializes");
+        missing_value["record"]["phenotypes"][0]
+            .as_object_mut()
+            .expect("terminal phenotype is an object")
+            .remove("genotype_delivery_execution");
+        std::fs::write(&missing_path, serde_json::to_vec(&missing_value).expect("missing-field terminal serializes"))
+            .expect("missing-field terminal writes");
+        let missing_error = read_required_json::<AttemptOutcomeRecord>(&missing_path)
+            .expect_err("missing required-nullable field fails");
+        assert!(missing_error.to_string().contains("missing field `genotype_delivery_execution`"));
+
+        let duplicate_paths = test_paths("terminal-duplicate-execution");
+        duplicate_paths.initialize_directories().expect("lineage directories initialize");
+        let duplicate_path = duplicate_paths.outcome_path(&AttemptIdentifier::for_test("attempt-terminal-schema"));
+        let encoded = serde_json::to_string(&outcome).expect("terminal outcome serializes");
+        let duplicate_encoded = encoded.replacen(
+            "\"effective_path\":\"host\"",
+            "\"effective_path\":\"host\",\"effective_path\":\"host\"",
+            1,
+        );
+        assert_ne!(duplicate_encoded, encoded);
+        std::fs::write(&duplicate_path, duplicate_encoded).expect("duplicate-field terminal writes");
+        let duplicate_error = read_required_json::<AttemptOutcomeRecord>(&duplicate_path)
+            .expect_err("duplicate nested genotype execution field fails");
+        assert!(duplicate_error.to_string().contains("duplicate object key 'effective_path'"));
+
+        let raw_terminal = LineageTerminalRecord::completed(
+            "run-set-test".to_string(),
+            AttemptIdentifier::for_test("attempt-terminal-raw-schema"),
+            vec![TerminalPhenotypeRecord {
+                phenotype_name: "trait-a".to_string(),
+                output_directory_name: "trait_0001_trait-a".to_string(),
+                run_manifest_sha256: digest('c'),
+                genotype_delivery_execution: raw_genotype_delivery_execution(),
+            }],
+        );
+        raw_terminal.validate().expect("raw execution with exact capability requirements validates");
+
+        let mut missing_requirement_terminal = raw_terminal;
+        missing_requirement_terminal.phenotypes[0].genotype_delivery_execution["raw_deflate_packed8_artifact"]
+            .as_object_mut()
+            .expect("raw packed8 artifact is an object")
+            .remove("minimum_cuda_driver_version");
+        assert!(
+            missing_requirement_terminal
+                .validate()
+                .expect_err("raw execution missing a capability requirement is rejected")
+                .to_string()
+                .contains("minimum_cuda_driver_version")
+        );
     }
 
     #[test]
@@ -3349,6 +3555,7 @@ mod tests {
             phenotype_name: "trait-a".to_string(),
             output_directory_name: "trait_0001_trait-a".to_string(),
             run_manifest_sha256: digest('c'),
+            genotype_delivery_execution: Value::Null,
         };
         let interrupted = LineageTerminalRecord::interrupted(
             "run-set-test".to_string(),

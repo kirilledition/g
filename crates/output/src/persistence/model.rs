@@ -97,6 +97,10 @@ impl CanonicalChunkPlan {
         &self.sha256
     }
 
+    pub(crate) fn chunk_count(&self) -> usize {
+        self.chunks.len()
+    }
+
     pub(crate) fn chunk_identifiers(&self) -> BTreeSet<i64> {
         self.chunks.iter().map(|chunk| chunk.chunk_identifier).collect()
     }

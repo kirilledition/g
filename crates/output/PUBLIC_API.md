@@ -18,8 +18,10 @@ batches, `AssociationImplementationCompatibility`,
 `FirthComponentsImplementationCompatibility`,
 `FirthComponentsFallbackReasonCompatibility`,
 `RawCudaFirthCapabilityRequirementsCompatibility`,
-`RawCudaFirthArtifactCompatibility`, and `OutputError`. Writer sessions are
-private implementation details.
+`RawCudaFirthArtifactCompatibility`, `GenotypeDeliveryExecution`,
+`GenotypeDeliveryEffectivePath`, `RawDeflatePacked8Artifact`,
+`RawDeflatePacked8CapabilityRequirements`, and `OutputError`. Writer sessions
+are private implementation details.
 Strict on-disk reconciliation is fixed policy owned by this crate.
 
 ## Public functions
@@ -47,8 +49,11 @@ of `claim` and `activate` and likewise requires current compatibility.
 `reject_activation` converts a backend compatibility-construction failure into
 an unpublished `OutputActivationError` with rollback authority, allowing
 claim-scoped diagnostics to close before ownership is released.
-`close_completed` drains writers and returns `Covered` only after exact
-canonical chunk coverage is proven. Individual writer-session lifecycle
+`close_completed` consumes exactly one `GenotypeDeliveryExecution` per planned
+phenotype compute group, validates its identity and resume-aware processed
+chunk count, then drains writers and returns `Covered` only after exact
+canonical chunk coverage is proven. Raw-DEFLATE nvCOMP evidence is accepted
+only for a GPU packed8 execution plan. Individual writer-session lifecycle
 methods remain crate-private.
 
 Ordinary `activate` resolves unpublished failures and completed-no-op cleanup
@@ -141,6 +146,27 @@ operation failures, internal/native failures, and JAX registration failures are
 fatal and have no compatibility variant. Free-text diagnostics, device
 identity, driver observations, and other observational detail are not part of
 the schema.
+
+Every attempt manifest also requires the explicitly nullable
+`runtime.genotype_delivery_execution` field. Initial running manifests contain
+`null`; completed manifests contain one validated object whose
+`phenotype_compute_group_id` exactly matches the execution plan. Interrupted
+manifests contain `null`. Failed manifests contain either `null` for every
+phenotype or completed execution evidence for every phenotype when output
+drain failed after successful compute; mixed presence is invalid. The object records the
+effective `host` or `raw_deflate_nvcomp` path, the resume-aware number of chunks
+processed in that lifecycle, mutually exclusive raw/host chunk counts, and an
+explicitly nullable raw-DEFLATE packed8 artifact. Raw execution requires every
+positive processed-chunk count to be counted as raw, zero host chunks, and the
+exact FFI target/API plus handler and PTX SHA-256/ISA/target and grouped
+reviewed minimum CUDA driver and compute-capability requirements. Artifact
+construction validates that its PTX target and minimum compute capability
+agree. Host execution has the inverse counts and a null artifact, including
+the canonical fully resumed zero-work case. The immutable terminal claim
+duplicates this exact object for each phenotype before it binds the terminal
+manifest hash, allowing a crash after terminal-claim publication to reconstruct
+the same manifest bytes. Finalized recovery rejects disagreement between the
+terminal copy and its bound manifest.
 
 The complete nested `execution_plan` graph is typed and closed as well:
 unknown or missing nested fields, unsupported enum values, and inconsistent

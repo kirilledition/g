@@ -756,16 +756,19 @@ where
     Hooks: RunHooks,
 {
     match delivery_result {
-        Ok(delivery_reports) => match output_manager.close_completed().and_then(OutputManager::finish) {
-            Ok(completion) => RunExecutionOutcome {
-                result: Ok(RunExecution { completed_outputs: completion.completed_outputs, delivery_reports }),
-                post_session_cleanup: completion.post_session_cleanup,
-            },
-            Err(output) => {
-                let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = output.into_parts();
-                RunExecutionOutcome { result: Err(RunExecutionError::OutputFinish(source)), post_session_cleanup }
+        Ok(delivery_reports) => {
+            let genotype_delivery_executions = output_genotype_delivery_executions(&delivery_reports);
+            match output_manager.close_completed(genotype_delivery_executions).and_then(OutputManager::finish) {
+                Ok(completion) => RunExecutionOutcome {
+                    result: Ok(RunExecution { completed_outputs: completion.completed_outputs, delivery_reports }),
+                    post_session_cleanup: completion.post_session_cleanup,
+                },
+                Err(output) => {
+                    let g_output::OutputTerminalFailureParts { source, post_session_cleanup } = output.into_parts();
+                    RunExecutionOutcome { result: Err(RunExecutionError::OutputFinish(source)), post_session_cleanup }
+                }
             }
-        },
+        }
         Err(DeliveryError::Interrupted(interruption)) => {
             let signal_name = Hooks::interruption_signal_name(&interruption).unwrap_or("unknown");
             match output_manager.finish_interrupted(signal_name) {
@@ -793,6 +796,12 @@ where
             }
         }
     }
+}
+
+fn output_genotype_delivery_executions(
+    delivery_reports: &[AssociationDeliveryReport],
+) -> Vec<g_output::GenotypeDeliveryExecution> {
+    delivery_reports.iter().map(|report| report.genotype_delivery_execution.clone()).collect()
 }
 
 fn interrupted_output_failure_outcome<BackendError, HookError, PostSessionCleanup>(
@@ -1381,6 +1390,41 @@ mod tests {
             }) if matches!(*delivery, DeliveryError::InvalidInput(ref message) if message == "delivery failure")
                 && output == "abort failure"
         ));
+    }
+
+    #[test]
+    fn output_execution_mapping_preserves_multi_group_identity_and_order() {
+        let host_execution =
+            g_output::GenotypeDeliveryExecution::host("group-host".to_string(), 0).expect("host execution is valid");
+        let raw_capability_requirements = g_output::RawDeflatePacked8CapabilityRequirements::new(12_020, 7, 0)
+            .expect("raw packed8 capability requirements are valid");
+        let raw_artifact = g_output::RawDeflatePacked8Artifact::new(
+            "g.bgen.packed8_deflate.test.v0".to_string(),
+            1,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            "8.2".to_string(),
+            "sm_70".to_string(),
+            raw_capability_requirements,
+        )
+        .expect("raw packed8 artifact is valid");
+        let raw_execution =
+            g_output::GenotypeDeliveryExecution::raw_deflate_nvcomp("group-raw".to_string(), 2, raw_artifact)
+                .expect("raw-nvCOMP execution is valid");
+        let reports = vec![
+            AssociationDeliveryReport { genotype_delivery_execution: host_execution, warnings: Vec::new() },
+            AssociationDeliveryReport { genotype_delivery_execution: raw_execution, warnings: Vec::new() },
+        ];
+
+        let executions = output_genotype_delivery_executions(&reports);
+
+        assert_eq!(executions.len(), 2);
+        assert_eq!(executions[0].phenotype_compute_group_id(), "group-host");
+        assert_eq!(executions[0].effective_path(), g_output::GenotypeDeliveryEffectivePath::Host);
+        assert_eq!(executions[0].processed_chunk_count(), 0);
+        assert_eq!(executions[1].phenotype_compute_group_id(), "group-raw");
+        assert_eq!(executions[1].effective_path(), g_output::GenotypeDeliveryEffectivePath::RawDeflateNvcomp);
+        assert_eq!(executions[1].processed_chunk_count(), 2);
     }
 
     #[test]

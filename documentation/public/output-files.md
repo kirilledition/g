@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | output file contracts as of 2026-07-23 | Public user docs |
+| Pre-release draft | output file contracts as of 2026-07-24 | Public user docs |
 
 This page is the canonical user-facing output contract for `g regenie`.
 
@@ -129,6 +129,28 @@ complete raw artifact field set is `ffi_target`, `ffi_api_version`,
 `minimum_cuda_driver_version`, `minimum_compute_capability_major`, and
 `minimum_compute_capability_minor`; it is closed, so unknown or missing fields
 are invalid.
+
+Schema zero requires `runtime.genotype_delivery_execution` as well. Running
+manifests initially record explicit `null`; completed manifests must record one
+object for the phenotype's compute group. Interrupted manifests retain
+explicit `null`. Failed manifests use `null` for every phenotype unless output
+drain failed after successful compute, in which case every phenotype retains
+its execution object; mixed presence is invalid. The object contains
+`phenotype_compute_group_id`, `effective_path`, `processed_chunk_count`,
+`raw_deflate_nvcomp_chunk_count`, `host_chunk_count`, and
+`raw_deflate_packed8_artifact`. The two effective paths are `host` and
+`raw_deflate_nvcomp`. Raw delivery requires every processed chunk to be raw,
+a positive processed count, zero host chunks, a GPU packed8 execution plan, and
+an artifact with the exact `ffi_target`, `ffi_api_version`, `handler_sha256`,
+`ptx_sha256`, `ptx_isa`, `ptx_target`, `minimum_cuda_driver_version`,
+`minimum_compute_capability_major`, and
+`minimum_compute_capability_minor`. The PTX target must match the recorded
+minimum compute capability. Host delivery requires the inverse counts and a
+null artifact, including fully resumed zero-work completion. The processed
+count is for work performed by the current lifecycle, so an exact recovery may
+report fewer chunks than the completed dataset contains. The immutable
+terminal claim carries the same execution object and manifest hash; recovery
+rejects any disagreement.
 
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns

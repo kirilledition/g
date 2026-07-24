@@ -11,7 +11,7 @@ use crate::association_scheduler::{
 };
 use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GenotypeTransferPreparation, GroupPreparationInput,
-    SampleMajorCovariateMatrix, TraitMajorMatrix,
+    RawDeflatePacked8ArtifactIdentity, SampleMajorCovariateMatrix, TraitMajorMatrix,
 };
 use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
 use crate::genotype_buffer::homogeneous_chunk_chromosome;
@@ -33,13 +33,68 @@ pub(crate) struct DeliveryWarning {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct AssociationDeliveryReport {
-    pub(crate) processed_chunk_count: usize,
+    pub(crate) genotype_delivery_execution: g_output::GenotypeDeliveryExecution,
     pub(crate) warnings: Vec<DeliveryWarning>,
 }
 
 enum PlannedGenotypeDelivery {
     Host,
-    CompressedPacked8(g_genotype::CompressedPacked8BatchLayout),
+    RawDeflateNvcomp { layout: g_genotype::CompressedPacked8BatchLayout, artifact: RawDeflatePacked8ArtifactIdentity },
+}
+
+impl AssociationDeliveryReport {
+    fn completed(
+        phenotype_compute_group_id: String,
+        genotype_delivery: &PlannedGenotypeDelivery,
+        processed_chunk_count: usize,
+        warnings: Vec<DeliveryWarning>,
+    ) -> Result<Self, OutputError> {
+        let raw_nvcomp_artifact = match genotype_delivery {
+            PlannedGenotypeDelivery::Host => None,
+            PlannedGenotypeDelivery::RawDeflateNvcomp { artifact, .. } => Some(*artifact),
+        };
+        Self::completed_for_effective_artifact(
+            phenotype_compute_group_id,
+            processed_chunk_count,
+            raw_nvcomp_artifact,
+            warnings,
+        )
+    }
+
+    fn completed_for_effective_artifact(
+        phenotype_compute_group_id: String,
+        processed_chunk_count: usize,
+        raw_nvcomp_artifact: Option<RawDeflatePacked8ArtifactIdentity>,
+        warnings: Vec<DeliveryWarning>,
+    ) -> Result<Self, OutputError> {
+        let processed_chunk_count = u64::try_from(processed_chunk_count)
+            .map_err(|error| OutputError::Runtime(format!("Processed chunk count does not fit uint64: {error}")))?;
+        let genotype_delivery_execution = match raw_nvcomp_artifact {
+            None => g_output::GenotypeDeliveryExecution::host(phenotype_compute_group_id, processed_chunk_count)?,
+            Some(artifact) => {
+                let capability_requirements = g_output::RawDeflatePacked8CapabilityRequirements::new(
+                    artifact.minimum_cuda_driver_version(),
+                    artifact.minimum_compute_capability_major(),
+                    artifact.minimum_compute_capability_minor(),
+                )?;
+                let raw_deflate_packed8_artifact = g_output::RawDeflatePacked8Artifact::new(
+                    artifact.ffi_target().to_string(),
+                    artifact.ffi_api_version(),
+                    artifact.handler_sha256().to_string(),
+                    artifact.ptx_sha256().to_string(),
+                    artifact.ptx_isa().to_string(),
+                    artifact.ptx_target().to_string(),
+                    capability_requirements,
+                )?;
+                g_output::GenotypeDeliveryExecution::raw_deflate_nvcomp(
+                    phenotype_compute_group_id,
+                    processed_chunk_count,
+                    raw_deflate_packed8_artifact,
+                )?
+            }
+        };
+        Ok(Self { genotype_delivery_execution, warnings })
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,10 +145,16 @@ where
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
     validate_delivery_request::<Backend::Error, InterruptionError>(&request)?;
+    let phenotype_compute_group_id = g_plan::build_phenotype_compute_group_id(&request.group.phenotype_group);
     let chunk_specs = plan_association_delivery(genotype_input, &mut request)?;
     if chunk_specs.is_empty() {
         check_interruption().map_err(DeliveryError::Interrupted)?;
-        return Ok(AssociationDeliveryReport { processed_chunk_count: 0, warnings: Vec::new() });
+        return Ok(AssociationDeliveryReport::completed(
+            phenotype_compute_group_id,
+            &PlannedGenotypeDelivery::Host,
+            0,
+            Vec::new(),
+        )?);
     }
     let read_session = genotype_input.reader.read_session(&request.group.sample_indices)?;
     let delivery_result = run_prepared_association_delivery(
@@ -102,6 +163,7 @@ where
         backend,
         &mut request,
         chunk_specs,
+        phenotype_compute_group_id,
         &mut check_interruption,
     );
     let source_result = read_session.finish().map_err(DeliveryError::Bgen);
@@ -124,16 +186,18 @@ fn run_prepared_association_delivery<Backend, CheckInterruption, InterruptionErr
     backend: &Arc<Backend>,
     request: &mut AssociationDeliveryRequest,
     chunk_specs: Vec<g_genotype::ChunkSpec>,
+    phenotype_compute_group_id: String,
     check_interruption: &mut CheckInterruption,
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
 where
     Backend: AssociationBackend + 'static,
     CheckInterruption: FnMut() -> Result<(), InterruptionError>,
 {
+    let processed_chunk_count = chunk_specs.len();
     let genotype_delivery = plan_genotype_delivery(genotype_input, backend.as_ref(), &request.settings, &chunk_specs)?;
     let genotype_transfer = match &genotype_delivery {
         PlannedGenotypeDelivery::Host => GenotypeTransferPreparation::Host,
-        PlannedGenotypeDelivery::CompressedPacked8(_) => {
+        PlannedGenotypeDelivery::RawDeflateNvcomp { .. } => {
             GenotypeTransferPreparation::CompressedPacked8(read_session.compressed_packed8_transfer().clone())
         }
     };
@@ -145,7 +209,6 @@ where
         |shared_group_state| {
             let mut pipeline = AssociationBatchPipeline::new(Arc::clone(backend), shared_group_state)?;
             let mut current_chromosome = None;
-            let mut processed_chunk_count = 0_usize;
             let mut warnings = Vec::new();
             let compute_variant_count = genotype_input.chunk_size.min(genotype_input.reader.variant_count());
 
@@ -192,7 +255,7 @@ where
                         request.settings.gpu_genotype_format == g_plan::GpuGenotypeFormat::Packed8,
                         request.settings.statistics_policy,
                     )?,
-                    PlannedGenotypeDelivery::CompressedPacked8(layout) => {
+                    PlannedGenotypeDelivery::RawDeflateNvcomp { layout, .. } => {
                         let logical_variant_count = chunk_spec.variant_stop_index - chunk_spec.variant_start_index;
                         GenotypeBatch {
                             variant_start_index: chunk_spec.variant_start_index,
@@ -216,13 +279,17 @@ where
                     active_trait_selection,
                 };
                 submit_batch(&mut pipeline, scheduled_batch, &request.settings, check_interruption)?;
-                processed_chunk_count += 1;
                 drain_available_batches(&mut pipeline, &request.settings, check_interruption)?;
             }
 
             finish_and_drain_pipeline(&mut pipeline, &request.settings, check_interruption)?;
             check_interruption_with_scheduler_failure_precedence(&pipeline, check_interruption)?;
-            Ok(AssociationDeliveryReport { processed_chunk_count, warnings })
+            Ok(AssociationDeliveryReport::completed(
+                phenotype_compute_group_id,
+                &genotype_delivery,
+                processed_chunk_count,
+                warnings,
+            )?)
         },
         |group_state| backend.release_group(group_state),
         |cleanup_stage, panic_message| {
@@ -321,14 +388,14 @@ fn plan_genotype_delivery<Backend, InterruptionError>(
 where
     Backend: AssociationBackend + 'static,
 {
-    if chunk_specs.is_empty()
-        || settings.gpu_genotype_format != g_plan::GpuGenotypeFormat::Packed8
-        || backend.genotype_delivery_capability() != GenotypeDeliveryCapability::RawDeflatePacked8
-    {
+    if chunk_specs.is_empty() || settings.gpu_genotype_format != g_plan::GpuGenotypeFormat::Packed8 {
         return Ok(PlannedGenotypeDelivery::Host);
     }
+    let GenotypeDeliveryCapability::RawDeflatePacked8(artifact) = backend.genotype_delivery_capability() else {
+        return Ok(PlannedGenotypeDelivery::Host);
+    };
     Ok(match genotype_input.reader.plan_compressed_packed8_batch_layout(chunk_specs)? {
-        Some(layout) => PlannedGenotypeDelivery::CompressedPacked8(layout),
+        Some(layout) => PlannedGenotypeDelivery::RawDeflateNvcomp { layout, artifact },
         None => PlannedGenotypeDelivery::Host,
     })
 }

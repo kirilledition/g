@@ -8,6 +8,10 @@ pub use crate::association_implementation::{
 };
 pub use crate::chunk::{NativeChunkHandle, NativeVariantMetadataHandle};
 pub use crate::error::OutputError;
+pub use crate::genotype_delivery_execution::{
+    GenotypeDeliveryEffectivePath, GenotypeDeliveryExecution, RawDeflatePacked8Artifact,
+    RawDeflatePacked8CapabilityRequirements,
+};
 pub use crate::manager::{
     Active, Claimed, CompletedOutputRun, Covered, OutputActivationError, OutputActivationFailureParts,
     OutputClaimRollback, OutputCompletion, OutputDeliveryToken, OutputManager, OutputPostSessionCleanup,

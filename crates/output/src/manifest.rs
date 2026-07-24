@@ -79,6 +79,7 @@ mod tests {
                         "raw_cuda_artifact": null,
                     },
                 },
+                "genotype_delivery_execution": null,
             },
         })
     }

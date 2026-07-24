@@ -336,6 +336,9 @@ mod tests {
             std::hint::black_box(PACKED8_DEFLATE_HANDLER_SHA256),
             "12e3dc7dc43d2929047bbee9469750f61923667805d10c1d1757d22253788d94"
         );
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_MINIMUM_CUDA_DRIVER_VERSION), 12_020);
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MAJOR), 7);
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MINOR), 0);
         assert_eq!(
             std::hint::black_box(PACKED8_DEFLATE_PTX_SHA256),
             "a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088"

@@ -18,7 +18,13 @@ orthogonal to its artifact-or-error result, including structural artifact
 conversion failures and output terminal rejections. Output authority remains
 private to the engine; `g-runner` observes only its purpose and engine-owned
 renderable error. Backend capability and transfer-preparation enums are owned
-here with the backend lifecycle. The validated association implementation
+here with the backend lifecycle. A raw-DEFLATE packed8 capability carries one
+validated `RawDeflatePacked8ArtifactIdentity`: its stable FFI target/API,
+framed source/ABI handler SHA-256, embedded PTX SHA-256/ISA/target, and grouped
+reviewed minimum CUDA driver and compute-capability requirements are injected
+by the root adapter without adding an engine dependency on `g-genotype-cuda`.
+Construction validates that the PTX target and minimum compute capability
+agree. The validated association implementation
 state is also engine-owned: its constructors admit only valid requested,
 effective, raw-artifact, fallback, and reason-specific observation shapes.
 Every raw-CUDA request, including a recoverable JAX fallback, retains the exact
@@ -111,6 +117,16 @@ travel through the backend's opaque
 batch lifecycle without cloning; compressed batches materialize exact integer
 summaries, which the genotype crate validates and converts on the
 materialization worker before any writer sees the batch.
+
+After successful delivery, the engine derives one group report from the
+already-selected delivery plan and the pre-loop chunk-plan length. The report
+binds the stable phenotype compute-group identifier, effective host or
+raw-DEFLATE-nvCOMP path, processed/host/raw-nvCOMP chunk counts, and the raw
+artifact identity and reviewed capability requirements when it was effective.
+This adds no branch, atomic, counter, or allocation to the per-chunk loop.
+Completion maps reports to output by compute-group identifier; a fully resumed
+zero-work group reports the host path with all chunk counts zero and no raw
+artifact.
 
 The root JAX adapter captures exact observed JAX/JAXlib versions when it builds
 the association implementation state. It decides once per selected JAX device:

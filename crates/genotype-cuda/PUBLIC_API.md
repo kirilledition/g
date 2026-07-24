@@ -3,7 +3,8 @@
 The crate owns the stable internal packed8 DEFLATE FFI target name and JAX
 registration API integer. It also exposes the build-verified embedded artifact
 identity: the PTX SHA-256, declared PTX ISA, and declared PTX target. The build
-script generates these PTX constants from the verified checked-in artifact so
+script generates these PTX constants and the reviewed minimum CUDA driver and
+compute-capability requirements from the verified checked-in artifact so
 runtime registration and diagnostic provenance do not repeat literals.
 It also generates a framed source/ABI SHA-256 over the native FFI wrapper,
 nvCOMP ABI, embedded PTX, shared CUDA-driver support, and vendored XLA FFI ABI
@@ -45,6 +46,9 @@ Public identity constants:
 - `PACKED8_DEFLATE_FFI_TARGET`
 - `PACKED8_DEFLATE_FFI_API_VERSION`
 - `PACKED8_DEFLATE_HANDLER_SHA256`
+- `PACKED8_DEFLATE_MINIMUM_CUDA_DRIVER_VERSION`
+- `PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MAJOR`
+- `PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MINOR`
 - `PACKED8_DEFLATE_PTX_SHA256`
 - `PACKED8_DEFLATE_PTX_ISA`
 - `PACKED8_DEFLATE_PTX_TARGET`

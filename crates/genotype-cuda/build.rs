@@ -96,13 +96,22 @@ fn write_artifact_identity(
          pub const PACKED8_DEFLATE_FFI_API_VERSION: u32 = {PACKED8_DEFLATE_FFI_API_VERSION};\n\
          /// SHA-256 of the framed native handler, PTX, driver support, nvCOMP ABI, and XLA ABI inputs.\n\
          pub const PACKED8_DEFLATE_HANDLER_SHA256: &str = \"{handler_sha256}\";\n\
+         /// Minimum CUDA driver API version reviewed for the embedded PTX ISA.\n\
+         pub const PACKED8_DEFLATE_MINIMUM_CUDA_DRIVER_VERSION: i32 = {MINIMUM_CUDA_DRIVER_VERSION};\n\
+         /// Minimum compute-capability major version declared by the embedded PTX target.\n\
+         pub const PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MAJOR: i32 = {};\n\
+         /// Minimum compute-capability minor version declared by the embedded PTX target.\n\
+         pub const PACKED8_DEFLATE_MINIMUM_COMPUTE_CAPABILITY_MINOR: i32 = {};\n\
          /// Canonical SHA-256 of the verified embedded packed8 PTX artifact.\n\
          pub const PACKED8_DEFLATE_PTX_SHA256: &str = \"{KERNEL_PTX_SHA256}\";\n\
          /// PTX ISA declared by the verified embedded packed8 artifact.\n\
          pub const PACKED8_DEFLATE_PTX_ISA: &str = \"{}\";\n\
          /// Compilation target declared by the verified embedded packed8 artifact.\n\
          pub const PACKED8_DEFLATE_PTX_TARGET: &str = \"{}\";\n",
-        ptx_identity.isa, ptx_identity.target
+        ptx_identity.minimum_compute_capability_major,
+        ptx_identity.minimum_compute_capability_minor,
+        ptx_identity.isa,
+        ptx_identity.target
     );
     fs::write(output_directory.join("packed8_artifact_identity.rs"), rust_identity)
         .expect("the generated Rust packed8 artifact identity must be writable");
