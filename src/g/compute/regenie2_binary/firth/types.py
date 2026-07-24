@@ -78,7 +78,6 @@ class NullFirthLineSearchState:
     accepted_coefficients: jax.Array
     accepted_deviance: jax.Array
     accepted: jax.Array
-    valid: jax.Array
 
 
 @jax.tree_util.register_dataclass
@@ -89,7 +88,6 @@ class NullFirthLineSearchResult:
     coefficients: jax.Array
     deviance: jax.Array
     accepted: jax.Array
-    valid: jax.Array
 
 
 @jax.tree_util.register_dataclass
