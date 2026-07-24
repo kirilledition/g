@@ -1,5 +1,6 @@
 //! Output writer adapter planning.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, PrimitiveArray};
@@ -8,7 +9,7 @@ use arrow::datatypes::{ArrowNativeType, ArrowPrimitiveType, Float32Type, UInt8Ty
 
 use crate::chunk::NativeChunkHandle;
 use crate::error::{OutputError, OutputResult};
-use crate::session::OutputWriterSession;
+use crate::manager::OutputDeliveryToken;
 
 #[derive(Debug, PartialEq)]
 pub struct Regenie2StatisticBatch {
@@ -39,13 +40,14 @@ struct Regenie2StatisticArrowArrays {
 /// Returns an error when an active trait index is out of bounds or a writer
 /// rejects the chunk.
 pub fn write_regenie2_multi_trait_chunk_f32(
-    writer_sessions: &[Arc<OutputWriterSession>],
+    delivery_token: &OutputDeliveryToken,
     active_trait_indices: Option<&[usize]>,
     chunk_handle: &NativeChunkHandle,
     statistic_batch: Regenie2StatisticBatch,
 ) -> OutputResult<()> {
     let row_count = chunk_handle.row_count();
-    let active_trait_count = active_trait_indices.map_or(writer_sessions.len(), <[usize]>::len);
+    let active_trait_count = active_trait_indices.map_or(delivery_token.trait_count(), <[usize]>::len);
+    validate_active_trait_indices(delivery_token.trait_count(), active_trait_indices)?;
     let expected_value_count = row_count.checked_mul(active_trait_count).ok_or_else(|| {
         OutputError::InvalidInput("Trait-major output statistic value count exceeds platform capacity.".to_string())
     })?;
@@ -59,9 +61,7 @@ pub fn write_regenie2_multi_trait_chunk_f32(
     let statistic_arrays = build_statistic_arrow_arrays(statistic_batch);
     for active_trait_position in 0..active_trait_count {
         let trait_index = active_trait_indices.map_or(active_trait_position, |indices| indices[active_trait_position]);
-        let writer_session = writer_sessions.get(trait_index).map(Arc::as_ref).ok_or_else(|| {
-            OutputError::InvalidInput("Active trait index is out of bounds for writer sessions.".to_string())
-        })?;
+        let writer_session = delivery_token.writer_session(trait_index)?;
         let row_start = active_trait_position * row_count;
         writer_session.write_regenie2_native_chunk_handle_arrays(
             chunk_handle.clone(),
@@ -74,6 +74,24 @@ pub fn write_regenie2_multi_trait_chunk_f32(
                 .as_ref()
                 .map(|correction_code| correction_code.slice(row_start, row_count)),
         )?;
+    }
+    Ok(())
+}
+
+fn validate_active_trait_indices(trait_count: usize, active_trait_indices: Option<&[usize]>) -> OutputResult<()> {
+    let Some(active_trait_indices) = active_trait_indices else {
+        return Ok(());
+    };
+    let mut unique_indices = BTreeSet::new();
+    for trait_index in active_trait_indices {
+        if *trait_index >= trait_count {
+            return Err(OutputError::InvalidInput(format!(
+                "Active trait index {trait_index} is out of bounds for {trait_count} output lanes."
+            )));
+        }
+        if !unique_indices.insert(*trait_index) {
+            return Err(OutputError::InvalidInput(format!("Active trait index {trait_index} appears more than once.")));
+        }
     }
     Ok(())
 }
@@ -124,7 +142,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{Regenie2StatisticBatch, validate_statistic_batch_lengths};
+    use super::{Regenie2StatisticBatch, validate_active_trait_indices, validate_statistic_batch_lengths};
 
     fn statistic_batch(value_count: usize) -> Regenie2StatisticBatch {
         Regenie2StatisticBatch {
@@ -173,5 +191,16 @@ mod tests {
         batch.correction_code.as_mut().expect("test correction codes exist").pop();
         let error = validate_statistic_batch_lengths(&batch, 4).expect_err("mismatched correction codes must fail");
         assert!(error.to_string().contains("correction-code value count 3"));
+    }
+
+    #[test]
+    fn active_trait_indices_are_prevalidated_for_bounds_and_duplicates() {
+        validate_active_trait_indices(3, Some(&[2, 0])).expect("unique in-bounds indices are valid");
+        let duplicate_error =
+            validate_active_trait_indices(3, Some(&[1, 1])).expect_err("duplicate indices are rejected");
+        assert!(duplicate_error.to_string().contains("appears more than once"));
+        let bounds_error =
+            validate_active_trait_indices(3, Some(&[3])).expect_err("out-of-bounds indices are rejected");
+        assert!(bounds_error.to_string().contains("out of bounds"));
     }
 }

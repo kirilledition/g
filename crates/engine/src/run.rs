@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use g_genotype::Packed8Compatibility;
 use g_input::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest};
-use g_output::{CompletedOutputRun, ManifestFileFingerprintCache, OutputDeliveryState, OutputManager};
+use g_output::{
+    Active, Claimed, CompletedOutputRun, ManifestFileFingerprintCache, OutputDeliveryToken, OutputManager, Planned,
+};
 use g_plan::{GpuGenotypeFormat, RunPlan};
 
 use crate::backend::AssociationBackend;
@@ -96,7 +98,7 @@ pub(crate) enum RunExecutionError<BackendError, HookError> {
 /// Unprepared native run owning its canonical plan and output lifecycle.
 pub(crate) struct RunEngine {
     run_plan: Arc<RunPlan>,
-    output_manager: OutputManager,
+    output_manager: OutputManager<Planned>,
 }
 
 impl RunEngine {
@@ -121,8 +123,8 @@ impl RunEngine {
     ///
     /// Returns a typed error when BGEN preparation, input alignment, preflight,
     /// manifest construction, resume validation, or output initialization fails.
-    pub(crate) fn prepare(self) -> Result<PreparedRun, RunPreparationError> {
-        let Self { run_plan, mut output_manager } = self;
+    pub(crate) fn prepare(self) -> Result<ClaimedRun, RunPreparationError> {
+        let Self { run_plan, output_manager } = self;
         let chunk_size = positive_u32_as_usize(run_plan.chunk_size, "analysis chunk size")?;
         let genotype_input = PreparedGenotypeInput {
             reader: g_genotype::BgenReaderCore::open(Path::new(&run_plan.input.bgen_path))?,
@@ -147,29 +149,38 @@ impl RunEngine {
             g_input::resolve_prediction_loco_paths(Path::new(&run_plan.input.prediction_list_path), &phenotype_names)?;
         let groups = load_groups(&run_plan, &genotype_input, &phenotype_names, &prediction_loco_paths)?;
         validate_groups(&run_plan, &groups)?;
-        let prepared_groups = prepare_output_groups(
+        let ClaimedOutputGroups { header_inputs, output_manager } = prepare_output_claim(
             &run_plan,
-            groups,
+            &groups,
             &prediction_loco_paths,
-            &mut output_manager,
+            output_manager,
             resolved_gpu_genotype_format,
             genotype_input.reader.source_identity(),
             genotype_input.reader.variant_count(),
             &planned_chunk_ranges,
         )?;
-        Ok(PreparedRun {
-            run_plan,
-            resolved_gpu_genotype_format,
-            genotype_input,
-            groups: prepared_groups,
-            output_manager,
-        })
+        Ok(ClaimedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, header_inputs, output_manager })
     }
 }
 
 struct PreparedAssociationGroup {
     group: AlignedPhenotypeGroup,
-    output: OutputDeliveryState,
+    output: OutputDeliveryToken,
+}
+
+struct ClaimedOutputGroups {
+    header_inputs: Vec<g_output::CurrentRunManifestHeaderInput>,
+    output_manager: OutputManager<Claimed>,
+}
+
+/// Read-only prepared inputs with exclusive output ownership but no attempt authority.
+pub(crate) struct ClaimedRun {
+    run_plan: Arc<RunPlan>,
+    resolved_gpu_genotype_format: GpuGenotypeFormat,
+    genotype_input: PreparedGenotypeInput,
+    groups: Vec<AlignedPhenotypeGroup>,
+    header_inputs: Vec<g_output::CurrentRunManifestHeaderInput>,
+    output_manager: OutputManager<Claimed>,
 }
 
 /// Fully prepared run awaiting one association backend.
@@ -178,7 +189,67 @@ pub(crate) struct PreparedRun {
     resolved_gpu_genotype_format: GpuGenotypeFormat,
     genotype_input: PreparedGenotypeInput,
     groups: Vec<PreparedAssociationGroup>,
-    output_manager: OutputManager,
+    output_manager: OutputManager<Active>,
+}
+
+impl ClaimedRun {
+    /// Return the canonical run plan bound to this claim.
+    #[must_use]
+    pub(crate) fn run_plan(&self) -> &RunPlan {
+        &self.run_plan
+    }
+
+    /// Return the ownership-private diagnostics path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim staging is inconsistent.
+    pub(crate) fn diagnostics_directory(&self) -> Result<&Path, RunPreparationError> {
+        self.output_manager.diagnostics_directory().map_err(Into::into)
+    }
+
+    /// Return idempotent cleanup for staging that never becomes authoritative.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim staging is inconsistent.
+    pub(crate) fn cleanup_handle(&self) -> Result<g_output::OutputClaimCleanup, RunPreparationError> {
+        self.output_manager.cleanup_handle().map_err(Into::into)
+    }
+
+    /// Remove unpublished diagnostics and release output ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when staging cleanup or claim release fails.
+    pub(crate) fn abort_before_activation(self) -> Result<(), g_output::OutputError> {
+        self.output_manager.abort_before_activation()
+    }
+
+    /// Publish attempt authority after backend construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when output activation or delivery-token construction fails.
+    pub(crate) fn activate(self) -> Result<PreparedRun, RunPreparationError> {
+        let Self { run_plan, resolved_gpu_genotype_format, genotype_input, groups, header_inputs, output_manager } =
+            self;
+        let output_manager = output_manager.activate(header_inputs)?;
+        let prepared_groups = groups
+            .into_iter()
+            .map(|group| {
+                let output = output_manager.delivery_token_for_phenotypes(&group.phenotype_group.phenotype_names)?;
+                Ok(PreparedAssociationGroup { group, output })
+            })
+            .collect::<Result<Vec<_>, RunPreparationError>>()?;
+        Ok(PreparedRun {
+            run_plan,
+            resolved_gpu_genotype_format,
+            genotype_input,
+            groups: prepared_groups,
+            output_manager,
+        })
+    }
 }
 
 impl PreparedRun {
@@ -238,8 +309,7 @@ impl PreparedRun {
                     let request = AssociationDeliveryRequest {
                         group: prepared_group.group,
                         settings: AssociationDeliverySettings {
-                            writer_sessions: prepared_group.output.writer_sessions,
-                            committed_chunk_identifier_sets: prepared_group.output.committed_chunk_identifier_sets,
+                            output: prepared_group.output,
                             null_logistic_nonconvergence_policy: run_plan
                                 .compute
                                 .kernels
@@ -307,7 +377,7 @@ pub(crate) fn validate_jax_integer_domain(run_plan: &RunPlan) -> Result<(), RunP
 
 fn resolve_gpu_genotype_format(
     run_plan: &RunPlan,
-    output_manager: &OutputManager,
+    output_manager: &OutputManager<Planned>,
     genotype_input: &PreparedGenotypeInput,
 ) -> Result<GpuGenotypeFormat, RunPreparationError> {
     if let Some(manifest_format) = resumed_manifest_gpu_genotype_format(run_plan, output_manager)? {
@@ -329,7 +399,7 @@ fn resolve_gpu_genotype_format(
 
 fn resumed_manifest_gpu_genotype_format(
     run_plan: &RunPlan,
-    output_manager: &OutputManager,
+    output_manager: &OutputManager<Planned>,
 ) -> Result<Option<GpuGenotypeFormat>, RunPreparationError> {
     if !run_plan.output.resume {
         return Ok(None);
@@ -395,16 +465,16 @@ fn validate_groups(run_plan: &RunPlan, groups: &[AlignedPhenotypeGroup]) -> Resu
     Ok(())
 }
 
-fn prepare_output_groups(
+fn prepare_output_claim(
     run_plan: &RunPlan,
-    groups: Vec<AlignedPhenotypeGroup>,
+    groups: &[AlignedPhenotypeGroup],
     prediction_loco_paths: &[g_input::PredictionLocoPath],
-    output_manager: &mut OutputManager,
+    output_manager: OutputManager<Planned>,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
     bgen_source_identity: &g_genotype_contracts::BgenSourceIdentity,
     variant_count: usize,
     planned_chunk_ranges: &[Range<usize>],
-) -> Result<Vec<PreparedAssociationGroup>, RunPreparationError> {
+) -> Result<ClaimedOutputGroups, RunPreparationError> {
     let runtime_output_plan = RuntimeOutputPlan {
         variant_count,
         resolved_gpu_genotype_format,
@@ -414,7 +484,7 @@ fn prepare_output_groups(
     let all_prediction_loco_files: Arc<[g_output::PredictionLocoFileFingerprint]> =
         build_prediction_loco_file_fingerprints_with_cache(prediction_loco_paths, &mut fingerprint_cache)?.into();
     let mut run_initializations = Vec::with_capacity(run_plan.phenotype_runs.len());
-    for group in &groups {
+    for group in groups {
         run_initializations.extend(build_runtime_output_initializations(
             &RuntimeOutputGroupInput {
                 phenotype_group: &group.phenotype_group,
@@ -426,26 +496,22 @@ fn prepare_output_groups(
         )?);
     }
     let collect_stage_timings = matches!(run_plan.telemetry, g_plan::TelemetryMode::Profile);
-    output_manager.initialize(run_initializations, planned_chunk_ranges, collect_stage_timings)?;
-    groups
-        .into_iter()
-        .map(|group| {
-            let output = output_manager.delivery_state_for_phenotypes(&group.phenotype_group.phenotype_names)?;
-            Ok(PreparedAssociationGroup { group, output })
-        })
-        .collect()
+    let output_manager = output_manager.claim(planned_chunk_ranges, collect_stage_timings)?;
+    Ok(ClaimedOutputGroups { header_inputs: run_initializations, output_manager })
 }
 
 fn finish_execution<BackendError, Hooks>(
     delivery_result: Result<Vec<AssociationDeliveryReport>, DeliveryError<BackendError, Hooks::Error>>,
-    output_manager: OutputManager,
+    output_manager: OutputManager<Active>,
 ) -> Result<RunExecution, RunExecutionError<BackendError, Hooks::Error>>
 where
+    BackendError: std::error::Error,
     Hooks: RunHooks,
 {
     match delivery_result {
         Ok(delivery_reports) => output_manager
-            .finish()
+            .close_completed()
+            .and_then(OutputManager::finish)
             .map(|completed_outputs| RunExecution { completed_outputs, delivery_reports })
             .map_err(RunExecutionError::OutputFinish),
         Err(DeliveryError::Interrupted(interruption)) => {
@@ -455,9 +521,12 @@ where
                 Err(output) => Err(RunExecutionError::InterruptedOutputFlush { interruption, output }),
             }
         }
-        Err(delivery) => match output_manager.abort() {
-            Ok(()) => Err(RunExecutionError::Delivery(delivery)),
-            Err(output) => Err(RunExecutionError::DeliveryAbort { delivery: Box::new(delivery), output }),
-        },
+        Err(delivery) => {
+            let failure_reason = format!("association delivery failed: {delivery}");
+            match output_manager.abort(&failure_reason) {
+                Ok(()) => Err(RunExecutionError::Delivery(delivery)),
+                Err(output) => Err(RunExecutionError::DeliveryAbort { delivery: Box::new(delivery), output }),
+            }
+        }
     }
 }

@@ -7,11 +7,30 @@ import typing
 
 import pytest
 
-from tooling.benchmark import linear_startup
+from tooling.benchmark import linear_startup, native_lifecycle
 from tooling.common import g_regenie as tooling_g_regenie
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
+
+
+def completed_evidence(run_directory: Path, parquet_path: Path) -> native_lifecycle.CompletedOutputEvidence:
+    """Build minimal verified evidence returned by the shared boundary."""
+    return native_lifecycle.CompletedOutputEvidence(
+        run_directory=str(run_directory),
+        row_count=4,
+        committed_chunk_count=1,
+        parquet_file_count=1,
+        parquet_total_bytes=parquet_path.stat().st_size,
+        parquet_sha256=native_lifecycle.sha256_file(parquet_path),
+        parquet_paths=(str(parquet_path),),
+        schema="schema",
+        schema_metadata={"contract": "0"},
+        parquet_metadata=({"contract": "0"},),
+        manifest_path=str(run_directory / "run_manifest.json"),
+        manifest_sha256="a" * 64,
+        manifest={"status": "completed"},
+    )
 
 
 def test_clone_helpers_generate_current_multi_trait_inputs(tmp_path: Path) -> None:
@@ -147,6 +166,81 @@ def test_build_run_spec_renders_production_parquet_config(tmp_path: Path) -> Non
     assert parsed["compute"]["jax_cache_dir"] == str(tmp_path / "cache")
     assert parsed["output"]["writer_threads"] == 8
     assert parsed["diagnostics"] == {"telemetry": "off"}
+
+
+def test_output_evidence_preserves_cli_phenotype_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-phenotype aggregation uses verified CLI order without discovery."""
+    output_prefix = tmp_path / "linear"
+    output_root = output_prefix.with_name(f"{output_prefix.name}.g")
+    run_directories = [
+        output_root / "attempts" / "attempt-current" / "trait_0001_first",
+        output_root / "attempts" / "attempt-current" / "trait_0002_second",
+    ]
+    parquet_paths: list[Path] = []
+    for run_directory in run_directories:
+        parquet_path = run_directory / "parts" / "part_000000000.parquet"
+        parquet_path.parent.mkdir(parents=True)
+        parquet_path.write_bytes(run_directory.name.encode())
+        parquet_paths.append(parquet_path)
+    observed_arguments: dict[str, object] = {}
+
+    def fake_collect(
+        stdout_chunks: typing.Sequence[str],
+        *,
+        output_root: Path,
+        expected_phenotype_count: int,
+        run_label: str,
+    ) -> native_lifecycle.CompletedOutputEvidenceSet:
+        observed_arguments.update(
+            {
+                "stdout_chunks": tuple(stdout_chunks),
+                "output_root": output_root,
+                "expected_phenotype_count": expected_phenotype_count,
+                "run_label": run_label,
+            }
+        )
+        return native_lifecycle.CompletedOutputEvidenceSet(
+            runs=tuple(
+                completed_evidence(run_directory, parquet_path)
+                for run_directory, parquet_path in zip(run_directories, parquet_paths, strict=True)
+            ),
+            owner_authority=native_lifecycle.OwnerAuthorityEvidence(
+                files=(
+                    native_lifecycle.ImmutableFileEvidence(
+                        absolute_path="/test/session.claim.json",
+                        raw_sha256="c" * 64,
+                    ),
+                ),
+                aggregate_sha256="d" * 64,
+                released_state_id="test-released-state",
+            ),
+            immutable_authority=native_lifecycle.ImmutableAuthorityEvidence(
+                files=(
+                    native_lifecycle.ImmutableFileEvidence(
+                        absolute_path="/test/session.claim.json",
+                        raw_sha256="c" * 64,
+                    ),
+                ),
+                aggregate_sha256="d" * 64,
+            ),
+        )
+
+    monkeypatch.setattr(native_lifecycle, "collect_completed_output_evidence", fake_collect)
+
+    evidence = linear_startup.collect_output_evidence(
+        output_prefix,
+        ("first artifact\n", "second artifact\n"),
+        expected_phenotype_count=2,
+        expected_variant_count=4,
+    )
+
+    assert evidence.run_directories == tuple(str(path) for path in run_directories)
+    assert observed_arguments["stdout_chunks"] == ("first artifact\n", "second artifact\n")
+    assert observed_arguments["output_root"] == output_root
+    assert observed_arguments["expected_phenotype_count"] == 2
 
 
 def test_profile_diagnostics_use_fresh_processes(tmp_path: Path) -> None:

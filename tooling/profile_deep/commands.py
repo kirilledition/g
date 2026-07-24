@@ -131,10 +131,11 @@ def build_g_step2_child_command(
         """
         import json
         import shutil
+        import sys
         import time
         from pathlib import Path
 
-        import g.cli
+        import g._core
         from tooling.benchmark import native_lifecycle
 
 
@@ -150,20 +151,25 @@ def build_g_step2_child_command(
             jax_module.profiler.start_trace(trace_directory)
         try:
             start_time = time.perf_counter()
-            exit_code = g.cli.run(cli_arguments)
+            native_result = g._core.cli.run(cli_arguments)
             wall_time_seconds = time.perf_counter() - start_time
         finally:
             if trace_directory is not None:
                 jax_module.profiler.stop_trace()
-        if exit_code != 0:
-            raise RuntimeError(f"g CLI exited with status {{exit_code}}.")
-        run_directory = native_lifecycle.discover_completed_run_directory(
-            expected_run_directory=None,
+        for output_text in native_result.stdout_chunks:
+            print(output_text, end="")
+        for output_text in native_result.stderr_chunks:
+            print(output_text, end="", file=sys.stderr)
+        if native_result.exit_code != 0:
+            raise RuntimeError(f"g CLI exited with status {{native_result.exit_code}}.")
+        verified_outputs = native_lifecycle.collect_completed_output_evidence(
+            native_result.stdout_chunks,
             output_root=output_root,
-            glob_pattern={run_glob_pattern!r},
+            expected_phenotype_count=1,
             run_label="deep profile child",
         )
-        output_evidence = native_lifecycle.measure_completed_output_run(run_directory)
+        output_evidence = verified_outputs.runs[0]
+        run_directory = Path(output_evidence.run_directory)
         output_paths = list(output_evidence.parquet_paths)
         if requested_stage_timing_path is not None:
             source_stage_timing_path = run_directory / "output_stage_timings.json"
@@ -183,6 +189,7 @@ def build_g_step2_child_command(
             "profile_summary_path": str(profile_summary_path) if profile_summary_path.exists() else None,
             "jax_cache_directory": {jax_cache_directory!r},
             "jax_persistent_cache_used": True,
+            "cli_stdout_chunks": list(native_result.stdout_chunks),
         }}))
         """
     ).format(
@@ -192,6 +199,5 @@ def build_g_step2_child_command(
         memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
         stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,
         jax_cache_directory=str(jax_cache_directory) if jax_cache_directory is not None else None,
-        run_glob_pattern=("*.regenie2_binary.run" if candidate.trait_type == "binary" else "*.regenie2_linear.run"),
     )
     return [sys.executable, "-c", child_code]

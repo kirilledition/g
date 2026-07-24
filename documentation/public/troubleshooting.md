@@ -150,8 +150,9 @@ changing production settings.
 
 ## Resume Does Not Reuse Existing Output
 
-Every resumable run writes `run_manifest.json` and `effective_config.toml`.
-Resume only when the manifest and execution-plan-affecting inputs still match.
+Every resumable run writes an immutable `.g-output` lineage plus per-attempt
+`run_manifest.json`, `effective_config.toml`, parts, and receipts. Resume only
+when the lineage and execution-plan-affecting inputs still match.
 
 Enable resume:
 
@@ -160,15 +161,30 @@ Enable resume:
 resume = true
 ```
 
-Resume always performs strict manifest and chunk-file reconciliation.
+Resume always performs strict lineage, manifest, receipt, footer, raw-hash, and
+chunk-coverage reconciliation.
 
 Common causes:
 
-- no `run_manifest.json` exists;
-- the output run directory exists but was not produced by the same analysis;
+- no valid `.g-output/genesis.json` exists;
+- a finalized terminal is missing a bound manifest, receipt, or part;
+- the output root was not produced by the same analysis;
 - a source file changed size or modification time;
 - a trait, covariate, binary correction, output, dtype, or multi-phenotype
   sample-mode option changed.
+
+If the leaf has no terminal because its process died abruptly, normal resume is
+intentionally refused. Set `recover_attempt` to that exact leaf attempt
+identifier as documented in [Resume and Manifest](resume-and-manifest.md).
+
+If the error reports a surviving owner claim, do not decide that it is stale
+from its age or from a PID lookup. First use the external scheduler or
+node-level coordinator to prove that the reported owner cannot write. Then
+resume with `--fenced-output-owner-claim <exact-claim-id>` (or
+`[output].fenced_owner_claim_id`) using the identifier from the error. A
+nonterminal attempt needs both this claim authorization and
+`recover_attempt`. A mismatched, absent, or historical claim identifier
+publishes no transition; authority records are never removed.
 
 See [Resume and Manifest](resume-and-manifest.md).
 
@@ -180,14 +196,13 @@ See [Resume and Manifest](resume-and-manifest.md).
 <out>.g/
 ```
 
-Look for per-phenotype directories such as:
+Look under the current immutable attempt:
 
 ```text
-trait_0001_phenotype.regenie2_linear.run/
-trait_0001_phenotype.regenie2_binary.run/
+attempts/attempt-<id>/trait_0001_<phenotype>/
 ```
 
-Results are the `parts/part_*.parquet` dataset inside each phenotype run
+Results are the `parts/part_*.parquet` dataset inside each phenotype attempt
 directory. See [Output Files](output-files.md).
 
 ## Some Parquet Parts Are Missing
@@ -199,9 +214,9 @@ If a run was interrupted or storage failed, rerun the same command with:
 resume = true
 ```
 
-Resume reconciles committed manifest chunks with Parquet files before
-writing the missing work. If writes continue to fail, inspect free space and
-permissions for the run directory and destination filesystem.
+Resume reconciles committed receipts with Parquet footer metadata and raw file
+hashes before writing missing work. If writes continue to fail, inspect free
+space and permissions for the output root and destination filesystem.
 
 ## Approximate Firth Reports a Failed Correction
 

@@ -6,4 +6,7 @@ pub use crate::backend::{
     TraitMajorMatrix,
 };
 pub use crate::run::RunHooks;
-pub use crate::run_coordinator::{EngineRunError, PhenotypeRunArtifact, execute_coordinated_run};
+pub use crate::run_coordinator::{
+    ClaimedCoordinatedRun, EngineClaimError, EngineRunError, PhenotypeRunArtifact, claim_coordinated_run,
+    execute_coordinated_run,
+};

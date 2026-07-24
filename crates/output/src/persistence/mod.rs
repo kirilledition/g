@@ -1,3 +1,4 @@
+pub(crate) mod attempt;
 pub(crate) mod identifier;
 pub(crate) mod io;
 pub(crate) mod lineage;

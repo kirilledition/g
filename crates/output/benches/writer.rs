@@ -9,8 +9,8 @@ use g_genotype_contracts::{
     BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
 };
 use g_output::{
-    CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager, OutputWriterSession,
-    Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
+    Active, CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken,
+    OutputManager, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 
 const BENCHMARK_CHUNK_ROW_COUNT: usize = 16_384;
@@ -45,8 +45,8 @@ struct BenchmarkChunk {
 }
 
 struct PreparedBenchmarkRun {
-    output_manager: OutputManager,
-    writer_sessions: Vec<Arc<OutputWriterSession>>,
+    output_manager: OutputManager<Active>,
+    delivery_token: OutputDeliveryToken,
     chunks: Vec<BenchmarkChunk>,
     benchmark_root: BenchmarkRoot,
 }
@@ -56,9 +56,23 @@ struct CompletedBenchmarkRun {
     benchmark_root: BenchmarkRoot,
 }
 
+struct BenchmarkDurabilityStageMetrics {
+    file_sync: f64,
+    file_hash: f64,
+    file_publish: f64,
+    directory_sync: f64,
+    receipt_publish: f64,
+    writer_total: f64,
+}
+
+struct BenchmarkOutputMetrics {
+    parquet_file_bytes: u64,
+    durability: BenchmarkDurabilityStageMetrics,
+}
+
 struct SubmittedBenchmarkRun {
-    output_manager: OutputManager,
-    writer_sessions: Vec<Arc<OutputWriterSession>>,
+    output_manager: OutputManager<Active>,
+    delivery_token: OutputDeliveryToken,
     benchmark_root: BenchmarkRoot,
 }
 
@@ -112,6 +126,7 @@ fn benchmark_run_plan(
             output_run_root: output_root.display().to_string(),
             resume: false,
             recover_attempt: None,
+            fenced_owner_claim_id: None,
             writer_thread_count,
         },
         telemetry: g_plan::TelemetryMode::Off,
@@ -368,6 +383,7 @@ fn prepare_benchmark_run(
     benchmark_name: &str,
     correction_pattern: CorrectionPattern,
     writer_thread_count: u32,
+    collect_stage_timings: bool,
 ) -> PreparedBenchmarkRun {
     let benchmark_root = unique_benchmark_root(benchmark_name);
     std::fs::create_dir_all(&benchmark_root.root_path).expect("benchmark root should be created");
@@ -386,33 +402,32 @@ fn prepare_benchmark_run(
         &prediction_list_path,
         writer_thread_count,
     ));
-    let mut output_manager = OutputManager::open(run_plan, "# benchmark configuration\n".to_string())
+    let output_manager = OutputManager::open(run_plan, "# benchmark configuration\n".to_string())
         .expect("benchmark output manager should open");
     let planned_chunk_ranges = (0..BENCHMARK_CHUNK_COUNT).map(benchmark_chunk_range).collect::<Vec<Range<usize>>>();
-    output_manager
+    let output_manager = output_manager
         .initialize(
             vec![benchmark_manifest_header(&bgen_path, BENCHMARK_TOTAL_ROW_COUNT)],
             &planned_chunk_ranges,
-            false,
+            collect_stage_timings,
         )
         .expect("benchmark output manager should initialize");
-    let writer_sessions = output_manager
-        .delivery_state_for_phenotypes(&[BENCHMARK_PHENOTYPE_NAME.to_string()])
-        .expect("benchmark output delivery state should be available")
-        .writer_sessions;
+    let delivery_token = output_manager
+        .delivery_token_for_phenotypes(&[BENCHMARK_PHENOTYPE_NAME.to_string()])
+        .expect("benchmark output delivery token should be available");
     let metadata_store = benchmark_metadata_store(BENCHMARK_TOTAL_ROW_COUNT);
     let chunks = (0..BENCHMARK_CHUNK_COUNT)
         .map(|chunk_index| benchmark_chunk(&metadata_store, chunk_index, correction_pattern))
         .collect();
-    PreparedBenchmarkRun { output_manager, writer_sessions, chunks, benchmark_root }
+    PreparedBenchmarkRun { output_manager, delivery_token, chunks, benchmark_root }
 }
 
 fn submit_benchmark_run(prepared_run: PreparedBenchmarkRun, chunk_interval: Option<Duration>) -> SubmittedBenchmarkRun {
-    let PreparedBenchmarkRun { output_manager, writer_sessions, chunks, benchmark_root } = prepared_run;
+    let PreparedBenchmarkRun { output_manager, delivery_token, chunks, benchmark_root } = prepared_run;
     let chunk_count = chunks.len();
     for (chunk_index, benchmark_chunk) in chunks.into_iter().enumerate() {
         write_regenie2_multi_trait_chunk_f32(
-            &writer_sessions,
+            &delivery_token,
             None,
             &benchmark_chunk.chunk_handle,
             benchmark_chunk.statistic_batch,
@@ -424,20 +439,29 @@ fn submit_benchmark_run(prepared_run: PreparedBenchmarkRun, chunk_interval: Opti
             std::thread::sleep(interval);
         }
     }
-    SubmittedBenchmarkRun { output_manager, writer_sessions, benchmark_root }
+    SubmittedBenchmarkRun { output_manager, delivery_token, benchmark_root }
 }
 
 fn finish_benchmark_run(submitted_run: SubmittedBenchmarkRun) -> CompletedBenchmarkRun {
-    let SubmittedBenchmarkRun { output_manager, writer_sessions, benchmark_root } = submitted_run;
-    drop(writer_sessions);
-    let completed_outputs = output_manager.finish().expect("benchmark output manager should finish");
+    let SubmittedBenchmarkRun { output_manager, delivery_token, benchmark_root } = submitted_run;
+    drop(delivery_token);
+    let completed_outputs = output_manager
+        .close_completed()
+        .expect("benchmark output should have exact coverage")
+        .finish()
+        .expect("benchmark output manager should finish");
     CompletedBenchmarkRun { completed_outputs, benchmark_root }
 }
 
-fn measure_parquet_file_bytes(benchmark_name: &str, correction_pattern: CorrectionPattern) -> u64 {
-    let completed_run =
-        finish_benchmark_run(submit_benchmark_run(prepare_benchmark_run(benchmark_name, correction_pattern, 8), None));
-    completed_run
+fn measure_benchmark_output_metrics(
+    benchmark_name: &str,
+    correction_pattern: CorrectionPattern,
+) -> BenchmarkOutputMetrics {
+    let completed_run = finish_benchmark_run(submit_benchmark_run(
+        prepare_benchmark_run(benchmark_name, correction_pattern, 8, true),
+        None,
+    ));
+    let parquet_file_bytes = completed_run
         .completed_outputs
         .iter()
         .flat_map(|completed_output| {
@@ -447,18 +471,56 @@ fn measure_parquet_file_bytes(benchmark_name: &str, correction_pattern: Correcti
         })
         .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "parquet"))
         .map(|entry| entry.metadata().expect("benchmark part metadata should be readable").len())
-        .sum()
+        .sum();
+    let run_directory =
+        &completed_run.completed_outputs.first().expect("benchmark should complete one output").run_directory;
+    let timing_text = std::fs::read_to_string(run_directory.join("output_stage_timings.json"))
+        .expect("benchmark stage timing should be readable");
+    let timing_value: serde_json::Value =
+        serde_json::from_str(&timing_text).expect("benchmark stage timing should be valid JSON");
+    BenchmarkOutputMetrics {
+        parquet_file_bytes,
+        durability: BenchmarkDurabilityStageMetrics {
+            file_sync: benchmark_stage_seconds(&timing_value, "rust_output_writer_parquet_file_sync"),
+            file_hash: benchmark_stage_seconds(&timing_value, "rust_output_writer_parquet_file_hash"),
+            file_publish: benchmark_stage_seconds(&timing_value, "rust_output_writer_parquet_file_publish"),
+            directory_sync: benchmark_stage_seconds(&timing_value, "rust_output_writer_parquet_directory_sync"),
+            receipt_publish: benchmark_stage_seconds(&timing_value, "rust_output_writer_receipt_publish"),
+            writer_total: benchmark_stage_seconds(&timing_value, "rust_output_writer_total"),
+        },
+    }
+}
+
+fn benchmark_stage_seconds(timing_value: &serde_json::Value, stage_name: &str) -> f64 {
+    timing_value["stage_totals_seconds"][stage_name]
+        .as_f64()
+        .unwrap_or_else(|| panic!("benchmark stage '{stage_name}' should be a floating-point number"))
 }
 
 fn bench_binary_parquet_writer(criterion: &mut Criterion) {
     let mut benchmark_group = criterion.benchmark_group("binary_parquet_writer");
-    let score_only_file_bytes = measure_parquet_file_bytes("score_only_size", CorrectionPattern::ScoreOnly);
-    let firth_success_file_bytes = measure_parquet_file_bytes("firth_success_size", CorrectionPattern::FirthSuccesses);
+    let score_only_metrics = measure_benchmark_output_metrics("score_only_size", CorrectionPattern::ScoreOnly);
+    let firth_success_metrics =
+        measure_benchmark_output_metrics("firth_success_size", CorrectionPattern::FirthSuccesses);
     let observed_firth_success_count =
         (0..BENCHMARK_TOTAL_ROW_COUNT).filter(|variant_index| benchmark_correction_code(*variant_index) == 2).count();
     assert_eq!(observed_firth_success_count, BENCHMARK_FIRTH_SUCCESS_COUNT);
     eprintln!(
-        "binary_parquet_writer rows={BENCHMARK_TOTAL_ROW_COUNT} tail_rows={BENCHMARK_TAIL_ROW_COUNT} firth_successes={observed_firth_success_count} firth_failures=0 score_only_bytes={score_only_file_bytes} firth_success_bytes={firth_success_file_bytes}"
+        "binary_parquet_writer rows={BENCHMARK_TOTAL_ROW_COUNT} tail_rows={BENCHMARK_TAIL_ROW_COUNT} firth_successes={observed_firth_success_count} firth_failures=0 score_only_bytes={} firth_success_bytes={} score_only_file_sync_seconds={} score_only_file_hash_seconds={} score_only_file_publish_seconds={} score_only_directory_sync_seconds={} score_only_receipt_publish_seconds={} score_only_writer_total_seconds={} firth_file_sync_seconds={} firth_file_hash_seconds={} firth_file_publish_seconds={} firth_directory_sync_seconds={} firth_receipt_publish_seconds={} firth_writer_total_seconds={}",
+        score_only_metrics.parquet_file_bytes,
+        firth_success_metrics.parquet_file_bytes,
+        score_only_metrics.durability.file_sync,
+        score_only_metrics.durability.file_hash,
+        score_only_metrics.durability.file_publish,
+        score_only_metrics.durability.directory_sync,
+        score_only_metrics.durability.receipt_publish,
+        score_only_metrics.durability.writer_total,
+        firth_success_metrics.durability.file_sync,
+        firth_success_metrics.durability.file_hash,
+        firth_success_metrics.durability.file_publish,
+        firth_success_metrics.durability.directory_sync,
+        firth_success_metrics.durability.receipt_publish,
+        firth_success_metrics.durability.writer_total,
     );
     benchmark_group.throughput(Throughput::Elements(
         u64::try_from(BENCHMARK_TOTAL_ROW_COUNT).expect("benchmark row count should fit uint64"),
@@ -466,7 +528,7 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
     for writer_thread_count in BENCHMARK_WRITER_THREAD_COUNTS {
         benchmark_group.bench_function(format!("score_only_chr22/writers_{writer_thread_count}"), |bencher| {
             bencher.iter_batched(
-                || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly, writer_thread_count),
+                || prepare_benchmark_run("score_only", CorrectionPattern::ScoreOnly, writer_thread_count, false),
                 |prepared_run| {
                     let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
                     std::hint::black_box(&completed_run.completed_outputs);
@@ -478,7 +540,14 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
         });
         benchmark_group.bench_function(format!("firth_success_chr22/writers_{writer_thread_count}"), |bencher| {
             bencher.iter_batched(
-                || prepare_benchmark_run("firth_success", CorrectionPattern::FirthSuccesses, writer_thread_count),
+                || {
+                    prepare_benchmark_run(
+                        "firth_success",
+                        CorrectionPattern::FirthSuccesses,
+                        writer_thread_count,
+                        false,
+                    )
+                },
                 |prepared_run| {
                     let completed_run = finish_benchmark_run(submit_benchmark_run(prepared_run, None));
                     std::hint::black_box(&completed_run.completed_outputs);
@@ -498,6 +567,7 @@ fn bench_binary_parquet_writer(criterion: &mut Criterion) {
                                 "firth_success_paced",
                                 CorrectionPattern::FirthSuccesses,
                                 writer_thread_count,
+                                false,
                             ),
                             Some(BENCHMARK_PACED_CHUNK_INTERVAL),
                         )

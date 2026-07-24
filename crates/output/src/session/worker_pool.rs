@@ -4,7 +4,7 @@ use std::thread::{Builder, JoinHandle};
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::error::OutputError;
-use crate::persistence::model::OutputChunkCommit;
+use crate::persistence::receipt::OutputPartReceipt;
 use crate::timing::OutputStageTimingAccumulator;
 use crate::writer::{RegenieStep2ChunkWriteBatch, write_regenie_step2_chunk_job};
 
@@ -19,7 +19,7 @@ struct OutputWriteTaskPayload {
     write_batch: RegenieStep2ChunkWriteBatch,
     config: Arc<OutputWriterConfig>,
     worker_error: Arc<Mutex<Option<String>>>,
-    worker_commits: Arc<Mutex<Vec<OutputChunkCommit>>>,
+    worker_receipts: Arc<Mutex<Vec<OutputPartReceipt>>>,
     stage_timings: Arc<Mutex<OutputStageTimingAccumulator>>,
 }
 
@@ -161,7 +161,7 @@ impl OutputWriterClient {
         write_batch: RegenieStep2ChunkWriteBatch,
         config: &Arc<OutputWriterConfig>,
         worker_error: &Arc<Mutex<Option<String>>>,
-        worker_commits: &Arc<Mutex<Vec<OutputChunkCommit>>>,
+        worker_receipts: &Arc<Mutex<Vec<OutputPartReceipt>>>,
         stage_timings: &Arc<Mutex<OutputStageTimingAccumulator>>,
         completion_ticket: OutputWriteCompletionTicket,
     ) -> Result<(), OutputError> {
@@ -173,7 +173,7 @@ impl OutputWriterClient {
                 write_batch,
                 config: Arc::clone(config),
                 worker_error: Arc::clone(worker_error),
-                worker_commits: Arc::clone(worker_commits),
+                worker_receipts: Arc::clone(worker_receipts),
                 stage_timings: Arc::clone(stage_timings),
             },
             completion_ticket,
@@ -275,8 +275,7 @@ fn run_output_write_task(output_write_task: OutputWriteTaskPayload) {
     #[cfg(test)]
     output_write_task.config.pause_worker_before_write_for_test();
     let write_result = write_regenie_step2_chunk_job(
-        &output_write_task.config.parts_directory,
-        &output_write_task.config.transaction_identifier,
+        &output_write_task.config.part_publication,
         output_write_task.write_batch,
         output_write_task.config.collect_stage_timings,
     );
@@ -292,14 +291,14 @@ fn run_output_write_task(output_write_task: OutputWriteTaskPayload) {
                 };
                 stage_timings_guard.add_writer_timing(write_result.timing);
             }
-            let Ok(mut worker_commits_guard) = output_write_task.worker_commits.lock() else {
+            let Ok(mut worker_receipts_guard) = output_write_task.worker_receipts.lock() else {
                 record_worker_error(
                     &output_write_task.worker_error,
-                    "Rust output writer commit lock was poisoned.".to_string(),
+                    "Rust output writer receipt lock was poisoned.".to_string(),
                 );
                 return;
             };
-            worker_commits_guard.extend(write_result.chunk_commits);
+            worker_receipts_guard.push(write_result.part_receipt);
         }
         Err(error) => {
             record_worker_error(&output_write_task.worker_error, error.to_string());
@@ -318,8 +317,9 @@ mod tests {
 
     use crossbeam_channel::bounded;
 
-    use crate::persistence::model::OutputTransactionIdentifier;
+    use crate::persistence::model::{CanonicalChunkPlan, OutputPartBinding, OutputTransactionIdentifier};
     use crate::timing::OutputStageTimingAccumulator;
+    use crate::writer::OutputPartPublication;
     use crate::writer::RegenieStep2ChunkWriteBatch;
 
     use super::{
@@ -327,6 +327,11 @@ mod tests {
         StartedOutputWriterPool, record_worker_error, run_output_writer_worker,
     };
     use crate::session::writer_session::OutputWriterConfig;
+
+    fn single_chunk_plan() -> CanonicalChunkPlan {
+        let chunk_range = 0..1;
+        CanonicalChunkPlan::try_new(std::slice::from_ref(&chunk_range)).expect("test chunk plan builds")
+    }
 
     fn empty_write_task(completion_tracker: &OutputWriteCompletionTracker, chunk_file_name: &str) -> OutputWriteTask {
         OutputWriteTask {
@@ -337,13 +342,25 @@ mod tests {
                 },
                 config: Arc::new(OutputWriterConfig {
                     run_directory: PathBuf::from("unused-run"),
-                    parts_directory: PathBuf::from("unused-parts"),
-                    transaction_identifier: OutputTransactionIdentifier::for_test("empty-write-task"),
+                    part_publication: OutputPartPublication {
+                        parts_directory: PathBuf::from("unused-parts"),
+                        commits_directory: PathBuf::from("unused-commits"),
+                        temporary_identifier: OutputTransactionIdentifier::for_test("empty-write-task"),
+                        binding: OutputPartBinding {
+                            run_set_id: "run-set-test".to_string(),
+                            attempt_id: OutputTransactionIdentifier::for_test("attempt-test"),
+                            phenotype_name: "trait-a".to_string(),
+                            execution_plan_sha256: "a".repeat(64),
+                            chunk_plan_sha256: "b".repeat(64),
+                        },
+                    },
+                    canonical_chunk_plan: single_chunk_plan(),
+                    initial_receipts: Vec::new(),
                     collect_stage_timings: false,
                     worker_before_write_hook: Mutex::new(None),
                 }),
                 worker_error: Arc::new(Mutex::new(None)),
-                worker_commits: Arc::new(Mutex::new(Vec::new())),
+                worker_receipts: Arc::new(Mutex::new(Vec::new())),
                 stage_timings: Arc::new(Mutex::new(OutputStageTimingAccumulator::default())),
             },
             completion_ticket: completion_tracker.reserve().expect("test write ticket is reserved"),
@@ -380,19 +397,31 @@ mod tests {
         let ticket = tracker.reserve().expect("pending write is reserved");
         let config = Arc::new(OutputWriterConfig {
             run_directory: PathBuf::from("unused-run"),
-            parts_directory: PathBuf::from("unused-parts"),
-            transaction_identifier: OutputTransactionIdentifier::for_test("closed-client"),
+            part_publication: OutputPartPublication {
+                parts_directory: PathBuf::from("unused-parts"),
+                commits_directory: PathBuf::from("unused-commits"),
+                temporary_identifier: OutputTransactionIdentifier::for_test("closed-client"),
+                binding: OutputPartBinding {
+                    run_set_id: "run-set-test".to_string(),
+                    attempt_id: OutputTransactionIdentifier::for_test("attempt-test"),
+                    phenotype_name: "trait-a".to_string(),
+                    execution_plan_sha256: "a".repeat(64),
+                    chunk_plan_sha256: "b".repeat(64),
+                },
+            },
+            canonical_chunk_plan: single_chunk_plan(),
+            initial_receipts: Vec::new(),
             collect_stage_timings: false,
             worker_before_write_hook: Mutex::new(None),
         });
         let worker_error = Arc::new(Mutex::new(None));
-        let worker_commits = Arc::new(Mutex::new(Vec::new()));
+        let worker_receipts = Arc::new(Mutex::new(Vec::new()));
         let stage_timings = Arc::new(Mutex::new(OutputStageTimingAccumulator::default()));
         let write_batch =
             RegenieStep2ChunkWriteBatch { chunk_file_name: "unused.parquet".to_string(), chunks: Vec::new() };
 
         let error = retained_client
-            .enqueue_regenie_step2(write_batch, &config, &worker_error, &worker_commits, &stage_timings, ticket)
+            .enqueue_regenie_step2(write_batch, &config, &worker_error, &worker_receipts, &stage_timings, ticket)
             .expect_err("centrally closed admission rejects the task");
 
         assert!(error.to_string().contains("writer pool is closed"));

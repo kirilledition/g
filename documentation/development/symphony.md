@@ -97,7 +97,7 @@ Validation:
 - just data-verify-binary-gpu-inputs
 - GWAS_ENGINE_DATA_DIR=/mnt/beegfs/kirill/Projects/g/data just slurm-gpu-just bench-binary-hot-gpu-smoke
 Expected output:
-- data/regenie2_binary_chr22_gpu_smoke.g/trait_0001_phenotype_binary.regenie2_binary.run/parts/*.parquet
+- data/regenie2_binary_chr22_gpu_smoke.g/attempts/attempt-<id>/trait_0001_phenotype_binary/parts/*.parquet
 ```
 
 If required data, external tools, SLURM capacity, or the GPU node is unavailable,

@@ -205,6 +205,7 @@ not TOML aliases.
 | `--bsize N` | `[trait] bsize = N` |
 | `--out PATH` | `[output] out = "PATH"` |
 | `--recover-output-attempt ATTEMPT_ID` | `[output] recover_attempt = "ATTEMPT_ID"` |
+| `--fenced-output-owner-claim CLAIM_ID` | `[output] fenced_owner_claim_id = "CLAIM_ID"` |
 | `--binary-fallback METHOD` | `[binary] fallback_method = METHOD` |
 | `--pThresh VALUE` | `[binary] p_threshold = VALUE` |
 | `--firth-se` | `[binary] firth_se = true` |
@@ -238,6 +239,13 @@ are intentionally not accepted as configuration keys.
 attempt. It requires `resume = true` and the exact path-safe attempt identifier.
 Normal resume after a durable interruption or failure terminal does not set it.
 
+`fenced_owner_claim_id` is a one-shot crash-recovery assertion. Use it only
+after an external scheduler or node-level coordinator has proved that the host
+and process reported in the surviving-claim error can no longer write. It
+requires `resume = true`; the exact claim identifier must still be the current
+Active authority leaf. The runtime never infers fencing from age or PID state
+and never deletes an authority record.
+
 ## Trait And Column Semantics
 
 Repeated `--phenoCol` and `--covarCol` flags append names. No `*ColList` CLI
@@ -254,17 +262,19 @@ Trait mode is resolved from `trait_type`, `qt`, and `bt`:
 
 ## Effective Config And Manifest
 
-Each phenotype output run writes:
+Each phenotype within an immutable attempt writes:
 
 ```text
-effective_config.toml
-run_manifest.json
+attempts/<attempt-id>/<phenotype-output-name>/
+  effective_config.toml
+  run_manifest.json
 ```
 
 `effective_config.toml` is the final merged config. `run_manifest.json` records
 execution-plan-affecting inputs and settings, file fingerprints, sample/variant
-counts, output writer settings, and committed chunks. Resume compares the
-requested run against this manifest before reusing chunks.
+counts, output writer settings, immutable receipts, and committed chunks.
+Resume traverses the `.g-output` lineage and compares the requested run against
+every bound manifest before reusing chunks.
 
 See [Resume and Manifest](resume-and-manifest.md) for strict resume behavior and
 compatibility checks.

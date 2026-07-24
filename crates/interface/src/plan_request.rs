@@ -121,6 +121,7 @@ fn build_output_plan(config: &RegenieConfigData) -> ConfigResult<plan::OutputPla
         output_run_root,
         resume: config.g_output.resume,
         recover_attempt: config.g_output.recover_attempt.clone(),
+        fenced_owner_claim_id: config.g_output.fenced_owner_claim_id.clone(),
         writer_thread_count: config.g_output.writer_threads.get(),
     })
 }

@@ -1,7 +1,17 @@
+use std::path::PathBuf;
+
 use arrow::array::ArrayRef;
 
 use crate::NativeChunkHandle;
-use crate::persistence::model::OutputChunkCommit;
+use crate::persistence::model::{OutputPartBinding, OutputTransactionIdentifier};
+use crate::persistence::receipt::OutputPartReceipt;
+
+pub(crate) struct OutputPartPublication {
+    pub(crate) parts_directory: PathBuf,
+    pub(crate) commits_directory: PathBuf,
+    pub(crate) temporary_identifier: OutputTransactionIdentifier,
+    pub(crate) binding: OutputPartBinding,
+}
 
 pub(crate) struct RegenieStep2ChunkJob {
     pub(crate) chunk_handle: NativeChunkHandle,
@@ -71,14 +81,18 @@ pub(crate) struct RegenieStep2ChunkWriteTiming {
     pub(crate) parquet_writer_init_seconds: f64,
     pub(crate) parquet_batch_write_seconds: f64,
     pub(crate) parquet_writer_finish_seconds: f64,
-    pub(crate) parquet_file_rename_seconds: f64,
+    pub(crate) parquet_file_sync_seconds: f64,
+    pub(crate) parquet_file_hash_seconds: f64,
+    pub(crate) parquet_file_publish_seconds: f64,
+    pub(crate) parquet_directory_sync_seconds: f64,
+    pub(crate) receipt_publish_seconds: f64,
     pub(crate) arrow_array_memory_bytes: u64,
     pub(crate) parquet_file_bytes: u64,
     pub(crate) total_seconds: f64,
 }
 
 pub(crate) struct RegenieStep2ChunkWriteResult {
-    pub(crate) chunk_commits: Vec<OutputChunkCommit>,
+    pub(crate) part_receipt: OutputPartReceipt,
     pub(crate) timing: RegenieStep2ChunkWriteTiming,
 }
 

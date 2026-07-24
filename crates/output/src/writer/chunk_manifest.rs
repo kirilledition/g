@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use crate::persistence::model::OutputChunkCommit;
 
 use super::{OutputResult, RegenieStep2ChunkWriteBatch};
@@ -25,22 +23,6 @@ pub(super) fn build_run_manifest_chunk_commits(
             })
         })
         .collect()
-}
-
-pub(super) fn build_chunk_commit_metadata_text(chunk_commits: &[OutputChunkCommit]) -> OutputResult<String> {
-    let chunk_commit_values = chunk_commits
-        .iter()
-        .map(|chunk_commit| {
-            json!({
-                "chunk_identifier": chunk_commit.chunk_identifier,
-                "variant_start_index": chunk_commit.variant_start_index,
-                "variant_stop_index": chunk_commit.variant_stop_index,
-                "row_count": chunk_commit.row_count,
-                "chunk_file_name": chunk_commit.chunk_file_name,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::to_string(&chunk_commit_values).map_err(crate::error::OutputError::runtime)
 }
 
 pub(crate) fn build_part_file_name(first_chunk_identifier: i64, last_chunk_identifier: i64) -> String {

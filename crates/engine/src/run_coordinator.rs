@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::time::Instant;
+use std::{error::Error, fmt};
 
 use g_runtime::{StageTimingRecorder, TelemetryRunError, TelemetryRunSession};
 use serde::Serialize;
@@ -91,6 +92,10 @@ pub(crate) enum CoordinatedRunDetailError<BackendError, HookError> {
     AssociationWarningCountOutOfRange,
     #[error("Native run completed without a phenotype output.")]
     MissingPhenotypeOutput,
+    #[error("Native run completed with {actual} phenotype outputs, but the run plan requires {expected}.")]
+    PhenotypeOutputCountMismatch { expected: usize, actual: usize },
+    #[error("Native run completed with a non-absolute or non-UTF-8 output path.")]
+    InvalidCompletedOutputPath,
 }
 
 /// Failure reported by the coarse engine entry point.
@@ -102,6 +107,62 @@ pub enum EngineRunError<HookError> {
     Interrupted(HookError),
 }
 
+/// Failure before an output claim can be returned to the runner.
+#[derive(Debug)]
+pub struct EngineClaimError {
+    message: String,
+}
+
+impl fmt::Display for EngineClaimError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(formatter)
+    }
+}
+
+impl Error for EngineClaimError {}
+
+/// Prepared native inputs with exclusive output ownership and no attempt authority.
+pub struct ClaimedCoordinatedRun {
+    run: crate::run::ClaimedRun,
+}
+
+impl ClaimedCoordinatedRun {
+    /// Return the canonical plan associated with this claim.
+    #[must_use]
+    pub fn run_plan(&self) -> &g_plan::RunPlan {
+        self.run.run_plan()
+    }
+
+    /// Return the ownership-private diagnostics directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim staging is inconsistent.
+    pub fn diagnostics_directory(&self) -> Result<&std::path::Path, EngineClaimError> {
+        self.run.diagnostics_directory().map_err(engine_claim_error)
+    }
+
+    /// Return idempotent cleanup for diagnostics that remain unpublished.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim staging is inconsistent.
+    pub fn cleanup_handle(&self) -> Result<g_output::OutputClaimCleanup, EngineClaimError> {
+        self.run.cleanup_handle().map_err(engine_claim_error)
+    }
+
+    /// Remove the unpublished attempt reservation and release ownership.
+    ///
+    /// Run-scoped diagnostics must be closed first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an output error when staging cleanup or claim release fails.
+    pub fn abort_before_activation(self) -> Result<(), g_output::OutputError> {
+        self.run.abort_before_activation()
+    }
+}
+
 /// One phenotype output produced by a completed engine run.
 #[derive(Debug, Eq, PartialEq)]
 pub struct PhenotypeRunArtifact {
@@ -109,14 +170,32 @@ pub struct PhenotypeRunArtifact {
     pub parquet_dataset_directory: String,
 }
 
-/// Prepare, execute, observe, and describe one native association run.
+/// Prepare read-only inputs and acquire exclusive output ownership.
+///
+/// # Errors
+///
+/// Returns an error before a native run session is opened when input
+/// preparation, output policy validation, or claim acquisition fails.
+pub fn claim_coordinated_run(
+    run_plan: g_plan::RunPlan,
+    effective_config_toml: String,
+) -> Result<ClaimedCoordinatedRun, EngineClaimError> {
+    let run =
+        RunEngine::open(run_plan, effective_config_toml).and_then(RunEngine::prepare).map_err(engine_claim_error)?;
+    Ok(ClaimedCoordinatedRun { run })
+}
+
+fn engine_claim_error(error: impl ToString) -> EngineClaimError {
+    EngineClaimError { message: error.to_string() }
+}
+
+/// Activate, execute, observe, and describe one claimed native association run.
 ///
 /// # Errors
 ///
 /// Returns a typed preparation, execution, telemetry, or diagnostic error.
 pub fn execute_coordinated_run<Backend, Hooks>(
-    run_plan: g_plan::RunPlan,
-    effective_config_toml: String,
+    claimed_run: ClaimedCoordinatedRun,
     backend: Arc<Backend>,
     hooks: &mut Hooks,
     telemetry_session: &TelemetryRunSession,
@@ -127,16 +206,8 @@ where
     Backend: AssociationBackend + 'static,
     Hooks: RunHooks,
 {
-    execute_coordinated_run_detail(
-        run_plan,
-        effective_config_toml,
-        backend,
-        hooks,
-        telemetry_session,
-        thread_name,
-        stage_timing_recorder,
-    )
-    .map_err(engine_run_error_from_detail)
+    execute_coordinated_run_detail(claimed_run, backend, hooks, telemetry_session, thread_name, stage_timing_recorder)
+        .map_err(engine_run_error_from_detail)
 }
 
 fn engine_run_error_from_detail<BackendError, HookError>(
@@ -155,8 +226,7 @@ where
 }
 
 fn execute_coordinated_run_detail<Backend, Hooks>(
-    run_plan: g_plan::RunPlan,
-    effective_config_toml: String,
+    claimed_run: ClaimedCoordinatedRun,
     backend: Arc<Backend>,
     hooks: &mut Hooks,
     telemetry_session: &TelemetryRunSession,
@@ -167,6 +237,7 @@ where
     Backend: AssociationBackend + 'static,
     Hooks: RunHooks,
 {
+    let run_plan = claimed_run.run.run_plan();
     let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())
         .map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;
     let association_mode = run_plan.association_mode;
@@ -189,7 +260,7 @@ where
         &EmptyDiagnosticFields {},
     )?;
     let preparation_start_time = Instant::now();
-    let prepared_run = RunEngine::open(run_plan, effective_config_toml)?.prepare()?;
+    let prepared_run = claimed_run.run.activate()?;
     let resolved_gpu_genotype_format = prepared_run.resolved_gpu_genotype_format();
     let association_backend_kind = match resolved_gpu_genotype_format {
         g_plan::GpuGenotypeFormat::Dosage => "jax_dosage",
@@ -296,13 +367,34 @@ fn complete_artifacts<BackendError, HookError>(
     phenotype_count: i64,
     single_phenotype_name: Option<&str>,
 ) -> Result<Vec<PhenotypeRunArtifact>, CoordinatedRunDetailError<BackendError, HookError>> {
+    let expected_phenotype_count =
+        usize::try_from(phenotype_count).map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;
+    if completed_outputs.len() != expected_phenotype_count {
+        return Err(CoordinatedRunDetailError::PhenotypeOutputCountMismatch {
+            expected: expected_phenotype_count,
+            actual: completed_outputs.len(),
+        });
+    }
     let artifacts = completed_outputs
         .into_iter()
-        .map(|run| PhenotypeRunArtifact {
-            output_run_directory: run.run_directory.display().to_string(),
-            parquet_dataset_directory: run.parts_directory.display().to_string(),
+        .map(|run| {
+            if !run.run_directory.is_absolute() || !run.parts_directory.is_absolute() {
+                return Err(CoordinatedRunDetailError::InvalidCompletedOutputPath);
+            }
+            Ok(PhenotypeRunArtifact {
+                output_run_directory: run
+                    .run_directory
+                    .to_str()
+                    .ok_or(CoordinatedRunDetailError::InvalidCompletedOutputPath)?
+                    .to_string(),
+                parquet_dataset_directory: run
+                    .parts_directory
+                    .to_str()
+                    .ok_or(CoordinatedRunDetailError::InvalidCompletedOutputPath)?
+                    .to_string(),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if phenotype_count == 1 {
         let phenotype_name = single_phenotype_name.ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
         let artifact = artifacts.first().ok_or(CoordinatedRunDetailError::MissingPhenotypeOutput)?;
@@ -378,8 +470,14 @@ mod tests {
     fn artifact_completion_preserves_output_order_and_validates_single_output() {
         let telemetry_session = TelemetryRunSession::default();
         let outputs = vec![
-            g_output::CompletedOutputRun { run_directory: "run-a".into(), parts_directory: "run-a/parts".into() },
-            g_output::CompletedOutputRun { run_directory: "run-b".into(), parts_directory: "run-b/parts".into() },
+            g_output::CompletedOutputRun {
+                run_directory: "/tmp/run-a".into(),
+                parts_directory: "/tmp/run-a/parts".into(),
+            },
+            g_output::CompletedOutputRun {
+                run_directory: "/tmp/run-b".into(),
+                parts_directory: "/tmp/run-b/parts".into(),
+            },
         ];
         let artifacts = complete_artifacts::<TestBackendError, TestInterruption>(
             outputs,
@@ -394,12 +492,12 @@ mod tests {
             artifacts,
             vec![
                 PhenotypeRunArtifact {
-                    output_run_directory: "run-a".to_string(),
-                    parquet_dataset_directory: "run-a/parts".to_string(),
+                    output_run_directory: "/tmp/run-a".to_string(),
+                    parquet_dataset_directory: "/tmp/run-a/parts".to_string(),
                 },
                 PhenotypeRunArtifact {
-                    output_run_directory: "run-b".to_string(),
-                    parquet_dataset_directory: "run-b/parts".to_string(),
+                    output_run_directory: "/tmp/run-b".to_string(),
+                    parquet_dataset_directory: "/tmp/run-b/parts".to_string(),
                 },
             ]
         );
@@ -413,13 +511,13 @@ mod tests {
                 1,
                 Some("trait"),
             ),
-            Err(CoordinatedRunDetailError::MissingPhenotypeOutput)
+            Err(CoordinatedRunDetailError::PhenotypeOutputCountMismatch { expected: 1, actual: 0 })
         ));
 
         let single_artifact = complete_artifacts::<TestBackendError, TestInterruption>(
             vec![g_output::CompletedOutputRun {
-                run_directory: "run-single".into(),
-                parts_directory: "run-single/parts".into(),
+                run_directory: "/tmp/run-single".into(),
+                parts_directory: "/tmp/run-single/parts".into(),
             }],
             &telemetry_session,
             "test-thread",
@@ -428,7 +526,22 @@ mod tests {
             Some("trait"),
         )
         .expect("single-phenotype artifact completes");
-        assert_eq!(single_artifact[0].output_run_directory, "run-single");
+        assert_eq!(single_artifact[0].output_run_directory, "/tmp/run-single");
+
+        assert!(matches!(
+            complete_artifacts::<TestBackendError, TestInterruption>(
+                vec![g_output::CompletedOutputRun {
+                    run_directory: "/tmp/run-a".into(),
+                    parts_directory: "/tmp/run-a/parts".into(),
+                }],
+                &telemetry_session,
+                "test-thread",
+                g_plan::AssociationMode::Regenie2Linear,
+                2,
+                None,
+            ),
+            Err(CoordinatedRunDetailError::PhenotypeOutputCountMismatch { expected: 2, actual: 1 })
+        ));
     }
 
     #[test]

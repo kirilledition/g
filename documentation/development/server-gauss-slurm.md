@@ -286,7 +286,7 @@ data/baselines/regenie_step1_pred.list
 Outputs are written under:
 
 ```bash
-data/regenie2_binary_chr22_gpu.g/trait_0001_phenotype_binary.regenie2_binary.run/
+data/regenie2_binary_chr22_gpu.g/attempts/attempt-<id>/trait_0001_phenotype_binary/
 ```
 
 ## Notes

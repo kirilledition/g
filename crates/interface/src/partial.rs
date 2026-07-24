@@ -289,6 +289,7 @@ pub(crate) struct PartialOutputConfig {
     pub(crate) writer_threads: Option<NonZeroU32>,
     pub(crate) resume: Option<bool>,
     pub(crate) recover_attempt: Option<String>,
+    pub(crate) fenced_owner_claim_id: Option<String>,
 }
 
 impl PartialOutputConfig {
@@ -299,6 +300,7 @@ impl PartialOutputConfig {
             writer_threads: required("writer_threads", self.writer_threads)?,
             resume: required("resume", self.resume)?,
             recover_attempt: self.recover_attempt,
+            fenced_owner_claim_id: self.fenced_owner_claim_id,
         })
     }
 }

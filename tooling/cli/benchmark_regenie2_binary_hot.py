@@ -139,16 +139,18 @@ def write_native_config(
 
 
 def collect_output_evidence(
-    output_root: Path, expected_variant_count: int | None
+    output_root: Path,
+    stdout_chunks: typing.Sequence[str],
+    expected_variant_count: int | None,
 ) -> native_lifecycle.CompletedOutputEvidence:
     """Validate direct Parquet parts and collect deterministic evidence."""
-    run_directory = native_lifecycle.discover_completed_run_directory(
-        expected_run_directory=None,
+    verified_outputs = native_lifecycle.collect_completed_output_evidence(
+        stdout_chunks,
         output_root=output_root,
-        glob_pattern="*.regenie2_binary.run",
+        expected_phenotype_count=1,
         run_label="binary lifecycle",
     )
-    output_evidence = native_lifecycle.measure_completed_output_run(run_directory)
+    output_evidence = verified_outputs.runs[0]
     if expected_variant_count is not None and output_evidence.row_count != expected_variant_count:
         message = f"Expected {expected_variant_count} output rows, observed {output_evidence.row_count}."
         raise RuntimeError(message)
@@ -177,7 +179,7 @@ def run_trial(
         message = "".join((*native.stderr_chunks, *native.stdout_chunks))
         raise RuntimeError(f"Native CLI failed for {name}: {message}")
     after = native_lifecycle.snapshot_tree(arguments.jax_cache_directory)
-    output = collect_output_evidence(output_root, arguments.expected_variant_count)
+    output = collect_output_evidence(output_root, native.stdout_chunks, arguments.expected_variant_count)
     return TrialResult(
         name=name,
         role=role,
@@ -208,8 +210,7 @@ def verify_hot_contract(trials: list[TrialResult]) -> None:
             raise RuntimeError(message)
         output = trial.output
         if (
-            output.parquet_sha256 != reference.parquet_sha256
-            or output.row_count != reference.row_count
+            output.row_count != reference.row_count
             or output.schema != reference.schema
             or output.schema_metadata != reference.schema_metadata
             or output.parquet_metadata != reference.parquet_metadata

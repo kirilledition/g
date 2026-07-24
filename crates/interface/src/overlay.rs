@@ -160,6 +160,7 @@ impl PartialOutputConfig {
         overlay_option!(self, override_config, writer_threads);
         overlay_option!(self, override_config, resume);
         overlay_option!(self, override_config, recover_attempt);
+        overlay_option!(self, override_config, fenced_owner_claim_id);
     }
 }
 

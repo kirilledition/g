@@ -9,7 +9,6 @@ mod error;
 mod manager;
 mod manifest;
 mod persistence;
-mod resume;
 mod schema;
 mod session;
 mod timing;

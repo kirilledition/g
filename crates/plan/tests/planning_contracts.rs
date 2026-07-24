@@ -99,6 +99,7 @@ fn build_test_run_plan() -> RunPlan {
             output_run_root: "results/analysis.run".to_string(),
             resume: true,
             recover_attempt: Some("attempt-123".to_string()),
+            fenced_owner_claim_id: Some("owner-123".to_string()),
             writer_thread_count: 8,
         },
         telemetry: TelemetryMode::Off,
@@ -180,7 +181,7 @@ fn assert_serialized_run_plan_shape(serialized_plan: &Value) {
     assert_object_keys(&serialized_plan["correction"], &["firth_se", "method", "p_threshold"]);
     assert_object_keys(
         &serialized_plan["output"],
-        &["output_run_root", "recover_attempt", "resume", "writer_thread_count"],
+        &["fenced_owner_claim_id", "output_run_root", "recover_attempt", "resume", "writer_thread_count"],
     );
     assert_object_keys(&serialized_plan["phenotype_runs"][0], &["output_directory_name", "phenotype_name"]);
 }
@@ -233,6 +234,7 @@ fn assert_decoded_run_plan_values(decoded_plan: &RunPlan) {
     assert_eq!(decoded_plan.output.output_run_root, "results/analysis.run");
     assert!(decoded_plan.output.resume);
     assert_eq!(decoded_plan.output.recover_attempt.as_deref(), Some("attempt-123"));
+    assert_eq!(decoded_plan.output.fenced_owner_claim_id.as_deref(), Some("owner-123"));
     assert_eq!(decoded_plan.output.writer_thread_count, 8);
     assert_eq!(decoded_plan.telemetry, TelemetryMode::Off);
     assert_eq!(decoded_plan.phenotype_runs.len(), 2);

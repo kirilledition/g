@@ -6,6 +6,7 @@ import dataclasses
 import os
 import select
 import subprocess
+import sys
 import time
 import typing
 from dataclasses import dataclass
@@ -231,7 +232,7 @@ def run_command(spec: CommandSpec) -> CommandResult:
 
 
 def run_streaming_command(spec: CommandSpec) -> CommandResult:
-    """Run a command while streaming combined output to stdout.
+    """Run a command while streaming and capturing stdout and stderr separately.
 
     Args:
         spec: Command specification.
@@ -240,12 +241,13 @@ def run_streaming_command(spec: CommandSpec) -> CommandResult:
         Command result.
 
     """
-    stdout_parts: list[str] = []
+    stdout_byte_parts: list[bytes] = []
+    stderr_byte_parts: list[bytes] = []
     try:
         process = subprocess.Popen(
             list(spec.args),
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             env=build_process_environment(spec),
             cwd=spec.cwd,
         )
@@ -255,33 +257,36 @@ def run_streaming_command(spec: CommandSpec) -> CommandResult:
         return result
     deadline = time.monotonic() + spec.timeout_seconds if spec.timeout_seconds is not None else None
     try:
-        if process.stdout is not None:
-            while True:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise subprocess.TimeoutExpired(spec.args, typing.cast("float", spec.timeout_seconds))
-                remaining_timeout = 0.1
-                if deadline is not None:
-                    remaining_timeout = max(0.0, min(remaining_timeout, deadline - time.monotonic()))
-                readable_streams, _, _ = select.select([process.stdout], [], [], remaining_timeout)
-                if readable_streams:
-                    raw_chunk = os.read(process.stdout.fileno(), 4096)
-                    if raw_chunk:
-                        chunk = subprocess_output_text(raw_chunk)
-                        print(chunk, end="")
-                        stdout_parts.append(chunk)
-                        continue
-                if process.poll() is not None:
-                    remaining_output = subprocess_output_text(process.stdout.read())
-                    if remaining_output:
-                        print(remaining_output, end="")
-                        stdout_parts.append(remaining_output)
-                    break
-        return_code = process.wait(timeout=0)
+        stdout_pipe = process.stdout
+        stderr_pipe = process.stderr
+        if stdout_pipe is None or stderr_pipe is None:
+            raise RuntimeError("Streaming subprocess pipes were not created.")
+        open_streams = [stdout_pipe, stderr_pipe]
+        while open_streams:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(spec.args, typing.cast("float", spec.timeout_seconds))
+            remaining_timeout = 0.1
+            if deadline is not None:
+                remaining_timeout = max(0.0, min(remaining_timeout, deadline - time.monotonic()))
+            readable_streams, _, _ = select.select(open_streams, [], [], remaining_timeout)
+            for readable_stream in readable_streams:
+                raw_chunk = os.read(readable_stream.fileno(), 4_096)
+                if not raw_chunk:
+                    open_streams.remove(readable_stream)
+                    continue
+                chunk = subprocess_output_text(raw_chunk)
+                if readable_stream is stdout_pipe:
+                    print(chunk, end="")
+                    stdout_byte_parts.append(raw_chunk)
+                else:
+                    print(chunk, end="", file=sys.stderr)
+                    stderr_byte_parts.append(raw_chunk)
+        return_code = process.wait()
         result = CommandResult(
             args=spec.args,
             return_code=return_code,
-            stdout="".join(stdout_parts),
-            stderr="",
+            stdout=subprocess_output_text(b"".join(stdout_byte_parts)),
+            stderr=subprocess_output_text(b"".join(stderr_byte_parts)),
             timed_out=False,
             missing_executable=False,
             cwd=str(spec.cwd) if spec.cwd is not None else None,
@@ -289,16 +294,23 @@ def run_streaming_command(spec: CommandSpec) -> CommandResult:
         )
     except subprocess.TimeoutExpired:
         process.kill()
-        remaining_stdout, _ = process.communicate()
+        remaining_stdout, remaining_stderr = process.communicate()
         if remaining_stdout:
             decoded_stdout = subprocess_output_text(remaining_stdout)
             print(decoded_stdout, end="")
-            stdout_parts.append(decoded_stdout)
+            stdout_byte_parts.append(remaining_stdout)
+        if remaining_stderr:
+            decoded_stderr = subprocess_output_text(remaining_stderr)
+            print(decoded_stderr, end="", file=sys.stderr)
+            stderr_byte_parts.append(remaining_stderr)
+        stderr_text = subprocess_output_text(b"".join(stderr_byte_parts))
+        if stderr_text and not stderr_text.endswith("\n"):
+            stderr_text += "\n"
         result = CommandResult(
             args=spec.args,
             return_code=None,
-            stdout="".join(stdout_parts),
-            stderr=f"Command timed out after {spec.timeout_seconds} seconds.",
+            stdout=subprocess_output_text(b"".join(stdout_byte_parts)),
+            stderr=f"{stderr_text}Command timed out after {spec.timeout_seconds} seconds.",
             timed_out=True,
             missing_executable=False,
             cwd=str(spec.cwd) if spec.cwd is not None else None,

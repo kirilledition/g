@@ -131,8 +131,9 @@ To see runtime knobs for this setting in config, use
 `[compute] multi_phenotype_sample_mode` via
 [Configuration](configuration.md#cli-to-toml-mapping).
 
-When validating this choice, compare `sample_count` and run manifest metadata in
-the output `run_manifest.json` files alongside statistical results.
+When validating this choice, compare `sample_count` and run manifest metadata
+under `attempts/<attempt>/<phenotype-output-name>/run_manifest.json` alongside
+the statistical results.
 
 ## GPU Execution
 

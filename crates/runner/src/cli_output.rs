@@ -25,15 +25,10 @@ impl CliRunResult {
 }
 
 pub(crate) fn render_completed_lines(artifacts: &[g_engine::PhenotypeRunArtifact]) -> Vec<String> {
-    let mut lines = Vec::with_capacity(artifacts.len().saturating_mul(2).max(1));
-    for artifact in artifacts {
-        lines.push(format!("Success. Run saved to {}", artifact.output_run_directory));
-        lines.push(format!("Parquet dataset saved to {}", artifact.parquet_dataset_directory));
-    }
-    if lines.is_empty() {
-        lines.push("Success. Run completed.".to_string());
-    }
-    lines
+    artifacts
+        .iter()
+        .map(|artifact| format!("Parquet dataset saved to {}", artifact.parquet_dataset_directory))
+        .collect()
 }
 
 pub(crate) fn render_interrupted_lines(signal_name: &str, flushed_for_resume: bool) -> Vec<String> {
@@ -93,8 +88,8 @@ mod tests {
     }
 
     #[test]
-    fn completion_lines_describe_each_artifact_or_empty_success() {
-        assert_eq!(render_completed_lines(&[]), ["Success. Run completed."]);
+    fn completion_lines_describe_each_parquet_dataset_once() {
+        assert!(render_completed_lines(&[]).is_empty());
         let artifacts = [
             PhenotypeRunArtifact {
                 output_run_directory: "run-a".to_string(),
@@ -107,12 +102,7 @@ mod tests {
         ];
         assert_eq!(
             render_completed_lines(&artifacts),
-            [
-                "Success. Run saved to run-a",
-                "Parquet dataset saved to run-a/parquet",
-                "Success. Run saved to run-b",
-                "Parquet dataset saved to run-b/parquet",
-            ]
+            ["Parquet dataset saved to run-a/parquet", "Parquet dataset saved to run-b/parquet",]
         );
     }
 

@@ -1,71 +1,190 @@
-//! Run-scoped output lifecycle ownership.
+//! Run-scoped append-only output lifecycle ownership.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::marker::PhantomData;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde_json::Value;
 
 use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
-    CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, OutputRunPaths,
-    build_current_run_manifest_header_value_with_cache, extend_run_manifest_metadata, initialize_output_run,
-    inspect_output_run, read_run_manifest_gpu_genotype_format_from_text, reconcile_output_run_resume,
-    resolve_output_run_paths,
+    CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, build_current_run_manifest_header_value_with_cache,
+    read_run_manifest_gpu_genotype_format_from_text,
 };
+use crate::persistence::attempt::{
+    AttemptManifestBinding, AttemptManifestStatus, AttemptManifestWrite, AttemptRunPaths, OrphanPartPolicy,
+    VerifiedAttemptRun, attempt_manifest_value_sha256, build_attempt_manifest_value,
+    inspect_unmaterialized_attempt_run, materialize_attempt_manifest, reuse_verified_receipts, verify_attempt_run,
+    write_attempt_manifest, write_effective_config,
+};
+use crate::persistence::identifier::{AttemptIdentifier, validate_safe_path_component};
+use crate::persistence::io::{create_directories_durable, sync_nearest_existing_directory};
+use crate::persistence::lineage::{
+    AttemptTerminalStatus, LineageGenesisRecord, LineageRecoveryKind, LineageSnapshot, LineageSuccessorRecord,
+    LineageTerminalRecord, OutputLineagePaths, OutputOwnerClaim, PhenotypeLineageContract, TerminalPhenotypeRecord,
+    terminal_record_sha256,
+};
+use crate::persistence::model::CanonicalChunkPlan;
+use crate::persistence::receipt::OutputPartReceipt;
 use crate::session::{
-    CreatedOutputWriterSessions, OutputWriterResourceOwner, OutputWriterSession, create_output_writer_sessions,
-    finish_interrupted_output_writer_sessions, finish_output_writer_sessions, validate_output_writer_settings,
+    CreatedOutputWriterSessions, OutputWriterResourceOwner, OutputWriterRunConfig, OutputWriterSession,
+    create_output_writer_sessions, finish_interrupted_output_writer_sessions, finish_output_writer_sessions,
+    validate_output_writer_settings,
 };
-const COMMAND_INTERFACE: &str = "g regenie";
 
-/// Writer and resume state consumed by one association group.
-pub struct OutputDeliveryState {
-    pub writer_sessions: Vec<Arc<OutputWriterSession>>,
-    pub committed_chunk_identifier_sets: Vec<Arc<BTreeSet<usize>>>,
+/// Output paths returned after a verified completed terminal.
+pub struct CompletedOutputRun {
+    pub run_directory: std::path::PathBuf,
+    pub parts_directory: std::path::PathBuf,
 }
 
-/// Final artifacts for one phenotype output.
-pub struct CompletedOutputRun {
-    pub run_directory: PathBuf,
-    pub parts_directory: PathBuf,
+/// Idempotent cleanup for claim-owned diagnostics that never became authoritative.
+#[derive(Clone)]
+pub struct OutputClaimCleanup {
+    lineage_paths: OutputLineagePaths,
+    claim_id: String,
+    attempt_id: AttemptIdentifier,
+    attempt_was_referenced: bool,
+    #[cfg(test)]
+    cleanup_pause: Option<Arc<OutputClaimCleanupTestPause>>,
+}
+
+#[cfg(test)]
+struct OutputClaimCleanupTestPause {
+    reached_sender: std::sync::mpsc::Sender<()>,
+    resume_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+#[cfg(test)]
+pub(crate) struct OutputClaimCleanupTestControl {
+    reached_receiver: std::sync::mpsc::Receiver<()>,
+    resume_sender: std::sync::mpsc::Sender<()>,
+    resumed: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+const OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Marker for a read-only output plan.
+pub struct Planned;
+
+/// Marker for an exclusively claimed output plan that has no attempt authority.
+pub struct Claimed;
+
+/// Marker for an initialized writable or verified read-only attempt.
+pub struct Active;
+
+/// Marker proving that every phenotype has exact chunk coverage.
+pub struct Covered;
+
+/// Opaque output capability for one phenotype group.
+pub struct OutputDeliveryToken {
+    writer_sessions: Vec<Option<Arc<OutputWriterSession>>>,
+    committed_chunk_identifier_sets: Vec<Arc<BTreeSet<usize>>>,
+}
+
+/// Typestate owner for one append-only output lineage.
+pub struct OutputManager<State = Planned> {
+    core: Option<OutputManagerCore>,
+    state: PhantomData<State>,
+}
+
+struct OutputManagerCore {
+    run_plan: Arc<g_plan::RunPlan>,
+    effective_config_toml: String,
+    lineage_paths: OutputLineagePaths,
+    lineage_snapshot: Option<LineageSnapshot>,
+    runs: Vec<ManagedOutputRun>,
+    run_indices_by_phenotype: BTreeMap<String, usize>,
+    active_attempt: Option<ActiveAttempt>,
+    writer_resource_owner: Option<OutputWriterResourceOwner>,
+    owner_claim: Option<OutputOwnerClaim>,
+    claim_staging_directory: Option<PathBuf>,
+    claimed_attempt_id: Option<AttemptIdentifier>,
+    canonical_chunk_plan: Option<CanonicalChunkPlan>,
+    collect_stage_timings: bool,
+    lifecycle_state: OutputManagerLifecycleState,
+}
+
+struct OutputManagerLifecycleState {
+    claimed_attempt_was_referenced: bool,
+    attempt_authority_published: bool,
+    terminal: bool,
 }
 
 struct ManagedOutputRun {
     phenotype_name: String,
-    paths: OutputRunPaths,
-    existing_manifest_json: Option<String>,
-    effective_config_path: PathBuf,
+    output_directory_name: String,
+    current_header: Option<Value>,
+    binding: Option<AttemptManifestBinding>,
+    paths: Option<AttemptRunPaths>,
+    receipts: Vec<OutputPartReceipt>,
     committed_chunk_identifiers: Arc<BTreeSet<usize>>,
+    writer_session: Option<Arc<OutputWriterSession>>,
 }
 
-/// One owner for every output run and writer session in an association run.
-pub struct OutputManager {
-    run_plan: Arc<g_plan::RunPlan>,
-    effective_config_toml: String,
-    runs: Vec<ManagedOutputRun>,
-    run_indices_by_phenotype: BTreeMap<String, usize>,
-    writer_sessions: Option<Vec<Arc<OutputWriterSession>>>,
-    writer_resource_owner: Option<OutputWriterResourceOwner>,
-    terminal: bool,
+struct ActiveAttempt {
+    run_set_id: String,
+    attempt_id: AttemptIdentifier,
+    canonical_chunk_plan: CanonicalChunkPlan,
+    completed_noop: bool,
+    collect_stage_timings: bool,
 }
 
-impl OutputManager {
-    /// Plan output paths and inspect existing manifests without mutating the filesystem.
+struct PreparedAttempt {
+    run_set_id: String,
+    attempt_id: AttemptIdentifier,
+    runs: Vec<PreparedAttemptRun>,
+}
+
+struct PreparedAttemptRun {
+    binding: AttemptManifestBinding,
+    paths: AttemptRunPaths,
+    receipts: Vec<OutputPartReceipt>,
+    committed_chunk_identifiers: BTreeSet<usize>,
+}
+
+struct StagedTerminalRun {
+    manifest: Value,
+    manifest_sha256: String,
+}
+
+struct StagedTerminalRuns {
+    terminal: LineageTerminalRecord,
+    runs: Vec<StagedTerminalRun>,
+}
+
+impl OutputManager<Planned> {
+    /// Inspect one output root without mutating it.
     ///
     /// # Errors
     ///
-    /// Returns an error when output names or paths collide, paths cannot be
-    /// inspected, or a non-resume output directory is already populated.
+    /// Returns an error for duplicate output names, incompatible resume
+    /// controls, or malformed lineage records.
     pub fn open(run_plan: Arc<g_plan::RunPlan>, effective_config_toml: String) -> OutputResult<Self> {
+        if contains_cli_line_separator(&run_plan.output.output_run_root) {
+            return Err(OutputError::InvalidInput(
+                "Output run root must not contain characters that split CLI output lines.".to_string(),
+            ));
+        }
+        let output_root = absolute_lexically_normalized_path(Path::new(&run_plan.output.output_run_root))?;
+        let output_root_text = output_root.to_str().ok_or_else(|| {
+            OutputError::InvalidInput("Resolved output run root must be valid UTF-8 for CLI publication.".to_string())
+        })?;
+        if contains_cli_line_separator(output_root_text) {
+            return Err(OutputError::InvalidInput(
+                "Resolved output run root must not contain characters that split CLI output lines.".to_string(),
+            ));
+        }
+        let lineage_paths = OutputLineagePaths::new(&output_root);
         let mut runs = Vec::with_capacity(run_plan.phenotype_runs.len());
         let mut run_indices_by_phenotype = BTreeMap::new();
-        let mut phenotype_names_by_run_directory = BTreeMap::new();
+        let mut output_directory_names = BTreeSet::new();
         for phenotype_run in &run_plan.phenotype_runs {
-            let output_root = Path::new(&run_plan.output.output_run_root).join(&phenotype_run.output_directory_name);
-            let output_run_paths = resolve_output_run_paths(&output_root, run_plan.association_mode.as_str());
+            validate_safe_path_component(&phenotype_run.output_directory_name, "phenotype directory name")?;
             let output_index = runs.len();
             if run_indices_by_phenotype.insert(phenotype_run.phenotype_name.clone(), output_index).is_some() {
                 return Err(OutputError::InvalidInput(format!(
@@ -73,234 +192,811 @@ impl OutputManager {
                     phenotype_run.phenotype_name
                 )));
             }
-            if let Some(existing_phenotype_name) = phenotype_names_by_run_directory
-                .insert(output_run_paths.run_directory.clone(), phenotype_run.phenotype_name.clone())
-            {
+            if !output_directory_names.insert(phenotype_run.output_directory_name.clone()) {
                 return Err(OutputError::InvalidInput(format!(
-                    "Phenotype outputs '{existing_phenotype_name}' and '{}' resolve to the same run directory '{}'.",
-                    phenotype_run.phenotype_name,
-                    output_run_paths.run_directory.display()
+                    "Duplicate phenotype output directory name '{}'.",
+                    phenotype_run.output_directory_name
                 )));
             }
-            let effective_config_path = output_run_paths.run_directory.join("effective_config.toml");
             runs.push(ManagedOutputRun {
                 phenotype_name: phenotype_run.phenotype_name.clone(),
-                paths: output_run_paths,
-                existing_manifest_json: None,
-                effective_config_path,
+                output_directory_name: phenotype_run.output_directory_name.clone(),
+                current_header: None,
+                binding: None,
+                paths: None,
+                receipts: Vec::new(),
                 committed_chunk_identifiers: Arc::new(BTreeSet::new()),
+                writer_session: None,
             });
         }
-        for run in &mut runs {
-            run.existing_manifest_json = inspect_output_run(&run.paths, run_plan.output.resume)?;
-        }
+        let lineage_snapshot = lineage_paths.inspect()?;
+        validate_open_policy(&run_plan, &lineage_paths, lineage_snapshot.as_ref(), &runs)?;
         Ok(Self {
-            run_plan,
-            effective_config_toml,
-            runs,
-            run_indices_by_phenotype,
-            writer_sessions: None,
-            writer_resource_owner: None,
-            terminal: false,
+            core: Some(OutputManagerCore {
+                run_plan,
+                effective_config_toml,
+                lineage_paths,
+                lineage_snapshot,
+                runs,
+                run_indices_by_phenotype,
+                active_attempt: None,
+                writer_resource_owner: None,
+                owner_claim: None,
+                claim_staging_directory: None,
+                claimed_attempt_id: None,
+                canonical_chunk_plan: None,
+                collect_stage_timings: false,
+                lifecycle_state: OutputManagerLifecycleState {
+                    claimed_attempt_was_referenced: false,
+                    attempt_authority_published: false,
+                    terminal: false,
+                },
+            }),
+            state: PhantomData,
         })
     }
 
-    /// Return the concrete GPU genotype format recorded by an existing manifest.
+    /// Return the genotype representation recorded by an existing leaf manifest.
     ///
     /// # Errors
     ///
-    /// Returns an error when the phenotype was not planned.
+    /// Returns an error when the phenotype is unknown or its leaf manifest is
+    /// missing or invalid.
     pub fn existing_manifest_gpu_genotype_format(
         &self,
         phenotype_name: &str,
     ) -> OutputResult<Option<g_plan::GpuGenotypeFormat>> {
-        self.run(phenotype_name)?
-            .existing_manifest_json
-            .as_deref()
-            .map(read_run_manifest_gpu_genotype_format_from_text)
-            .transpose()
+        let core = self.core()?;
+        let Some(snapshot) = core.lineage_snapshot.as_ref() else {
+            return Ok(None);
+        };
+        let run = core.run(phenotype_name)?;
+        let paths = AttemptRunPaths::new(
+            &core.lineage_paths.attempts_directory,
+            &snapshot.leaf_attempt_id,
+            &run.output_directory_name,
+        )?;
+        let manifest_text = match std::fs::read_to_string(&paths.manifest_path) {
+            Ok(manifest_text) => manifest_text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && snapshot.leaf_terminal.is_none() => {
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(OutputError::Runtime(format!(
+                    "Failed to read existing output manifest '{}': {error}",
+                    paths.manifest_path.display()
+                )));
+            }
+        };
+        read_run_manifest_gpu_genotype_format_from_text(&manifest_text).map(Some)
     }
 
-    /// Initialize every output manifest and the shared bounded writer pool.
+    /// Acquire exclusive output ownership without publishing attempt authority.
     ///
     /// # Errors
     ///
-    /// Returns an error when headers do not cover the planned phenotypes exactly,
-    /// resume validation fails, metadata cannot be written, or writer creation fails.
+    /// Returns an error when writer settings, the canonical chunk plan,
+    /// explicit fencing, ownership acquisition, or staging creation fails.
+    pub fn claim(
+        mut self,
+        planned_chunk_ranges: &[Range<usize>],
+        collect_stage_timings: bool,
+    ) -> OutputResult<OutputManager<Claimed>> {
+        let mut core = self.take_core()?;
+        validate_output_writer_settings(&core.run_plan.output, core.runs.len())?;
+        core.canonical_chunk_plan = Some(CanonicalChunkPlan::try_new(planned_chunk_ranges)?);
+        core.collect_stage_timings = collect_stage_timings;
+
+        let claim_result = match core.run_plan.output.fenced_owner_claim_id.as_deref() {
+            Some(fenced_claim_id) => core.lineage_paths.take_over_fenced_owner_claim(fenced_claim_id),
+            None => core.lineage_paths.try_acquire_owner_claim(),
+        };
+        core.owner_claim = Some(claim_result?);
+        let current_snapshot = match core.lineage_paths.inspect().and_then(|snapshot| {
+            validate_claimed_policy(&core.run_plan, &core.lineage_paths, snapshot.as_ref(), &core.runs)?;
+            Ok(snapshot)
+        }) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return Err(core.release_after_unmutated_error(error)),
+        };
+        if let Err(error) = core.reestablish_observed_durability(current_snapshot.as_ref()) {
+            return Err(core.release_after_unmutated_error(error));
+        }
+        let durable_snapshot = match core.lineage_paths.inspect() {
+            Ok(snapshot) if snapshot == current_snapshot => snapshot,
+            Ok(_) => {
+                return Err(core.release_after_unmutated_error(OutputError::InvalidInput(
+                    "Output lineage changed while re-establishing observed durability.".to_string(),
+                )));
+            }
+            Err(error) => return Err(core.release_after_unmutated_error(error)),
+        };
+        core.lineage_snapshot = durable_snapshot;
+        let referenced_attempts =
+            core.lineage_snapshot.as_ref().map_or_else(BTreeSet::new, lineage_attempt_identifiers);
+        let current_claim_identifier = match core.owner_claim.as_ref() {
+            Some(owner_claim) => owner_claim.claim_id().to_string(),
+            None => {
+                return Err(core.release_after_unmutated_error(OutputError::Runtime(
+                    "Claimed output lost its owner claim before staging cleanup.".to_string(),
+                )));
+            }
+        };
+        if let Err(error) =
+            core.lineage_paths.cleanup_obsolete_owner_staging(&current_claim_identifier, &referenced_attempts)
+        {
+            return Err(core.release_after_unmutated_error(error));
+        }
+        let staging_result = core.initialize_claim_staging_directory();
+        if let Err(error) = staging_result {
+            let cleanup_result = core.cleanup_claim_staging();
+            let release_result = core.release_owner_claim();
+            let primary_error = match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => OutputError::OutputOperationAndOwnerClaimRelease {
+                    primary: Box::new(error),
+                    release: Box::new(cleanup_error),
+                },
+            };
+            return Err(match release_result {
+                Ok(()) => primary_error,
+                Err(release_error) => OutputError::OutputOperationAndOwnerClaimRelease {
+                    primary: Box::new(primary_error),
+                    release: Box::new(release_error),
+                },
+            });
+        }
+        Ok(OutputManager { core: Some(core), state: PhantomData })
+    }
+
+    /// Validate all execution headers and initialize one active attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when header coverage, lineage compatibility, durable
+    /// recovery, attempt publication, or writer creation fails.
     pub fn initialize(
-        &mut self,
+        self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
         planned_chunk_ranges: &[Range<usize>],
         collect_stage_timings: bool,
-    ) -> OutputResult<()> {
-        if self.writer_sessions.is_some() {
-            return Err(OutputError::InvalidInput("Output manager is already initialized.".to_string()));
+    ) -> OutputResult<OutputManager<Active>> {
+        let claimed_manager = self.claim(planned_chunk_ranges, collect_stage_timings)?;
+        let cleanup = match claimed_manager.cleanup_handle() {
+            Ok(cleanup) => cleanup,
+            Err(error) => {
+                return match claimed_manager.abort_before_activation() {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
+                        primary: Box::new(error),
+                        release: Box::new(cleanup_error),
+                    }),
+                };
+            }
+        };
+        match claimed_manager.activate(current_header_inputs) {
+            Ok(active_manager) => Ok(active_manager),
+            Err(error) => match cleanup.cleanup_if_unpublished() {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
+                    primary: Box::new(error),
+                    release: Box::new(cleanup_error),
+                }),
+            },
         }
-        validate_output_writer_settings(&self.run_plan.output, self.runs.len())?;
-        let mut headers_by_phenotype = BTreeMap::new();
-        let mut fingerprint_cache = ManifestFileFingerprintCache::default();
-        for current_header_input in current_header_inputs {
-            let phenotype_name = current_header_input.phenotype_name.clone();
-            let current_header = build_current_run_manifest_header_value_with_cache(
-                &self.run_plan,
-                &current_header_input,
-                &mut fingerprint_cache,
-            )?;
-            match headers_by_phenotype.entry(phenotype_name) {
-                Entry::Vacant(entry) => {
-                    entry.insert(current_header);
-                }
-                Entry::Occupied(entry) => {
-                    return Err(OutputError::InvalidInput(format!(
-                        "Duplicate output initialization for phenotype '{}'.",
-                        entry.key()
+    }
+}
+
+impl OutputManager<Claimed> {
+    /// Return the ownership-private directory for run-scoped diagnostics.
+    ///
+    /// This path is allocated only after this process owns the output claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if claim staging was not initialized.
+    pub fn diagnostics_directory(&self) -> OutputResult<&Path> {
+        self.core()?
+            .claim_staging_directory
+            .as_deref()
+            .ok_or_else(|| OutputError::Runtime("Claimed output has no diagnostics staging directory.".to_string()))
+    }
+
+    /// Return an idempotent post-session cleanup handle.
+    ///
+    /// The handle becomes a no-op after successful activation retires the
+    /// staging intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the claimed staging identity is inconsistent.
+    pub fn cleanup_handle(&self) -> OutputResult<OutputClaimCleanup> {
+        let core = self.core()?;
+        let owner_claim = core
+            .owner_claim
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Claimed output has no owner claim.".to_string()))?;
+        Ok(OutputClaimCleanup {
+            lineage_paths: core.lineage_paths.clone(),
+            claim_id: owner_claim.claim_id().to_string(),
+            attempt_id: core.claimed_attempt_id()?,
+            attempt_was_referenced: core.lifecycle_state.claimed_attempt_was_referenced,
+            #[cfg(test)]
+            cleanup_pause: None,
+        })
+    }
+
+    /// Publish immutable attempt authority and start the output writers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when header coverage, lineage compatibility, durable
+    /// recovery, attempt publication, or writer creation fails.
+    pub fn activate(
+        mut self,
+        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
+    ) -> OutputResult<OutputManager<Active>> {
+        let mut core = self.take_core()?;
+        let canonical_chunk_plan = core
+            .canonical_chunk_plan
+            .clone()
+            .ok_or_else(|| OutputError::Runtime("Claimed output has no canonical chunk plan.".to_string()))?;
+        let collect_stage_timings = core.collect_stage_timings;
+        let phenotype_contracts = match (|| {
+            let headers = build_headers(&core, current_header_inputs)?;
+            bind_headers(&mut core.runs, headers)?;
+            let phenotype_contracts = phenotype_contracts(&core.runs)?;
+            if let Some(snapshot) = core.lineage_snapshot.as_ref() {
+                preflight_existing_lineage(&core, snapshot, &canonical_chunk_plan, &phenotype_contracts)?;
+            }
+            Ok(phenotype_contracts)
+        })() {
+            Ok(phenotype_contracts) => phenotype_contracts,
+            Err(error) => return Err(core.release_after_unmutated_error(error)),
+        };
+        #[cfg(test)]
+        match core
+            .owner_claim
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output activation has no owner claim.".to_string()))
+            .and_then(inject_owner_claim_release_conflict_at_test_point)
+        {
+            Ok(None) => {}
+            Ok(Some(error)) | Err(error) => return Err(core.release_after_unmutated_error(error)),
+        }
+        #[cfg(test)]
+        if let Err(error) = fail_initialization_at_test_point("after_owner_claim") {
+            return Err(core.release_after_unmutated_error(error));
+        }
+        let initialization_result = match core.lineage_snapshot.clone() {
+            None => {
+                initialize_genesis_attempt(&mut core, &canonical_chunk_plan, phenotype_contracts, collect_stage_timings)
+            }
+            Some(snapshot) => initialize_existing_lineage(
+                &mut core,
+                snapshot,
+                &canonical_chunk_plan,
+                &phenotype_contracts,
+                collect_stage_timings,
+            ),
+        };
+        if let Err(error) = initialization_result {
+            return match core.resolve_initialization_error(&error) {
+                Ok(()) => Err(error),
+                Err(recovery_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
+                    primary: Box::new(error),
+                    release: Box::new(recovery_error),
+                }),
+            };
+        }
+        Ok(OutputManager { core: Some(core), state: PhantomData })
+    }
+
+    /// Remove an unpublished attempt reservation and release ownership.
+    ///
+    /// Run-scoped diagnostics must be closed before calling this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when staging cleanup or owner release fails.
+    pub fn abort_before_activation(mut self) -> OutputResult<()> {
+        let mut core = self.take_core()?;
+        let cleanup_result = core.cleanup_claim_staging();
+        let release_result = core.release_owner_claim();
+        combine_terminal_cleanup_result(cleanup_result, release_result, "Pre-activation output staging cleanup failed")
+    }
+}
+
+impl OutputClaimCleanup {
+    #[cfg(test)]
+    pub(crate) fn install_cleanup_pause_for_test(&mut self) -> OutputClaimCleanupTestControl {
+        let (reached_sender, reached_receiver) = std::sync::mpsc::channel();
+        let (resume_sender, resume_receiver) = std::sync::mpsc::channel();
+        let pause = Arc::new(OutputClaimCleanupTestPause {
+            reached_sender,
+            resume_receiver: std::sync::Mutex::new(resume_receiver),
+        });
+        self.cleanup_pause = Some(Arc::clone(&pause));
+        OutputClaimCleanupTestControl {
+            reached_receiver,
+            resume_sender,
+            resumed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Remove diagnostics for an unpublished claim and retire its staging intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for mismatched staging metadata or failed durable cleanup.
+    pub fn cleanup_if_unpublished(self) -> OutputResult<()> {
+        let Some(staged_attempt_id) = self.lineage_paths.owner_staging_attempt(&self.claim_id)? else {
+            return self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id);
+        };
+        if staged_attempt_id != self.attempt_id {
+            return Err(OutputError::ConcurrentLineageUpdate {
+                record_path: self
+                    .lineage_paths
+                    .control_directory
+                    .join("owner-staging")
+                    .join(format!("{}.json", self.claim_id)),
+            });
+        }
+        #[cfg(test)]
+        if let Some(cleanup_pause) = self.cleanup_pause.as_ref() {
+            cleanup_pause.reached_sender.send(()).map_err(|error| {
+                OutputError::Runtime(format!("Failed to report the output cleanup test pause: {error}"))
+            })?;
+            cleanup_pause
+                .resume_receiver
+                .lock()
+                .map_err(|error| OutputError::Runtime(format!("Output cleanup test pause lock is poisoned: {error}")))?
+                .recv_timeout(OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT)
+                .map_err(|error| OutputError::Runtime(format!("Output cleanup test pause timed out: {error}")))?;
+        }
+        let referenced_attempts =
+            self.lineage_paths.inspect()?.as_ref().map_or_else(BTreeSet::new, lineage_attempt_identifiers);
+        let removal_path = if self.attempt_was_referenced {
+            Some(self.lineage_paths.attempt_directory(&self.attempt_id).join("diagnostics").join(&self.claim_id))
+        } else if referenced_attempts.contains(&self.attempt_id) {
+            None
+        } else {
+            Some(self.lineage_paths.attempt_directory(&self.attempt_id))
+        };
+        if let Some(removal_path) = removal_path {
+            match std::fs::remove_dir_all(&removal_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(OutputError::Runtime(format!(
+                        "Failed to remove unpublished output staging '{}': {error}",
+                        removal_path.display()
                     )));
                 }
             }
+            let synchronization_directory = if self.attempt_was_referenced {
+                removal_path.parent().ok_or_else(|| {
+                    OutputError::Runtime(format!("Output staging '{}' has no parent.", removal_path.display()))
+                })?
+            } else {
+                &self.lineage_paths.attempts_directory
+            };
+            sync_nearest_existing_directory(synchronization_directory)?;
         }
-        self.validate_run_manifest_header_coverage(&headers_by_phenotype)?;
-        self.refresh_run_manifest_hints()?;
-        let resumed_chunk_commits = if self.run_plan.output.resume {
-            self.runs
-                .iter()
-                .map(|run| {
-                    let header = headers_by_phenotype.get(&run.phenotype_name).ok_or_else(|| {
-                        OutputError::InvalidInput(format!(
-                            "Missing output initialization for phenotype '{}'.",
-                            run.phenotype_name
-                        ))
-                    })?;
-                    let manifest = run.existing_manifest_json.as_deref().ok_or_else(|| {
-                        OutputError::InvalidInput(format!(
-                            "Resume output for phenotype '{}' has no manifest.",
-                            run.phenotype_name
-                        ))
-                    })?;
-                    reconcile_output_run_resume(&run.paths.parts_directory, manifest, header, planned_chunk_ranges)
-                        .map(Some)
-                })
-                .collect::<OutputResult<Vec<_>>>()?
-        } else {
-            std::iter::repeat_with(|| None).take(self.runs.len()).collect()
-        };
-        for run in &self.runs {
-            std::fs::create_dir_all(&run.paths.parts_directory).map_err(OutputError::runtime)?;
-        }
-        for (run, resumed_chunk_commits) in self.runs.iter_mut().zip(resumed_chunk_commits) {
-            let current_header = headers_by_phenotype.remove(&run.phenotype_name).ok_or_else(|| {
-                OutputError::InvalidInput(format!(
-                    "Missing output initialization for phenotype '{}'.",
-                    run.phenotype_name
-                ))
-            })?;
-            let committed_chunk_identifiers = initialize_output_run(
-                &run.paths.run_directory,
-                run.existing_manifest_json.as_deref(),
-                &current_header,
-                resumed_chunk_commits,
-            )?;
-            run.committed_chunk_identifiers = Arc::new(
-                committed_chunk_identifiers
-                    .into_iter()
-                    .map(|identifier| {
-                        usize::try_from(identifier).map_err(|_| {
-                            OutputError::InvalidInput(format!(
-                                "Committed chunk identifier {identifier} does not fit usize."
-                            ))
-                        })
-                    })
-                    .collect::<OutputResult<BTreeSet<_>>>()?,
-            );
-            std::fs::write(&run.effective_config_path, &self.effective_config_toml).map_err(OutputError::runtime)?;
-            extend_manifest_from_plan(&self.run_plan, run)?;
-        }
-        let CreatedOutputWriterSessions { sessions, resource_owner } = create_output_writer_sessions(
-            self.runs.iter().map(|run| run.paths.run_directory.clone()).collect(),
-            self.runs.iter().map(|run| run.paths.parts_directory.clone()).collect(),
-            &self.run_plan.output,
-            collect_stage_timings,
-        )?;
-        self.writer_sessions = Some(sessions.into_iter().map(Arc::new).collect());
-        self.writer_resource_owner = resource_owner;
-        Ok(())
+        self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id)
+    }
+}
+
+#[cfg(test)]
+impl OutputClaimCleanupTestControl {
+    pub(crate) fn wait_until_reached(&self) -> Result<(), std::sync::mpsc::RecvTimeoutError> {
+        self.reached_receiver.recv_timeout(OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT)
     }
 
-    /// Borrow delivery state for phenotype names in trait order.
+    pub(crate) fn resume(&self) {
+        self.resume_cleanup();
+    }
+
+    fn resume_cleanup(&self) {
+        if !self.resumed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.resume_sender.send(());
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for OutputClaimCleanupTestControl {
+    fn drop(&mut self) {
+        self.resume_cleanup();
+    }
+}
+
+impl OutputManager<Active> {
+    /// Build an opaque group capability in phenotype order.
     ///
     /// # Errors
     ///
-    /// Returns an error when a phenotype is unknown or writers are not initialized.
-    pub fn delivery_state_for_phenotypes(&self, phenotype_names: &[String]) -> OutputResult<OutputDeliveryState> {
-        let writer_sessions = self.writer_sessions.as_ref().ok_or_else(|| {
-            OutputError::InvalidInput("Output manager must be initialized before delivery.".to_string())
-        })?;
-        let mut selected_writer_sessions = Vec::with_capacity(phenotype_names.len());
+    /// Returns an error for unknown or duplicate phenotype names.
+    pub fn delivery_token_for_phenotypes(&self, phenotype_names: &[String]) -> OutputResult<OutputDeliveryToken> {
+        let core = self.core()?;
+        let mut selected_indices = BTreeSet::new();
+        let mut writer_sessions = Vec::with_capacity(phenotype_names.len());
         let mut committed_chunk_identifier_sets = Vec::with_capacity(phenotype_names.len());
         for phenotype_name in phenotype_names {
             let output_index =
-                self.run_indices_by_phenotype.get(phenotype_name).copied().ok_or_else(|| {
+                core.run_indices_by_phenotype.get(phenotype_name).copied().ok_or_else(|| {
                     OutputError::InvalidInput(format!("Unknown planned phenotype '{phenotype_name}'."))
                 })?;
-            selected_writer_sessions.push(
-                writer_sessions.get(output_index).map(Arc::clone).ok_or_else(|| {
-                    OutputError::InvalidInput(format!("Output index {output_index} is out of range."))
-                })?,
+            if !selected_indices.insert(output_index) {
+                return Err(OutputError::InvalidInput(format!(
+                    "Phenotype '{phenotype_name}' was selected more than once for output delivery."
+                )));
+            }
+            let run = core
+                .runs
+                .get(output_index)
+                .ok_or_else(|| OutputError::Runtime(format!("Output index {output_index} is inconsistent.")))?;
+            writer_sessions.push(run.writer_session.as_ref().map(Arc::clone));
+            committed_chunk_identifier_sets.push(Arc::clone(&run.committed_chunk_identifiers));
+        }
+        Ok(OutputDeliveryToken { writer_sessions, committed_chunk_identifier_sets })
+    }
+
+    /// Drain all writers and prove exact coverage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a writer, timing snapshot, or exact-coverage check
+    /// fails. A best-effort failed terminal is published before returning.
+    pub fn close_completed(mut self) -> OutputResult<OutputManager<Covered>> {
+        let mut core = self.take_core()?;
+        let completed_noop = core.active_attempt()?.completed_noop;
+        let close_result = if completed_noop { core.reverify_completed_noop() } else { core.close_writers_completed() };
+        #[cfg(test)]
+        let close_result = close_result.and(fail_lifecycle_at_test_point(if completed_noop {
+            "close_completed_noop"
+        } else {
+            "close_completed"
+        }));
+        if let Err(error) = close_result {
+            let recovery_result = if completed_noop {
+                core.lifecycle_state.terminal = true;
+                core.release_owner_claim()
+            } else {
+                let reason = format!("output completion failed: {error}");
+                core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason))
+            };
+            return return_primary_after_recovery(
+                error,
+                recovery_result,
+                "Output completion failure recovery also failed",
             );
-            committed_chunk_identifier_sets.push(Arc::clone(
-                &self
-                    .runs
-                    .get(output_index)
-                    .ok_or_else(|| OutputError::InvalidInput(format!("Output index {output_index} is out of range.")))?
-                    .committed_chunk_identifiers,
+        }
+        Ok(OutputManager { core: Some(core), state: PhantomData })
+    }
+
+    /// Flush accepted output and publish an interrupted terminal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when draining, timing, manifest, or terminal publication
+    /// fails.
+    pub fn finish_interrupted(mut self, signal_name: &str) -> OutputResult<()> {
+        let mut core = self.take_core()?;
+        if signal_name.trim().is_empty() {
+            let error = OutputError::InvalidInput("Output interruption signal name must not be empty.".to_string());
+            return return_primary_after_recovery(
+                error,
+                core.resolve_rejected_terminal_request("empty interruption signal"),
+                "Rejected output interruption recovery failed",
+            );
+        }
+        if core.active_attempt()?.completed_noop {
+            core.lifecycle_state.terminal = true;
+            let error =
+                OutputError::InvalidInput("A verified completed output lineage cannot be interrupted.".to_string());
+            let release_result = core.release_owner_claim();
+            return return_primary_after_recovery(
+                error,
+                release_result,
+                "Completed no-op interruption rejection could not release ownership",
+            );
+        }
+        let close_result = core.close_writers_interrupted(signal_name);
+        #[cfg(test)]
+        let close_result = close_result.and(fail_lifecycle_at_test_point("finish_interrupted"));
+        if let Err(error) = close_result {
+            let reason = format!("interrupted output flush failed: {error}");
+            let recovery_result =
+                core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason));
+            return return_primary_after_recovery(
+                error,
+                recovery_result,
+                "Interrupted output flush failure recovery also failed",
+            );
+        }
+        core.publish_terminal_and_release(&AttemptManifestStatus::Interrupted, Some(signal_name), None)
+    }
+
+    /// Discard unsubmitted tails and publish a failed terminal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when writer drain, timing, manifest, or terminal
+    /// publication fails.
+    pub fn abort(mut self, failure_reason: &str) -> OutputResult<()> {
+        let mut core = self.take_core()?;
+        if failure_reason.trim().is_empty() {
+            let error = OutputError::InvalidInput("Output failure reason must not be empty.".to_string());
+            return return_primary_after_recovery(
+                error,
+                core.resolve_rejected_terminal_request("empty failure reason"),
+                "Rejected output abort recovery failed",
+            );
+        }
+        if core.active_attempt()?.completed_noop {
+            core.lifecycle_state.terminal = true;
+            let error = OutputError::InvalidInput("A verified completed output lineage cannot be aborted.".to_string());
+            let release_result = core.release_owner_claim();
+            return return_primary_after_recovery(
+                error,
+                release_result,
+                "Completed no-op abort rejection could not release ownership",
+            );
+        }
+        let abort_result = core.abort_writers();
+        let terminal_reason = abort_result.as_ref().err().map_or_else(
+            || failure_reason.to_string(),
+            |abort_error| format!("{failure_reason}; writer cleanup also reported: {abort_error}"),
+        );
+        let recovery_result =
+            core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&terminal_reason));
+        combine_terminal_cleanup_result(abort_result, recovery_result, "Output abort recovery also failed")
+    }
+}
+
+impl OutputManager<Covered> {
+    /// Publish completed manifests and the immutable completed terminal.
+    ///
+    /// Completed no-op attempts are fully reverified and perform no writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when final verification, manifest publication, or
+    /// terminal publication fails.
+    pub fn finish(mut self) -> OutputResult<Vec<CompletedOutputRun>> {
+        let mut core = self.take_core()?;
+        let completed_noop = core.active_attempt()?.completed_noop;
+        if completed_noop {
+            let completion_result = core.reverify_completed_noop().and_then(|()| core.completed_outputs());
+            core.lifecycle_state.terminal = true;
+            let release_result = core.release_owner_claim();
+            return combine_terminal_cleanup_result(
+                completion_result,
+                release_result,
+                "Completed output verification failed",
+            );
+        }
+
+        let completed_outputs_result = core.completed_outputs();
+        #[cfg(test)]
+        let completed_outputs_result = completed_outputs_result.and_then(|outputs| {
+            fail_completion_at_test_point("before_completed_terminal_publication").map(|()| outputs)
+        });
+        let completed_outputs = match completed_outputs_result {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                let failure_reason = format!("completed output result construction failed: {error}");
+                let recovery_result =
+                    core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&failure_reason));
+                return return_primary_after_recovery(
+                    error,
+                    recovery_result,
+                    "Completed output failure recovery also failed",
+                );
+            }
+        };
+
+        if let Err(error) = core.publish_terminal(&AttemptManifestStatus::Completed, None, None) {
+            return Err(core.retained_owner_claim_error(&error));
+        }
+        core.lifecycle_state.terminal = true;
+        let release_result = core.release_owner_claim();
+        #[cfg(test)]
+        combine_terminal_cleanup_result(
+            fail_completion_at_test_point("after_completed_terminal_finalization"),
+            release_result,
+            "Completed output terminal-boundary operation failed",
+        )?;
+        #[cfg(not(test))]
+        release_result?;
+        Ok(completed_outputs)
+    }
+}
+
+impl OutputDeliveryToken {
+    #[must_use]
+    pub fn trait_count(&self) -> usize {
+        self.writer_sessions.len()
+    }
+
+    #[must_use]
+    pub fn committed_chunk_identifier_sets(&self) -> &[Arc<BTreeSet<usize>>] {
+        &self.committed_chunk_identifier_sets
+    }
+
+    #[must_use]
+    pub fn is_read_only(&self) -> bool {
+        self.writer_sessions.iter().all(Option::is_none)
+    }
+
+    pub(crate) fn writer_session(&self, trait_index: usize) -> OutputResult<&OutputWriterSession> {
+        self.writer_sessions
+            .get(trait_index)
+            .ok_or_else(|| OutputError::InvalidInput("Active trait index is out of bounds.".to_string()))?
+            .as_deref()
+            .ok_or_else(|| {
+                OutputError::InvalidInput(
+                    "Completed output delivery token is strictly read-only and cannot accept chunks.".to_string(),
+                )
+            })
+    }
+}
+
+impl<State> OutputManager<State> {
+    fn core(&self) -> OutputResult<&OutputManagerCore> {
+        self.core.as_ref().ok_or_else(|| OutputError::Runtime("Output manager core was already consumed.".to_string()))
+    }
+
+    fn take_core(&mut self) -> OutputResult<OutputManagerCore> {
+        self.core.take().ok_or_else(|| OutputError::Runtime("Output manager core was already consumed.".to_string()))
+    }
+}
+
+impl<State> Drop for OutputManager<State> {
+    fn drop(&mut self) {
+        let Some(core) = self.core.as_mut() else {
+            return;
+        };
+        if !core.lifecycle_state.terminal {
+            for run in &core.runs {
+                if let Some(writer_session) = run.writer_session.as_ref() {
+                    let _ = writer_session.abort();
+                }
+            }
+            let _ = core.shutdown_writer_resources();
+        }
+    }
+}
+
+impl OutputManagerCore {
+    fn reestablish_observed_durability(&self, snapshot: Option<&LineageSnapshot>) -> OutputResult<()> {
+        if let Some(snapshot) = snapshot {
+            for attempt_id in lineage_attempt_identifiers(snapshot) {
+                for run in &self.runs {
+                    let paths = AttemptRunPaths::new(
+                        &self.lineage_paths.attempts_directory,
+                        &attempt_id,
+                        &run.output_directory_name,
+                    )?;
+                    paths.reestablish_directory_durability()?;
+                }
+                let attempt_directory = self.lineage_paths.attempt_directory(&attempt_id);
+                if attempt_directory.is_dir() {
+                    crate::persistence::io::sync_directory(&attempt_directory)?;
+                }
+            }
+        }
+        self.lineage_paths.reestablish_observed_directory_durability()
+    }
+
+    fn reestablish_current_durability_and_reinspect(&mut self) -> OutputResult<LineageSnapshot> {
+        let observed_snapshot = self
+            .lineage_paths
+            .inspect()?
+            .ok_or_else(|| OutputError::InvalidInput("Owned output lineage disappeared.".to_string()))?;
+        self.reestablish_observed_durability(Some(&observed_snapshot))?;
+        let durable_snapshot = self.lineage_paths.inspect()?.ok_or_else(|| {
+            OutputError::InvalidInput("Owned output lineage disappeared after synchronization.".to_string())
+        })?;
+        if durable_snapshot != observed_snapshot {
+            return Err(OutputError::InvalidInput(
+                "Output lineage changed while re-establishing durable authority.".to_string(),
             ));
         }
-        Ok(OutputDeliveryState { writer_sessions: selected_writer_sessions, committed_chunk_identifier_sets })
+        self.lineage_snapshot = Some(durable_snapshot.clone());
+        Ok(durable_snapshot)
     }
 
-    /// Finish every writer and return artifact paths in phenotype order.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a writer fails.
-    pub fn finish(mut self) -> OutputResult<Vec<CompletedOutputRun>> {
-        let finish_result = (|| {
-            let writer_sessions = self.writer_session_references()?;
-            let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
-            finish_output_writer_sessions(&writer_sessions, thread_count)
-        })();
-        let shutdown_result = self.shutdown_writer_resources();
-        self.terminal = true;
-        finish_result?;
-        shutdown_result?;
-        Ok(self.take_completion())
+    fn cleanup_claim_staging(&mut self) -> OutputResult<()> {
+        let claimed_attempt_id = self.claimed_attempt_id()?;
+        let owner_claim = self
+            .owner_claim
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output staging cleanup requires an owner claim.".to_string()))?;
+        let claim_identifier = owner_claim.claim_id().to_string();
+        let removal_path = if self.lifecycle_state.claimed_attempt_was_referenced {
+            self.claim_staging_directory.clone().ok_or_else(|| {
+                OutputError::Runtime("Output staging cleanup requires a diagnostics directory.".to_string())
+            })?
+        } else {
+            self.lineage_paths.attempt_directory(&claimed_attempt_id)
+        };
+        match std::fs::remove_dir_all(&removal_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(OutputError::Runtime(format!(
+                    "Failed to remove unpublished output staging '{}': {error}",
+                    removal_path.display()
+                )));
+            }
+        }
+        let synchronization_directory = if self.lifecycle_state.claimed_attempt_was_referenced {
+            removal_path.parent().ok_or_else(|| {
+                OutputError::Runtime(format!("Output diagnostics staging '{}' has no parent.", removal_path.display()))
+            })?
+        } else {
+            &self.lineage_paths.attempts_directory
+        };
+        sync_nearest_existing_directory(synchronization_directory)?;
+        self.lineage_paths.retire_owner_staging_intent(&claim_identifier, &claimed_attempt_id)?;
+        self.claim_staging_directory = None;
+        Ok(())
     }
 
-    /// Flush every writer and mark manifests interrupted.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when interrupted output cannot be flushed.
-    pub fn finish_interrupted(mut self, signal_name: &str) -> OutputResult<()> {
-        let finish_result = (|| {
-            let writer_sessions = self.writer_session_references()?;
-            let thread_count = finish_thread_count(&self.run_plan.output, writer_sessions.len())?;
-            finish_interrupted_output_writer_sessions(&writer_sessions, thread_count, signal_name)
-        })();
-        let shutdown_result = self.shutdown_writer_resources();
-        self.terminal = true;
-        finish_result.and(shutdown_result)
+    fn initialize_claim_staging_directory(&mut self) -> OutputResult<()> {
+        let completed_attempt = self.lineage_snapshot.as_ref().and_then(|snapshot| {
+            let terminal = snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref())?;
+            (terminal.status == AttemptTerminalStatus::Completed).then(|| snapshot.leaf_attempt_id.clone())
+        });
+        let claimed_attempt_was_referenced = completed_attempt.is_some();
+        let claimed_attempt_id = completed_attempt.unwrap_or_else(AttemptIdentifier::generate);
+        let owner_claim = self
+            .owner_claim
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output claim staging requires an owner claim.".to_string()))?;
+        let claim_identifier = owner_claim.claim_id().to_string();
+        let claim_staging_directory =
+            self.lineage_paths.attempt_directory(&claimed_attempt_id).join("diagnostics").join(&claim_identifier);
+        self.claimed_attempt_id = Some(claimed_attempt_id.clone());
+        self.lifecycle_state.claimed_attempt_was_referenced = claimed_attempt_was_referenced;
+        self.claim_staging_directory = Some(claim_staging_directory.clone());
+        self.lineage_paths.publish_owner_staging_intent(&claim_identifier, &claimed_attempt_id)?;
+        #[cfg(test)]
+        fail_initialization_at_test_point("after_owner_staging_intent")?;
+        create_directories_durable(&claim_staging_directory)?;
+        #[cfg(test)]
+        fail_initialization_at_test_point("after_claim_diagnostics_creation")?;
+        Ok(())
     }
 
-    /// Abort every writer and discard pending chunks.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first writer abort failure.
-    pub fn abort(mut self) -> OutputResult<()> {
-        let abort_result = abort_writer_sessions(self.writer_sessions.as_deref().unwrap_or_default());
-        let shutdown_result = self.shutdown_writer_resources();
-        self.terminal = true;
-        abort_result.and(shutdown_result)
+    fn claimed_attempt_id(&self) -> OutputResult<AttemptIdentifier> {
+        self.claimed_attempt_id
+            .clone()
+            .ok_or_else(|| OutputError::Runtime("Claimed output has no reserved attempt identifier.".to_string()))
+    }
+
+    fn retire_claim_staging_intent(&self) -> OutputResult<()> {
+        let owner_claim = self
+            .owner_claim
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output staging retirement requires an owner claim.".to_string()))?;
+        let attempt_id = self
+            .claimed_attempt_id
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output staging retirement requires a claimed attempt.".to_string()))?;
+        self.lineage_paths.retire_owner_staging_intent(owner_claim.claim_id(), attempt_id)
+    }
+
+    fn release_after_unmutated_error(&mut self, error: OutputError) -> OutputError {
+        match self.release_owner_claim() {
+            Ok(()) => error,
+            Err(release_error) => OutputError::OutputOperationAndOwnerClaimRelease {
+                primary: Box::new(error),
+                release: Box::new(release_error),
+            },
+        }
     }
 
     fn run(&self, phenotype_name: &str) -> OutputResult<&ManagedOutputRun> {
@@ -313,147 +1009,1612 @@ impl OutputManager {
         })
     }
 
-    fn refresh_run_manifest_hints(&mut self) -> OutputResult<()> {
-        let refreshed_manifest_json = self
-            .runs
-            .iter()
-            .map(|run| inspect_output_run(&run.paths, self.run_plan.output.resume))
-            .collect::<OutputResult<Vec<_>>>()?;
-        for (run, existing_manifest_json) in self.runs.iter_mut().zip(refreshed_manifest_json) {
-            run.existing_manifest_json = existing_manifest_json;
+    fn active_attempt(&self) -> OutputResult<&ActiveAttempt> {
+        self.active_attempt
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output manager has no active attempt.".to_string()))
+    }
+
+    fn install_prepared_attempt(
+        &mut self,
+        prepared_attempt: PreparedAttempt,
+        canonical_chunk_plan: CanonicalChunkPlan,
+        completed_noop: bool,
+        collect_stage_timings: bool,
+    ) -> OutputResult<()> {
+        if prepared_attempt.runs.len() != self.runs.len() {
+            return Err(OutputError::Runtime("Prepared output attempt run count is inconsistent.".to_string()));
+        }
+        for (run, prepared_run) in self.runs.iter_mut().zip(prepared_attempt.runs) {
+            run.binding = Some(prepared_run.binding);
+            run.paths = Some(prepared_run.paths);
+            run.receipts = prepared_run.receipts;
+            run.committed_chunk_identifiers = Arc::new(prepared_run.committed_chunk_identifiers);
+        }
+        self.active_attempt = Some(ActiveAttempt {
+            run_set_id: prepared_attempt.run_set_id,
+            attempt_id: prepared_attempt.attempt_id,
+            canonical_chunk_plan,
+            completed_noop,
+            collect_stage_timings,
+        });
+        Ok(())
+    }
+
+    fn install_claimed_attempt_shell(
+        &mut self,
+        run_set_id: String,
+        attempt_id: AttemptIdentifier,
+        canonical_chunk_plan: CanonicalChunkPlan,
+        collect_stage_timings: bool,
+    ) -> OutputResult<()> {
+        for run in &mut self.runs {
+            let execution_plan_sha256 = execution_plan_hash(run)?;
+            run.binding = Some(AttemptManifestBinding {
+                run_set_id: run_set_id.clone(),
+                attempt_id: attempt_id.clone(),
+                phenotype_name: run.phenotype_name.clone(),
+                output_directory_name: run.output_directory_name.clone(),
+                execution_plan_sha256,
+                chunk_plan_sha256: canonical_chunk_plan.sha256().to_string(),
+            });
+            run.paths = Some(AttemptRunPaths::new(
+                &self.lineage_paths.attempts_directory,
+                &attempt_id,
+                &run.output_directory_name,
+            )?);
+            run.receipts.clear();
+            run.committed_chunk_identifiers = Arc::new(BTreeSet::new());
+        }
+        self.active_attempt = Some(ActiveAttempt {
+            run_set_id,
+            attempt_id,
+            canonical_chunk_plan,
+            completed_noop: false,
+            collect_stage_timings,
+        });
+        self.lifecycle_state.attempt_authority_published = true;
+        Ok(())
+    }
+
+    fn resolve_initialization_error(&mut self, initialization_error: &OutputError) -> OutputResult<()> {
+        if !self.lifecycle_state.attempt_authority_published {
+            return self.release_owner_claim();
+        }
+        let abort_result = if self.runs.iter().any(|run| run.writer_session.is_some()) {
+            self.abort_writers()
+        } else {
+            self.shutdown_writer_resources()
+        };
+        #[cfg(test)]
+        let abort_result = abort_result.and(fail_initialization_cleanup_at_test_point("after_writer_abort"));
+        let abort_diagnostic = abort_result.as_ref().err().map(ToString::to_string);
+        let support_result = self.materialize_initialization_failure_support();
+        let support_succeeded = support_result.is_ok();
+        let failure_reason = abort_diagnostic.map_or_else(
+            || format!("output initialization failed: {initialization_error}"),
+            |abort_error| {
+                format!(
+                    "output initialization failed: {initialization_error}; writer cleanup also reported: {abort_error}"
+                )
+            },
+        );
+        let terminal_result = if support_succeeded {
+            self.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&failure_reason))
+        } else {
+            Ok(())
+        };
+        support_result.and(terminal_result)
+    }
+
+    fn resolve_rejected_terminal_request(&mut self, rejection_reason: &str) -> OutputResult<()> {
+        if self.active_attempt()?.completed_noop {
+            self.lifecycle_state.terminal = true;
+            return self.release_owner_claim();
+        }
+        let abort_result = self.abort_writers();
+        let failure_reason = abort_result.as_ref().err().map_or_else(
+            || format!("output lifecycle request rejected: {rejection_reason}"),
+            |abort_error| {
+                format!(
+                    "output lifecycle request rejected: {rejection_reason}; writer cleanup also reported: \
+                     {abort_error}"
+                )
+            },
+        );
+        self.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&failure_reason))
+    }
+
+    fn materialize_initialization_failure_support(&self) -> OutputResult<()> {
+        for run in &self.runs {
+            let paths = run.paths.as_ref().ok_or_else(|| {
+                OutputError::Runtime("Claimed output attempt has no paths during failure recovery.".to_string())
+            })?;
+            paths.initialize_directories()?;
+            write_effective_config(paths, &self.effective_config_toml)?;
         }
         Ok(())
     }
 
-    fn validate_run_manifest_header_coverage(
-        &self,
-        headers_by_phenotype: &BTreeMap<String, serde_json::Value>,
-    ) -> OutputResult<()> {
-        if headers_by_phenotype.len() != self.runs.len() {
-            return Err(OutputError::InvalidInput(format!(
-                "Output initialization count {} does not match planned phenotype count {}.",
-                headers_by_phenotype.len(),
-                self.runs.len()
-            )));
+    fn start_writers(&mut self) -> OutputResult<()> {
+        let canonical_chunk_plan = self.active_attempt()?.canonical_chunk_plan.clone();
+        let collect_stage_timings = self.active_attempt()?.collect_stage_timings;
+        let run_configs = self
+            .runs
+            .iter()
+            .map(|run| {
+                let paths = run
+                    .paths
+                    .as_ref()
+                    .ok_or_else(|| OutputError::Runtime("Output run paths are not initialized.".to_string()))?;
+                let binding = run
+                    .binding
+                    .as_ref()
+                    .ok_or_else(|| OutputError::Runtime("Output run binding is not initialized.".to_string()))?;
+                Ok(OutputWriterRunConfig {
+                    run_directory: paths.run_directory.clone(),
+                    parts_directory: paths.parts_directory.clone(),
+                    commits_directory: paths.commits_directory.clone(),
+                    binding: binding.part_binding(),
+                    canonical_chunk_plan: canonical_chunk_plan.clone(),
+                    initial_receipts: run.receipts.clone(),
+                })
+            })
+            .collect::<OutputResult<Vec<_>>>()?;
+        let CreatedOutputWriterSessions { sessions, resource_owner } =
+            create_output_writer_sessions(run_configs, &self.run_plan.output, collect_stage_timings)?;
+        for (run, session) in self.runs.iter_mut().zip(sessions) {
+            run.writer_session = Some(Arc::new(session));
         }
+        self.writer_resource_owner = resource_owner;
+        Ok(())
+    }
+
+    fn close_writers_completed(&mut self) -> OutputResult<()> {
+        let sessions = self.writer_session_references()?;
+        let thread_count = finish_thread_count(&self.run_plan.output, sessions.len())?;
+        let finish_result = finish_output_writer_sessions(&sessions, thread_count);
+        let shutdown_result = self.shutdown_writer_resources();
+        finish_result?;
+        shutdown_result?;
+        self.refresh_receipts_from_sessions()?;
+        let canonical_chunk_plan = &self.active_attempt()?.canonical_chunk_plan;
         for run in &self.runs {
-            if !headers_by_phenotype.contains_key(&run.phenotype_name) {
-                return Err(OutputError::InvalidInput(format!(
-                    "Missing output initialization for phenotype '{}'.",
-                    run.phenotype_name
-                )));
+            canonical_chunk_plan
+                .validate_exact_coverage(run.receipts.iter().flat_map(|receipt| receipt.footer.chunks.iter()))?;
+        }
+        Ok(())
+    }
+
+    fn close_writers_interrupted(&mut self, signal_name: &str) -> OutputResult<()> {
+        let sessions = self.writer_session_references()?;
+        let thread_count = finish_thread_count(&self.run_plan.output, sessions.len())?;
+        let finish_result = finish_interrupted_output_writer_sessions(&sessions, thread_count, signal_name);
+        let shutdown_result = self.shutdown_writer_resources();
+        finish_result?;
+        shutdown_result?;
+        self.refresh_receipts_from_sessions()
+    }
+
+    fn abort_writers(&mut self) -> OutputResult<()> {
+        let mut first_error = None;
+        for run in &self.runs {
+            if let Some(session) = run.writer_session.as_ref()
+                && let Err(error) = session.abort()
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        let shutdown_result = self.shutdown_writer_resources();
+        let refresh_result = self.refresh_receipts_from_sessions();
+        first_error.map_or(Ok(()), Err).and(shutdown_result).and(refresh_result)
+    }
+
+    fn writer_session_references(&self) -> OutputResult<Vec<&OutputWriterSession>> {
+        self.runs
+            .iter()
+            .map(|run| {
+                run.writer_session
+                    .as_deref()
+                    .ok_or_else(|| OutputError::Runtime("Writable output run has no writer session.".to_string()))
+            })
+            .collect()
+    }
+
+    fn refresh_receipts_from_sessions(&mut self) -> OutputResult<()> {
+        for run in &mut self.runs {
+            if let Some(session) = run.writer_session.as_ref() {
+                run.receipts = session.receipt_snapshot()?;
+                run.committed_chunk_identifiers = Arc::new(receipt_chunk_identifiers(&run.receipts)?);
             }
         }
         Ok(())
     }
 
-    fn writer_session_references(&self) -> OutputResult<Vec<&OutputWriterSession>> {
-        let writer_sessions = self.writer_sessions.as_ref().ok_or_else(|| {
-            OutputError::InvalidInput("Output manager must be initialized before completion.".to_string())
-        })?;
-        Ok(writer_sessions.iter().map(Arc::as_ref).collect())
+    fn shutdown_writer_resources(&mut self) -> OutputResult<()> {
+        self.writer_resource_owner.take().map_or(Ok(()), |mut owner| owner.shutdown_and_join())
     }
 
-    fn take_completion(&mut self) -> Vec<CompletedOutputRun> {
+    fn release_owner_claim(&mut self) -> OutputResult<()> {
+        #[cfg(test)]
+        if let Some(owner_claim) = self.owner_claim.as_ref() {
+            inject_owner_claim_cleanup_conflict_at_test_point(owner_claim)?;
+        }
+        let Some(owner_claim) = self.owner_claim.as_mut() else {
+            return Err(OutputError::Runtime("Output manager has no owner claim to release.".to_string()));
+        };
+        let claim_path = owner_claim.claim_path().to_path_buf();
+        match owner_claim.release() {
+            Ok(()) => {
+                self.owner_claim = None;
+                Ok(())
+            }
+            Err(first_error) if owner_claim.release_transition_is_visible() => match owner_claim.release() {
+                Ok(()) => {
+                    self.owner_claim = None;
+                    Ok(())
+                }
+                Err(retry_error) => Err(OutputError::PublishedOutputOwnerClaimReleaseDurability {
+                    claim_path,
+                    first_failure: first_error.to_string(),
+                    retry_failure: retry_error.to_string(),
+                }),
+            },
+            Err(error) => Err(owner_claim.authority_failure(&error)),
+        }
+    }
+
+    fn retained_owner_claim_error(&self, reason: &impl ToString) -> OutputError {
+        self.owner_claim.as_ref().map_or_else(
+            || OutputError::Runtime(reason.to_string()),
+            |owner_claim| owner_claim.authority_failure(reason),
+        )
+    }
+
+    fn publish_terminal_and_release(
+        &mut self,
+        status: &AttemptManifestStatus,
+        interrupted_signal: Option<&str>,
+        failure_reason: Option<&str>,
+    ) -> OutputResult<()> {
+        if let Err(error) = self.publish_terminal(status, interrupted_signal, failure_reason) {
+            return Err(self.retained_owner_claim_error(&error));
+        }
+        self.lifecycle_state.terminal = true;
+        self.release_owner_claim()
+    }
+
+    fn publish_terminal(
+        &mut self,
+        status: &AttemptManifestStatus,
+        interrupted_signal: Option<&str>,
+        failure_reason: Option<&str>,
+    ) -> OutputResult<()> {
+        #[cfg(test)]
+        fail_terminal_cleanup_at_test_point("before_terminal_publication")?;
+        self.reestablish_current_durability_and_reinspect()?;
+        self.refresh_active_attempt(OrphanPartPolicy::Observe, false)?;
+        let run_set_id = self.active_attempt()?.run_set_id.clone();
+        let attempt_id = self.active_attempt()?.attempt_id.clone();
+        let StagedTerminalRuns { terminal, .. } = stage_terminal_runs(
+            &self.runs,
+            &self.run_plan,
+            run_set_id,
+            attempt_id,
+            status,
+            interrupted_signal,
+            failure_reason,
+        )?;
+        self.lineage_paths.publish_terminal_claim(&terminal)?;
+        #[cfg(test)]
+        crash_at_test_failpoint("after_terminal_claim");
+        let claimed_snapshot = self
+            .lineage_paths
+            .inspect()?
+            .ok_or_else(|| OutputError::InvalidInput("Claimed output lineage disappeared.".to_string()))?;
+        if claimed_snapshot.pending_terminal.as_ref() != Some(&terminal) {
+            return Err(OutputError::InvalidInput("Output terminal claim changed before materialization.".to_string()));
+        }
+        self.refresh_active_attempt(OrphanPartPolicy::Reconcile, true)?;
+        let staged_terminal_runs = stage_terminal_runs(
+            &self.runs,
+            &self.run_plan,
+            terminal.run_set_id.clone(),
+            terminal.attempt_id.clone(),
+            status,
+            interrupted_signal,
+            failure_reason,
+        )?;
+        if staged_terminal_runs.terminal != terminal {
+            return Err(OutputError::InvalidInput(
+                "Output receipts changed after terminal authority was claimed.".to_string(),
+            ));
+        }
+        materialize_staged_terminal_runs(&self.runs, &staged_terminal_runs.runs)?;
+        self.reestablish_current_durability_and_reinspect()?;
+        self.lineage_paths.finalize_terminal(&terminal)?;
+        Ok(())
+    }
+
+    fn refresh_active_attempt(
+        &mut self,
+        orphan_part_policy: OrphanPartPolicy,
+        allow_pending_terminal: bool,
+    ) -> OutputResult<()> {
+        let snapshot = self
+            .lineage_paths
+            .inspect()?
+            .ok_or_else(|| OutputError::InvalidInput("Active output lineage disappeared.".to_string()))?;
+        let active_attempt_id = self.active_attempt()?.attempt_id.clone();
+        if snapshot.leaf_attempt_id != active_attempt_id
+            || snapshot.leaf_terminal.is_some()
+            || (!allow_pending_terminal && snapshot.pending_terminal.is_some())
+        {
+            return Err(OutputError::InvalidInput(
+                "Active output lineage changed before terminal publication.".to_string(),
+            ));
+        }
+        let canonical_chunk_plan = self.active_attempt()?.canonical_chunk_plan.clone();
+        let allowed_attempts = lineage_attempt_identifiers(&snapshot);
+        let verified_runs = verify_runs_against_snapshot(
+            &self.lineage_paths,
+            &self.runs,
+            &snapshot,
+            &canonical_chunk_plan,
+            &allowed_attempts,
+            false,
+            orphan_part_policy,
+        )?;
+        if verified_runs.iter().any(|verified_run| verified_run.status != AttemptManifestStatus::Running) {
+            return Err(OutputError::InvalidInput(
+                "Active nonterminal lineage contains a terminal-status attempt manifest.".to_string(),
+            ));
+        }
+        for (run, verified_run) in self.runs.iter_mut().zip(verified_runs) {
+            run.receipts = verified_run.receipts;
+            run.committed_chunk_identifiers = Arc::new(verified_run.committed_chunk_identifiers);
+        }
+        Ok(())
+    }
+
+    fn reverify_completed_noop(&mut self) -> OutputResult<()> {
+        let snapshot = self
+            .lineage_paths
+            .inspect()?
+            .ok_or_else(|| OutputError::InvalidInput("Completed output lineage disappeared.".to_string()))?;
+        let active_attempt_id = self.active_attempt()?.attempt_id.clone();
+        let canonical_chunk_plan = self.active_attempt()?.canonical_chunk_plan.clone();
+        if snapshot.leaf_attempt_id != active_attempt_id
+            || snapshot
+                .leaf_terminal
+                .as_ref()
+                .is_none_or(|terminal| terminal.status != AttemptTerminalStatus::Completed)
+        {
+            return Err(OutputError::InvalidInput(
+                "Completed output lineage changed during read-only verification.".to_string(),
+            ));
+        }
+        let allowed_attempts = lineage_attempt_identifiers(&snapshot);
+        verify_runs_against_snapshot(
+            &self.lineage_paths,
+            &self.runs,
+            &snapshot,
+            &canonical_chunk_plan,
+            &allowed_attempts,
+            true,
+            OrphanPartPolicy::Reject,
+        )?;
+        self.lineage_snapshot = Some(snapshot);
+        Ok(())
+    }
+
+    fn completed_outputs(&self) -> OutputResult<Vec<CompletedOutputRun>> {
         self.runs
-            .drain(..)
-            .map(|run| CompletedOutputRun {
-                run_directory: run.paths.run_directory,
-                parts_directory: run.paths.parts_directory,
+            .iter()
+            .map(|run| {
+                let paths = run
+                    .paths
+                    .as_ref()
+                    .ok_or_else(|| OutputError::Runtime("Completed output run has no paths.".to_string()))?;
+                Ok(CompletedOutputRun {
+                    run_directory: paths.run_directory.clone(),
+                    parts_directory: paths.parts_directory.clone(),
+                })
             })
             .collect()
     }
-
-    fn shutdown_writer_resources(&mut self) -> OutputResult<()> {
-        self.writer_resource_owner.take().map_or(Ok(()), |mut resource_owner| resource_owner.shutdown_and_join())
-    }
 }
 
-impl Drop for OutputManager {
-    fn drop(&mut self) {
-        if !self.terminal {
-            let _ = abort_writer_sessions(self.writer_sessions.as_deref().unwrap_or_default());
-            drop(self.writer_resource_owner.take());
+fn absolute_lexically_normalized_path(path: &Path) -> OutputResult<PathBuf> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().map_err(OutputError::runtime)?.join(path)
+    };
+    let mut normalized_path = PathBuf::new();
+    for component in absolute_path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized_path.push(prefix.as_os_str()),
+            Component::RootDir => normalized_path.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized_path.pop();
+            }
+            Component::Normal(name) => normalized_path.push(name),
         }
     }
+    Ok(normalized_path)
 }
 
-fn finish_thread_count(output_plan: &g_plan::OutputPlan, writer_session_count: usize) -> OutputResult<usize> {
-    let requested_thread_count = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
-    if requested_thread_count == 0 && writer_session_count != 0 {
-        return Err(OutputError::InvalidInput("Writer finish thread count must be positive.".to_string()));
+fn contains_cli_line_separator(text: &str) -> bool {
+    text.chars().any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
+}
+
+fn validate_open_policy(
+    run_plan: &g_plan::RunPlan,
+    lineage_paths: &OutputLineagePaths,
+    snapshot: Option<&LineageSnapshot>,
+    runs: &[ManagedOutputRun],
+) -> OutputResult<()> {
+    if snapshot.is_none() && run_plan.output.resume {
+        let fenced_claim_id = run_plan.output.fenced_owner_claim_id.as_deref().ok_or_else(|| {
+            OutputError::InvalidInput("Output resume requires an existing .g-output lineage.".to_string())
+        })?;
+        lineage_paths.require_fenced_owner_claim(fenced_claim_id)?;
     }
-    Ok(requested_thread_count.min(writer_session_count))
+    validate_claimed_policy(run_plan, lineage_paths, snapshot, runs)
 }
 
-fn abort_writer_sessions(writer_sessions: &[Arc<OutputWriterSession>]) -> OutputResult<()> {
-    let mut first_error = None;
-    for writer_session in writer_sessions {
-        if let Err(error) = writer_session.abort()
-            && first_error.is_none()
+fn validate_claimed_policy(
+    run_plan: &g_plan::RunPlan,
+    lineage_paths: &OutputLineagePaths,
+    snapshot: Option<&LineageSnapshot>,
+    runs: &[ManagedOutputRun],
+) -> OutputResult<()> {
+    let Some(snapshot) = snapshot else {
+        if run_plan.output.resume {
+            if run_plan.output.recover_attempt.is_some() {
+                return Err(OutputError::InvalidInput(
+                    "Pre-genesis fenced owner recovery cannot name an output attempt.".to_string(),
+                ));
+            }
+            if fresh_root_contains_output_artifacts(lineage_paths)? {
+                return Err(OutputError::InvalidInput(format!(
+                    "Pre-genesis output root '{}' contains artifacts not bound to owner recovery.",
+                    lineage_paths.output_root.display()
+                )));
+            }
+            return Ok(());
+        }
+        if run_plan.output.recover_attempt.is_some() {
+            return Err(OutputError::InvalidInput(
+                "Exact output recovery requires an existing nonterminal lineage.".to_string(),
+            ));
+        }
+        if fresh_root_contains_output_artifacts(lineage_paths)? {
+            return Err(OutputError::InvalidInput(format!(
+                "Output run root '{}' already exists and is not empty.",
+                lineage_paths.output_root.display()
+            )));
+        }
+        return Ok(());
+    };
+    if !run_plan.output.resume {
+        return Err(OutputError::InvalidInput("Existing output lineage requires [output].resume=true.".to_string()));
+    }
+    validate_planned_names(snapshot, runs)?;
+    let terminal_authority = snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref());
+    match (terminal_authority, run_plan.output.recover_attempt.as_deref()) {
+        (Some(_), Some(_)) => Err(OutputError::InvalidInput(
+            "Exact output recovery is only valid for a nonterminal leaf attempt.".to_string(),
+        )),
+        (None, Some(recover_attempt)) if recover_attempt == snapshot.leaf_attempt_id.as_str() => Ok(()),
+        (None, Some(recover_attempt)) => Err(OutputError::InvalidInput(format!(
+            "Exact output recovery names attempt '{recover_attempt}', but the nonterminal leaf is '{}'.",
+            snapshot.leaf_attempt_id.as_str()
+        ))),
+        (None, None) => Err(OutputError::InvalidInput(format!(
+            "Nonterminal output attempt '{}' requires exact output.recover_attempt authorization.",
+            snapshot.leaf_attempt_id.as_str()
+        ))),
+        (Some(_), None) => Ok(()),
+    }
+}
+
+fn validate_planned_names(snapshot: &LineageSnapshot, runs: &[ManagedOutputRun]) -> OutputResult<()> {
+    if snapshot.genesis.phenotypes.len() != runs.len() {
+        return Err(OutputError::InvalidInput(
+            "Output lineage phenotype count does not match the current run plan.".to_string(),
+        ));
+    }
+    for (contract, run) in snapshot.genesis.phenotypes.iter().zip(runs) {
+        if contract.phenotype_name != run.phenotype_name || contract.output_directory_name != run.output_directory_name
         {
-            first_error = Some(error);
+            return Err(OutputError::InvalidInput(
+                "Output lineage phenotype order or directory names do not match the current run plan.".to_string(),
+            ));
         }
     }
-    first_error.map_or(Ok(()), Err)
+    Ok(())
 }
 
-#[derive(Serialize)]
-struct ManifestCommand<'a> {
-    interface: &'static str,
-    phenotype: &'a str,
-    effective_config: String,
+fn build_headers(
+    core: &OutputManagerCore,
+    current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
+) -> OutputResult<BTreeMap<String, Value>> {
+    let mut headers = BTreeMap::new();
+    let mut fingerprint_cache = ManifestFileFingerprintCache::default();
+    for input in current_header_inputs {
+        let phenotype_name = input.phenotype_name.clone();
+        let header =
+            build_current_run_manifest_header_value_with_cache(&core.run_plan, &input, &mut fingerprint_cache)?;
+        match headers.entry(phenotype_name) {
+            Entry::Vacant(entry) => {
+                entry.insert(header);
+            }
+            Entry::Occupied(entry) => {
+                return Err(OutputError::InvalidInput(format!(
+                    "Duplicate output initialization for phenotype '{}'.",
+                    entry.key()
+                )));
+            }
+        }
+    }
+    if headers.len() != core.runs.len() || core.runs.iter().any(|run| !headers.contains_key(&run.phenotype_name)) {
+        return Err(OutputError::InvalidInput(
+            "Output initialization headers do not cover planned phenotypes exactly.".to_string(),
+        ));
+    }
+    Ok(headers)
 }
 
-#[derive(Serialize)]
-struct ManifestRuntime {
-    device: &'static str,
-    cpu_threads: Option<u32>,
-    writer_threads: u32,
-    writer_queue_depth: usize,
-    chunks_per_parquet_file: usize,
-    parquet_compression: &'static str,
+fn bind_headers(runs: &mut [ManagedOutputRun], mut headers: BTreeMap<String, Value>) -> OutputResult<()> {
+    for run in runs {
+        run.current_header = Some(headers.remove(&run.phenotype_name).ok_or_else(|| {
+            OutputError::InvalidInput(format!("Missing output initialization for phenotype '{}'.", run.phenotype_name))
+        })?);
+    }
+    Ok(())
 }
 
-fn extend_manifest_from_plan(run_plan: &g_plan::RunPlan, run: &ManagedOutputRun) -> OutputResult<()> {
-    let command = serde_json::to_value(ManifestCommand {
-        interface: COMMAND_INTERFACE,
-        phenotype: &run.phenotype_name,
-        effective_config: run.effective_config_path.display().to_string(),
-    })
-    .map_err(OutputError::runtime)?;
-    let runtime = serde_json::to_value(ManifestRuntime {
-        device: run_plan.compute.device.as_str(),
-        cpu_threads: run_plan.compute.cpu_thread_count,
-        writer_threads: run_plan.output.writer_thread_count,
-        writer_queue_depth: crate::WRITER_QUEUE_DEPTH,
-        chunks_per_parquet_file: crate::CHUNKS_PER_PARQUET_FILE,
-        parquet_compression: "zstd",
-    })
-    .map_err(OutputError::runtime)?;
-    extend_run_manifest_metadata(&run.paths.run_directory, command, runtime)
+fn phenotype_contracts(runs: &[ManagedOutputRun]) -> OutputResult<Vec<PhenotypeLineageContract>> {
+    runs.iter()
+        .map(|run| {
+            Ok(PhenotypeLineageContract {
+                phenotype_name: run.phenotype_name.clone(),
+                output_directory_name: run.output_directory_name.clone(),
+                execution_plan_sha256: execution_plan_hash(run)?,
+            })
+        })
+        .collect()
+}
+
+fn execution_plan_hash(run: &ManagedOutputRun) -> OutputResult<String> {
+    run.current_header
+        .as_ref()
+        .and_then(|header| header.get("execution_plan_hash"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!(
+                "Output header for phenotype '{}' has no execution plan hash.",
+                run.phenotype_name
+            ))
+        })
+}
+
+fn initialize_genesis_attempt(
+    core: &mut OutputManagerCore,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    phenotype_contracts: Vec<PhenotypeLineageContract>,
+    collect_stage_timings: bool,
+) -> OutputResult<()> {
+    let attempt_id = core.claimed_attempt_id()?;
+    let genesis =
+        LineageGenesisRecord::new(attempt_id.clone(), canonical_chunk_plan.sha256().to_string(), phenotype_contracts);
+    core.lineage_paths.initialize_directories()?;
+    core.lineage_paths.publish_genesis(&genesis)?;
+    core.lifecycle_state.attempt_authority_published = true;
+    core.retire_claim_staging_intent()?;
+    #[cfg(test)]
+    crash_at_test_failpoint("after_genesis_claim");
+    core.install_claimed_attempt_shell(
+        genesis.run_set_id.clone(),
+        attempt_id.clone(),
+        canonical_chunk_plan.clone(),
+        collect_stage_timings,
+    )?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_attempt_claim")?;
+    let prepared_attempt = prepare_attempt(core, genesis.run_set_id.clone(), attempt_id, canonical_chunk_plan, None)?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_attempt_preparation")?;
+    core.install_prepared_attempt(prepared_attempt, canonical_chunk_plan.clone(), false, collect_stage_timings)?;
+    core.start_writers()?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_writer_start")?;
+    core.lineage_snapshot = core.lineage_paths.inspect()?;
+    Ok(())
+}
+
+fn preflight_existing_lineage(
+    core: &OutputManagerCore,
+    snapshot: &LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    phenotype_contracts: &[PhenotypeLineageContract],
+) -> OutputResult<()> {
+    if snapshot.genesis.chunk_plan_sha256 != canonical_chunk_plan.sha256()
+        || snapshot.genesis.phenotypes != phenotype_contracts
+    {
+        return Err(OutputError::InvalidInput(
+            "Output lineage contract does not match the current chunk or execution plan.".to_string(),
+        ));
+    }
+    let allowed_attempts = lineage_attempt_identifiers(snapshot);
+    let verified_runs = verify_runs_against_snapshot(
+        &core.lineage_paths,
+        &core.runs,
+        snapshot,
+        canonical_chunk_plan,
+        &allowed_attempts,
+        snapshot.leaf_terminal.is_some(),
+        OrphanPartPolicy::Observe,
+    )?;
+    if snapshot.leaf_terminal.is_none()
+        && snapshot.pending_terminal.is_none()
+        && verified_runs.iter().any(|verified_run| verified_run.status != AttemptManifestStatus::Running)
+    {
+        return Err(OutputError::InvalidInput(
+            "Nonterminal output lineage has a terminal-status attempt manifest.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn initialize_existing_lineage(
+    core: &mut OutputManagerCore,
+    mut snapshot: LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    phenotype_contracts: &[PhenotypeLineageContract],
+    collect_stage_timings: bool,
+) -> OutputResult<()> {
+    validate_existing_lineage_contract(&snapshot, canonical_chunk_plan, phenotype_contracts)?;
+    if snapshot.pending_terminal.is_some() {
+        finalize_pending_terminal(core, &snapshot, canonical_chunk_plan)?;
+        snapshot = core
+            .lineage_paths
+            .inspect()?
+            .ok_or_else(|| OutputError::InvalidInput("Finalized output lineage disappeared.".to_string()))?;
+    }
+    let allowed_attempts = lineage_attempt_identifiers(&snapshot);
+    let verified_runs = verify_runs_against_snapshot(
+        &core.lineage_paths,
+        &core.runs,
+        &snapshot,
+        canonical_chunk_plan,
+        &allowed_attempts,
+        snapshot.leaf_terminal.is_some(),
+        if snapshot.leaf_terminal.is_some() { OrphanPartPolicy::Reject } else { OrphanPartPolicy::Observe },
+    )?;
+    if snapshot.leaf_terminal.as_ref().is_some_and(|terminal| terminal.status == AttemptTerminalStatus::Completed) {
+        let prepared_attempt = prepared_attempt_from_verified(
+            core,
+            snapshot.genesis.run_set_id.clone(),
+            snapshot.leaf_attempt_id.clone(),
+            verified_runs,
+        )?;
+        core.install_prepared_attempt(prepared_attempt, canonical_chunk_plan.clone(), true, collect_stage_timings)?;
+        core.retire_claim_staging_intent()?;
+        core.lineage_snapshot = Some(snapshot);
+        return Ok(());
+    }
+    if snapshot.leaf_terminal.is_none()
+        && verified_runs.iter().any(|verified_run| verified_run.status != AttemptManifestStatus::Running)
+    {
+        return Err(OutputError::InvalidInput(
+            "Nonterminal output lineage has a terminal-status attempt manifest.".to_string(),
+        ));
+    }
+    let new_attempt_id = core.claimed_attempt_id()?;
+    let source_attempt_id = snapshot.leaf_attempt_id.clone();
+    let run_set_id = snapshot.genesis.run_set_id.clone();
+    let source_receipts = verified_runs.into_iter().map(|verified_run| verified_run.receipts).collect::<Vec<_>>();
+    let successor = match snapshot.leaf_terminal {
+        Some(_) => LineageSuccessorRecord::new(
+            run_set_id.clone(),
+            source_attempt_id.clone(),
+            new_attempt_id.clone(),
+            LineageRecoveryKind::TerminalResume,
+            Some(terminal_record_sha256(&core.lineage_paths, &source_attempt_id)?),
+        )?,
+        None => LineageSuccessorRecord::new(
+            run_set_id.clone(),
+            source_attempt_id.clone(),
+            new_attempt_id.clone(),
+            LineageRecoveryKind::ExactNonterminalRecovery,
+            None,
+        )?,
+    };
+    core.reestablish_observed_durability(Some(&snapshot))?;
+    let durable_parent_snapshot = core
+        .lineage_paths
+        .inspect()?
+        .ok_or_else(|| OutputError::InvalidInput("Output successor parent disappeared.".to_string()))?;
+    if durable_parent_snapshot != snapshot {
+        return Err(OutputError::InvalidInput(
+            "Output successor parent changed while re-establishing durability.".to_string(),
+        ));
+    }
+    core.lineage_paths.publish_successor(&successor)?;
+    core.lifecycle_state.attempt_authority_published = true;
+    core.retire_claim_staging_intent()?;
+    #[cfg(test)]
+    crash_at_test_failpoint("after_successor_claim");
+    core.install_claimed_attempt_shell(
+        run_set_id.clone(),
+        new_attempt_id.clone(),
+        canonical_chunk_plan.clone(),
+        collect_stage_timings,
+    )?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_attempt_claim")?;
+    core.lineage_snapshot = core.lineage_paths.inspect()?;
+    let prepared_attempt = prepare_attempt(
+        core,
+        run_set_id,
+        new_attempt_id.clone(),
+        canonical_chunk_plan,
+        Some((&source_attempt_id, &source_receipts)),
+    )?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_attempt_preparation")?;
+    core.install_prepared_attempt(prepared_attempt, canonical_chunk_plan.clone(), false, collect_stage_timings)?;
+    core.start_writers()?;
+    #[cfg(test)]
+    fail_initialization_at_test_point("after_writer_start")?;
+    Ok(())
+}
+
+fn validate_existing_lineage_contract(
+    snapshot: &LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    phenotype_contracts: &[PhenotypeLineageContract],
+) -> OutputResult<()> {
+    if snapshot.genesis.chunk_plan_sha256 == canonical_chunk_plan.sha256()
+        && snapshot.genesis.phenotypes == phenotype_contracts
+    {
+        Ok(())
+    } else {
+        Err(OutputError::InvalidInput(
+            "Output lineage contract does not match the current chunk or execution plan.".to_string(),
+        ))
+    }
+}
+
+fn finalize_pending_terminal(
+    core: &mut OutputManagerCore,
+    snapshot: &LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+) -> OutputResult<()> {
+    core.reestablish_observed_durability(Some(snapshot))?;
+    let durable_snapshot = core
+        .lineage_paths
+        .inspect()?
+        .ok_or_else(|| OutputError::InvalidInput("Pending output lineage disappeared.".to_string()))?;
+    if &durable_snapshot != snapshot {
+        return Err(OutputError::InvalidInput(
+            "Pending output lineage changed while re-establishing durability.".to_string(),
+        ));
+    }
+    let terminal = snapshot.pending_terminal.as_ref().ok_or_else(|| {
+        OutputError::Runtime("Pending output terminal finalization is missing its claim.".to_string())
+    })?;
+    let status = match terminal.status {
+        AttemptTerminalStatus::Completed => AttemptManifestStatus::Completed,
+        AttemptTerminalStatus::Interrupted => AttemptManifestStatus::Interrupted,
+        AttemptTerminalStatus::Failed => AttemptManifestStatus::Failed,
+    };
+    let allowed_attempts = lineage_attempt_identifiers(snapshot);
+    let observed_runs = verify_runs_against_snapshot(
+        &core.lineage_paths,
+        &core.runs,
+        snapshot,
+        canonical_chunk_plan,
+        &allowed_attempts,
+        false,
+        OrphanPartPolicy::Observe,
+    )?;
+    install_verified_leaf_run_state(core, snapshot, canonical_chunk_plan, observed_runs)?;
+    let StagedTerminalRuns { terminal: observed_terminal, .. } = stage_terminal_runs(
+        &core.runs,
+        &core.run_plan,
+        terminal.run_set_id.clone(),
+        terminal.attempt_id.clone(),
+        &status,
+        terminal.interrupted_signal.as_deref(),
+        terminal.failure_reason.as_deref(),
+    )?;
+    if &observed_terminal != terminal {
+        return Err(OutputError::InvalidInput(
+            "Pending output terminal cannot be reconstructed from durable parts.".to_string(),
+        ));
+    }
+    let reconciled_runs = verify_runs_against_snapshot(
+        &core.lineage_paths,
+        &core.runs,
+        snapshot,
+        canonical_chunk_plan,
+        &allowed_attempts,
+        false,
+        OrphanPartPolicy::Reconcile,
+    )?;
+    install_verified_leaf_run_state(core, snapshot, canonical_chunk_plan, reconciled_runs)?;
+    let staged_terminal_runs = stage_terminal_runs(
+        &core.runs,
+        &core.run_plan,
+        terminal.run_set_id.clone(),
+        terminal.attempt_id.clone(),
+        &status,
+        terminal.interrupted_signal.as_deref(),
+        terminal.failure_reason.as_deref(),
+    )?;
+    if &staged_terminal_runs.terminal != terminal {
+        return Err(OutputError::InvalidInput(
+            "Pending output terminal changed during receipt reconciliation.".to_string(),
+        ));
+    }
+    materialize_staged_terminal_runs(&core.runs, &staged_terminal_runs.runs)?;
+    core.reestablish_observed_durability(Some(snapshot))?;
+    let finalization_snapshot = core.lineage_paths.inspect()?.ok_or_else(|| {
+        OutputError::InvalidInput("Pending output lineage disappeared before finalization.".to_string())
+    })?;
+    if finalization_snapshot.pending_terminal.as_ref() != Some(terminal) {
+        return Err(OutputError::InvalidInput("Pending output terminal changed before finalization.".to_string()));
+    }
+    core.lineage_paths.finalize_terminal(terminal)?;
+    Ok(())
+}
+
+fn install_verified_leaf_run_state(
+    core: &mut OutputManagerCore,
+    snapshot: &LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    verified_runs: Vec<VerifiedAttemptRun>,
+) -> OutputResult<()> {
+    if verified_runs.len() != core.runs.len() {
+        return Err(OutputError::Runtime("Verified output attempt run count is inconsistent.".to_string()));
+    }
+    for (run, verified_run) in core.runs.iter_mut().zip(verified_runs) {
+        run.binding = Some(AttemptManifestBinding {
+            run_set_id: snapshot.genesis.run_set_id.clone(),
+            attempt_id: snapshot.leaf_attempt_id.clone(),
+            phenotype_name: run.phenotype_name.clone(),
+            output_directory_name: run.output_directory_name.clone(),
+            execution_plan_sha256: execution_plan_hash(run)?,
+            chunk_plan_sha256: canonical_chunk_plan.sha256().to_string(),
+        });
+        run.paths = Some(AttemptRunPaths::new(
+            &core.lineage_paths.attempts_directory,
+            &snapshot.leaf_attempt_id,
+            &run.output_directory_name,
+        )?);
+        run.receipts = verified_run.receipts;
+        run.committed_chunk_identifiers = Arc::new(verified_run.committed_chunk_identifiers);
+    }
+    Ok(())
+}
+
+fn prepare_attempt(
+    core: &OutputManagerCore,
+    run_set_id: String,
+    attempt_id: AttemptIdentifier,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    reuse_source: Option<(&AttemptIdentifier, &[Vec<OutputPartReceipt>])>,
+) -> OutputResult<PreparedAttempt> {
+    let mut prepared_runs = Vec::with_capacity(core.runs.len());
+    for (run_index, run) in core.runs.iter().enumerate() {
+        let paths =
+            AttemptRunPaths::new(&core.lineage_paths.attempts_directory, &attempt_id, &run.output_directory_name)?;
+        paths.initialize_directories()?;
+        let binding = AttemptManifestBinding {
+            run_set_id: run_set_id.clone(),
+            attempt_id: attempt_id.clone(),
+            phenotype_name: run.phenotype_name.clone(),
+            output_directory_name: run.output_directory_name.clone(),
+            execution_plan_sha256: execution_plan_hash(run)?,
+            chunk_plan_sha256: canonical_chunk_plan.sha256().to_string(),
+        };
+        let receipts = if let Some((source_attempt_id, source_receipts)) = reuse_source {
+            let source_paths = AttemptRunPaths::new(
+                &core.lineage_paths.attempts_directory,
+                source_attempt_id,
+                &run.output_directory_name,
+            )?;
+            let receipts = source_receipts
+                .get(run_index)
+                .cloned()
+                .ok_or_else(|| OutputError::Runtime("Output reuse receipt count is inconsistent.".to_string()))?;
+            reuse_verified_receipts(&source_paths, &paths, &receipts)?;
+            receipts
+        } else {
+            Vec::new()
+        };
+        write_effective_config(&paths, &core.effective_config_toml)?;
+        let header = run
+            .current_header
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run header is not initialized.".to_string()))?;
+        write_attempt_manifest(&AttemptManifestWrite {
+            paths: &paths,
+            binding: &binding,
+            header,
+            status: AttemptManifestStatus::Running,
+            interrupted_signal: None,
+            failure_reason: None,
+            receipts: &receipts,
+            run_plan: &core.run_plan,
+        })?;
+        let committed_chunk_identifiers = receipt_chunk_identifiers(&receipts)?;
+        prepared_runs.push(PreparedAttemptRun { binding, paths, receipts, committed_chunk_identifiers });
+    }
+    Ok(PreparedAttempt { run_set_id, attempt_id, runs: prepared_runs })
+}
+
+fn verify_runs_against_snapshot(
+    lineage_paths: &OutputLineagePaths,
+    runs: &[ManagedOutputRun],
+    snapshot: &LineageSnapshot,
+    canonical_chunk_plan: &CanonicalChunkPlan,
+    allowed_attempts: &BTreeSet<AttemptIdentifier>,
+    require_terminal_manifest: bool,
+    orphan_part_policy: OrphanPartPolicy,
+) -> OutputResult<Vec<VerifiedAttemptRun>> {
+    let terminal_records = snapshot
+        .leaf_terminal
+        .as_ref()
+        .map(|terminal| {
+            terminal
+                .phenotypes
+                .iter()
+                .map(|record| (record.phenotype_name.as_str(), record))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut verified_runs = Vec::with_capacity(runs.len());
+    for run in runs {
+        let header = run
+            .current_header
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run header is not initialized.".to_string()))?;
+        let binding = AttemptManifestBinding {
+            run_set_id: snapshot.genesis.run_set_id.clone(),
+            attempt_id: snapshot.leaf_attempt_id.clone(),
+            phenotype_name: run.phenotype_name.clone(),
+            output_directory_name: run.output_directory_name.clone(),
+            execution_plan_sha256: execution_plan_hash(run)?,
+            chunk_plan_sha256: canonical_chunk_plan.sha256().to_string(),
+        };
+        let paths = AttemptRunPaths::new(
+            &lineage_paths.attempts_directory,
+            &snapshot.leaf_attempt_id,
+            &run.output_directory_name,
+        )?;
+        let manifest_exists = paths.manifest_path.try_exists().map_err(|error| {
+            OutputError::Runtime(format!(
+                "Failed to inspect output attempt manifest '{}': {error}",
+                paths.manifest_path.display()
+            ))
+        })?;
+        let verified = if manifest_exists {
+            verify_attempt_run(
+                &paths,
+                &binding,
+                header,
+                canonical_chunk_plan,
+                allowed_attempts,
+                require_terminal_manifest,
+                orphan_part_policy,
+            )?
+        } else if require_terminal_manifest {
+            return Err(OutputError::InvalidInput(format!(
+                "Terminal output attempt is missing manifest '{}'.",
+                paths.manifest_path.display()
+            )));
+        } else {
+            inspect_unmaterialized_attempt_run(&paths, &binding, canonical_chunk_plan, allowed_attempts)?
+        };
+        if let Some(terminal) = snapshot.leaf_terminal.as_ref() {
+            validate_manifest_terminal_status(&verified.status, terminal.status)?;
+            let terminal_record = terminal_records.get(run.phenotype_name.as_str()).ok_or_else(|| {
+                OutputError::InvalidInput(format!("Output terminal is missing phenotype '{}'.", run.phenotype_name))
+            })?;
+            if terminal_record.output_directory_name != run.output_directory_name
+                || terminal_record.run_manifest_sha256 != verified.manifest_sha256
+            {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output terminal phenotype '{}' has a stale manifest binding.",
+                    run.phenotype_name
+                )));
+            }
+        }
+        verified_runs.push(verified);
+    }
+    if snapshot.leaf_terminal.is_some() && terminal_records.len() != runs.len() {
+        return Err(OutputError::InvalidInput("Output terminal phenotype coverage is not exact.".to_string()));
+    }
+    Ok(verified_runs)
+}
+
+fn prepared_attempt_from_verified(
+    core: &OutputManagerCore,
+    run_set_id: String,
+    attempt_id: AttemptIdentifier,
+    verified_runs: Vec<VerifiedAttemptRun>,
+) -> OutputResult<PreparedAttempt> {
+    let mut prepared_runs = Vec::with_capacity(core.runs.len());
+    for (run, verified) in core.runs.iter().zip(verified_runs) {
+        let binding = AttemptManifestBinding {
+            run_set_id: run_set_id.clone(),
+            attempt_id: attempt_id.clone(),
+            phenotype_name: run.phenotype_name.clone(),
+            output_directory_name: run.output_directory_name.clone(),
+            execution_plan_sha256: execution_plan_hash(run)?,
+            chunk_plan_sha256: core
+                .lineage_snapshot
+                .as_ref()
+                .ok_or_else(|| OutputError::Runtime("Output lineage snapshot is missing.".to_string()))?
+                .genesis
+                .chunk_plan_sha256
+                .clone(),
+        };
+        let paths =
+            AttemptRunPaths::new(&core.lineage_paths.attempts_directory, &attempt_id, &run.output_directory_name)?;
+        prepared_runs.push(PreparedAttemptRun {
+            binding,
+            paths,
+            receipts: verified.receipts,
+            committed_chunk_identifiers: verified.committed_chunk_identifiers,
+        });
+    }
+    Ok(PreparedAttempt { run_set_id, attempt_id, runs: prepared_runs })
+}
+
+fn stage_terminal_runs(
+    runs: &[ManagedOutputRun],
+    run_plan: &g_plan::RunPlan,
+    run_set_id: String,
+    attempt_id: AttemptIdentifier,
+    status: &AttemptManifestStatus,
+    interrupted_signal: Option<&str>,
+    failure_reason: Option<&str>,
+) -> OutputResult<StagedTerminalRuns> {
+    let mut phenotype_records = Vec::with_capacity(runs.len());
+    let mut staged_runs = Vec::with_capacity(runs.len());
+    for run in runs {
+        let paths = run
+            .paths
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run paths are not initialized.".to_string()))?;
+        let binding = run
+            .binding
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run binding is not initialized.".to_string()))?;
+        let header = run
+            .current_header
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run header is not initialized.".to_string()))?;
+        let manifest = build_attempt_manifest_value(&AttemptManifestWrite {
+            paths,
+            binding,
+            header,
+            status: status.clone(),
+            interrupted_signal,
+            failure_reason,
+            receipts: &run.receipts,
+            run_plan,
+        })?;
+        let manifest_sha256 = attempt_manifest_value_sha256(&manifest)?;
+        phenotype_records.push(TerminalPhenotypeRecord {
+            phenotype_name: run.phenotype_name.clone(),
+            output_directory_name: run.output_directory_name.clone(),
+            run_manifest_sha256: manifest_sha256.clone(),
+        });
+        staged_runs.push(StagedTerminalRun { manifest, manifest_sha256 });
+    }
+    let terminal = match status {
+        AttemptManifestStatus::Completed => LineageTerminalRecord::completed(run_set_id, attempt_id, phenotype_records),
+        AttemptManifestStatus::Interrupted => LineageTerminalRecord::interrupted(
+            run_set_id,
+            attempt_id,
+            interrupted_signal
+                .ok_or_else(|| OutputError::Runtime("Interrupted terminal is missing its signal.".to_string()))?
+                .to_string(),
+            phenotype_records,
+        ),
+        AttemptManifestStatus::Failed => LineageTerminalRecord::failed(
+            run_set_id,
+            attempt_id,
+            failure_reason
+                .ok_or_else(|| OutputError::Runtime("Failed terminal is missing its reason.".to_string()))?
+                .to_string(),
+            phenotype_records,
+        ),
+        AttemptManifestStatus::Running => {
+            return Err(OutputError::InvalidInput(
+                "A running attempt manifest cannot be staged as a terminal.".to_string(),
+            ));
+        }
+    };
+    Ok(StagedTerminalRuns { terminal, runs: staged_runs })
+}
+
+fn materialize_staged_terminal_runs(runs: &[ManagedOutputRun], staged_runs: &[StagedTerminalRun]) -> OutputResult<()> {
+    if runs.len() != staged_runs.len() {
+        return Err(OutputError::Runtime("Staged output terminal run count is inconsistent.".to_string()));
+    }
+    for (run, staged_run) in runs.iter().zip(staged_runs) {
+        let paths = run
+            .paths
+            .as_ref()
+            .ok_or_else(|| OutputError::Runtime("Output run paths are not initialized.".to_string()))?;
+        materialize_attempt_manifest(paths, &staged_run.manifest, &staged_run.manifest_sha256)?;
+    }
+    Ok(())
+}
+
+fn lineage_attempt_identifiers(snapshot: &LineageSnapshot) -> BTreeSet<AttemptIdentifier> {
+    let mut attempts = BTreeSet::from([snapshot.genesis.attempt_id.clone()]);
+    attempts.extend(snapshot.successor_records.iter().map(|successor| successor.attempt_id.clone()));
+    attempts
+}
+
+fn validate_manifest_terminal_status(
+    manifest_status: &AttemptManifestStatus,
+    terminal_status: AttemptTerminalStatus,
+) -> OutputResult<()> {
+    let matches = matches!(
+        (manifest_status, terminal_status),
+        (AttemptManifestStatus::Completed, AttemptTerminalStatus::Completed)
+            | (AttemptManifestStatus::Interrupted, AttemptTerminalStatus::Interrupted)
+            | (AttemptManifestStatus::Failed, AttemptTerminalStatus::Failed)
+    );
+    if matches {
+        Ok(())
+    } else {
+        Err(OutputError::InvalidInput("Output terminal status does not match its attempt manifests.".to_string()))
+    }
+}
+
+fn receipt_chunk_identifiers(receipts: &[OutputPartReceipt]) -> OutputResult<BTreeSet<usize>> {
+    let mut identifiers = BTreeSet::new();
+    for receipt in receipts {
+        for chunk in &receipt.footer.chunks {
+            let identifier = usize::try_from(chunk.chunk_identifier).map_err(|_| {
+                OutputError::InvalidInput(format!(
+                    "Output chunk identifier {} does not fit the platform index width.",
+                    chunk.chunk_identifier
+                ))
+            })?;
+            if !identifiers.insert(identifier) {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output receipts contain duplicate chunk identifier {identifier}."
+                )));
+            }
+        }
+    }
+    Ok(identifiers)
+}
+
+fn directory_exists_and_is_non_empty(directory: &Path) -> OutputResult<bool> {
+    match std::fs::read_dir(directory) {
+        Ok(mut entries) => entries.next().transpose().map(|entry| entry.is_some()).map_err(OutputError::runtime),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(OutputError::runtime(error)),
+    }
+}
+
+fn fresh_root_contains_output_artifacts(lineage_paths: &OutputLineagePaths) -> OutputResult<bool> {
+    let owner_staging_bindings = lineage_paths.owner_staging_bindings()?;
+    let root_entries = match std::fs::read_dir(&lineage_paths.output_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
+    for root_entry in root_entries {
+        let root_entry = root_entry.map_err(OutputError::runtime)?;
+        let file_name = root_entry.file_name();
+        if file_name == ".g-output" {
+            if control_directory_contains_output_artifacts(&lineage_paths.control_directory)? {
+                return Ok(true);
+            }
+        } else if file_name == "attempts" {
+            if attempts_directory_contains_non_staging_artifacts(&root_entry.path(), &owner_staging_bindings)? {
+                return Ok(true);
+            }
+        } else {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn attempts_directory_contains_non_staging_artifacts(
+    attempts_directory: &Path,
+    owner_staging_bindings: &BTreeMap<AttemptIdentifier, BTreeSet<String>>,
+) -> OutputResult<bool> {
+    let entries = match std::fs::read_dir(attempts_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(OutputError::runtime)?;
+        if !entry.file_type().map_err(OutputError::runtime)?.is_dir() {
+            return Ok(true);
+        }
+        let Some(attempt_name) = entry.file_name().to_str().map(str::to_string) else {
+            return Ok(true);
+        };
+        let Ok(attempt_id) = AttemptIdentifier::parse(&attempt_name) else {
+            return Ok(true);
+        };
+        let Some(claim_identifiers) = owner_staging_bindings.get(&attempt_id) else {
+            return Ok(true);
+        };
+        let attempt_entries = std::fs::read_dir(entry.path()).map_err(OutputError::runtime)?;
+        for attempt_entry in attempt_entries {
+            let attempt_entry = attempt_entry.map_err(OutputError::runtime)?;
+            if attempt_entry.file_name() != "diagnostics"
+                || !attempt_entry.file_type().map_err(OutputError::runtime)?.is_dir()
+            {
+                return Ok(true);
+            }
+            let diagnostic_entries = std::fs::read_dir(attempt_entry.path()).map_err(OutputError::runtime)?;
+            for diagnostic_entry in diagnostic_entries {
+                let diagnostic_entry = diagnostic_entry.map_err(OutputError::runtime)?;
+                let Some(claim_identifier) = diagnostic_entry.file_name().to_str().map(str::to_string) else {
+                    return Ok(true);
+                };
+                if !claim_identifiers.contains(&claim_identifier)
+                    || !diagnostic_entry.file_type().map_err(OutputError::runtime)?.is_dir()
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::finish_thread_count;
+fn crash_at_test_failpoint(expected_failpoint: &str) {
+    if std::env::var("G_OUTPUT_TEST_CRASH_POINT").as_deref() == Ok(expected_failpoint) {
+        std::process::exit(86);
+    }
+}
 
-    fn output_plan(writer_thread_count: u32) -> g_plan::OutputPlan {
-        g_plan::OutputPlan {
-            output_run_root: "unused".to_string(),
-            resume: false,
-            recover_attempt: None,
-            writer_thread_count,
+#[cfg(test)]
+std::thread_local! {
+    static INITIALIZATION_FAILURE_POINT: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+    static INITIALIZATION_CLEANUP_FAILURE_POINT: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+    static LIFECYCLE_FAILURE_POINT: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+    static TERMINAL_CLEANUP_FAILURE_POINT: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) struct InitializationFailureGuard;
+
+#[cfg(test)]
+pub(crate) struct InitializationCleanupFailureGuard;
+
+#[cfg(test)]
+pub(crate) struct LifecycleFailureGuard;
+
+#[cfg(test)]
+pub(crate) struct TerminalCleanupFailureGuard;
+
+#[cfg(test)]
+impl Drop for InitializationFailureGuard {
+    fn drop(&mut self) {
+        INITIALIZATION_FAILURE_POINT.with(|failure_point| {
+            *failure_point.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+impl Drop for InitializationCleanupFailureGuard {
+    fn drop(&mut self) {
+        INITIALIZATION_CLEANUP_FAILURE_POINT.with(|failure_point| {
+            *failure_point.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+impl Drop for LifecycleFailureGuard {
+    fn drop(&mut self) {
+        LIFECYCLE_FAILURE_POINT.with(|failure_point| {
+            *failure_point.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+impl Drop for TerminalCleanupFailureGuard {
+    fn drop(&mut self) {
+        TERMINAL_CLEANUP_FAILURE_POINT.with(|failure_point| {
+            *failure_point.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_initialization_failure_for_test(failure_point: &str) -> InitializationFailureGuard {
+    INITIALIZATION_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        assert!(installed_failure_point.is_none(), "an initialization failure point is already installed");
+        *installed_failure_point = Some(failure_point.to_string());
+    });
+    InitializationFailureGuard
+}
+
+#[cfg(test)]
+pub(crate) fn install_initialization_cleanup_failure_for_test(
+    failure_point: &str,
+) -> InitializationCleanupFailureGuard {
+    INITIALIZATION_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        assert!(installed_failure_point.is_none(), "an initialization cleanup failure point is already installed");
+        *installed_failure_point = Some(failure_point.to_string());
+    });
+    InitializationCleanupFailureGuard
+}
+
+#[cfg(test)]
+pub(crate) fn install_lifecycle_failure_for_test(failure_point: &str) -> LifecycleFailureGuard {
+    LIFECYCLE_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        assert!(installed_failure_point.is_none(), "a lifecycle failure point is already installed");
+        *installed_failure_point = Some(failure_point.to_string());
+    });
+    LifecycleFailureGuard
+}
+
+#[cfg(test)]
+pub(crate) fn install_terminal_cleanup_failure_for_test(failure_point: &str) -> TerminalCleanupFailureGuard {
+    TERMINAL_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        assert!(installed_failure_point.is_none(), "a terminal cleanup failure point is already installed");
+        *installed_failure_point = Some(failure_point.to_string());
+    });
+    TerminalCleanupFailureGuard
+}
+
+#[cfg(test)]
+fn fail_initialization_at_test_point(observed_failure_point: &str) -> OutputResult<()> {
+    INITIALIZATION_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            Err(OutputError::Runtime(format!("Injected output initialization failure at '{observed_failure_point}'.")))
+        } else {
+            Ok(())
         }
-    }
+    })
+}
 
-    #[test]
-    fn finish_thread_count_is_bounded_by_sessions_and_rejects_zero_with_work() {
-        assert_eq!(finish_thread_count(&output_plan(8), 3).expect("thread count is valid"), 3);
-        assert_eq!(finish_thread_count(&output_plan(2), 3).expect("thread count is valid"), 2);
-        assert_eq!(finish_thread_count(&output_plan(0), 0).expect("empty output needs no threads"), 0);
+#[cfg(test)]
+fn fail_initialization_cleanup_at_test_point(observed_failure_point: &str) -> OutputResult<()> {
+    INITIALIZATION_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            Err(OutputError::Runtime(format!(
+                "Injected output initialization cleanup failure at '{observed_failure_point}'."
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
 
-        let error = finish_thread_count(&output_plan(0), 1).expect_err("zero threads with output is rejected");
-        assert!(error.to_string().contains("must be positive"));
+#[cfg(test)]
+fn fail_lifecycle_at_test_point(observed_failure_point: &str) -> OutputResult<()> {
+    LIFECYCLE_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            Err(OutputError::Runtime(format!("Injected output lifecycle failure at '{observed_failure_point}'.")))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(test)]
+fn fail_terminal_cleanup_at_test_point(observed_failure_point: &str) -> OutputResult<()> {
+    TERMINAL_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            Err(OutputError::Runtime(format!(
+                "Injected output terminal cleanup failure at '{observed_failure_point}'."
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(test)]
+fn inject_owner_claim_cleanup_conflict_at_test_point(owner_claim: &OutputOwnerClaim) -> OutputResult<()> {
+    TERMINAL_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() != Some("owner_claim_release_conflict") {
+            return Ok(());
+        }
+        *installed_failure_point = None;
+        owner_claim.publish_conflicting_takeover_for_test()
+    })
+}
+
+#[cfg(test)]
+fn inject_owner_claim_release_conflict_at_test_point(
+    owner_claim: &OutputOwnerClaim,
+) -> OutputResult<Option<OutputError>> {
+    INITIALIZATION_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() != Some("after_owner_claim_release_conflict") {
+            return Ok(None);
+        }
+        *installed_failure_point = None;
+        owner_claim.publish_conflicting_takeover_for_test()?;
+        Ok(Some(OutputError::Runtime("Injected output initialization failure before owner-claim release.".to_string())))
+    })
+}
+
+fn control_directory_contains_output_artifacts(control_directory: &Path) -> OutputResult<bool> {
+    let entries = match std::fs::read_dir(control_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(OutputError::runtime)?;
+        let file_name = entry.file_name();
+        if file_name == "session.claim.json" || is_owner_claim_candidate_temporary_file_name(&file_name) {
+            continue;
+        }
+        if matches!(file_name.to_str(), Some("owner-transitions" | "owner-staging"))
+            && entry.file_type().map_err(OutputError::runtime)?.is_dir()
+        {
+            continue;
+        }
+        if matches!(file_name.to_str(), Some("outcomes" | "successors" | "terminal-finalizations"))
+            && entry.file_type().map_err(OutputError::runtime)?.is_dir()
+            && !directory_exists_and_is_non_empty(&entry.path())?
+        {
+            continue;
+        }
+        if file_name.to_str().is_some_and(is_immutable_record_candidate_temporary_file_name) {
+            continue;
+        }
+        return Ok(true);
     }
+    Ok(false)
+}
+
+fn is_immutable_record_candidate_temporary_file_name(file_name: &str) -> bool {
+    let Some(identifier) = file_name
+        .strip_prefix('.')
+        .and_then(|name| name.rsplit_once(".attempt-"))
+        .and_then(|(_, suffix)| suffix.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    identifier.len() == 32 && identifier.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn is_owner_claim_candidate_temporary_file_name(file_name: &std::ffi::OsStr) -> bool {
+    let Some(identifier) = file_name
+        .to_str()
+        .and_then(|name| name.strip_prefix(".session.claim.json."))
+        .and_then(|name| name.strip_suffix(".tmp"))
+        .and_then(|name| name.strip_prefix("attempt-"))
+    else {
+        return false;
+    };
+    identifier.len() == 32 && identifier.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn finish_thread_count(output_plan: &g_plan::OutputPlan, writer_count: usize) -> OutputResult<usize> {
+    let requested = usize::try_from(output_plan.writer_thread_count).map_err(OutputError::runtime)?;
+    if requested == 0 && writer_count != 0 {
+        return Err(OutputError::InvalidInput("Writer finish thread count must be positive.".to_string()));
+    }
+    Ok(requested.min(writer_count))
+}
+
+fn combine_terminal_cleanup_result<ValueType>(
+    primary_result: OutputResult<ValueType>,
+    release_result: OutputResult<()>,
+    context: &str,
+) -> OutputResult<ValueType> {
+    match (primary_result, release_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(release_error)) => Err(release_error),
+        (Err(error), Err(release_error)) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
+            primary: Box::new(OutputError::Runtime(format!("{context}: {error}"))),
+            release: Box::new(release_error),
+        }),
+    }
+}
+
+fn return_primary_after_recovery<ValueType>(
+    primary_error: OutputError,
+    recovery_result: OutputResult<()>,
+    context: &str,
+) -> OutputResult<ValueType> {
+    match recovery_result {
+        Ok(()) => Err(primary_error),
+        Err(recovery_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
+            primary: Box::new(OutputError::Runtime(format!("{context}: {primary_error}"))),
+            release: Box::new(recovery_error),
+        }),
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static COMPLETION_FAILURE_POINT: std::cell::RefCell<Option<String>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(test)]
+pub(crate) struct CompletionFailureGuard;
+
+#[cfg(test)]
+impl Drop for CompletionFailureGuard {
+    fn drop(&mut self) {
+        COMPLETION_FAILURE_POINT.with(|failure_point| {
+            *failure_point.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_completion_failure_for_test(failure_point: &str) -> CompletionFailureGuard {
+    COMPLETION_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        assert!(installed_failure_point.is_none(), "a completion failure point is already installed");
+        *installed_failure_point = Some(failure_point.to_string());
+    });
+    CompletionFailureGuard
+}
+
+#[cfg(test)]
+fn fail_completion_at_test_point(observed_failure_point: &str) -> OutputResult<()> {
+    COMPLETION_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            Err(OutputError::Runtime(format!("Injected output completion failure at '{observed_failure_point}'.")))
+        } else {
+            Ok(())
+        }
+    })
 }

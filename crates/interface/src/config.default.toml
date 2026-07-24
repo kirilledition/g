@@ -43,6 +43,8 @@ null_firth_step_halving_scale = 0.5
 [output]
 writer_threads = 4
 resume = false
+# One-shot recovery after external fencing; use the exact surviving claim ID.
+# fenced_owner_claim_id = "owner-..."
 
 [diagnostics]
 telemetry = "progress"

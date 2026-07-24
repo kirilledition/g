@@ -14,9 +14,10 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use super::{UnpublishedPart, transaction_temporary_part_path, write_regenie_step2_chunk_job_with_io};
 use crate::chunk::{NativeChunkHandle, NativeVariantMetadataHandle};
-use crate::persistence::io::OutputIo;
-use crate::persistence::model::{OutputChunkCommit, OutputTransactionIdentifier};
-use crate::writer::{RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, streams};
+use crate::persistence::io::{FileIntegrity, NoReplacePublication, OutputIo, file_size_and_sha256};
+use crate::persistence::model::{OutputChunkCommit, OutputPartBinding, OutputTransactionIdentifier};
+use crate::persistence::receipt::{OutputPartFooter, read_part_receipt, receipt_path};
+use crate::writer::{OutputPartPublication, RegenieStep2ChunkJob, RegenieStep2ChunkWriteBatch, streams};
 
 const CHUNK_FILE_NAME: &str = "part_000000000.parquet";
 const TEST_TRANSACTION_IDENTIFIER: &str = "test-transaction";
@@ -51,6 +52,7 @@ enum FaultPoint {
     ParquetFinalize,
     FileSync,
     Rename,
+    AfterFinalLink,
     DirectorySync,
     Metadata,
     Cleanup,
@@ -64,6 +66,7 @@ impl FaultPoint {
             Self::ParquetFinalize => "Parquet-finalize",
             Self::FileSync => "file-sync",
             Self::Rename => "rename",
+            Self::AfterFinalLink => "after-final-link",
             Self::DirectorySync => "directory-sync",
             Self::Metadata => "metadata",
             Self::Cleanup => "cleanup",
@@ -87,6 +90,11 @@ struct PublicationFailureCase {
     fault_point: FaultPoint,
     expected_operation: &'static str,
     final_exists: bool,
+}
+
+struct ExpectedPartPaths {
+    temporary_path: PathBuf,
+    final_path: PathBuf,
 }
 
 struct RecordingState {
@@ -183,7 +191,7 @@ impl OutputIo for RecordingOutputIo {
         file.file.sync_all()
     }
 
-    fn rename_file(&self, source_path: &Path, destination_path: &Path) -> io::Result<()> {
+    fn publish_file_no_replace(&self, source_path: &Path, destination_path: &Path) -> io::Result<NoReplacePublication> {
         self.state.record(RecordedOperation::Rename {
             source_path: source_path.to_path_buf(),
             destination_path: destination_path.to_path_buf(),
@@ -191,7 +199,17 @@ impl OutputIo for RecordingOutputIo {
         if self.state.should_fail(FaultPoint::Rename) {
             return Err(injected_error(FaultPoint::Rename));
         }
-        std::fs::rename(source_path, destination_path)
+        match std::fs::hard_link(source_path, destination_path) {
+            Ok(()) => {
+                if self.state.should_fail(FaultPoint::AfterFinalLink) {
+                    return Err(injected_error(FaultPoint::AfterFinalLink));
+                }
+                std::fs::remove_file(source_path)?;
+                Ok(NoReplacePublication::Created)
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(NoReplacePublication::AlreadyExists),
+            Err(error) => Err(error),
+        }
     }
 
     fn sync_directory(&self, path: &Path) -> io::Result<()> {
@@ -202,12 +220,12 @@ impl OutputIo for RecordingOutputIo {
         File::open(path)?.sync_all()
     }
 
-    fn file_size(&self, path: &Path) -> io::Result<u64> {
+    fn file_integrity(&self, path: &Path) -> io::Result<FileIntegrity> {
         self.state.record(RecordedOperation::Metadata(path.to_path_buf()));
         if self.state.should_fail(FaultPoint::Metadata) {
             return Err(injected_error(FaultPoint::Metadata));
         }
-        std::fs::metadata(path).map(|metadata| metadata.len())
+        file_size_and_sha256(path).map_err(io::Error::other)
     }
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {
@@ -223,8 +241,38 @@ fn injected_error(fault_point: FaultPoint) -> io::Error {
     io::Error::other(format!("injected {} failure", fault_point.label()))
 }
 
-fn test_transaction_identifier() -> OutputTransactionIdentifier {
-    OutputTransactionIdentifier::for_test(TEST_TRANSACTION_IDENTIFIER)
+fn test_publication(parts_directory: &Path) -> OutputPartPublication {
+    test_publication_with_identifier(parts_directory, TEST_TRANSACTION_IDENTIFIER)
+}
+
+fn test_publication_with_identifier(parts_directory: &Path, temporary_identifier: &str) -> OutputPartPublication {
+    OutputPartPublication {
+        parts_directory: parts_directory.to_path_buf(),
+        commits_directory: parts_directory.join("commits"),
+        temporary_identifier: OutputTransactionIdentifier::for_test(temporary_identifier),
+        binding: OutputPartBinding {
+            run_set_id: "run-set-test".to_string(),
+            attempt_id: OutputTransactionIdentifier::for_test("attempt-test"),
+            phenotype_name: "trait-a".to_string(),
+            execution_plan_sha256: "a".repeat(64),
+            chunk_plan_sha256: "b".repeat(64),
+        },
+    }
+}
+
+fn test_part_footer() -> OutputPartFooter {
+    OutputPartFooter::new(
+        &test_publication(Path::new("unused")).binding,
+        CHUNK_FILE_NAME.to_string(),
+        vec![OutputChunkCommit {
+            chunk_identifier: 0,
+            variant_start_index: 0,
+            variant_stop_index: 1,
+            row_count: 1,
+            chunk_file_name: CHUNK_FILE_NAME.to_string(),
+        }],
+    )
+    .expect("test part footer builds")
 }
 
 fn test_write_batch() -> RegenieStep2ChunkWriteBatch {
@@ -270,12 +318,16 @@ fn float_array(value: f32) -> ArrayRef {
     Arc::new(Float32Array::from(vec![value]))
 }
 
-fn expected_paths(parts_directory: &Path) -> (PathBuf, PathBuf) {
-    let transaction_identifier = test_transaction_identifier();
-    (
-        transaction_temporary_part_path(parts_directory, CHUNK_FILE_NAME, &transaction_identifier),
-        parts_directory.join(CHUNK_FILE_NAME),
-    )
+fn expected_paths(parts_directory: &Path) -> ExpectedPartPaths {
+    let publication = test_publication(parts_directory);
+    ExpectedPartPaths {
+        temporary_path: transaction_temporary_part_path(
+            parts_directory,
+            CHUNK_FILE_NAME,
+            &publication.temporary_identifier,
+        ),
+        final_path: parts_directory.join(CHUNK_FILE_NAME),
+    }
 }
 
 fn assert_readable_parquet_part(final_path: &Path) {
@@ -283,14 +335,19 @@ fn assert_readable_parquet_part(final_path: &Path) {
     let builder = ParquetRecordBatchReaderBuilder::try_new(input_file).expect("published footer is readable");
     assert_eq!(builder.schema().fields(), crate::schema::REGENIE_STEP2_CHUNK_SCHEMA.fields());
     let footer_metadata = builder.metadata().file_metadata().key_value_metadata().expect("footer metadata exists");
-    let chunk_commit_metadata = footer_metadata
+    assert!(
+        footer_metadata.iter().all(|entry| entry.key != "g.output.chunk_commits"),
+        "legacy unvalidated chunk metadata must not be emitted"
+    );
+    let part_binding_metadata = footer_metadata
         .iter()
-        .find(|entry| entry.key == crate::schema::CHUNK_COMMITS_METADATA_KEY)
+        .find(|entry| entry.key == crate::schema::PART_BINDING_METADATA_KEY)
         .and_then(|entry| entry.value.as_deref())
-        .expect("chunk commit metadata exists");
-    let chunk_commit_values: serde_json::Value =
-        serde_json::from_str(chunk_commit_metadata).expect("chunk commit metadata is valid JSON");
-    assert_eq!(chunk_commit_values[0]["chunk_file_name"], CHUNK_FILE_NAME);
+        .expect("bound part metadata exists");
+    let part_footer: OutputPartFooter =
+        serde_json::from_str(part_binding_metadata).expect("bound part metadata is valid JSON");
+    assert_eq!(part_footer.part_file_name, CHUNK_FILE_NAME);
+    assert_eq!(part_footer.receipt_id, "part_000000000");
     let batches =
         builder.build().expect("published part reader builds").collect::<Result<Vec<_>, _>>().expect("part reads");
     assert_eq!(batches.len(), 1);
@@ -302,6 +359,14 @@ fn assert_readable_parquet_part(final_path: &Path) {
         .downcast_ref::<Float32Array>()
         .expect("BETA is Float32");
     assert!((beta.value(0) - 0.5).abs() < f32::EPSILON);
+}
+
+fn count_files_with_extension(directory: &Path, extension: &str) -> usize {
+    std::fs::read_dir(directory)
+        .expect("test output directory reads")
+        .map(|entry| entry.expect("test output entry reads").path())
+        .filter(|path| path.extension().is_some_and(|observed| observed == extension))
+        .count()
 }
 
 fn expected_fault_operations(
@@ -325,6 +390,11 @@ fn expected_fault_operations(
         operations.push(RecordedOperation::Cleanup(temporary_path.to_path_buf()));
         return operations;
     }
+    operations.push(RecordedOperation::Metadata(temporary_path.to_path_buf()));
+    if fault_point == FaultPoint::Metadata {
+        operations.push(RecordedOperation::Cleanup(temporary_path.to_path_buf()));
+        return operations;
+    }
     operations.push(RecordedOperation::Rename {
         source_path: temporary_path.to_path_buf(),
         destination_path: final_path.to_path_buf(),
@@ -337,10 +407,6 @@ fn expected_fault_operations(
     if fault_point == FaultPoint::DirectorySync {
         return operations;
     }
-    if fault_point == FaultPoint::Metadata {
-        operations.push(RecordedOperation::Metadata(final_path.to_path_buf()));
-        return operations;
-    }
     panic!("cleanup is tested only as a secondary fault")
 }
 
@@ -348,17 +414,11 @@ fn expected_fault_operations(
 fn durable_publication_orders_every_boundary_before_commit_exposure() {
     let directory = TestDirectory::new("ordered-success");
     let output_io = RecordingOutputIo::new(&[]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
 
-    let write_result = write_regenie_step2_chunk_job_with_io(
-        &output_io,
-        &directory.path,
-        &transaction_identifier,
-        test_write_batch(),
-        true,
-    )
-    .expect("durable publication succeeds");
+    let write_result = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+        .expect("durable publication succeeds");
 
     assert_eq!(
         output_io.operations(),
@@ -367,13 +427,13 @@ fn durable_publication_orders_every_boundary_before_commit_exposure() {
             RecordedOperation::ParquetHeader(temporary_path.clone()),
             RecordedOperation::ParquetFinalize(temporary_path.clone()),
             RecordedOperation::FileSync(temporary_path.clone()),
+            RecordedOperation::Metadata(temporary_path.clone()),
             RecordedOperation::Rename { source_path: temporary_path.clone(), destination_path: final_path.clone() },
             RecordedOperation::DirectorySync(directory.path.clone()),
-            RecordedOperation::Metadata(final_path.clone()),
         ]
     );
     assert_eq!(
-        write_result.chunk_commits,
+        write_result.part_receipt.footer.chunks,
         [OutputChunkCommit {
             chunk_identifier: 0,
             variant_start_index: 0,
@@ -384,6 +444,12 @@ fn durable_publication_orders_every_boundary_before_commit_exposure() {
     );
     assert!(!temporary_path.exists());
     assert_readable_parquet_part(&final_path);
+    let receipt = read_part_receipt(
+        &receipt_path(&publication.commits_directory, &write_result.part_receipt.footer.receipt_id)
+            .expect("receipt path builds"),
+    )
+    .expect("receipt reads");
+    assert_eq!(receipt, write_result.part_receipt);
 }
 
 #[test]
@@ -406,7 +472,7 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
         },
         PublicationFailureCase {
             fault_point: FaultPoint::Rename,
-            expected_operation: "rename temporary Parquet part",
+            expected_operation: "publish temporary Parquet part",
             final_exists: false,
         },
         PublicationFailureCase {
@@ -416,8 +482,8 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
         },
         PublicationFailureCase {
             fault_point: FaultPoint::Metadata,
-            expected_operation: "read published Parquet part metadata",
-            final_exists: true,
+            expected_operation: "hash temporary Parquet part",
+            final_exists: false,
         },
     ];
 
@@ -425,27 +491,18 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
         let fault_point = failure_case.fault_point;
         let directory = TestDirectory::new(fault_point.label());
         let output_io = RecordingOutputIo::new(&[fault_point]);
-        let transaction_identifier = test_transaction_identifier();
-        let (temporary_path, final_path) = expected_paths(&directory.path);
+        let publication = test_publication(&directory.path);
+        let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
 
-        let error = write_regenie_step2_chunk_job_with_io(
-            &output_io,
-            &directory.path,
-            &transaction_identifier,
-            test_write_batch(),
-            true,
-        )
-        .err()
-        .expect("faulted publication cannot expose commits");
+        let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+            .err()
+            .expect("faulted publication cannot expose commits");
 
         let error_message = error.to_string();
         assert!(error_message.contains(failure_case.expected_operation), "unexpected error: {error_message}");
         assert!(error_message.contains("injected"), "original failure is missing: {error_message}");
-        let expected_error_path = match fault_point {
-            FaultPoint::DirectorySync => &directory.path,
-            FaultPoint::Metadata => &final_path,
-            _ => &temporary_path,
-        };
+        let expected_error_path =
+            if fault_point == FaultPoint::DirectorySync { &directory.path } else { &temporary_path };
         assert!(
             error_message.contains(&expected_error_path.display().to_string()),
             "failing path is missing: {error_message}"
@@ -463,6 +520,14 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
         } else {
             assert!(!temporary_path.exists(), "failed unpublished temp must be cleaned");
         }
+        assert!(
+            !publication.commits_directory.exists()
+                || std::fs::read_dir(&publication.commits_directory)
+                    .expect("existing receipt directory reads")
+                    .next()
+                    .is_none(),
+            "a failed publication boundary must not expose a receipt"
+        );
     }
 }
 
@@ -470,7 +535,7 @@ fn every_publication_failure_returns_no_commit_and_preserves_operation_context()
 fn parquet_writer_initialization_failure_cleans_the_transaction_temp_without_publishing() {
     let directory = TestDirectory::new("Parquet-writer-initialize");
     let output_io = RecordingOutputIo::new(&[]);
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
     let foreign_temp_path = directory.path.join(".foreign-part.foreign-transaction.tmp");
     std::fs::write(&foreign_temp_path, b"foreign temp").expect("foreign temp is created");
     let output_file = output_io.create_new_file(&temporary_path).expect("transaction temp is created");
@@ -481,13 +546,15 @@ fn parquet_writer_initialization_failure_cleans_the_transaction_temp_without_pub
         let _unpublished_part = UnpublishedPart::new(&output_io, temporary_path.clone());
         streams::write_regenie_step2_chunks_to_parquet_file(
             output_file,
-            Vec::new(),
-            &unsupported_schema,
-            &crate::schema::REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA,
-            &temporary_path,
-            &[],
-            0.0,
-            false,
+            streams::RegenieStep2ParquetStreamRequest {
+                chunks: Vec::new(),
+                chunk_schema: &unsupported_schema,
+                parquet_record_batch_schema: &crate::schema::REGENIE_STEP2_PARQUET_RECORD_BATCH_FLOAT32_SCHEMA,
+                chunk_file_path: &temporary_path,
+                part_footer: &test_part_footer(),
+                file_create_seconds: 0.0,
+                collect_stage_timings: false,
+            },
         )
     }
     .err()
@@ -510,18 +577,12 @@ fn parquet_writer_initialization_failure_cleans_the_transaction_temp_without_pub
 fn first_physical_parquet_write_failure_during_finalize_cleans_the_transaction_temp_without_publishing() {
     let directory = TestDirectory::new("first-physical-Parquet-write");
     let output_io = RecordingOutputIo::new(&[FaultPoint::FirstPhysicalParquetWrite]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
 
-    let error = write_regenie_step2_chunk_job_with_io(
-        &output_io,
-        &directory.path,
-        &transaction_identifier,
-        test_write_batch(),
-        true,
-    )
-    .err()
-    .expect("failed first physical Parquet write cannot expose commits");
+    let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+        .err()
+        .expect("failed first physical Parquet write cannot expose commits");
 
     let error_message = error.to_string();
     assert!(error_message.contains("finalize temporary Parquet part"), "unexpected error: {error_message}");
@@ -543,17 +604,16 @@ fn first_physical_parquet_write_failure_during_finalize_cleans_the_transaction_t
 fn invalid_record_batch_cleans_only_the_transaction_temp_without_publishing() {
     let directory = TestDirectory::new("invalid-record-batch");
     let output_io = RecordingOutputIo::new(&[]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
     let foreign_temp_path = directory.path.join(".foreign-part.foreign-transaction.tmp");
     std::fs::write(&foreign_temp_path, b"foreign temp").expect("foreign temp is created");
     let mut write_batch = test_write_batch();
     write_batch.chunks[0].beta = Arc::new(Float32Array::from(vec![0.5_f32, 0.75_f32]));
 
-    let error =
-        write_regenie_step2_chunk_job_with_io(&output_io, &directory.path, &transaction_identifier, write_batch, true)
-            .err()
-            .expect("invalid record-batch construction cannot expose commits");
+    let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, write_batch, true)
+        .err()
+        .expect("invalid record-batch construction cannot expose commits");
 
     let error_message = error.to_string();
     assert_eq!(error_message, "Invalid argument error: all columns in a record batch must have the same length");
@@ -574,19 +634,13 @@ fn invalid_record_batch_cleans_only_the_transaction_temp_without_publishing() {
 fn create_new_collision_preserves_the_foreign_temp_and_never_cleans_it() {
     let directory = TestDirectory::new("create-new-collision");
     let output_io = RecordingOutputIo::new(&[]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
     std::fs::write(&temporary_path, b"foreign transaction data").expect("colliding temp is created");
 
-    let error = write_regenie_step2_chunk_job_with_io(
-        &output_io,
-        &directory.path,
-        &transaction_identifier,
-        test_write_batch(),
-        true,
-    )
-    .err()
-    .expect("create-new collision is rejected");
+    let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+        .err()
+        .expect("create-new collision is rejected");
 
     assert!(error.to_string().contains("create new temporary Parquet part"));
     assert!(error.to_string().contains(&temporary_path.display().to_string()));
@@ -599,21 +653,15 @@ fn create_new_collision_preserves_the_foreign_temp_and_never_cleans_it() {
 fn cleanup_removes_only_the_current_unpublished_temp() {
     let directory = TestDirectory::new("cleanup-scope");
     let output_io = RecordingOutputIo::new(&[FaultPoint::FileSync]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
     let foreign_temp_path = directory.path.join(".foreign-part.foreign-transaction.tmp");
     std::fs::write(&foreign_temp_path, b"foreign temp").expect("foreign temp is created");
     std::fs::write(&final_path, b"existing final").expect("existing final is created");
 
-    let error = write_regenie_step2_chunk_job_with_io(
-        &output_io,
-        &directory.path,
-        &transaction_identifier,
-        test_write_batch(),
-        true,
-    )
-    .err()
-    .expect("file sync fault rejects publication");
+    let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+        .err()
+        .expect("file sync fault rejects publication");
 
     assert!(error.to_string().contains("injected file-sync failure"));
     assert!(!temporary_path.exists());
@@ -625,18 +673,12 @@ fn cleanup_removes_only_the_current_unpublished_temp() {
 fn failed_footer_is_never_published_and_cleanup_failure_cannot_replace_the_primary_error() {
     let directory = TestDirectory::new("missing-footer");
     let output_io = RecordingOutputIo::new(&[FaultPoint::ParquetFinalize, FaultPoint::Cleanup]);
-    let transaction_identifier = test_transaction_identifier();
-    let (temporary_path, final_path) = expected_paths(&directory.path);
+    let publication = test_publication(&directory.path);
+    let ExpectedPartPaths { temporary_path, final_path } = expected_paths(&directory.path);
 
-    let error = write_regenie_step2_chunk_job_with_io(
-        &output_io,
-        &directory.path,
-        &transaction_identifier,
-        test_write_batch(),
-        true,
-    )
-    .err()
-    .expect("failed footer cannot publish");
+    let error = write_regenie_step2_chunk_job_with_io(&output_io, &publication, test_write_batch(), true)
+        .err()
+        .expect("failed footer cannot publish");
 
     let error_message = error.to_string();
     assert!(error_message.contains("injected Parquet-finalize failure"));
@@ -648,4 +690,93 @@ fn failed_footer_is_never_published_and_cleanup_failure_cannot_replace_the_prima
         ParquetRecordBatchReaderBuilder::try_new(incomplete_file).is_err(),
         "a temp without its footer must be unreadable"
     );
+}
+
+#[test]
+fn restart_reconciles_final_link_created_before_source_removal() {
+    let directory = TestDirectory::new("restart-after-final-link");
+    let first_output_io = RecordingOutputIo::new(&[FaultPoint::AfterFinalLink]);
+    let first_publication = test_publication(&directory.path);
+    let final_path = expected_paths(&directory.path).final_path;
+
+    let first_error =
+        write_regenie_step2_chunk_job_with_io(&first_output_io, &first_publication, test_write_batch(), true)
+            .err()
+            .expect("injected link boundary interrupts the first publication");
+    assert!(first_error.to_string().contains("injected after-final-link failure"));
+    assert_readable_parquet_part(&final_path);
+    assert!(!first_publication.commits_directory.exists());
+
+    let second_output_io = RecordingOutputIo::new(&[]);
+    let second_publication = test_publication_with_identifier(&directory.path, "restart-transaction");
+    let result =
+        write_regenie_step2_chunk_job_with_io(&second_output_io, &second_publication, test_write_batch(), true)
+            .expect("restart verifies the final and publishes its receipt");
+
+    assert_eq!(count_files_with_extension(&directory.path, "parquet"), 1);
+    assert_eq!(count_files_with_extension(&second_publication.commits_directory, "json"), 1);
+    let receipt = read_part_receipt(
+        &receipt_path(&second_publication.commits_directory, &result.part_receipt.footer.receipt_id)
+            .expect("receipt path builds"),
+    )
+    .expect("reconstructed receipt reads");
+    assert_eq!(receipt, result.part_receipt);
+}
+
+#[test]
+fn restart_reconciles_final_part_created_before_receipt() {
+    let directory = TestDirectory::new("restart-before-receipt");
+    let first_publication = test_publication(&directory.path);
+    std::fs::write(&first_publication.commits_directory, b"blocks receipt directory")
+        .expect("receipt path blocker is created");
+    let final_path = expected_paths(&directory.path).final_path;
+
+    let first_error = write_regenie_step2_chunk_job_with_io(
+        &RecordingOutputIo::new(&[]),
+        &first_publication,
+        test_write_batch(),
+        true,
+    )
+    .err()
+    .expect("blocked receipt publication interrupts the first publication");
+    assert!(first_error.to_string().contains("non-directory ancestor"));
+    assert_readable_parquet_part(&final_path);
+
+    std::fs::remove_file(&first_publication.commits_directory).expect("receipt path blocker is removed");
+    std::fs::create_dir(&first_publication.commits_directory).expect("receipt directory is created");
+    let second_publication = test_publication_with_identifier(&directory.path, "receipt-restart");
+    let result = write_regenie_step2_chunk_job_with_io(
+        &RecordingOutputIo::new(&[]),
+        &second_publication,
+        test_write_batch(),
+        true,
+    )
+    .expect("restart verifies the final and publishes its receipt");
+
+    assert_eq!(count_files_with_extension(&directory.path, "parquet"), 1);
+    assert_eq!(count_files_with_extension(&second_publication.commits_directory, "json"), 1);
+    assert_eq!(result.part_receipt.footer.chunks.len(), 1);
+}
+
+#[test]
+fn existing_final_with_conflicting_footer_is_rejected() {
+    let directory = TestDirectory::new("conflicting-final-footer");
+    let first_publication = test_publication(&directory.path);
+    write_regenie_step2_chunk_job_with_io(&RecordingOutputIo::new(&[]), &first_publication, test_write_batch(), false)
+        .expect("first immutable part publishes");
+
+    let mut conflicting_publication = test_publication_with_identifier(&directory.path, "conflicting-transaction");
+    conflicting_publication.binding.phenotype_name = "trait-b".to_string();
+    let error = write_regenie_step2_chunk_job_with_io(
+        &RecordingOutputIo::new(&[]),
+        &conflicting_publication,
+        test_write_batch(),
+        false,
+    )
+    .err()
+    .expect("conflicting footer cannot reuse an existing final");
+
+    assert!(error.to_string().contains("conflicts with the expected immutable footer"));
+    assert_eq!(count_files_with_extension(&directory.path, "parquet"), 1);
+    assert_eq!(count_files_with_extension(&first_publication.commits_directory, "json"), 1);
 }

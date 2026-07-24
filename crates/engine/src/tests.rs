@@ -848,6 +848,7 @@ fn valid_run_plan() -> g_plan::RunPlan {
             output_run_root: "output".to_string(),
             resume: false,
             recover_attempt: None,
+            fenced_owner_claim_id: None,
             writer_thread_count: 8,
         },
         telemetry: g_plan::TelemetryMode::Off,

@@ -214,7 +214,11 @@ where
     }
     let native_session_policies = compiled_runs
         .iter()
-        .map(|compiled_run| project_native_run_session_policy(&compiled_run.run_plan))
+        .map(|compiled_run| {
+            let diagnostics_directory =
+                std::path::Path::new(&compiled_run.run_plan.output.output_run_root).join(".g-output/preflight");
+            project_native_run_session_policy(&compiled_run.run_plan, &diagnostics_directory)
+        })
         .collect::<Vec<_>>();
     let mut native_policies = compiled_runs.iter().zip(&native_session_policies);
     let Some((first_compiled_run, first_native_session_policy)) = native_policies.next() else {
@@ -275,22 +279,66 @@ where
     Host::Backend: AssociationBackend + 'static,
 {
     let mut output = CliRunResult::default();
-    let native_session_policy = project_native_run_session_policy(&run_plan);
+    let thread_name = host.current_thread_name()?;
+    let claimed_run = match Host::detach(|| g_engine::claim_coordinated_run(run_plan, effective_config_toml)) {
+        Ok(claimed_run) => claimed_run,
+        Err(error) => {
+            let error = host.run_error(error.to_string());
+            output.append(failed_terminal_result(host, None, &error, None));
+            return Ok(output);
+        }
+    };
+    let diagnostics_directory = match claimed_run.diagnostics_directory() {
+        Ok(path) => path.to_path_buf(),
+        Err(error) => {
+            let error_message = error.to_string();
+            let cleanup_error = claimed_run.abort_before_activation().err();
+            let error = host.run_error(cleanup_error.map_or(error_message.clone(), |cleanup_error| {
+                format!("{error_message} Pre-activation output cleanup also failed: {cleanup_error}")
+            }));
+            output.append(failed_terminal_result(host, None, &error, None));
+            return Ok(output);
+        }
+    };
+    let claim_cleanup = match claimed_run.cleanup_handle() {
+        Ok(cleanup) => cleanup,
+        Err(error) => {
+            let error_message = error.to_string();
+            let cleanup_error = claimed_run.abort_before_activation().err();
+            let error = host.run_error(cleanup_error.map_or(error_message.clone(), |cleanup_error| {
+                format!("{error_message} Pre-activation output cleanup also failed: {cleanup_error}")
+            }));
+            output.append(failed_terminal_result(host, None, &error, None));
+            return Ok(output);
+        }
+    };
+    let native_session_policy = project_native_run_session_policy(claimed_run.run_plan(), &diagnostics_directory);
     let mut native_session = match open_compatible_native_run_session(host, native_session_policy) {
         Ok(session) => session,
         Err(error) => {
+            let cleanup_error = claimed_run.abort_before_activation().err();
+            let error = match cleanup_error {
+                Some(cleanup_error) => {
+                    host.run_error(format!("{error} Pre-activation output cleanup also failed: {cleanup_error}"))
+                }
+                None => error,
+            };
             let terminal_result = failed_terminal_result(host, None, &error, None);
             output.append(terminal_result);
             return Ok(output);
         }
     };
-    let thread_name = host.current_thread_name()?;
+    let mut claimed_run = Some(claimed_run);
     let mut execution_result = (|| {
         host.install_python_logging()?;
         let runtime_start_time = Instant::now();
+        let run_plan = claimed_run
+            .as_ref()
+            .ok_or_else(|| host.run_error("Claimed run was consumed before runtime configuration.".to_string()))?
+            .run_plan();
         configure_process_runtime(
             host,
-            &run_plan,
+            run_plan,
             native_session.policy(),
             native_session.telemetry_session(),
             &thread_name,
@@ -299,7 +347,7 @@ where
 
         let backend_start_time = Instant::now();
         let backend =
-            host.create_backend(run_plan.compute.device, JaxAssociationBackendPlan::from_run_plan(&run_plan))?;
+            host.create_backend(run_plan.compute.device, JaxAssociationBackendPlan::from_run_plan(run_plan))?;
         native_session.record_stage_duration("jax_backend_initialization", backend_start_time);
 
         let telemetry_session = native_session.telemetry_session().clone();
@@ -307,9 +355,9 @@ where
         let thread_name_for_run = thread_name.as_str();
         let execution_result = Host::detach(|| {
             let mut hooks = HostRunHooks { host };
+            let claimed_run = claimed_run.take().expect("claimed run exists until output activation begins");
             g_engine::execute_coordinated_run(
-                run_plan,
-                effective_config_toml,
+                claimed_run,
                 backend,
                 &mut hooks,
                 &telemetry_session,
@@ -347,6 +395,42 @@ where
         terminal_result = terminal_result_from_error(host, None, &thread_name, &error);
         close_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
         logging_result = CliRunResult { exit_code: terminal_result.exit_code, ..CliRunResult::default() };
+    }
+    if let Some(claimed_run) = claimed_run.take()
+        && let Err(error) = claimed_run.abort_before_activation()
+    {
+        let retry_error = claim_cleanup.clone().cleanup_if_unpublished().err();
+        let cleanup_message = retry_error.map_or_else(
+            || format!("Pre-activation output cleanup failed: {error}"),
+            |retry_error| {
+                format!(
+                    "Pre-activation output cleanup failed: {error}. Post-session staging retry also failed: \
+                     {retry_error}"
+                )
+            },
+        );
+        let cleanup_result = runtime_close_failure_result(
+            terminal_result.exit_code.max(CLI_RUNTIME_FAILURE_EXIT_CODE),
+            "OutputError",
+            &cleanup_message,
+        );
+        output.append(terminal_result);
+        output.append(close_result);
+        output.append(logging_result);
+        output.append(cleanup_result);
+        return Ok(output);
+    }
+    if let Err(error) = claim_cleanup.cleanup_if_unpublished() {
+        let cleanup_result = runtime_close_failure_result(
+            terminal_result.exit_code.max(CLI_RUNTIME_FAILURE_EXIT_CODE),
+            "OutputError",
+            &format!("Post-session output staging cleanup failed: {error}"),
+        );
+        output.append(terminal_result);
+        output.append(close_result);
+        output.append(logging_result);
+        output.append(cleanup_result);
+        return Ok(output);
     }
     output.append(terminal_result);
     output.append(close_result);
@@ -720,10 +804,7 @@ mod tests {
         )
         .expect("completion output should render");
         assert_eq!(completion.exit_code, 0);
-        assert_eq!(
-            completion.stdout_chunks,
-            ["Success. Run saved to run\n", "Parquet dataset saved to run/parquet\n",]
-        );
+        assert_eq!(completion.stdout_chunks, ["Parquet dataset saved to run/parquet\n"]);
 
         let failure = TestHostError::failure("backend failed");
         assert_eq!(

@@ -54,19 +54,25 @@ fn validate_binary_config(config: &RegenieConfigData) -> ConfigResult<()> {
 }
 
 fn validate_output_config(config: &RegenieConfigData) -> ConfigResult<()> {
-    let Some(attempt_identifier) = config.g_output.recover_attempt.as_deref() else {
-        return Ok(());
-    };
-    if !config.g_output.resume {
+    if config.g_output.recover_attempt.is_some() && !config.g_output.resume {
         return Err(ConfigError::new("--recover-output-attempt requires [output].resume = true."));
     }
-    if attempt_identifier.is_empty()
-        || attempt_identifier.len() > 128
-        || !attempt_identifier.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
-        return Err(ConfigError::new(
-            "--recover-output-attempt must be a non-empty path-safe identifier of at most 128 ASCII characters.",
-        ));
+    if config.g_output.fenced_owner_claim_id.is_some() && !config.g_output.resume {
+        return Err(ConfigError::new("--fenced-output-owner-claim requires [output].resume = true."));
+    }
+    validate_optional_output_identifier(config.g_output.recover_attempt.as_deref(), "--recover-output-attempt")?;
+    validate_optional_output_identifier(config.g_output.fenced_owner_claim_id.as_deref(), "--fenced-output-owner-claim")
+}
+
+fn validate_optional_output_identifier(identifier: Option<&str>, option_name: &str) -> ConfigResult<()> {
+    if identifier.is_some_and(|identifier| {
+        identifier.is_empty()
+            || identifier.len() > 128
+            || !identifier.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }) {
+        return Err(ConfigError::new(format!(
+            "{option_name} must be a non-empty path-safe identifier of at most 128 ASCII characters."
+        )));
     }
     Ok(())
 }

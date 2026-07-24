@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import enum
 import json
+import typing
 from dataclasses import dataclass
-from pathlib import Path
+
+if typing.TYPE_CHECKING:
+    from pathlib import Path
 
 
 class RegenieTraitKind(enum.StrEnum):
@@ -215,24 +218,3 @@ def render_g_regenie_command(spec: RegenieRunSpec, config_path: Path) -> list[st
 def render_native_cli_arguments(config_path: Path) -> list[str]:
     """Render arguments accepted by ``g._core.cli.run``."""
     return ["regenie", "--config", str(config_path)]
-
-
-def expected_output_run_directory(spec: RegenieRunSpec) -> Path:
-    """Infer the output directory for a single-phenotype run."""
-    if len(spec.inputs.phenotype_columns) != 1:
-        raise ValueError("Default output run directory inference only supports one phenotype column.")
-    output_root = spec.output.output_run_directory or Path(f"{spec.inputs.output_prefix}.g")
-    phenotype_name = spec.inputs.phenotype_columns[0]
-    sanitized_characters: list[str] = []
-    previous_character_was_replaced = False
-    for character in phenotype_name:
-        if character.isascii() and (character.isalnum() or character in "._-"):
-            sanitized_characters.append(character)
-            previous_character_was_replaced = False
-        elif not previous_character_was_replaced:
-            sanitized_characters.append("_")
-            previous_character_was_replaced = True
-    phenotype_slug = "".join(sanitized_characters).strip("._-") or "phenotype"
-    phenotype_directory = f"trait_0001_{phenotype_slug[:80]}"
-    association_mode = "regenie2_binary" if spec.trait_kind == RegenieTraitKind.BINARY else "regenie2_linear"
-    return output_root / f"{phenotype_directory}.{association_mode}.run"

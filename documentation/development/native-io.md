@@ -71,24 +71,28 @@ Native output writes one result representation:
 | --- | --- | --- |
 | Parquet | `parts/` | `part_<first>[_<last>].parquet` |
 
-Run directories also contain `run_manifest.json` and `effective_config.toml`.
-The parts directory is the completed dataset; output does not require a
-consolidation pass.
+Each attempt stores phenotype directories under
+`attempts/<attempt>/<phenotype-output-name>/`. Those directories contain
+`parts/`, `commits/`, `run_manifest.json`, `effective_config.toml`, and an
+optional `output_stage_timings.json`. The parts directory is the completed
+dataset; output does not require a consolidation pass.
 
 Output planning is read-only. The engine resolves every phenotype run path and
-inspects any resume manifest before input preparation without creating output
-directories. Directory and initial-manifest creation begins only during output
-initialization, after the complete path plan, prepared inputs, and manifest
-headers validate.
+inspects the immutable lineage before input preparation without creating the
+output root. Initialization publishes the durable no-replace owner claim,
+repeats validation, publishes genesis or successor authority, and only then
+creates attempt-specific state.
 
 ## Manifest And Resume Contract
 
-`run_manifest.json` is the resume authority. Pre-release manifest schema version `0`
-stores prepared-run fields, input fingerprints, and Parquet writer settings in
-one canonical `execution_plan` object plus `execution_plan_hash`. Top-level
-state is limited to schema and mutable lifecycle fields such as committed
-chunks. The pre-release Parquet output schema is version `0`; `INFO` is nullable
-when its expected-variance denominator is undefined.
+The append-only `.g-output` lineage is the resume authority.
+`run_manifest.json` is attempt state whose SHA-256 is bound by a terminal
+claim. Pre-release manifest schema version `0` stores prepared-run fields,
+input fingerprints, and Parquet writer settings in one canonical
+`execution_plan` object plus `execution_plan_hash`. Top-level lifecycle state
+binds the attempt, status, receipts, and committed chunks. The pre-release
+Parquet output schema is version `0`; `INFO` is nullable when its
+expected-variance denominator is undefined.
 
 Each compute group records a required fingerprint of its trait-major aligned
 phenotype matrix, including phenotype names, shape, and float32 values. Resume
@@ -99,36 +103,76 @@ Manifest construction records `association_backend.kind` from the
 engine-resolved delivery format so resume and review tooling can distinguish
 `jax_dosage` and `jax_packed8`; it is not a `RunPlan` field.
 
-Resume always reconciles manifest chunk commits with files on disk. It reads
-chunk commit metadata from Parquet footer metadata, compares every part to the
-canonical output schema, and checks every commit against the current
-chromosome-aware BGEN chunk plan. Parts without the current metadata are
-rejected rather than reconstructed from result columns. BGEN compatibility is
-bound to the exact opened file's device, inode, size, modification time, and
-change time.
+Resume validates each immutable receipt against its part's embedded transaction
+footer, canonical output schema, raw byte size, and freshly computed SHA-256.
+It checks every exact chunk binding against the canonical chromosome-aware BGEN
+chunk plan and rejects duplicate or missing coverage. Parts without current
+metadata are rejected rather than reconstructed from result columns. A
+verifiable final part that exists before its receipt because of a process crash
+can be reconciled only for a nonterminal attempt or pending terminal claim.
+BGEN compatibility is bound to the exact opened file's device, inode, size,
+modification time, and change time.
 
 Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.
 
-Output ownership does not use advisory file locks. The run root carries an
-append-only `.g-output` lineage with one immutable genesis record. Each attempt
-has one immutable outcome slot. A durable terminal and an exact nonterminal
-recovery claim are tagged alternatives published to that same slot, so an old
-owner cannot publish a terminal after a takeover claim wins. A terminal outcome
-may later have one immutable normal-resume successor bound to the terminal
-outcome's SHA-256 only when its status is `interrupted` or `failed`. A
-`completed` outcome remains the immutable leaf and is verified read-only on
-resume. Records are written and synchronized under unique temporary
-names, then published with a same-directory hard-link no-replace operation and
-a directory synchronization. There is no authoritative mutable `HEAD`; readers
-traverse exact-recovery claims or hash-bound normal successors from genesis and
-reject incompatible dual-state artifacts.
+The run root carries an append-only `.g-output` lineage with one immutable
+genesis record. Each attempt has one immutable outcome slot. A terminal claim
+and an exact nonterminal recovery claim are tagged alternatives published to
+that same slot, so an old owner cannot publish a terminal after a takeover
+claim wins. A terminal claim becomes durable terminal authority only after its
+named manifests are materialized and a separate immutable finalization record
+binds the claim SHA-256. Interrupted and failed terminals may later have one
+immutable normal-resume successor bound to the finalized terminal outcome's
+SHA-256. A completed terminal remains the immutable leaf and is fully verified
+read-only on resume.
 
-The hard-link no-replace operation is the cross-process linearization point.
-Its same-filesystem, cross-node visibility and `AlreadyExists` behavior must be
-qualified on the deployed BeeGFS mount before production use. A failed
-qualification is a release blocker; advisory locks are not an acceptable
-fallback.
+Records are written and synchronized under unique temporary names, then
+published with a same-directory hard-link no-replace operation and a directory
+synchronization. There is no authoritative mutable `HEAD`; readers traverse
+exact-recovery claims or hash-bound normal successors from genesis and reject
+incompatible dual-state artifacts. After owner acquisition, the manager first
+reserves a stable attempt identifier and creates only that claim's private
+diagnostics directory. Genesis or successor publication later makes the same
+attempt identifier authoritative; failed pre-activation claims durably remove
+their unreferenced staging.
+
+The first owner claim is a permanent immutable record at
+`.g-output/session.claim.json`. Its current authority is found by traversing
+immutable predecessor slots in `.g-output/owner-transitions/`. Each slot can
+contain exactly one graceful release, fenced takeover, or reacquisition
+transition, so release and takeover contend on the same compare-and-set point.
+A second owner is rejected before diagnostics or attempt authority mutation.
+Normal terminal paths append a Released leaf only after terminal durability.
+Process death leaves an Active leaf and automatic recovery fails closed. There
+is deliberately no timeout, PID/liveness guess, authority unlink, or
+unlink-on-open behavior. An externally fenced restart may provide the exact
+current Active identifier through `fenced_owner_claim_id`; a mismatch, an
+absent root, or a historical predecessor fails without publishing a
+transition. A match authorizes a no-replace fenced-takeover transition from
+that exact predecessor. The root and every historical transition remain
+immutable evidence.
+
+A process death before an authority-record hard link may leave a uniquely named
+`.session.claim.json.*.tmp` candidate. Those files are preserved for
+inspection but are not authority, are never promoted or removed
+automatically, and do not make an otherwise fresh root occupied. A death after
+the root or transition hard link leaves both a typed Active authority and its
+candidate link; the Active leaf continues to block until externally fenced.
+
+The deployed BeeGFS mount failed both Rust `File::try_lock` and POSIX `fcntl`
+cross-node exclusion, so neither is a production correctness mechanism.
+External recovery must fence the recorded host/process before publishing a
+takeover from its exact Active identifier. Manual deletion is unsupported.
+Hard-link no-replace visibility and owner-transition contention must be
+qualified cross-node.
+The current Gauss qualification evidence is recorded in
+[Output Transaction BeeGFS Qualification](output-transaction-beegfs-qualification.md).
+
+The hard-link no-replace operation is the durable authority linearization
+point. Its same-filesystem, cross-node visibility and `AlreadyExists` behavior
+must be qualified on the deployed BeeGFS mount before production use. A failed
+qualification is a release blocker; the current Gauss mount passed.
 
 The canonical chunk plan is ordered, contiguous from zero, and SHA-256 bound.
 Part footer metadata repeats run-set, producing-attempt, phenotype,
@@ -156,8 +200,8 @@ failure releases its ticket only after recording the failure, so terminal
 completion cannot hang or silently pass a detached batch.
 
 The run-scoped `OutputManager`, not an individual writer session, owns the
-bounded queue lifetime and worker `JoinHandle`s. Sessions shared through
-`OutputDeliveryState` contain only clients of one mutex-linearized admission
+bounded queue lifetime and worker `JoinHandle`s. Opaque
+`OutputDeliveryToken`s contain only clients of one mutex-linearized admission
 gate. Acquiring a sender permit is the gate's linearization point. The control
 mutex is released before a bounded queue send, so close does not wait for space
 in a full queue. A pre-close permit remains admitted and its completion ticket
@@ -169,4 +213,5 @@ reported only when no earlier lifecycle error exists. Destruction is a
 best-effort safety net that closes admission and never waits for a worker that
 is still running; production correctness relies on the explicit terminal
 paths. Dropping an initialized manager first aborts all sessions, drains queued
-batches, discards pending tails, and leaves retained session handles closed.
+batches, discards pending tails, and leaves retained delivery tokens unable to
+admit more work.

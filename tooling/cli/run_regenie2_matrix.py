@@ -12,6 +12,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import typing
 from pathlib import Path
@@ -166,7 +167,7 @@ class RunSpec:
     mode: ExecutionMode
     command_arguments: list[str]
     output_prefix: Path
-    output_run_directory: Path
+    output_run_root: Path
     profile_summary_path: Path | None
     event_log_path: Path | None
     cache_enabled: bool
@@ -187,7 +188,7 @@ class RunResult:
     wall_time_seconds: float | None
     command_arguments: list[str]
     output_prefix: str
-    output_run_directory: str
+    output_run_directory: str | None
     profile_summary_path: str | None
     event_log_path: str | None
     cache_enabled: bool
@@ -199,6 +200,15 @@ class RunResult:
     output_file_count: int | None
     output_total_bytes: int | None
     stage_seconds: dict[str, float]
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamingCommandResult:
+    """Exit status and retained output from one streamed subprocess."""
+
+    return_code: int
+    stdout_chunks: tuple[str, ...]
+    stderr_chunks: tuple[str, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -323,17 +333,6 @@ def resolve_jax_cache_directory_for_mode(arguments: MatrixArguments, mode: Execu
     return arguments.jax_cache_directory / "gpu" / trait.value
 
 
-def output_run_directory_for_spec(arguments: MatrixArguments, output_prefix: Path, trait: TraitKind) -> Path:
-    """Infer the single-phenotype output run directory for a spec."""
-    run_spec = build_regenie_run_spec(
-        arguments=arguments,
-        trait=trait,
-        mode=ExecutionMode.CPU,
-        output_prefix=output_prefix,
-    )
-    return tooling_g_regenie.expected_output_run_directory(run_spec)
-
-
 def build_environment_overrides() -> dict[str, str]:
     """Build child-process environment overrides."""
     python_path_entries = [str(REPOSITORY_ROOT)]
@@ -437,8 +436,8 @@ def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
         for mode in modes:
             name = f"{trait.value}_{mode.value}"
             output_prefix = arguments.output_directory / "runs" / name
-            output_run_directory = output_run_directory_for_spec(arguments, output_prefix, trait)
-            telemetry_directory = Path(f"{output_prefix}.g") / "logs"
+            output_run_root = Path(f"{output_prefix}.g")
+            telemetry_directory = output_run_root / "logs"
             cache_enabled = (
                 arguments.cpu_jax_persistent_cache if mode == ExecutionMode.CPU else arguments.gpu_jax_persistent_cache
             )
@@ -454,7 +453,7 @@ def build_run_specs(arguments: MatrixArguments) -> list[RunSpec]:
                 mode=mode,
                 command_arguments=[],
                 output_prefix=output_prefix,
-                output_run_directory=output_run_directory,
+                output_run_root=output_run_root,
                 profile_summary_path=(
                     telemetry_directory / "profile.summary.json"
                     if arguments.telemetry_mode == tooling_g_regenie.RegenieTelemetry.PROFILE
@@ -494,27 +493,65 @@ def validate_input_paths(arguments: MatrixArguments) -> None:
         raise FileNotFoundError(message)
 
 
-def run_streaming_command(spec: RunSpec) -> int:
-    """Run one subprocess and stream output through logging."""
+def run_streaming_command(spec: RunSpec) -> StreamingCommandResult:
+    """Run one subprocess while retaining authoritative stdout separately."""
     environment = dict(os.environ)
     environment.update(spec.environment_overrides)
     logger.info("Starting %s: %s", spec.name, shlex.join(spec.command_arguments))
     process = subprocess.Popen(
         spec.command_arguments,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=REPOSITORY_ROOT,
         env=environment,
         bufsize=1,
     )
-    stdout_pipe = process.stdout
-    if stdout_pipe is not None:
-        for raw_line in stdout_pipe:
-            line = raw_line.rstrip()
-            if line:
-                logger.info("[%s] %s", spec.name, line)
-    return process.wait()
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    stream_threads = [
+        threading.Thread(
+            target=stream_process_pipe,
+            kwargs={
+                "stream": stream,
+                "chunks": chunks,
+                "run_name": spec.name,
+                "stream_name": stream_name,
+            },
+        )
+        for stream, chunks, stream_name in (
+            (process.stdout, stdout_chunks, "stdout"),
+            (process.stderr, stderr_chunks, "stderr"),
+        )
+        if stream is not None
+    ]
+    for stream_thread in stream_threads:
+        stream_thread.start()
+    return_code = process.wait()
+    for stream_thread in stream_threads:
+        stream_thread.join()
+    return StreamingCommandResult(
+        return_code=return_code,
+        stdout_chunks=tuple(stdout_chunks),
+        stderr_chunks=tuple(stderr_chunks),
+    )
+
+
+def stream_process_pipe(
+    *,
+    stream: typing.TextIO,
+    chunks: list[str],
+    run_name: str,
+    stream_name: str,
+) -> None:
+    """Retain and log one subprocess stream without mixing provenance."""
+    for raw_line in stream:
+        chunks.append(raw_line)
+        line = raw_line.rstrip()
+        if line:
+            logger.info("[%s:%s] %s", run_name, stream_name, line)
 
 
 def load_json_mapping(path: Path) -> dict[str, typing.Any] | None:
@@ -524,25 +561,23 @@ def load_json_mapping(path: Path) -> dict[str, typing.Any] | None:
     return typing.cast("dict[str, typing.Any]", json.loads(path.read_text(encoding="utf-8")))
 
 
-def discover_output_run_directory(spec: RunSpec) -> Path:
-    """Discover the actual production output run directory for a completed spec."""
-    output_root = Path(f"{spec.output_prefix}.g")
-    association_suffix = "regenie2_binary.run" if spec.trait == TraitKind.BINARY else "regenie2_linear.run"
-    return native_lifecycle.discover_completed_run_directory(
-        expected_run_directory=spec.output_run_directory,
-        output_root=output_root,
-        glob_pattern=f"*.{association_suffix}",
+def measure_run_outputs(
+    arguments: MatrixArguments,
+    spec: RunSpec,
+    stdout_chunks: typing.Sequence[str],
+) -> dict[str, typing.Any]:
+    """Measure run-output metadata from manifests and files."""
+    verified_outputs = native_lifecycle.collect_completed_output_evidence(
+        stdout_chunks,
+        output_root=spec.output_run_root,
+        expected_phenotype_count=1,
         run_label=spec.name,
     )
-
-
-def measure_run_outputs(arguments: MatrixArguments, spec: RunSpec) -> dict[str, typing.Any]:
-    """Measure run-output metadata from manifests and files."""
-    output_run_directory = discover_output_run_directory(spec)
-    output_measurement = native_lifecycle.measure_completed_output_run(output_run_directory)
+    output_measurement = verified_outputs.runs[0]
+    output_run_directory = Path(output_measurement.run_directory)
     diagnostic_evidence = native_lifecycle.collect_diagnostic_evidence(
         telemetry=arguments.telemetry_mode,
-        telemetry_root=Path(f"{spec.output_prefix}.g"),
+        telemetry_root=spec.output_run_root,
         run_directories=(output_run_directory,),
     )
     return {
@@ -568,7 +603,7 @@ def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
             wall_time_seconds=None,
             command_arguments=spec.command_arguments,
             output_prefix=str(spec.output_prefix),
-            output_run_directory=str(spec.output_run_directory),
+            output_run_directory=None,
             profile_summary_path=str(spec.profile_summary_path) if spec.profile_summary_path is not None else None,
             event_log_path=str(spec.event_log_path) if spec.event_log_path is not None else None,
             cache_enabled=spec.cache_enabled,
@@ -587,11 +622,15 @@ def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
     if spec.cache_state == CacheState.WARM and (cache_before is None or cache_before.file_count == 0):
         raise RuntimeError(f"Warm GPU cache is empty for {spec.name}: {spec.cache_directory}")
     start_time = time.perf_counter()
-    return_code = run_streaming_command(spec)
+    command_result = run_streaming_command(spec)
     wall_time_seconds = time.perf_counter() - start_time
-    status = RunStatus.SUCCESS if return_code == 0 else RunStatus.FAILED
+    status = RunStatus.SUCCESS if command_result.return_code == 0 else RunStatus.FAILED
     cache_after = native_lifecycle.snapshot_tree(spec.cache_directory) if spec.cache_directory is not None else None
-    output_metrics = measure_run_outputs(arguments, spec) if status == RunStatus.SUCCESS else {"stage_seconds": {}}
+    output_metrics = (
+        measure_run_outputs(arguments, spec, command_result.stdout_chunks)
+        if status == RunStatus.SUCCESS
+        else {"stage_seconds": {}}
+    )
     if (
         status == RunStatus.SUCCESS
         and spec.cache_state == CacheState.COLD
@@ -607,16 +646,11 @@ def run_one_spec(arguments: MatrixArguments, spec: RunSpec) -> RunResult:
         trait=spec.trait,
         mode=spec.mode,
         status=status,
-        return_code=return_code,
+        return_code=command_result.return_code,
         wall_time_seconds=wall_time_seconds,
         command_arguments=spec.command_arguments,
         output_prefix=str(spec.output_prefix),
-        output_run_directory=str(
-            output_metrics.get(
-                "output_run_directory",
-                str(spec.output_run_directory),
-            )
-        ),
+        output_run_directory=typing.cast("str | None", output_metrics.get("output_run_directory")),
         profile_summary_path=str(spec.profile_summary_path) if spec.profile_summary_path is not None else None,
         event_log_path=str(spec.event_log_path) if spec.event_log_path is not None else None,
         cache_enabled=spec.cache_enabled,
@@ -672,7 +706,9 @@ def run_result_from_json_dict(payload: dict[str, typing.Any]) -> RunResult:
         wall_time_seconds=(float(payload["wall_time_seconds"]) if payload["wall_time_seconds"] is not None else None),
         command_arguments=[str(value) for value in payload.get("command_arguments", [])],
         output_prefix=str(payload["output_prefix"]),
-        output_run_directory=str(payload["output_run_directory"]),
+        output_run_directory=(
+            str(payload["output_run_directory"]) if payload.get("output_run_directory") is not None else None
+        ),
         profile_summary_path=(
             str(payload["profile_summary_path"]) if payload.get("profile_summary_path") is not None else None
         ),

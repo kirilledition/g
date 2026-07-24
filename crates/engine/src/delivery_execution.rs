@@ -169,9 +169,9 @@ where
             }
 
             let active_trait_selection = active_trait_selection_for_chunk(
-                request.settings.writer_sessions.len(),
+                request.settings.output.trait_count(),
                 chunk_spec.variant_start_index,
-                &request.settings.committed_chunk_identifier_sets,
+                request.settings.output.committed_chunk_identifier_sets(),
             )
             .map_err(DeliveryError::InvalidInput)?;
             if matches!(&active_trait_selection, ActiveTraitSelection::Indices(indices) if indices.is_empty()) {
@@ -248,7 +248,7 @@ fn plan_association_delivery<BackendError, InterruptionError>(
     request: &mut AssociationDeliveryRequest,
 ) -> DeliveryResult<Vec<g_genotype::ChunkSpec>, BackendError, InterruptionError> {
     let committed_chunk_identifiers =
-        intersect_committed_chunk_identifier_sets(&request.settings.committed_chunk_identifier_sets);
+        intersect_committed_chunk_identifier_sets(request.settings.output.committed_chunk_identifier_sets());
     let chunk_specs = genotype_input
         .reader
         .plan_chromosome_homogeneous_chunks(genotype_input.chunk_size, &committed_chunk_identifiers)?;
@@ -375,16 +375,16 @@ fn validate_delivery_request<BackendError, InterruptionError>(
     if request.group.sample_indices.is_empty() {
         return Err(DeliveryError::InvalidInput("phenotype group contains no aligned samples".to_string()));
     }
-    if request.settings.writer_sessions.len() != trait_count {
+    if request.settings.output.trait_count() != trait_count {
         return Err(DeliveryError::InvalidInput(format!(
             "output writer count {} does not match trait count {trait_count}",
-            request.settings.writer_sessions.len()
+            request.settings.output.trait_count()
         )));
     }
-    if request.settings.committed_chunk_identifier_sets.len() != trait_count {
+    if request.settings.output.committed_chunk_identifier_sets().len() != trait_count {
         return Err(DeliveryError::InvalidInput(format!(
             "committed chunk set count {} does not match trait count {trait_count}",
-            request.settings.committed_chunk_identifier_sets.len()
+            request.settings.output.committed_chunk_identifier_sets().len()
         )));
     }
     Ok(())
@@ -463,7 +463,7 @@ fn write_completed_batch<BackendError, InterruptionError>(
     };
     let variant_count = metadata.row_count();
     write_host_association_batch(
-        &settings.writer_sessions,
+        &settings.output,
         active_trait_indices,
         variant_start_index,
         metadata,

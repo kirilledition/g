@@ -712,21 +712,17 @@ def load_stage_seconds(path: Path | None) -> dict[str, float]:
     return {str(key): float(value) for key, value in raw_stage_seconds.items()}
 
 
-def discover_g_output_run_directory(case: BenchmarkCase) -> Path:
-    """Discover the g output run directory for one completed case."""
-    expected_root = Path(f"{case.output_directory / 'linear'}.g")
-    return native_lifecycle.discover_completed_run_directory(
-        expected_run_directory=None,
-        output_root=expected_root,
-        glob_pattern="*.regenie2_linear.run",
+def measure_g_outputs(case: BenchmarkCase, stdout_chunks: typing.Sequence[str]) -> tuple[int | None, int | None]:
+    """Measure g output rows and bytes."""
+    output_root = Path(f"{case.output_directory / 'linear'}.g")
+    verified_outputs = native_lifecycle.collect_completed_output_evidence(
+        stdout_chunks,
+        output_root=output_root,
+        expected_phenotype_count=1,
         run_label=case.case_id,
     )
-
-
-def measure_g_outputs(case: BenchmarkCase) -> tuple[int | None, int | None]:
-    """Measure g output rows and bytes."""
-    output_run_directory = discover_g_output_run_directory(case)
-    output_measurement = native_lifecycle.measure_completed_output_run(output_run_directory)
+    output_measurement = verified_outputs.runs[0]
+    output_run_directory = Path(output_measurement.run_directory)
     return output_measurement.row_count, directory_size_bytes(output_run_directory)
 
 
@@ -742,10 +738,10 @@ def count_gzip_table_rows(path: Path) -> int:
     return row_count
 
 
-def measure_case_outputs(case: BenchmarkCase) -> tuple[int | None, int | None, dict[str, float]]:
+def measure_case_outputs(case: BenchmarkCase, command_stdout: str) -> tuple[int | None, int | None, dict[str, float]]:
     """Measure case output rows, bytes, and stage timings."""
     if case.tool == BenchmarkTool.G:
-        output_row_count, output_total_bytes = measure_g_outputs(case)
+        output_row_count, output_total_bytes = measure_g_outputs(case, (command_stdout,))
         return output_row_count, output_total_bytes, load_stage_seconds(case.stage_timing_path)
     return (
         count_gzip_table_rows(case.output_directory / "results.tsv.gz"),
@@ -801,7 +797,7 @@ def run_one_case(arguments: BenchmarkArguments, case: BenchmarkCase) -> tuple[Ca
     output_total_bytes: int | None = None
     stage_seconds: dict[str, float] = {}
     if status == RunStatus.SUCCESS:
-        output_row_count, output_total_bytes, stage_seconds = measure_case_outputs(case)
+        output_row_count, output_total_bytes, stage_seconds = measure_case_outputs(case, timed_result.result.stdout)
     cache_after = native_lifecycle.snapshot_tree(case.cache_directory) if uses_persistent_cache else None
     if (
         status == RunStatus.SUCCESS

@@ -12,6 +12,7 @@ use crate::persistence::identifier::AttemptIdentifier;
 pub(crate) type OutputTransactionIdentifier = AttemptIdentifier;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputChunkCommit {
     pub(crate) chunk_identifier: i64,
     pub(crate) variant_start_index: i64,
@@ -21,6 +22,7 @@ pub(crate) struct OutputChunkCommit {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputChunkGeometry {
     pub(crate) chunk_identifier: i64,
     pub(crate) variant_start_index: i64,
@@ -82,6 +84,7 @@ impl CanonicalChunkPlan {
         Ok(Self { chunks: chunks.into(), chunks_by_identifier: Arc::new(chunks_by_identifier), sha256: sha256.into() })
     }
 
+    #[cfg(test)]
     pub(crate) fn chunks(&self) -> &[OutputChunkGeometry] {
         &self.chunks
     }
@@ -146,6 +149,7 @@ impl CanonicalChunkPlan {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputPartBinding {
     pub(crate) run_set_id: String,
     pub(crate) attempt_id: AttemptIdentifier,
@@ -166,7 +170,13 @@ mod tests {
         assert_eq!(plan.sha256().len(), 64);
         assert_eq!(CanonicalChunkPlan::try_new(&[0..3, 3..5]).expect("same plan builds").sha256(), plan.sha256());
 
-        for malformed_ranges in [Vec::new(), vec![1..3], vec![0..0], vec![0..3, 4..5], vec![0..3, 2..5]] {
+        for malformed_ranges in [
+            Vec::new(),
+            std::iter::once(1..3).collect(),
+            std::iter::once(0..0).collect(),
+            vec![0..3, 4..5],
+            vec![0..3, 2..5],
+        ] {
             assert!(CanonicalChunkPlan::try_new(&malformed_ranges).is_err());
         }
     }

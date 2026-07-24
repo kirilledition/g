@@ -6,6 +6,7 @@ import typing
 
 import pytest
 
+from tooling.benchmark import native_lifecycle
 from tooling.cli import benchmark_regenie2_binary_hot
 from tooling.common import g_regenie as tooling_g_regenie
 
@@ -78,3 +79,75 @@ def test_binary_campaign_rejects_prepopulated_cache(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="requires an empty campaign cache"):
         benchmark_regenie2_binary_hot.run_benchmark(arguments)
+
+
+def test_binary_output_evidence_uses_cli_artifact_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The binary lifecycle passes native stdout to strict output verification."""
+    run_directory = tmp_path / "output" / "attempts" / "attempt-current" / "trait_0001_binary"
+    parquet_path = run_directory / "parts" / "part_000000000.parquet"
+    parquet_path.parent.mkdir(parents=True)
+    parquet_path.write_bytes(b"part")
+    completed_output = native_lifecycle.CompletedOutputEvidence(
+        run_directory=str(run_directory),
+        row_count=4,
+        committed_chunk_count=1,
+        parquet_file_count=1,
+        parquet_total_bytes=4,
+        parquet_sha256="a" * 64,
+        parquet_paths=(str(parquet_path),),
+        schema="schema",
+        schema_metadata={},
+        parquet_metadata=({},),
+        manifest_path=str(run_directory / "run_manifest.json"),
+        manifest_sha256="b" * 64,
+        manifest={"status": "completed"},
+    )
+    observed_stdout: list[tuple[str, ...]] = []
+
+    def fake_collect(
+        stdout_chunks: typing.Sequence[str],
+        *,
+        output_root: Path,
+        expected_phenotype_count: int,
+        run_label: str,
+    ) -> native_lifecycle.CompletedOutputEvidenceSet:
+        observed_stdout.append(tuple(stdout_chunks))
+        assert output_root == tmp_path / "output"
+        assert expected_phenotype_count == 1
+        assert run_label == "binary lifecycle"
+        return native_lifecycle.CompletedOutputEvidenceSet(
+            runs=(completed_output,),
+            owner_authority=native_lifecycle.OwnerAuthorityEvidence(
+                files=(
+                    native_lifecycle.ImmutableFileEvidence(
+                        absolute_path="/test/session.claim.json",
+                        raw_sha256="c" * 64,
+                    ),
+                ),
+                aggregate_sha256="d" * 64,
+                released_state_id="test-released-state",
+            ),
+            immutable_authority=native_lifecycle.ImmutableAuthorityEvidence(
+                files=(
+                    native_lifecycle.ImmutableFileEvidence(
+                        absolute_path="/test/session.claim.json",
+                        raw_sha256="c" * 64,
+                    ),
+                ),
+                aggregate_sha256="d" * 64,
+            ),
+        )
+
+    monkeypatch.setattr(native_lifecycle, "collect_completed_output_evidence", fake_collect)
+
+    observed = benchmark_regenie2_binary_hot.collect_output_evidence(
+        tmp_path / "output",
+        ("Parquet dataset saved to current/parts\n",),
+        4,
+    )
+
+    assert observed is completed_output
+    assert observed_stdout == [("Parquet dataset saved to current/parts\n",)]

@@ -1,12 +1,13 @@
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::ops::Range;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use arrow::array::{Array, Float32Array, Int32Array, Int64Array, StringArray};
+use arrow::array::Float32Array;
 use g_genotype_contracts::{
     BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
 };
@@ -14,11 +15,26 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::Value;
 
 use crate::{
-    CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager, OutputWriterSession,
+    CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager,
     Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 
-const PRIMARY_PHENOTYPE: &str = "trait_alpha";
+const PHENOTYPE_NAME: &str = "trait_alpha";
+const OUTPUT_DIRECTORY_NAME: &str = "trait_0001_trait_alpha";
+const SECOND_PHENOTYPE_NAME: &str = "trait_beta";
+const SECOND_OUTPUT_DIRECTORY_NAME: &str = "trait_0002_trait_beta";
+const TRANSACTION_HELPER_MODE_ENVIRONMENT: &str = "G_OUTPUT_TRANSACTION_HELPER_MODE";
+const TRANSACTION_HELPER_READY_ENVIRONMENT: &str = "G_OUTPUT_TRANSACTION_HELPER_READY";
+const TRANSACTION_HELPER_ROOT_ENVIRONMENT: &str = "G_OUTPUT_TRANSACTION_HELPER_ROOT";
+const TRANSACTION_HELPER_TEST_NAME: &str = "tests::output_transaction_subprocess_helper";
+
+fn single_chunk_ranges(stop: usize) -> Vec<Range<usize>> {
+    std::iter::once(0..stop).collect()
+}
+
+fn single_chunk_ranges_from(start: usize, stop: usize) -> Vec<Range<usize>> {
+    std::iter::once(start..stop).collect()
+}
 
 struct TestDirectory {
     path: PathBuf,
@@ -29,7 +45,8 @@ impl TestDirectory {
         static DIRECTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
         let sequence = DIRECTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("test time is after Unix epoch").as_nanos();
-        let path = std::env::temp_dir().join(format!("g-output-{label}-{}-{timestamp}-{sequence}", std::process::id()));
+        let path = std::env::temp_dir()
+            .join(format!("g-output-transaction-{label}-{}-{timestamp}-{sequence}", std::process::id()));
         std::fs::create_dir_all(&path).expect("test directory is created");
         Self { path }
     }
@@ -54,20 +71,67 @@ struct TestInputs {
     prediction_list: PathBuf,
 }
 
-struct TestChunk {
-    handle: NativeChunkHandle,
-    statistics: Regenie2StatisticBatch,
-}
-
-fn test_inputs(directory: &TestDirectory, phenotype_names: &[&str]) -> TestInputs {
-    let phenotype_header = phenotype_names.join("\t");
+fn test_inputs(directory: &TestDirectory) -> TestInputs {
     TestInputs {
         bgen: directory.write("input.bgen", b"test bgen identity"),
         sample: directory.write("input.sample", b"ID_1 ID_2\n0 0\nfamily sample\n"),
-        phenotype: directory
-            .write("phenotypes.tsv", format!("FID\tIID\t{phenotype_header}\nfamily\tsample\t1\n").as_bytes()),
+        phenotype: directory.write("phenotypes.tsv", b"FID\tIID\ttrait_alpha\nfamily\tsample\t1\n"),
         prediction_list: directory.write("predictions.list", b"trait_alpha predictions.loco\n"),
     }
+}
+
+fn existing_test_inputs(directory: &TestDirectory) -> TestInputs {
+    TestInputs {
+        bgen: directory.path.join("input.bgen"),
+        sample: directory.path.join("input.sample"),
+        phenotype: directory.path.join("phenotypes.tsv"),
+        prediction_list: directory.path.join("predictions.list"),
+    }
+}
+
+fn run_plan(
+    directory: &TestDirectory,
+    inputs: &TestInputs,
+    resume: bool,
+    recover_attempt: Option<String>,
+    telemetry: g_plan::TelemetryMode,
+) -> Arc<g_plan::RunPlan> {
+    Arc::new(g_plan::RunPlan {
+        association_mode: g_plan::AssociationMode::Regenie2Binary,
+        chunk_size: 2,
+        input: g_plan::InputPlan {
+            bgen_path: inputs.bgen.display().to_string(),
+            sample_path: inputs.sample.display().to_string(),
+            phenotype_path: inputs.phenotype.display().to_string(),
+            prediction_list_path: inputs.prediction_list.display().to_string(),
+            covariate_path: None,
+            covariate_names: Vec::new(),
+        },
+        compute: g_plan::ComputePlan {
+            device: g_plan::Device::Gpu,
+            cpu_thread_count: None,
+            jax_cache_directory: None,
+            multi_phenotype_sample_mode: g_plan::MultiPhenotypeSampleMode::CompleteCase,
+            kernels: kernel_plan(),
+        },
+        correction: g_plan::CorrectionPlan {
+            method: g_plan::BinaryFallbackMethod::FirthApproximate,
+            p_threshold: g_plan::Probability::try_from(0.05).expect("valid correction threshold"),
+            firth_se: false,
+        },
+        output: g_plan::OutputPlan {
+            output_run_root: directory.path.join("results").display().to_string(),
+            resume,
+            recover_attempt,
+            fenced_owner_claim_id: None,
+            writer_thread_count: 2,
+        },
+        telemetry,
+        phenotype_runs: vec![g_plan::PhenotypeRunPlan {
+            phenotype_name: PHENOTYPE_NAME.to_string(),
+            output_directory_name: OUTPUT_DIRECTORY_NAME.to_string(),
+        }],
+    })
 }
 
 fn kernel_plan() -> g_plan::KernelPlan {
@@ -107,94 +171,28 @@ fn kernel_plan() -> g_plan::KernelPlan {
     }
 }
 
-fn run_plan(
-    directory: &TestDirectory,
+fn header(inputs: &TestInputs, variant_count: usize) -> CurrentRunManifestHeaderInput {
+    header_for_phenotype(inputs, variant_count, PHENOTYPE_NAME)
+}
+
+fn header_for_phenotype(
     inputs: &TestInputs,
-    phenotype_names: &[&str],
-    resume: bool,
-    writer_thread_count: u32,
-) -> Arc<g_plan::RunPlan> {
-    Arc::new(g_plan::RunPlan {
-        association_mode: g_plan::AssociationMode::Regenie2Binary,
-        chunk_size: 3,
-        input: g_plan::InputPlan {
-            bgen_path: inputs.bgen.display().to_string(),
-            sample_path: inputs.sample.display().to_string(),
-            phenotype_path: inputs.phenotype.display().to_string(),
-            prediction_list_path: inputs.prediction_list.display().to_string(),
-            covariate_path: None,
-            covariate_names: Vec::new(),
-        },
-        compute: g_plan::ComputePlan {
-            device: g_plan::Device::Gpu,
-            cpu_thread_count: None,
-            jax_cache_directory: None,
-            multi_phenotype_sample_mode: g_plan::MultiPhenotypeSampleMode::CompleteCase,
-            kernels: kernel_plan(),
-        },
-        correction: g_plan::CorrectionPlan {
-            method: g_plan::BinaryFallbackMethod::FirthApproximate,
-            p_threshold: g_plan::Probability::try_from(0.05).expect("valid correction threshold"),
-            firth_se: false,
-        },
-        output: g_plan::OutputPlan {
-            output_run_root: directory.path.join("results").display().to_string(),
-            resume,
-            recover_attempt: None,
-            writer_thread_count,
-        },
-        telemetry: g_plan::TelemetryMode::Off,
-        phenotype_runs: phenotype_names
-            .iter()
-            .enumerate()
-            .map(|(index, phenotype_name)| g_plan::PhenotypeRunPlan {
-                phenotype_name: (*phenotype_name).to_string(),
-                output_directory_name: format!("phenotype_{index:04}_{phenotype_name}"),
-            })
-            .collect(),
-    })
-}
-
-fn planned_run_directories(run_plan: &g_plan::RunPlan) -> Vec<PathBuf> {
-    run_plan
-        .phenotype_runs
-        .iter()
-        .map(|phenotype_run| {
-            let output_root = Path::new(&run_plan.output.output_run_root).join(&phenotype_run.output_directory_name);
-            if output_root.extension().is_some_and(|extension| extension == "run") {
-                output_root
-            } else {
-                PathBuf::from(format!("{}.{}.run", output_root.display(), run_plan.association_mode.as_str()))
-            }
-        })
-        .collect()
-}
-
-fn timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i64 {
-    seconds
-        .checked_mul(1_000_000_000)
-        .and_then(|value| value.checked_add(nanoseconds))
-        .expect("test timestamp fits int64")
-}
-
-fn bgen_identity(path: &Path) -> Arc<BgenSourceIdentity> {
-    let canonical_path = path.canonicalize().expect("test BGEN canonicalizes");
+    variant_count: usize,
+    phenotype_name: &str,
+) -> CurrentRunManifestHeaderInput {
+    let canonical_path = inputs.bgen.canonicalize().expect("test BGEN canonicalizes");
     let metadata = canonical_path.metadata().expect("test BGEN metadata exists");
-    Arc::new(BgenSourceIdentity {
-        configured_path: path.to_path_buf(),
-        canonical_path: Some(canonical_path),
-        device_identifier: metadata.dev(),
-        inode_identifier: metadata.ino(),
-        change_time_nanoseconds: timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
-        modification_time_nanoseconds: timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
-        file_size: metadata.len(),
-    })
-}
-
-fn header(phenotype_name: &str, inputs: &TestInputs, variant_count: usize) -> CurrentRunManifestHeaderInput {
     CurrentRunManifestHeaderInput {
         phenotype_name: phenotype_name.to_string(),
-        bgen_source_identity: bgen_identity(&inputs.bgen),
+        bgen_source_identity: Arc::new(BgenSourceIdentity {
+            configured_path: inputs.bgen.clone(),
+            canonical_path: Some(canonical_path),
+            device_identifier: metadata.dev(),
+            inode_identifier: metadata.ino(),
+            change_time_nanoseconds: timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
+            modification_time_nanoseconds: timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
+            file_size: metadata.len(),
+        }),
         covariate_names: Arc::from(Vec::<String>::new()),
         prediction_loco_files: Arc::from(Vec::new()),
         sample_count: 12,
@@ -204,9 +202,28 @@ fn header(phenotype_name: &str, inputs: &TestInputs, variant_count: usize) -> Cu
         phenotype_compute_group_id: Arc::from("group-id"),
         sample_set_fingerprint: Arc::from("sample-fingerprint"),
         covariate_design_fingerprint: Arc::from("covariate-fingerprint"),
-        phenotype_design_fingerprint: Arc::from(format!("phenotype-{phenotype_name}")),
+        phenotype_design_fingerprint: Arc::from("phenotype-fingerprint"),
         prediction_alignment_fingerprint: Arc::from("prediction-fingerprint"),
     }
+}
+
+fn timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i64 {
+    seconds
+        .checked_mul(1_000_000_000)
+        .and_then(|value| value.checked_add(nanoseconds))
+        .expect("test timestamp fits int64")
+}
+
+fn initialize_manager(
+    run_plan: Arc<g_plan::RunPlan>,
+    inputs: &TestInputs,
+    chunk_ranges: &[Range<usize>],
+) -> crate::OutputManager<crate::Active> {
+    let variant_count = chunk_ranges.last().map_or(0, |range| range.end);
+    OutputManager::open(run_plan, "# test configuration\n".to_string())
+        .expect("manager opens")
+        .initialize(vec![header(inputs, variant_count)], chunk_ranges, true)
+        .expect("manager initializes")
 }
 
 fn metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
@@ -226,977 +243,1182 @@ fn metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
             identifier_text.into_boxed_str(),
             identifier_offsets.into_boxed_slice(),
             (0..variant_count)
-                .map(|index| 1_000_i64 + i64::try_from(index).expect("test index fits int64"))
+                .map(|index| 1_000_i64 + i64::try_from(index).expect("index fits"))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             vec![1_u32; variant_count].into_boxed_slice(),
             vec![2_u32; variant_count].into_boxed_slice(),
         )
-        .expect("test metadata store should satisfy its invariants"),
+        .expect("test metadata store is valid"),
     )
 }
 
-fn test_chunk(store: &Arc<VariantMetadataStore>, chunk_range: Range<usize>, trait_count: usize) -> TestChunk {
+fn write_chunk(token: &crate::OutputDeliveryToken, store: &Arc<VariantMetadataStore>, chunk_range: Range<usize>) {
     let row_count = chunk_range.len();
-    let chunk_identifier = i64::try_from(chunk_range.start).expect("test chunk identifier fits int64");
-    let metadata = VariantMetadataColumns::new(Arc::clone(store), chunk_range.clone())
-        .expect("test metadata range should be valid");
-    let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata).expect("test metadata is valid");
-    let mut info_score = NullableFloat32Column {
-        values: Vec::with_capacity(row_count),
-        validity_bytes: Vec::with_capacity(row_count.div_ceil(8)),
-    };
-    for row_index in 0..row_count {
-        info_score.push(0.8 + small_index_as_f32(row_index) * 0.01, row_index != 1);
-    }
-    let handle = NativeChunkHandle::try_new(
+    let metadata =
+        VariantMetadataColumns::new(Arc::clone(store), chunk_range.clone()).expect("test metadata range is valid");
+    let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata).expect("metadata handle is valid");
+    let chunk_handle = NativeChunkHandle::try_new(
         metadata_handle,
         ChunkOutputStatistics {
-            allele_one_frequency: (0..row_count).map(|index| 0.1 + small_index_as_f32(index) * 0.05).collect(),
-            observation_count: (0..row_count)
-                .map(|index| 12 - i32::try_from(index).expect("test index fits int32"))
-                .collect(),
-            info_score,
+            allele_one_frequency: vec![0.25; row_count],
+            observation_count: vec![12; row_count],
+            info_score: NullableFloat32Column {
+                values: vec![0.9; row_count],
+                validity_bytes: vec![u8::MAX; row_count.div_ceil(8)],
+            },
         },
-        chunk_identifier,
+        i64::try_from(chunk_range.start).expect("chunk index fits"),
     )
-    .expect("test chunk is valid");
-    let value_count = row_count.checked_mul(trait_count).expect("test statistic size fits");
-    let beta = (0..value_count).map(|index| small_index_as_f32(index) + 0.25).collect::<Vec<_>>();
-    let standard_error = (0..value_count).map(|index| small_index_as_f32(index) + 0.5).collect::<Vec<_>>();
-    let chi_squared = (0..value_count).map(|index| small_index_as_f32(index) + 0.75).collect::<Vec<_>>();
-    let log10_p_value = (0..value_count).map(|index| small_index_as_f32(index) + 1.0).collect::<Vec<_>>();
-    let correction_code = Some((0..value_count).map(|index| u8::try_from(index % 4).expect("code fits")).collect());
-    TestChunk {
-        handle,
-        statistics: Regenie2StatisticBatch {
-            trait_count,
+    .expect("chunk handle is valid");
+    write_regenie2_multi_trait_chunk_f32(
+        token,
+        None,
+        &chunk_handle,
+        Regenie2StatisticBatch {
+            trait_count: 1,
             variant_count: row_count,
-            beta,
-            standard_error,
-            chi_squared,
-            log10_p_value,
-            correction_code,
+            beta: vec![0.5; row_count],
+            standard_error: vec![0.25; row_count],
+            chi_squared: vec![4.0; row_count],
+            log10_p_value: vec![2.0; row_count],
+            correction_code: Some(vec![0; row_count]),
         },
-    }
-}
-
-fn small_index_as_f32(index: usize) -> f32 {
-    f32::from(u16::try_from(index).expect("small test index fits uint16"))
-}
-
-fn single_chunk_plan(chunk_range: Range<usize>) -> Vec<Range<usize>> {
-    std::iter::once(chunk_range).collect()
-}
-
-fn initialize_manager(
-    run_plan: Arc<g_plan::RunPlan>,
-    inputs: &TestInputs,
-    phenotype_names: &[&str],
-    planned_chunk_ranges: &[Range<usize>],
-) -> OutputManager {
-    let variant_count = planned_chunk_ranges.last().map_or(0, |range| range.end);
-    let headers = phenotype_names.iter().map(|phenotype_name| header(phenotype_name, inputs, variant_count)).collect();
-    let mut manager = OutputManager::open(run_plan, "# test configuration\n".to_string()).expect("manager opens");
-    manager.initialize(headers, planned_chunk_ranges, false).expect("manager initializes");
-    manager
-}
-
-fn only_parquet_part(parts_directory: &Path) -> PathBuf {
-    let mut part_paths = std::fs::read_dir(parts_directory)
-        .expect("parts directory exists")
-        .map(|entry| entry.expect("part entry is readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "parquet"))
-        .collect::<Vec<_>>();
-    part_paths.sort();
-    assert_eq!(part_paths.len(), 1);
-    part_paths.remove(0)
-}
-
-fn read_manifest(run_directory: &Path) -> Value {
-    serde_json::from_str(
-        &std::fs::read_to_string(run_directory.join("run_manifest.json")).expect("manifest is readable"),
     )
-    .expect("manifest is valid JSON")
+    .expect("chunk is accepted");
 }
 
-fn parquet_part_count(parts_directory: &Path) -> usize {
-    std::fs::read_dir(parts_directory)
-        .expect("parts directory exists")
-        .map(|entry| entry.expect("part entry is readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "parquet"))
-        .count()
+fn read_json(path: &Path) -> Value {
+    serde_json::from_slice(&std::fs::read(path).expect("JSON file reads")).expect("JSON file is valid")
 }
 
-fn parquet_part_names(parts_directory: &Path) -> Vec<String> {
-    let mut part_names = std::fs::read_dir(parts_directory)
-        .expect("parts directory exists")
-        .map(|entry| entry.expect("part entry is readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "parquet"))
-        .map(|path| path.file_name().expect("part path has a file name").to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    part_names.sort();
-    part_names
+fn attempt_identifier(output_root: &Path, parent_attempt: Option<&str>) -> String {
+    let path = match parent_attempt {
+        None => output_root.join(".g-output/genesis.json"),
+        Some(parent_attempt) => {
+            let terminal_successor = output_root.join(".g-output/successors").join(format!("{parent_attempt}.json"));
+            if terminal_successor.exists() {
+                terminal_successor
+            } else {
+                output_root.join(".g-output/outcomes").join(format!("{parent_attempt}.json"))
+            }
+        }
+    };
+    let record = read_json(&path);
+    record
+        .get("attempt_id")
+        .or_else(|| record.pointer("/record/attempt_id"))
+        .and_then(Value::as_str)
+        .expect("attempt identifier exists")
+        .to_string()
 }
 
-fn wait_until_session_is_closing(session: &OutputWriterSession) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !session.is_closing_for_test().expect("session state is readable") {
-        assert!(Instant::now() < deadline, "writer session did not start closing before the test timeout");
-        std::thread::yield_now();
-    }
+fn run_crashing_transaction_helper(directory: &TestDirectory, mode: &str, failpoint: &str) -> std::process::Output {
+    std::process::Command::new(std::env::current_exe().expect("current test executable resolves"))
+        .args(["--exact", TRANSACTION_HELPER_TEST_NAME, "--nocapture"])
+        .env(TRANSACTION_HELPER_MODE_ENVIRONMENT, mode)
+        .env(TRANSACTION_HELPER_ROOT_ENVIRONMENT, &directory.path)
+        .env("G_OUTPUT_TEST_CRASH_POINT", failpoint)
+        .output()
+        .expect("transaction crash helper runs")
 }
 
-fn read_float_column(parts_directory: &Path, column_name: &str) -> Vec<f32> {
-    let input_file = File::open(only_parquet_part(parts_directory)).expect("part opens");
-    let batches = ParquetRecordBatchReaderBuilder::try_new(input_file)
-        .expect("part metadata reads")
-        .build()
-        .expect("part reader builds")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("part reads");
-    batches
-        .iter()
-        .flat_map(|batch| {
-            batch
-                .column_by_name(column_name)
-                .expect("column exists")
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .expect("column is Float32")
-                .values()
-                .to_vec()
-        })
-        .collect()
-}
-
-#[test]
-fn writer_persists_nullable_info_labels_and_pre_release_contract_versions() {
-    let directory = TestDirectory::new("nullable-info");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(Arc::clone(&plan), &inputs, &phenotype_names, &single_chunk_plan(0..3));
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let chunk = test_chunk(&metadata_store(3), 0..3, 1);
-    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
-    drop(sessions);
-    let completed = manager.finish().expect("manager finishes");
-    assert_eq!(completed.len(), 1);
-
-    let manifest = read_manifest(&completed[0].run_directory);
-    assert_eq!(manifest["schema_version"], 0);
-    assert_eq!(manifest["output_schema_version"], 0);
-    assert_eq!(manifest["status"], "completed");
-    assert_eq!(manifest["committed_chunks"].as_array().expect("commits are a list").len(), 1);
-
-    let part_path = only_parquet_part(&completed[0].parts_directory);
-    assert_eq!(part_path.file_name().and_then(|name| name.to_str()), Some("part_000000000.parquet"));
-    assert!(
-        std::fs::read_dir(&completed[0].parts_directory).expect("parts directory reads").all(|entry| entry
-            .expect("part entry reads")
-            .path()
-            .extension()
-            .is_none_or(|extension| extension != "tmp"))
-    );
-    let input_file = File::open(&part_path).expect("part opens");
-    let builder = ParquetRecordBatchReaderBuilder::try_new(input_file).expect("part metadata reads");
-    assert!(builder.schema().field_with_name("INFO").expect("INFO field exists").is_nullable());
-    let footer_metadata = builder.metadata().file_metadata().key_value_metadata().expect("footer metadata exists");
-    assert!(footer_metadata.iter().any(|entry| entry.key == crate::schema::CHUNK_COMMITS_METADATA_KEY));
-    let batches = builder.build().expect("part reader builds").collect::<Result<Vec<_>, _>>().expect("part reads");
-    assert_eq!(batches.len(), 1);
-    let batch = &batches[0];
-    assert_eq!(batch.num_rows(), 3);
-    let positions = batch.column_by_name("GENPOS").expect("GENPOS exists");
+fn assert_expected_crash(output: &std::process::Output) {
     assert_eq!(
-        positions.as_any().downcast_ref::<Int64Array>().expect("GENPOS is Int64").values(),
-        &[1_000, 1_001, 1_002]
+        output.status.code(),
+        Some(86),
+        "transaction helper did not stop at its failpoint\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    let observation_counts = batch.column_by_name("N").expect("N exists");
-    assert_eq!(observation_counts.as_any().downcast_ref::<Int32Array>().expect("N is Int32").values(), &[12, 11, 10]);
-    let info_scores = batch
-        .column_by_name("INFO")
-        .expect("INFO exists")
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .expect("INFO is Float32");
-    assert!(!info_scores.is_null(0));
-    assert!(info_scores.is_null(1));
-    assert!(!info_scores.is_null(2));
-    assert!((info_scores.value(0) - 0.8).abs() < f32::EPSILON);
-    let methods = batch
-        .column_by_name("CORRECTION_METHOD")
-        .expect("method exists")
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("method reads as Utf8");
-    let statuses = batch
-        .column_by_name("CORRECTION_STATUS")
-        .expect("status exists")
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("status reads as Utf8");
-    assert_eq!((0..3).map(|index| methods.value(index)).collect::<Vec<_>>(), ["score", "score", "firth_approximate"]);
-    assert_eq!((0..3).map(|index| statuses.value(index)).collect::<Vec<_>>(), ["success", "failed", "success"]);
 }
 
-#[test]
-fn enabled_stage_timing_records_writer_and_finish_metrics() {
-    let directory = TestDirectory::new("stage-timing");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let planned_ranges = single_chunk_plan(0..2);
-    let headers = vec![header(PRIMARY_PHENOTYPE, &inputs, 2)];
-    let mut manager = OutputManager::open(plan, "# timing\n".to_string()).expect("manager opens");
-    manager.initialize(headers, &planned_ranges, true).expect("manager initializes with timing");
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let chunk = test_chunk(&metadata_store(2), 0..2, 1);
-    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
-    drop(sessions);
-    let completed = manager.finish().expect("manager finishes");
-
-    let timing_path = completed[0].run_directory.join("output_stage_timings.json");
-    let timing: Value = serde_json::from_str(&std::fs::read_to_string(timing_path).expect("timing snapshot reads"))
-        .expect("timing snapshot is valid JSON");
-    assert_eq!(timing["stage_counts"]["rust_output_enqueue"], 1);
-    assert_eq!(timing["stage_counts"]["rust_output_coordinator_flush"], 1);
-    assert_eq!(timing["stage_counts"]["rust_output_writer_total"], 1);
-    assert_eq!(timing["stage_counts"]["rust_output_manifest_commit"], 1);
-    assert_eq!(timing["stage_counts"]["rust_output_finish_total"], 1);
-    assert_eq!(timing["output_metrics"]["writer_chunk_file_count"], 1);
-    assert_eq!(timing["output_metrics"]["writer_chunk_count"], 1);
-    assert_eq!(timing["output_metrics"]["writer_row_count"], 2);
-    assert!(timing["output_metrics"]["writer_arrow_array_memory_bytes"].as_u64().expect("memory is uint64") > 0);
-    assert!(timing["output_metrics"]["writer_parquet_file_bytes"].as_u64().expect("bytes are uint64") > 0);
-}
-
-#[test]
-fn writer_groups_eight_chunks_and_flushes_tail_with_sorted_commits() {
-    let directory = TestDirectory::new("grouped-tail");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_chunk_ranges = (0..9).map(|index| index..index + 1).collect::<Vec<_>>();
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let store = metadata_store(9);
-    for chunk_range in planned_chunk_ranges.clone() {
-        let chunk = test_chunk(&store, chunk_range, 1);
-        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
-            .expect("chunk is accepted");
+fn assert_surviving_owner_claim(error: crate::OutputError, output_root: &Path) {
+    match error {
+        crate::OutputError::SurvivingOutputOwnerClaim { claim_path, claim_id, host_name, process_id } => {
+            assert_eq!(claim_path, output_root.join(".g-output/session.claim.json"));
+            assert!(claim_id.starts_with("owner-"));
+            assert!(!host_name.is_empty());
+            assert_ne!(process_id, 0);
+        }
+        unexpected_error => panic!("expected a surviving owner claim, got: {unexpected_error}"),
     }
-    drop(sessions);
-    let completed = manager.finish().expect("manager finishes");
-    let mut part_names = std::fs::read_dir(&completed[0].parts_directory)
-        .expect("parts directory exists")
-        .map(|entry| entry.expect("part entry is readable").file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".parquet"))
+}
+
+fn assert_owner_authority_released(output_root: &Path) {
+    assert!(output_root.join(".g-output/session.claim.json").is_file(), "the immutable root claim remains");
+    crate::persistence::lineage::OutputLineagePaths::new(output_root)
+        .reject_surviving_owner_claim()
+        .expect("owner authority resolves to a released leaf");
+}
+
+fn claim_error(run_plan: Arc<g_plan::RunPlan>, chunk_ranges: &[Range<usize>], context: &str) -> crate::OutputError {
+    OutputManager::open(run_plan, "# test configuration\n".to_string())
+        .expect("manager planning is read-only")
+        .claim(chunk_ranges, false)
+        .err()
+        .unwrap_or_else(|| panic!("{context}"))
+}
+
+fn owner_claim_identifier(output_root: &Path) -> String {
+    crate::persistence::lineage::OutputLineagePaths::new(output_root)
+        .current_owner_claim_identifier_for_test()
+        .expect("owner authority resolves")
+        .expect("owner authority is active")
+}
+
+fn authorize_fenced_owner_claim(
+    mut run_plan: Arc<g_plan::RunPlan>,
+    fenced_owner_claim_id: String,
+) -> Arc<g_plan::RunPlan> {
+    Arc::get_mut(&mut run_plan).expect("test run plan has one owner").output.fenced_owner_claim_id =
+        Some(fenced_owner_claim_id);
+    run_plan
+}
+
+fn owner_claim_candidate_temporary_paths(output_root: &Path) -> Vec<PathBuf> {
+    let control_directory = output_root.join(".g-output");
+    let mut paths = std::fs::read_dir(control_directory)
+        .expect("control directory reads")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".session.claim.json.") && name.strip_suffix(".tmp").is_some())
+        })
         .collect::<Vec<_>>();
-    part_names.sort();
-    assert_eq!(part_names, ["part_000000000_000000007.parquet", "part_000000008.parquet"]);
-    let manifest = read_manifest(&completed[0].run_directory);
-    let identifiers = manifest["committed_chunks"]
-        .as_array()
-        .expect("commits are a list")
+    paths.sort();
+    paths
+}
+
+fn regular_file_snapshot(root: &Path) -> BTreeMap<PathBuf, (u64, i64, Vec<u8>)> {
+    fn visit(root: &Path, directory: &Path, snapshot: &mut BTreeMap<PathBuf, (u64, i64, Vec<u8>)>) {
+        for entry in std::fs::read_dir(directory).expect("snapshot directory reads") {
+            let path = entry.expect("snapshot entry reads").path();
+            if path.is_dir() {
+                visit(root, &path, snapshot);
+            } else {
+                let metadata = path.metadata().expect("snapshot metadata reads");
+                snapshot.insert(
+                    path.strip_prefix(root).expect("snapshot path is relative").to_path_buf(),
+                    (
+                        metadata.len(),
+                        timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
+                        std::fs::read(&path).expect("snapshot file reads"),
+                    ),
+                );
+            }
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    visit(root, root, &mut snapshot);
+    snapshot
+}
+
+fn path_relative_to(base: &Path, target: &Path) -> PathBuf {
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+    let common_count = base_components
         .iter()
-        .map(|commit| commit["chunk_identifier"].as_i64().expect("identifier is int64"))
-        .collect::<Vec<_>>();
-    assert_eq!(identifiers, (0_i64..9).collect::<Vec<_>>());
+        .zip(&target_components)
+        .take_while(|(base_component, target_component)| base_component == target_component)
+        .count();
+    let mut relative = PathBuf::new();
+    for _ in &base_components[common_count..] {
+        relative.push("..");
+    }
+    for component in &target_components[common_count..] {
+        relative.push(component.as_os_str());
+    }
+    relative
 }
 
 #[test]
-fn reordered_partial_traits_preserve_trait_major_values_across_resume() {
-    let directory = TestDirectory::new("partial-traits");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta", "trait_gamma"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_ranges = single_chunk_plan(0..2);
-    let initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let manager = initialize_manager(initial_plan, &inputs, &phenotype_names, &planned_ranges);
-    let sessions = manager
-        .delivery_state_for_phenotypes(&phenotype_names.map(str::to_string))
-        .expect("delivery state exists")
-        .writer_sessions;
-    let chunk = test_chunk(&metadata_store(2), 0..2, 2);
-    let statistics = Regenie2StatisticBatch {
-        trait_count: 2,
-        variant_count: 2,
-        beta: vec![10.0, 11.0, 20.0, 21.0],
-        standard_error: chunk.statistics.standard_error,
-        chi_squared: chunk.statistics.chi_squared,
-        log10_p_value: chunk.statistics.log10_p_value,
-        correction_code: chunk.statistics.correction_code,
-    };
-    write_regenie2_multi_trait_chunk_f32(&sessions, Some(&[2, 0]), &chunk.handle, statistics)
-        .expect("reordered subset writes");
-    drop(sessions);
-    manager.finish().expect("initial manager finishes");
+fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
+    let directory = TestDirectory::new("completed-layout");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = vec![0..2, 2..4];
+    let run_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+    let manager = initialize_manager(run_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    let store = metadata_store(4);
+    for chunk_range in chunk_ranges {
+        write_chunk(&token, &store, chunk_range);
+    }
+    drop(token);
 
-    let resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 2);
-    let resume_manager = initialize_manager(resume_plan, &inputs, &phenotype_names, &planned_ranges);
-    let delivery = resume_manager
-        .delivery_state_for_phenotypes(&phenotype_names.map(str::to_string))
-        .expect("resume delivery state exists");
-    assert_eq!(delivery.committed_chunk_identifier_sets[0].iter().copied().collect::<Vec<_>>(), [0]);
-    assert!(delivery.committed_chunk_identifier_sets[1].is_empty());
-    assert_eq!(delivery.committed_chunk_identifier_sets[2].iter().copied().collect::<Vec<_>>(), [0]);
-    let resumed_sessions = delivery.writer_sessions;
-    let resumed_chunk = test_chunk(&metadata_store(2), 0..2, 1);
-    let resumed_statistics = Regenie2StatisticBatch {
-        trait_count: 1,
-        variant_count: 2,
-        beta: vec![30.0, 31.0],
-        standard_error: resumed_chunk.statistics.standard_error,
-        chi_squared: resumed_chunk.statistics.chi_squared,
-        log10_p_value: resumed_chunk.statistics.log10_p_value,
-        correction_code: resumed_chunk.statistics.correction_code,
-    };
-    write_regenie2_multi_trait_chunk_f32(&resumed_sessions, Some(&[1]), &resumed_chunk.handle, resumed_statistics)
-        .expect("remaining trait writes after resume");
-    drop(resumed_sessions);
-    resume_manager.finish().expect("resume manager finishes");
+    let completed =
+        manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes");
+    assert_eq!(completed.len(), 1);
+    let run_directory = &completed[0].run_directory;
+    assert_eq!(run_directory.file_name().and_then(|name| name.to_str()), Some(OUTPUT_DIRECTORY_NAME));
+    let output_root = directory.path.join("results");
+    assert_owner_authority_released(&output_root);
+    let attempt = attempt_identifier(&output_root, None);
+    assert_eq!(run_directory.parent().and_then(Path::file_name).and_then(|name| name.to_str()), Some(attempt.as_str()));
+    let manifest = read_json(&run_directory.join("run_manifest.json"));
+    assert_eq!(manifest["status"], "completed");
+    assert_eq!(manifest["execution_plan"]["resume_policy"], "lineage_receipts_exact_coverage");
+    assert_eq!(manifest["committed_chunks"].as_array().map(Vec::len), Some(2));
+    assert_eq!(manifest["committed_parts"].as_array().map(Vec::len), Some(1));
+    assert!(run_directory.join("effective_config.toml").is_file());
+    assert!(run_directory.join("output_stage_timings.json").is_file());
+
+    let receipt_path = std::fs::read_dir(run_directory.join("commits"))
+        .expect("receipt directory reads")
+        .next()
+        .expect("one receipt exists")
+        .expect("receipt entry reads")
+        .path();
+    let receipt = read_json(&receipt_path);
+    assert_eq!(receipt["footer"]["run_set_id"], manifest["run_set_id"]);
+    assert_eq!(receipt["footer"]["attempt_id"], manifest["attempt_id"]);
+    assert_eq!(receipt["footer"]["phenotype_name"], PHENOTYPE_NAME);
+    assert!(receipt["part_sha256"].as_str().is_some_and(|digest| digest.len() == 64));
+    let part_path =
+        run_directory.join("parts").join(receipt["footer"]["part_file_name"].as_str().expect("part name exists"));
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(part_path).expect("part opens"))
+        .expect("Parquet footer reads");
+    let embedded_footer = builder
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .and_then(|entries| entries.iter().find(|entry| entry.key == crate::schema::PART_BINDING_METADATA_KEY))
+        .and_then(|entry| entry.value.as_deref())
+        .expect("embedded part footer exists");
+    assert_eq!(serde_json::from_str::<Value>(embedded_footer).expect("footer JSON parses"), receipt["footer"]);
+    let batches = builder.build().expect("part reader builds").collect::<Result<Vec<_>, _>>().expect("part reads");
+    assert_eq!(
+        batches[0]
+            .column_by_name("BETA")
+            .expect("BETA exists")
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("BETA is Float32")
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn interrupted_attempt_resumes_into_successor_with_verified_hardlink_reuse() {
+    let directory = TestDirectory::new("terminal-resume");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = vec![0..2, 2..4];
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    let store = metadata_store(4);
+    write_chunk(&token, &store, 0..2);
+    drop(token);
+    manager.finish_interrupted("SIGTERM").expect("interrupted terminal publishes");
 
     let output_root = directory.path.join("results");
-    for (directory_name, expected_beta) in [
-        ("phenotype_0000_trait_alpha.regenie2_binary.run", vec![20.0, 21.0]),
-        ("phenotype_0001_trait_beta.regenie2_binary.run", vec![30.0, 31.0]),
-        ("phenotype_0002_trait_gamma.regenie2_binary.run", vec![10.0, 11.0]),
-    ] {
-        let observed_beta = read_float_column(&output_root.join(directory_name).join("parts"), "BETA");
-        assert_eq!(observed_beta.len(), expected_beta.len());
-        for (observed, expected) in observed_beta.iter().zip(expected_beta) {
-            assert!((*observed - expected).abs() < f32::EPSILON);
+    assert_owner_authority_released(&output_root);
+    let first_attempt = attempt_identifier(&output_root, None);
+    let first_parts = output_root.join("attempts").join(&first_attempt).join(OUTPUT_DIRECTORY_NAME).join("parts");
+    let first_part = std::fs::read_dir(&first_parts)
+        .expect("first parts read")
+        .find_map(|entry| {
+            let path = entry.expect("part entry reads").path();
+            path.extension().is_some_and(|extension| extension == "parquet").then_some(path)
+        })
+        .expect("first part exists");
+
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let resume_manager = initialize_manager(resume_plan, &inputs, &chunk_ranges);
+    let token =
+        resume_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("resume token builds");
+    assert_eq!(token.committed_chunk_identifier_sets()[0].as_ref(), &std::collections::BTreeSet::from([0]));
+    write_chunk(&token, &store, 2..4);
+    drop(token);
+    let completed = resume_manager
+        .close_completed()
+        .expect("resumed exact coverage closes")
+        .finish()
+        .expect("resumed completion publishes");
+
+    let second_attempt = attempt_identifier(&output_root, Some(&first_attempt));
+    let reused_part = completed[0].parts_directory.join(first_part.file_name().expect("part file name exists"));
+    assert_eq!(
+        first_part.metadata().expect("source metadata reads").ino(),
+        reused_part.metadata().expect("reused metadata reads").ino()
+    );
+    assert_ne!(first_attempt, second_attempt);
+    assert_eq!(
+        std::fs::read_dir(&completed[0].parts_directory)
+            .expect("completed parts read")
+            .filter_map(Result::ok)
+            .filter(|entry| { entry.path().extension().is_some_and(|extension| extension == "parquet") })
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn completed_resume_reverifies_payload_without_mutating_data() {
+    let directory = TestDirectory::new("completed-noop");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    manager.close_completed().expect("initial exact coverage closes").finish().expect("initial completion publishes");
+
+    let output_root = directory.path.join("results");
+    let before = regular_file_snapshot(&output_root);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let resume_manager = initialize_manager(resume_plan, &inputs, &chunk_ranges);
+    let token =
+        resume_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("completed token builds");
+    assert!(token.is_read_only());
+    drop(token);
+    resume_manager.close_completed().expect("completed attempt reverifies").finish().expect("completed no-op finishes");
+    let after = regular_file_snapshot(&output_root);
+    for (path, expected) in &before {
+        assert_eq!(after.get(path), Some(expected), "completed payload changed at '{}'", path.display());
+    }
+    let new_paths = after.keys().filter(|path| !before.contains_key(*path)).collect::<Vec<_>>();
+    assert!(
+        !new_paths.is_empty() && new_paths.iter().all(|path| path.starts_with(".g-output/owner-transitions")),
+        "completed resume may append only owner-authority transitions, got {new_paths:?}"
+    );
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn planning_does_not_create_the_output_root() {
+    let directory = TestDirectory::new("read-only-plan");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let output_root = PathBuf::from(&plan.output.output_run_root);
+    let manager = OutputManager::open(plan, "# test configuration\n".to_string()).expect("manager plans");
+    assert!(!output_root.exists());
+    drop(manager);
+    assert!(!output_root.exists());
+}
+
+#[test]
+fn pre_release_output_contract_versions_remain_zero() {
+    assert_eq!(crate::manifest::RUN_MANIFEST_SCHEMA_VERSION, 0);
+    assert_eq!(crate::manifest::OUTPUT_SCHEMA_VERSION, 0);
+    assert_eq!(crate::persistence::attempt::ATTEMPT_MANIFEST_SCHEMA_VERSION, 0);
+    assert_eq!(crate::persistence::lineage::LINEAGE_SCHEMA_VERSION, 0);
+    assert_eq!(crate::persistence::receipt::PART_RECORD_SCHEMA_VERSION, 0);
+}
+
+#[test]
+fn planning_rejects_cli_line_separators_without_mutation() {
+    for separator in ['\n', '\u{2028}', '\u{2029}'] {
+        let directory = TestDirectory::new("line-separator");
+        let inputs = test_inputs(&directory);
+        let mut root_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        Arc::get_mut(&mut root_plan).expect("test plan has one owner").output.output_run_root =
+            format!("{}{}suffix", directory.path.join("results").display(), separator);
+        assert!(OutputManager::open(root_plan, "# test configuration\n".to_string()).is_err());
+        assert!(!directory.path.join("results").exists());
+
+        let mut phenotype_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        Arc::get_mut(&mut phenotype_plan).expect("test plan has one owner").phenotype_runs[0].output_directory_name =
+            format!("trait{separator}split");
+        assert!(OutputManager::open(phenotype_plan, "# test configuration\n".to_string()).is_err());
+        assert!(!directory.path.join("results").exists());
+    }
+}
+
+#[test]
+fn relative_output_root_returns_absolute_completed_paths() {
+    let directory = TestDirectory::new("relative-root");
+    let inputs = test_inputs(&directory);
+    let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let expected_output_root = directory.path.join("results");
+    Arc::get_mut(&mut plan).expect("test plan has one owner").output.output_run_root =
+        path_relative_to(&std::env::current_dir().expect("current directory resolves"), &expected_output_root)
+            .display()
+            .to_string();
+    let manager = initialize_manager(plan, &inputs, &single_chunk_ranges(2));
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    let completed = manager.close_completed().expect("relative output closes").finish().expect("output completes");
+    assert_eq!(completed.len(), 1);
+    assert!(completed[0].run_directory.is_absolute());
+    assert!(completed[0].parts_directory.is_absolute());
+    assert!(completed[0].run_directory.starts_with(&expected_output_root));
+    assert_eq!(completed[0].parts_directory, completed[0].run_directory.join("parts"));
+}
+
+#[test]
+fn controlled_initialization_failures_never_leave_an_owner_claim() {
+    for failure_stage in ["writer_settings", "chunk_plan", "headers"] {
+        let directory = TestDirectory::new(failure_stage);
+        let inputs = test_inputs(&directory);
+        let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        if failure_stage == "writer_settings" {
+            Arc::get_mut(&mut plan).expect("test plan has one owner").output.writer_thread_count = 0;
+        }
+        let output_root = directory.path.join("results");
+        let manager =
+            OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
+        let initialization_result = match failure_stage {
+            "writer_settings" => manager.initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false),
+            "chunk_plan" => manager.initialize(vec![header(&inputs, 2)], &single_chunk_ranges_from(1, 2), false),
+            "headers" => manager.initialize(Vec::new(), &single_chunk_ranges(2), false),
+            _ => unreachable!("failure stages are exhaustive"),
+        };
+        assert!(initialization_result.is_err());
+        if failure_stage == "headers" {
+            assert_owner_authority_released(&output_root);
+        } else {
+            assert!(!output_root.exists(), "pre-claim validation must remain read-only");
+        }
+    }
+
+    for failure_point in ["after_owner_staging_intent", "after_claim_diagnostics_creation"] {
+        let directory = TestDirectory::new(failure_point);
+        let inputs = test_inputs(&directory);
+        let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        let output_root = directory.path.join("results");
+        let failure_guard = crate::manager::install_initialization_failure_for_test(failure_point);
+        let error = OutputManager::open(plan, "# test configuration\n".to_string())
+            .expect("failure case manager plans")
+            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+            .err()
+            .expect("configured staging failure fires");
+        drop(failure_guard);
+        assert!(error.to_string().contains(failure_point));
+        assert_owner_authority_released(&output_root);
+        assert!(!output_root.join(".g-output/genesis.json").exists());
+        assert!(
+            !output_root.join("attempts").exists()
+                || std::fs::read_dir(output_root.join("attempts")).expect("attempt directory reads").next().is_none()
+        );
+        assert!(
+            std::fs::read_dir(output_root.join(".g-output/owner-staging"))
+                .expect("owner staging directory reads")
+                .next()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn postclaim_initialization_failures_publish_failed_terminals_and_release() {
+    for failure_point in ["after_owner_claim", "after_attempt_claim", "after_attempt_preparation", "after_writer_start"]
+    {
+        let directory = TestDirectory::new(failure_point);
+        let inputs = test_inputs(&directory);
+        let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        let output_root = directory.path.join("results");
+        let failure_guard = crate::manager::install_initialization_failure_for_test(failure_point);
+        let manager =
+            OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
+        let error = manager
+            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+            .err()
+            .expect("configured initialization stage fails");
+        drop(failure_guard);
+        assert!(error.to_string().contains("Injected output initialization failure"));
+        assert_owner_authority_released(&output_root);
+        if failure_point == "after_owner_claim" {
+            assert!(!output_root.join(".g-output/genesis.json").exists());
+        } else {
+            let attempt = attempt_identifier(&output_root, None);
+            assert_eq!(
+                read_json(
+                    &output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json")
+                )["status"],
+                "failed"
+            );
+            assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).is_file());
         }
     }
 }
 
 #[test]
-fn interrupted_finish_flushes_pending_chunk_and_records_signal() {
-    let directory = TestDirectory::new("interrupted");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let retained_session = Arc::clone(&sessions[0]);
-    let chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
-    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
-    drop(sessions);
-    manager.finish_interrupted("SIGTERM").expect("interrupted finish succeeds");
-    let manifest = read_manifest(&run_directory);
-    assert_eq!(manifest["status"], "interrupted");
-    assert_eq!(manifest["interrupted_signal"], "SIGTERM");
-    assert!(run_directory.join("parts/part_000000000.parquet").exists());
-    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    let error = write_regenie2_multi_trait_chunk_f32(
-        &[retained_session],
-        None,
-        &rejected_chunk.handle,
-        rejected_chunk.statistics,
-    )
-    .expect_err("retained delivery client rejects writes after interrupted finish");
-    assert!(error.to_string().contains("already closed"));
-}
-
-#[test]
-fn finish_reports_a_manifest_removed_after_initialization() {
-    let directory = TestDirectory::new("removed-manifest");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
-    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
-    let manifest_path = run_directory.join("run_manifest.json");
-    std::fs::remove_file(&manifest_path).expect("external manifest deletion succeeds");
-
-    let error = manager.finish().err().expect("finish must reject the missing manifest");
-    assert!(
-        matches!(
-            error,
-            crate::OutputError::MissingRunManifest { manifest_path: ref observed_path }
-                if observed_path == &manifest_path
-        ),
-        "unexpected finish error: {error}"
-    );
-    assert!(!manifest_path.exists());
-}
-
-#[test]
-fn abort_discards_pending_chunks_and_closes_retained_session() {
-    let directory = TestDirectory::new("abort");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let retained_session: Arc<OutputWriterSession> = Arc::clone(&sessions[0]);
-    let chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
-    drop(sessions);
-    manager.abort().expect("abort succeeds");
-
-    let second_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    let error =
-        write_regenie2_multi_trait_chunk_f32(&[retained_session], None, &second_chunk.handle, second_chunk.statistics)
-            .expect_err("closed session rejects writes");
-    assert!(error.to_string().contains("already closed"));
-    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
-    assert_eq!(read_manifest(&run_directory)["status"], "running");
-    assert_eq!(std::fs::read_dir(run_directory.join("parts")).expect("parts exists").count(), 0);
-}
-
-#[test]
-fn multi_session_finish_closes_delivery_clients_that_outlive_the_manager() {
-    let directory = TestDirectory::new("multi-session-finish");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let manager = initialize_manager(Arc::clone(&plan), &inputs, &phenotype_names, &single_chunk_plan(0..2));
-    let delivery =
-        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
-    let chunk = test_chunk(&metadata_store(2), 0..2, 2);
-    write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
-        .expect("multi-session chunk is accepted");
-
-    let completed = manager.finish().expect("all sessions finish and shared workers join");
-
-    assert_eq!(completed.len(), 2);
-    assert!(completed.iter().all(|run| read_manifest(&run.run_directory)["status"] == "completed"));
-    assert!(completed.iter().all(|run| parquet_part_count(&run.parts_directory) == 1));
-    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    let error = write_regenie2_multi_trait_chunk_f32(
-        &[Arc::clone(&delivery.writer_sessions[0])],
-        None,
-        &rejected_chunk.handle,
-        rejected_chunk.statistics,
-    )
-    .expect_err("retained delivery client rejects writes after finish");
-    assert!(error.to_string().contains("already closed"));
-}
-
-#[test]
-fn multi_session_abort_closes_delivery_clients_that_outlive_the_manager() {
-    let directory = TestDirectory::new("multi-session-abort");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let run_directories = planned_run_directories(&plan);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..2));
-    let delivery =
-        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
-    let chunk = test_chunk(&metadata_store(2), 0..2, 2);
-    write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
-        .expect("multi-session chunk is admitted as pending tails");
-
-    manager.abort().expect("all sessions abort and shared workers join");
-
-    assert!(run_directories.iter().all(|run_directory| {
-        read_manifest(run_directory)["status"] == "running" && parquet_part_count(&run_directory.join("parts")) == 0
-    }));
-    let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    let error = write_regenie2_multi_trait_chunk_f32(
-        &[Arc::clone(&delivery.writer_sessions[1])],
-        None,
-        &rejected_chunk.handle,
-        rejected_chunk.statistics,
-    )
-    .expect_err("retained delivery client rejects writes after abort");
-    assert!(error.to_string().contains("already closed"));
-}
-
-#[test]
-fn finish_attempts_later_sessions_before_shutdown_after_a_primary_session_error() {
-    let directory = TestDirectory::new("multi-session-primary-error");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let run_directories = planned_run_directories(&plan);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
-    let delivery =
-        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
-    let missing_manifest_path = run_directories[0].join("run_manifest.json");
-    std::fs::remove_file(&missing_manifest_path).expect("first manifest is removed");
-
-    let error = manager.finish().err().expect("first session manifest failure remains primary");
-
-    assert!(
-        matches!(
-            error,
-            crate::OutputError::MissingRunManifest { manifest_path: ref observed_path }
-                if observed_path == &missing_manifest_path
-        ),
-        "unexpected finish error: {error}"
-    );
-    assert_eq!(read_manifest(&run_directories[1])["status"], "completed");
-    for retained_session in &delivery.writer_sessions {
-        let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-        let write_error = write_regenie2_multi_trait_chunk_f32(
-            &[Arc::clone(retained_session)],
-            None,
-            &rejected_chunk.handle,
-            rejected_chunk.statistics,
-        )
-        .expect_err("every retained session is closed after terminal failure");
-        assert!(write_error.to_string().contains("already closed"));
-    }
-}
-
-#[test]
-fn initialized_manager_drop_drains_queued_batches_discards_tails_and_closes_retained_sessions() {
-    let directory = TestDirectory::new("initialized-manager-drop");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_chunk_ranges = (0..9).map(|index| index..index + 1).collect::<Vec<_>>();
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let run_directories = planned_run_directories(&plan);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let delivery =
-        manager.delivery_state_for_phenotypes(&phenotype_names.map(str::to_string)).expect("delivery state exists");
-    let worker_control = delivery.writer_sessions[0]
-        .install_worker_before_write_test_hook()
-        .expect("before-write worker barrier installs");
-    let store = metadata_store(9);
-    for chunk_range in planned_chunk_ranges {
-        let chunk = test_chunk(&store, chunk_range, 2);
-        write_regenie2_multi_trait_chunk_f32(&delivery.writer_sessions, None, &chunk.handle, chunk.statistics)
-            .expect("full batches and pending tails are admitted");
-    }
-    worker_control.wait_until_worker_started();
-    let (drop_finished_sender, drop_finished_receiver) = crossbeam_channel::bounded::<()>(1);
-    let drop_handle = std::thread::Builder::new()
-        .name("initialized-output-manager-drop".to_string())
-        .spawn(move || {
-            drop(manager);
-            drop_finished_sender.send(()).expect("test observes manager drop completion");
-        })
-        .expect("manager drop controller starts");
-    wait_until_session_is_closing(&delivery.writer_sessions[0]);
-
-    assert!(matches!(drop_finished_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
-    assert!(run_directories.iter().all(|run_directory| parquet_part_count(&run_directory.join("parts")) == 0));
-    worker_control.release();
-    drop_finished_receiver
-        .recv_timeout(Duration::from_secs(10))
-        .expect("manager drop returns after queued work drains");
-    drop_handle.join().expect("manager drop controller does not panic");
-
-    let expected_part_names = vec!["part_000000000_000000007.parquet".to_string()];
-    let part_names_after_drop = run_directories
-        .iter()
-        .map(|run_directory| parquet_part_names(&run_directory.join("parts")))
-        .collect::<Vec<_>>();
-    assert!(part_names_after_drop.iter().all(|part_names| part_names == &expected_part_names));
-    for run_directory in &run_directories {
-        let manifest = read_manifest(run_directory);
-        assert_eq!(manifest["status"], "running");
-        assert!(manifest["committed_chunks"].as_array().expect("commits are a list").is_empty());
-    }
-    for retained_session in &delivery.writer_sessions {
-        let rejected_chunk = test_chunk(&metadata_store(1), 0..1, 1);
-        let error = write_regenie2_multi_trait_chunk_f32(
-            &[Arc::clone(retained_session)],
-            None,
-            &rejected_chunk.handle,
-            rejected_chunk.statistics,
-        )
-        .expect_err("manager drop closes every retained session");
-        assert!(error.to_string().contains("already closed"));
-    }
-    let stable_part_names = run_directories
-        .iter()
-        .map(|run_directory| parquet_part_names(&run_directory.join("parts")))
-        .collect::<Vec<_>>();
-    assert_eq!(stable_part_names, part_names_after_drop, "no worker may publish after manager drop returns");
-}
-
-#[test]
-fn finish_waits_for_a_reserved_batch_detached_before_queue_send() {
-    let directory = TestDirectory::new("finish-detached-before-send");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_chunk_ranges = (0..8).map(|index| index..index + 1).collect::<Vec<_>>();
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let retained_session = Arc::clone(&sessions[0]);
-    let detach_control = retained_session
-        .install_detached_before_send_test_hook()
-        .expect("detach hook installs while the session is open");
-    let store = metadata_store(8);
-    for chunk_range in planned_chunk_ranges.iter().take(7).cloned() {
-        let chunk = test_chunk(&store, chunk_range, 1);
-        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
-            .expect("partial batch chunk is accepted");
-    }
-    let final_chunk = test_chunk(&store, planned_chunk_ranges[7].clone(), 1);
-    let write_sessions = sessions.clone();
-    let write_handle = std::thread::spawn(move || {
-        write_regenie2_multi_trait_chunk_f32(&write_sessions, None, &final_chunk.handle, final_chunk.statistics)
-    });
-    detach_control.wait_until_detached();
-
-    let (finish_sender, finish_receiver) = crossbeam_channel::bounded(1);
-    let finish_handle = std::thread::spawn(move || {
-        let finish_result = manager.finish().map(|_| ()).map_err(|error| error.to_string());
-        finish_sender.send(finish_result).expect("finish result receiver remains connected");
-    });
-    wait_until_session_is_closing(&retained_session);
-    assert!(matches!(finish_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
-    let parts_directory = directory.path.join("results/phenotype_0000_trait_alpha.regenie2_binary.run/parts");
-    assert_eq!(parquet_part_count(&parts_directory), 0);
-    let rejected_chunk = test_chunk(&store, 0..1, 1);
-    let closing_error = write_regenie2_multi_trait_chunk_f32(
-        &[Arc::clone(&retained_session)],
-        None,
-        &rejected_chunk.handle,
-        rejected_chunk.statistics,
-    )
-    .expect_err("closing session rejects later writes");
-    assert!(closing_error.to_string().contains("already closing"));
-
-    detach_control.release();
-    write_handle.join().expect("write thread does not panic").expect("reserved batch is sent");
-    finish_receiver
-        .recv_timeout(Duration::from_secs(10))
-        .expect("finish returns after the reserved batch completes")
-        .expect("finish succeeds");
-    finish_handle.join().expect("finish thread does not panic");
-
-    assert_eq!(parquet_part_count(&parts_directory), 1);
-    let run_directory = parts_directory.parent().expect("parts directory has a run parent");
-    assert_eq!(read_manifest(run_directory)["status"], "completed");
-    let post_finish_chunk = test_chunk(&store, 0..1, 1);
-    let closed_error = write_regenie2_multi_trait_chunk_f32(
-        &[retained_session],
-        None,
-        &post_finish_chunk.handle,
-        post_finish_chunk.statistics,
-    )
-    .expect_err("finished retained session rejects later writes");
-    assert!(closed_error.to_string().contains("already closed"));
-    assert_eq!(parquet_part_count(&parts_directory), 1);
-}
-
-#[test]
-fn abort_waits_for_a_reserved_batch_detached_before_queue_send() {
-    let directory = TestDirectory::new("abort-detached-before-send");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_chunk_ranges = (0..8).map(|index| index..index + 1).collect::<Vec<_>>();
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let retained_session = Arc::clone(&sessions[0]);
-    let detach_control = retained_session
-        .install_detached_before_send_test_hook()
-        .expect("detach hook installs while the session is open");
-    let store = metadata_store(8);
-    for chunk_range in planned_chunk_ranges.iter().take(7).cloned() {
-        let chunk = test_chunk(&store, chunk_range, 1);
-        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
-            .expect("partial batch chunk is accepted");
-    }
-    let final_chunk = test_chunk(&store, planned_chunk_ranges[7].clone(), 1);
-    let write_sessions = sessions.clone();
-    let write_handle = std::thread::spawn(move || {
-        write_regenie2_multi_trait_chunk_f32(&write_sessions, None, &final_chunk.handle, final_chunk.statistics)
-    });
-    detach_control.wait_until_detached();
-
-    let (abort_sender, abort_receiver) = crossbeam_channel::bounded(1);
-    let abort_handle = std::thread::spawn(move || {
-        let abort_result = manager.abort().map_err(|error| error.to_string());
-        abort_sender.send(abort_result).expect("abort result receiver remains connected");
-    });
-    wait_until_session_is_closing(&retained_session);
-    assert!(matches!(abort_receiver.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)));
-    let parts_directory = directory.path.join("results/phenotype_0000_trait_alpha.regenie2_binary.run/parts");
-    assert_eq!(parquet_part_count(&parts_directory), 0);
-
-    detach_control.release();
-    write_handle.join().expect("write thread does not panic").expect("reserved batch is sent");
-    abort_receiver
-        .recv_timeout(Duration::from_secs(10))
-        .expect("abort returns after the reserved batch completes")
-        .expect("abort succeeds");
-    abort_handle.join().expect("abort thread does not panic");
-
-    assert_eq!(parquet_part_count(&parts_directory), 1);
-    let run_directory = parts_directory.parent().expect("parts directory has a run parent");
-    assert_eq!(read_manifest(run_directory)["status"], "running");
-    let post_abort_chunk = test_chunk(&store, 0..1, 1);
-    let closed_error = write_regenie2_multi_trait_chunk_f32(
-        &[retained_session],
-        None,
-        &post_abort_chunk.handle,
-        post_abort_chunk.statistics,
-    )
-    .expect_err("aborted retained session rejects later writes");
-    assert!(closed_error.to_string().contains("already closed"));
-    assert_eq!(parquet_part_count(&parts_directory), 1);
-}
-
-#[test]
-fn abort_leaves_completed_worker_part_for_strict_resume_repair() {
-    let directory = TestDirectory::new("abort-enqueued");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let planned_chunk_ranges = (0..8).map(|index| index..index + 1).collect::<Vec<_>>();
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let store = metadata_store(8);
-    for chunk_range in planned_chunk_ranges.clone() {
-        let chunk = test_chunk(&store, chunk_range, 1);
-        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
-            .expect("chunk is accepted");
-    }
-    drop(sessions);
-    manager.abort().expect("abort waits for enqueued worker");
-
-    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
-    assert!(run_directory.join("parts/part_000000000_000000007.parquet").is_file());
-    assert!(read_manifest(&run_directory)["committed_chunks"].as_array().expect("commits are a list").is_empty());
-
-    let resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
-    let resume_manager = initialize_manager(resume_plan, &inputs, &phenotype_names, &planned_chunk_ranges);
-    let delivery = resume_manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("resume delivery state exists");
-    assert_eq!(
-        delivery.committed_chunk_identifier_sets[0].iter().copied().collect::<Vec<_>>(),
-        (0_usize..8).collect::<Vec<_>>()
-    );
-    drop(delivery);
-    resume_manager.finish().expect("resume manager finishes");
-    assert_eq!(read_manifest(&run_directory)["status"], "completed");
-}
-
-#[test]
-fn strict_resume_repairs_orphan_commit_and_rejects_each_nonzero_contract_version() {
-    let directory = TestDirectory::new("resume");
-    let phenotype_names = [PRIMARY_PHENOTYPE];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
-    let manager = initialize_manager(initial_plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
-    let sessions = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("delivery state exists")
-        .writer_sessions;
-    let chunk = test_chunk(&metadata_store(1), 0..1, 1);
-    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
-    drop(sessions);
-    let completed = manager.finish().expect("manager finishes");
-    let run_directory = &completed[0].run_directory;
-    let manifest_path = run_directory.join("run_manifest.json");
-    let mut orphan_manifest = read_manifest(run_directory);
-    orphan_manifest["committed_chunks"] = Value::Array(Vec::new());
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&orphan_manifest).expect("manifest serializes"))
-        .expect("orphan manifest is written");
-
-    let resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
-    let mut resume_manager =
-        OutputManager::open(Arc::clone(&resume_plan), "# resumed\n".to_string()).expect("resume manager opens");
-    resume_manager
-        .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
-        .expect("orphan part repairs manifest commits");
-    let delivery = resume_manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .expect("resume delivery state exists");
-    assert_eq!(delivery.committed_chunk_identifier_sets[0].iter().copied().collect::<Vec<_>>(), [0]);
-    drop(delivery);
-    resume_manager.finish().expect("resumed manager finishes");
-
-    let compatible_manifest = read_manifest(run_directory);
-    for field_name in ["schema_version", "output_schema_version"] {
-        let mut incompatible_manifest = compatible_manifest.clone();
-        incompatible_manifest[field_name] = Value::from(1);
-        let incompatible_bytes = serde_json::to_vec_pretty(&incompatible_manifest).expect("manifest serializes");
-        std::fs::write(&manifest_path, &incompatible_bytes).expect("incompatible manifest is written");
-        let incompatible_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
-        let mut incompatible_manager = OutputManager::open(incompatible_plan, "# incompatible\n".to_string())
-            .expect("incompatible manager opens before validation");
-        let error = incompatible_manager
-            .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
-            .expect_err("nonzero pre-release contract version must fail");
-        assert!(error.to_string().contains(field_name), "unexpected error: {error}");
-        assert_eq!(std::fs::read(&manifest_path).expect("manifest remains readable"), incompatible_bytes);
-    }
-}
-
-#[test]
-fn manager_planning_is_read_only_and_rejects_multi_run_collisions() {
-    let directory = TestDirectory::new("manager-planning");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-
-    let successful_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let successful_run_directories = planned_run_directories(&successful_plan);
-    let manager = OutputManager::open(successful_plan, "# planned\n".to_string()).expect("manager planning succeeds");
-    assert!(successful_run_directories.iter().all(|run_directory| !run_directory.exists()));
-    drop(manager);
-    assert!(successful_run_directories.iter().all(|run_directory| !run_directory.exists()));
-
-    let occupied_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let mut occupied_plan = Arc::try_unwrap(occupied_plan).expect("test plan has one owner");
-    occupied_plan.output.output_run_root = directory.path.join("occupied-results").display().to_string();
-    let occupied_run_directories = planned_run_directories(&occupied_plan);
-    std::fs::create_dir_all(&occupied_run_directories[1]).expect("second output fixture directory is created");
-    let sentinel_path = occupied_run_directories[1].join("sentinel");
-    std::fs::write(&sentinel_path, b"occupied").expect("second output sentinel is written");
-    let error = OutputManager::open(Arc::new(occupied_plan), "# occupied\n".to_string())
-        .err()
-        .expect("occupied later output rejects the whole plan");
-    assert!(error.to_string().contains("already exists and is not empty"));
-    assert!(!occupied_run_directories[0].exists());
-    assert_eq!(std::fs::read(&sentinel_path).expect("sentinel remains readable"), b"occupied");
-
-    let collision_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let mut collision_plan = Arc::try_unwrap(collision_plan).expect("test plan has one owner");
-    collision_plan.output.output_run_root = directory.path.join("collision-results").display().to_string();
-    collision_plan.phenotype_runs[1].output_directory_name =
-        collision_plan.phenotype_runs[0].output_directory_name.clone();
-    let collision_run_directory = planned_run_directories(&collision_plan)[0].clone();
-    let error = OutputManager::open(Arc::new(collision_plan), "# collision\n".to_string())
-        .err()
-        .expect("colliding output paths are rejected");
-    assert!(error.to_string().contains("resolve to the same run directory"));
-    assert!(!collision_run_directory.exists());
-}
-
-#[test]
-fn manager_rejects_writer_settings_before_initialization_mutation() {
-    let directory = TestDirectory::new("manager-writer-settings");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 0);
-    let run_directories = planned_run_directories(&plan);
-    let mut manager = OutputManager::open(plan, "# invalid writers\n".to_string()).expect("manager opens");
-
+fn initialization_abort_cleanup_failure_is_recorded_without_retaining_the_claim() {
+    let directory = TestDirectory::new("initialization-abort-diagnostic");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let output_root = directory.path.join("results");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_writer_start");
+    let cleanup_failure_guard = crate::manager::install_initialization_cleanup_failure_for_test("after_writer_abort");
+    let manager = OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
     let error = manager
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .err()
+        .expect("configured initialization and cleanup stages fail");
+    drop(cleanup_failure_guard);
+    drop(failure_guard);
+    assert!(error.to_string().contains("after_writer_start"));
+    assert!(!error.to_string().contains("claim was retained"));
+    assert_owner_authority_released(&output_root);
+    let attempt = attempt_identifier(&output_root, None);
+    let manifest =
+        read_json(&output_root.join("attempts").join(attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json"));
+    assert_eq!(manifest["status"], "failed");
+    assert!(manifest["failure_reason"].as_str().is_some_and(|reason| reason.contains("writer cleanup also reported")));
+}
+
+#[test]
+fn initialization_release_conflict_reports_the_surviving_owner() {
+    let directory = TestDirectory::new("owner-claim-release-conflict");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let output_root = directory.path.join("results");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim_release_conflict");
+    let manager = OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
+    let error = manager
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .err()
+        .expect("claim-release conflict fails initialization");
+    drop(failure_guard);
+    let error_text = error.to_string();
+    assert!(error_text.contains("Injected output initialization failure"));
+    assert!(error_text.contains("survives from process"));
+    assert!(error_text.contains("fence the recorded owner"));
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+}
+
+#[test]
+fn failed_multi_phenotype_preactivation_allows_a_fresh_retry() {
+    let directory = TestDirectory::new("multi-phenotype-preactivation-retry");
+    let inputs = test_inputs(&directory);
+    let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    Arc::get_mut(&mut plan).expect("test plan has one owner").phenotype_runs.push(g_plan::PhenotypeRunPlan {
+        phenotype_name: SECOND_PHENOTYPE_NAME.to_string(),
+        output_directory_name: SECOND_OUTPUT_DIRECTORY_NAME.to_string(),
+    });
+    let output_root = directory.path.join("results");
+    let initialization_error = OutputManager::open(Arc::clone(&plan), "# incomplete initialization\n".to_string())
+        .expect("multi-phenotype manager plans")
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .err()
+        .expect("missing second phenotype header rejects activation");
+    assert!(initialization_error.to_string().contains("do not cover planned phenotypes exactly"));
+    assert_owner_authority_released(&output_root);
+    assert!(!output_root.join(".g-output/genesis.json").exists());
+    assert!(
+        std::fs::read_dir(output_root.join(".g-output/owner-staging"))
+            .expect("owner staging directory reads")
+            .next()
+            .is_none()
+    );
+
+    let retry_manager = OutputManager::open(plan, "# complete initialization\n".to_string())
+        .expect("fresh multi-phenotype retry plans")
         .initialize(
-            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
-            &single_chunk_plan(0..1),
+            vec![header(&inputs, 2), header_for_phenotype(&inputs, 2, SECOND_PHENOTYPE_NAME)],
+            &single_chunk_ranges(2),
             false,
         )
-        .expect_err("zero writer threads are rejected");
-    assert!(error.to_string().contains("Writer thread count must be at least 1"));
-    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
+        .expect("fresh multi-phenotype retry activates");
+    let attempt = attempt_identifier(&output_root, None);
+    for output_directory_name in [OUTPUT_DIRECTORY_NAME, SECOND_OUTPUT_DIRECTORY_NAME] {
+        let manifest = read_json(
+            &output_root.join("attempts").join(&attempt).join(output_directory_name).join("run_manifest.json"),
+        );
+        assert_eq!(manifest["status"], "running");
+    }
+    retry_manager.abort("multi-phenotype fresh retry test").expect("fresh retry terminates");
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
-fn manager_validates_initialization_and_trait_routing() {
-    let directory = TestDirectory::new("manager-validation");
-    let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];
-    let inputs = test_inputs(&directory, &phenotype_names);
-    let plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let run_directories = planned_run_directories(&plan);
-    let mut manager = OutputManager::open(plan, "# test\n".to_string()).expect("manager opens");
-    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
-    let error = manager
-        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
-        .err()
-        .expect("delivery before initialization must fail");
-    assert!(error.to_string().contains("must be initialized before delivery"));
+fn preactivation_cleanup_racing_fenced_takeover_preserves_successor_staging() {
+    let directory = TestDirectory::new("preactivation-cleanup-takeover");
+    let inputs = test_inputs(&directory);
+    let predecessor_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let predecessor_manager = OutputManager::open(predecessor_plan, "# predecessor\n".to_string())
+        .expect("predecessor manager plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("predecessor manager claims");
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let predecessor_claim_id = owner_claim_identifier(&output_root);
+    let predecessor_attempt_id = lineage_paths
+        .owner_staging_attempt(&predecessor_claim_id)
+        .expect("predecessor staging reads")
+        .expect("predecessor staging exists");
+    let predecessor_attempt_directory = lineage_paths.attempt_directory(&predecessor_attempt_id);
+    let mut predecessor_cleanup = predecessor_manager.cleanup_handle().expect("predecessor cleanup handle builds");
+    let predecessor_cleanup_retry = predecessor_cleanup.clone();
+    let cleanup_control = predecessor_cleanup.install_cleanup_pause_for_test();
+
+    let successor_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+        predecessor_claim_id.clone(),
+    );
+    let successor_manager = OutputManager::open(successor_plan, "# successor\n".to_string())
+        .expect("successor manager preflights the predecessor");
+    drop(predecessor_manager);
+    let successor_manager = std::thread::scope(|scope| {
+        let cleanup_thread = scope.spawn(move || predecessor_cleanup.cleanup_if_unpublished());
+        cleanup_control.wait_until_reached().expect("predecessor cleanup reaches its bounded test pause");
+        let successor_result = successor_manager.claim(&single_chunk_ranges(2), false);
+        cleanup_control.resume();
+        let cleanup_result = cleanup_thread.join().expect("predecessor cleanup thread joins");
+        cleanup_result.expect("predecessor cleanup tolerates the successor sweep");
+        successor_result.expect("fenced successor claims while predecessor cleanup is paused")
+    });
+    let successor_claim_id = owner_claim_identifier(&output_root);
+    assert_ne!(successor_claim_id, predecessor_claim_id);
+    let successor_attempt_id = lineage_paths
+        .owner_staging_attempt(&successor_claim_id)
+        .expect("successor staging reads")
+        .expect("successor staging exists");
+    let successor_diagnostics_directory =
+        successor_manager.diagnostics_directory().expect("successor diagnostics path exists").to_path_buf();
+
+    predecessor_cleanup_retry.cleanup_if_unpublished().expect("predecessor cleanup remains idempotent after takeover");
+    assert!(!predecessor_attempt_directory.exists());
     assert_eq!(
-        manager.existing_manifest_gpu_genotype_format(PRIMARY_PHENOTYPE).expect("fresh run manifest lookup succeeds"),
+        lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("predecessor staging absence reads"),
         None
     );
-    let error =
-        manager.existing_manifest_gpu_genotype_format("unknown").expect_err("unknown manifest phenotype must fail");
-    assert!(error.to_string().contains("Unknown planned phenotype"));
-    let error = manager
-        .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
-        .expect_err("missing phenotype header must fail");
-    assert!(error.to_string().contains("initialization count"));
-    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
-    let error = manager
-        .initialize(
-            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header(PRIMARY_PHENOTYPE, &inputs, 1)],
-            &single_chunk_plan(0..1),
-            false,
-        )
-        .expect_err("duplicate phenotype header must fail");
-    assert!(error.to_string().contains("Duplicate output initialization"));
-    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
-    let error = manager
-        .initialize(
-            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_gamma", &inputs, 1)],
-            &single_chunk_plan(0..1),
-            false,
-        )
-        .expect_err("same-count wrong phenotype coverage must fail");
-    assert!(error.to_string().contains("Missing output initialization for phenotype 'trait_beta'"));
-    assert!(run_directories.iter().all(|run_directory| !run_directory.exists()));
-    manager
-        .initialize(
-            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
-            &single_chunk_plan(0..1),
-            false,
-        )
-        .expect("complete initialization succeeds");
-    assert!(run_directories.iter().all(|run_directory| {
-        run_directory.join("parts").is_dir() && run_directory.join("run_manifest.json").is_file()
-    }));
-    let error = manager
-        .initialize(
-            vec![header(PRIMARY_PHENOTYPE, &inputs, 1), header("trait_beta", &inputs, 1)],
-            &single_chunk_plan(0..1),
-            false,
-        )
-        .expect_err("second initialization must fail");
-    assert!(error.to_string().contains("already initialized"));
-    let error =
-        manager.delivery_state_for_phenotypes(&["unknown".to_string()]).err().expect("unknown phenotype must fail");
-    assert!(error.to_string().contains("Unknown planned phenotype"));
-    let delivery = manager
-        .delivery_state_for_phenotypes(&["trait_beta".to_string(), PRIMARY_PHENOTYPE.to_string()])
-        .expect("reordered trait delivery succeeds");
-    assert_eq!(delivery.writer_sessions.len(), 2);
-    drop(delivery);
-    manager.abort().expect("manager aborts");
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&successor_claim_id).expect("successor staging remains readable"),
+        Some(successor_attempt_id)
+    );
+    assert!(successor_diagnostics_directory.is_dir());
 
-    let unfinished_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let unfinished_root = directory.path.join("unfinished-results");
-    let mut unfinished_plan = Arc::try_unwrap(unfinished_plan).expect("test plan has one owner");
-    unfinished_plan.output.output_run_root = unfinished_root.display().to_string();
-    let unfinished_manager =
-        OutputManager::open(Arc::new(unfinished_plan), "# unfinished\n".to_string()).expect("manager opens");
-    let error = unfinished_manager.finish().err().expect("finish before initialization must fail");
-    assert!(error.to_string().contains("must be initialized before completion"));
+    successor_manager.abort_before_activation().expect("successor staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+}
 
-    let duplicate_plan = run_plan(&directory, &inputs, &phenotype_names, false, 2);
-    let mut duplicate_plan = Arc::try_unwrap(duplicate_plan).expect("test plan has one owner");
-    duplicate_plan.output.output_run_root = directory.path.join("duplicate-results").display().to_string();
-    duplicate_plan.phenotype_runs[1].phenotype_name = PRIMARY_PHENOTYPE.to_string();
-    let error = OutputManager::open(Arc::new(duplicate_plan), "# duplicate\n".to_string())
+#[test]
+fn cleanup_pause_disconnects_without_waiting_when_cleanup_returns_early() {
+    let directory = TestDirectory::new("preactivation-cleanup-early-return");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = OutputManager::open(plan, "# cleanup early return\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("manager claims");
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let claim_id = owner_claim_identifier(&output_root);
+    let attempt_id = lineage_paths.owner_staging_attempt(&claim_id).expect("staging reads").expect("staging exists");
+    let mut cleanup = manager.cleanup_handle().expect("cleanup handle builds");
+    let cleanup_control = cleanup.install_cleanup_pause_for_test();
+    lineage_paths.retire_owner_staging_intent(&claim_id, &attempt_id).expect("staging intent retires before cleanup");
+
+    std::thread::scope(|scope| {
+        let cleanup_thread = scope.spawn(move || cleanup.cleanup_if_unpublished());
+        assert!(matches!(cleanup_control.wait_until_reached(), Err(std::sync::mpsc::RecvTimeoutError::Disconnected)));
+        cleanup_thread
+            .join()
+            .expect("early cleanup thread joins")
+            .expect("missing staging is an idempotent cleanup success");
+    });
+
+    manager.abort_before_activation().expect("manager releases after the cleanup rendezvous test");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn existing_lineage_is_preflighted_before_owner_claim_acquisition() {
+    let mismatch_directory = TestDirectory::new("preflight-mismatch");
+    let mismatch_inputs = test_inputs(&mismatch_directory);
+    let initial_plan = run_plan(&mismatch_directory, &mismatch_inputs, false, None, g_plan::TelemetryMode::Off);
+    initialize_manager(initial_plan, &mismatch_inputs, &single_chunk_ranges(2))
+        .finish_interrupted("SIGTERM")
+        .expect("initial attempt is interrupted");
+    let mismatch_plan = run_plan(&mismatch_directory, &mismatch_inputs, true, None, g_plan::TelemetryMode::Off);
+    let mismatch_manager =
+        OutputManager::open(mismatch_plan, "# test configuration\n".to_string()).expect("resume manager plans");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
+    let mismatch_error = mismatch_manager
+        .initialize(vec![header(&mismatch_inputs, 1)], &single_chunk_ranges(1), false)
         .err()
-        .expect("duplicate output phenotype must fail");
-    assert!(error.to_string().contains("Duplicate phenotype output name"));
+        .expect("mismatched chunk plan fails");
+    drop(failure_guard);
+    assert!(mismatch_error.to_string().contains("lineage contract does not match"));
+    assert!(!mismatch_error.to_string().contains("Injected"));
+    assert_owner_authority_released(&mismatch_directory.path.join("results"));
+
+    let corruption_directory = TestDirectory::new("preflight-corruption");
+    let corruption_inputs = test_inputs(&corruption_directory);
+    let initial_plan = run_plan(&corruption_directory, &corruption_inputs, false, None, g_plan::TelemetryMode::Off);
+    initialize_manager(initial_plan, &corruption_inputs, &single_chunk_ranges(2))
+        .finish_interrupted("SIGTERM")
+        .expect("initial attempt is interrupted");
+    let output_root = corruption_directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let mut manifest = read_json(&manifest_path);
+    manifest["failure_reason"] = Value::String("tampered".to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("tampered manifest serializes"))
+        .expect("terminal manifest is corrupted");
+
+    let corruption_plan = run_plan(&corruption_directory, &corruption_inputs, true, None, g_plan::TelemetryMode::Off);
+    let corruption_manager =
+        OutputManager::open(corruption_plan, "# test configuration\n".to_string()).expect("resume manager plans");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
+    let corruption_error = corruption_manager
+        .initialize(vec![header(&corruption_inputs, 2)], &single_chunk_ranges(2), false)
+        .err()
+        .expect("corrupt lineage fails");
+    drop(failure_guard);
+    assert!(!corruption_error.to_string().contains("Injected"));
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn invalid_terminal_arguments_publish_failed_and_release_the_claim() {
+    for (operation, expected_error) in [("interrupt", "interruption signal name"), ("abort", "failure reason")] {
+        let directory = TestDirectory::new(operation);
+        let inputs = test_inputs(&directory);
+        let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        let manager = initialize_manager(plan, &inputs, &single_chunk_ranges(2));
+        let error = match operation {
+            "interrupt" => manager.finish_interrupted("").expect_err("empty signal is rejected"),
+            "abort" => manager.abort("  ").expect_err("empty failure reason is rejected"),
+            _ => unreachable!("terminal operations are exhaustive"),
+        };
+        assert!(error.to_string().contains(expected_error));
+
+        let output_root = directory.path.join("results");
+        assert_owner_authority_released(&output_root);
+        let attempt = attempt_identifier(&output_root, None);
+        let manifest = read_json(
+            &output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json"),
+        );
+        assert_eq!(manifest["status"], "failed");
+        assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).is_file());
+    }
+}
+
+#[test]
+fn consuming_terminal_failures_report_primary_and_cleanup_outcomes() {
+    let close_directory = TestDirectory::new("close-cleanup-conflict");
+    let close_inputs = test_inputs(&close_directory);
+    let close_plan = run_plan(&close_directory, &close_inputs, false, None, g_plan::TelemetryMode::Off);
+    let close_manager = initialize_manager(close_plan, &close_inputs, &single_chunk_ranges(2));
+    let close_token =
+        close_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&close_token, &metadata_store(2), 0..2);
+    drop(close_token);
+    let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("close_completed");
+    let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("owner_claim_release_conflict");
+    let close_error = close_manager.close_completed().err().expect("close and cleanup failures are both reported");
+    drop(cleanup_guard);
+    drop(lifecycle_guard);
+    let close_error_text = close_error.to_string();
+    assert!(close_error_text.contains("close_completed"));
+    assert!(close_error_text.contains("survives from process"));
+    let close_root = close_directory.path.join("results");
+    assert!(close_root.join(".g-output/session.claim.json").is_file());
+
+    let interrupted_directory = TestDirectory::new("interrupted-terminal-cleanup");
+    let interrupted_inputs = test_inputs(&interrupted_directory);
+    let interrupted_plan =
+        run_plan(&interrupted_directory, &interrupted_inputs, false, None, g_plan::TelemetryMode::Off);
+    let interrupted_manager = initialize_manager(interrupted_plan, &interrupted_inputs, &single_chunk_ranges(2));
+    let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("finish_interrupted");
+    let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("before_terminal_publication");
+    let interrupted_error = interrupted_manager
+        .finish_interrupted("SIGTERM")
+        .expect_err("flush and terminal-publication failures are both reported");
+    drop(cleanup_guard);
+    drop(lifecycle_guard);
+    let interrupted_error_text = interrupted_error.to_string();
+    assert!(interrupted_error_text.contains("finish_interrupted"));
+    assert!(interrupted_error_text.contains("before_terminal_publication"));
+    assert!(interrupted_error_text.contains("remains authoritative"));
+    let interrupted_root = interrupted_directory.path.join("results");
+    assert!(interrupted_root.join(".g-output/session.claim.json").is_file());
+
+    let noop_directory = TestDirectory::new("completed-noop-cleanup-conflict");
+    let noop_inputs = test_inputs(&noop_directory);
+    let initial_plan = run_plan(&noop_directory, &noop_inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &noop_inputs, &single_chunk_ranges(2));
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    initial_manager.close_completed().expect("exact coverage closes").finish().expect("initial output completes");
+    let resume_plan = run_plan(&noop_directory, &noop_inputs, true, None, g_plan::TelemetryMode::Off);
+    let noop_manager = initialize_manager(resume_plan, &noop_inputs, &single_chunk_ranges(2));
+    let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("close_completed_noop");
+    let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("owner_claim_release_conflict");
+    let noop_error = noop_manager.close_completed().err().expect("completed no-op cleanup failure is reported");
+    drop(cleanup_guard);
+    drop(lifecycle_guard);
+    let noop_error_text = noop_error.to_string();
+    assert!(noop_error_text.contains("close_completed_noop"));
+    assert!(noop_error_text.contains("survives from process"));
+    let noop_root = noop_directory.path.join("results");
+    assert!(noop_root.join(".g-output/session.claim.json").is_file());
+}
+
+#[test]
+fn consuming_terminal_release_retries_or_reports_transition_durability() {
+    let retry_directory = TestDirectory::new("claim-release-sync-retry");
+    let retry_inputs = test_inputs(&retry_directory);
+    let retry_plan = run_plan(&retry_directory, &retry_inputs, false, None, g_plan::TelemetryMode::Off);
+    let retry_manager = initialize_manager(retry_plan, &retry_inputs, &single_chunk_ranges(2));
+    crate::persistence::io::fail_owner_publication_syncs_for_test(3);
+    retry_manager.abort("release retry test").expect("three directory-sync failures are retried");
+    assert_owner_authority_released(&retry_directory.path.join("results"));
+
+    let unresolved_directory = TestDirectory::new("claim-release-sync-unresolved");
+    let unresolved_inputs = test_inputs(&unresolved_directory);
+    let unresolved_plan = run_plan(&unresolved_directory, &unresolved_inputs, false, None, g_plan::TelemetryMode::Off);
+    let unresolved_manager = initialize_manager(unresolved_plan, &unresolved_inputs, &single_chunk_ranges(2));
+    crate::persistence::io::fail_owner_publication_syncs_for_test(4);
+    let error = unresolved_manager
+        .abort("release durability test")
+        .expect_err("four directory-sync failures report unresolved durability");
+    assert!(matches!(error, crate::OutputError::PublishedOutputOwnerClaimReleaseDurability { .. }));
+    let error_text = error.to_string();
+    assert!(error_text.contains("visible graceful-release transition"));
+    assert!(!error_text.contains("remains authoritative"));
+    let unresolved_root = unresolved_directory.path.join("results");
+    assert!(unresolved_root.join(".g-output/session.claim.json").is_file());
+    File::open(unresolved_root.join(".g-output"))
+        .expect("control directory opens")
+        .sync_all()
+        .expect("test resolves the injected directory-sync uncertainty");
+}
+
+#[test]
+fn completion_faults_do_not_strand_a_claim_across_terminal_publication() {
+    for (failure_point, expected_status) in
+        [("before_completed_terminal_publication", "failed"), ("after_completed_terminal_finalization", "completed")]
+    {
+        let directory = TestDirectory::new(failure_point);
+        let inputs = test_inputs(&directory);
+        let chunk_ranges = single_chunk_ranges(2);
+        let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        let manager = initialize_manager(plan, &inputs, &chunk_ranges);
+        let token =
+            manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+        write_chunk(&token, &metadata_store(2), 0..2);
+        drop(token);
+        let covered = manager.close_completed().expect("exact coverage closes");
+
+        let failure_guard = crate::manager::install_completion_failure_for_test(failure_point);
+        let error = covered.finish().err().expect("configured completion stage fails");
+        drop(failure_guard);
+        assert!(error.to_string().contains("Injected output completion failure"));
+
+        let output_root = directory.path.join("results");
+        assert_owner_authority_released(&output_root);
+        let attempt = attempt_identifier(&output_root, None);
+        assert_eq!(
+            read_json(
+                &output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json")
+            )["status"],
+            expected_status
+        );
+
+        let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+        let resumed = initialize_manager(resume_plan, &inputs, &chunk_ranges);
+        if expected_status == "completed" {
+            resumed
+                .close_completed()
+                .expect("completed terminal reverifies")
+                .finish()
+                .expect("completed terminal returns read-only outputs");
+        } else {
+            resumed.abort("completion fault recovery test").expect("failed terminal resumes safely");
+        }
+        assert_owner_authority_released(&output_root);
+    }
+}
+
+#[test]
+fn output_transaction_subprocess_helper() {
+    let Ok(mode) = std::env::var(TRANSACTION_HELPER_MODE_ENVIRONMENT) else {
+        return;
+    };
+    let root = std::env::var(TRANSACTION_HELPER_ROOT_ENVIRONMENT).expect("transaction helper root is configured");
+    let directory = std::mem::ManuallyDrop::new(TestDirectory { path: PathBuf::from(root) });
+    let inputs = existing_test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    match mode.as_str() {
+        "genesis_claim" => {
+            let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+            let _manager = initialize_manager(plan, &inputs, &chunk_ranges);
+        }
+        "successor_claim" => {
+            let plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+            let _manager = initialize_manager(plan, &inputs, &chunk_ranges);
+        }
+        "hold_active" => {
+            let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+            let _manager = initialize_manager(plan, &inputs, &chunk_ranges);
+            let ready_path =
+                std::env::var(TRANSACTION_HELPER_READY_ENVIRONMENT).expect("live-owner ready path is configured");
+            std::fs::write(ready_path, b"ready").expect("live owner reports readiness");
+            loop {
+                std::thread::park_timeout(std::time::Duration::from_mins(1));
+            }
+        }
+        "terminal_claim" => {
+            let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+            let manager = initialize_manager(plan, &inputs, &chunk_ranges);
+            let token =
+                manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+            write_chunk(&token, &metadata_store(2), 0..2);
+            drop(token);
+            manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes");
+        }
+        "panic_active" => {
+            let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+            let _manager = initialize_manager(plan, &inputs, &chunk_ranges);
+            panic!("injected active output manager panic");
+        }
+        unsupported_mode => panic!("unsupported transaction helper mode '{unsupported_mode}'"),
+    }
+    panic!("transaction helper did not reach its configured crash point");
+}
+
+#[test]
+fn genesis_claim_crash_recovers_from_its_authorized_attempt_directory() {
+    let directory = TestDirectory::new("genesis-claim-crash");
+    let inputs = test_inputs(&directory);
+    let crash = run_crashing_transaction_helper(&directory, "genesis_claim", "after_genesis_claim");
+    assert_expected_crash(&crash);
+
+    let output_root = directory.path.join("results");
+    let claimed_attempt = attempt_identifier(&output_root, None);
+    assert!(output_root.join("attempts").join(&claimed_attempt).is_dir());
+    assert_eq!(std::fs::read_dir(output_root.join("attempts")).expect("attempt root exists").count(), 1);
+
+    let resume_plan = run_plan(&directory, &inputs, true, Some(claimed_attempt.clone()), g_plan::TelemetryMode::Off);
+    let blocked_error = claim_error(
+        Arc::clone(&resume_plan),
+        &single_chunk_ranges(2),
+        "surviving owner claim blocks automatic recovery",
+    );
+    assert_surviving_owner_claim(blocked_error, &output_root);
+    let fenced_claim_id = owner_claim_identifier(&output_root);
+    let manager = initialize_manager(
+        authorize_fenced_owner_claim(resume_plan, fenced_claim_id),
+        &inputs,
+        &single_chunk_ranges(2),
+    );
+    let recovery_attempt = attempt_identifier(&output_root, Some(&claimed_attempt));
+    assert_ne!(recovery_attempt, claimed_attempt);
+    assert!(output_root.join("attempts").join(&recovery_attempt).is_dir());
+    assert!(output_root.join("attempts").join(&claimed_attempt).is_dir());
+    manager.abort("genesis claim crash recovery test").expect("recovery attempt terminates");
+}
+
+#[test]
+fn owner_claim_publication_crash_windows_remain_fail_closed_and_recoverable() {
+    for (failpoint, claim_published) in [("before_owner_claim_link", false), ("after_owner_claim_link", true)] {
+        let directory = TestDirectory::new(failpoint);
+        let inputs = test_inputs(&directory);
+        let crash = run_crashing_transaction_helper(&directory, "genesis_claim", failpoint);
+        assert_expected_crash(&crash);
+
+        let output_root = directory.path.join("results");
+        assert_eq!(owner_claim_candidate_temporary_paths(&output_root).len(), 1);
+        assert_eq!(output_root.join(".g-output/session.claim.json").exists(), claim_published);
+        assert!(!output_root.join(".g-output/genesis.json").exists());
+        let fresh_plan = if claim_published {
+            let blocked_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+            let blocked_error =
+                claim_error(blocked_plan, &single_chunk_ranges(2), "post-link crash leaves a typed surviving claim");
+            assert_surviving_owner_claim(blocked_error, &output_root);
+            authorize_fenced_owner_claim(
+                run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+                owner_claim_identifier(&output_root),
+            )
+        } else {
+            run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off)
+        };
+
+        let manager = initialize_manager(fresh_plan, &inputs, &single_chunk_ranges(2));
+        manager.abort("owner claim publication crash recovery test").expect("fresh attempt terminates");
+        assert_owner_authority_released(&output_root);
+        assert_eq!(
+            owner_claim_candidate_temporary_paths(&output_root).len(),
+            1,
+            "non-authoritative crashed candidates remain inspectable but do not block ownership"
+        );
+    }
+}
+
+#[test]
+fn panic_unwind_leaves_a_fail_closed_owner_claim() {
+    let directory = TestDirectory::new("panic-active");
+    let inputs = test_inputs(&directory);
+    let output = run_crashing_transaction_helper(&directory, "panic_active", "unused");
+    assert!(!output.status.success());
+    assert_ne!(output.status.code(), Some(86));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("injected active output manager panic"));
+
+    let output_root = directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+    assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).exists());
+    let recovery_plan = run_plan(&directory, &inputs, true, Some(attempt), g_plan::TelemetryMode::Off);
+    let blocked_error =
+        claim_error(Arc::clone(&recovery_plan), &single_chunk_ranges(2), "panic claim blocks automatic recovery");
+    assert_surviving_owner_claim(blocked_error, &output_root);
+
+    let recovery_plan = authorize_fenced_owner_claim(recovery_plan, owner_claim_identifier(&output_root));
+    let manager = initialize_manager(recovery_plan, &inputs, &single_chunk_ranges(2));
+    manager.abort("panic recovery test").expect("externally fenced panic recovery terminates");
+}
+
+#[test]
+fn successor_claim_crash_is_exactly_recoverable_without_an_orphan_candidate() {
+    let directory = TestDirectory::new("successor-claim-crash");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    manager.finish_interrupted("SIGTERM").expect("initial attempt is interrupted");
+    let output_root = directory.path.join("results");
+    let initial_attempt = attempt_identifier(&output_root, None);
+
+    let crash = run_crashing_transaction_helper(&directory, "successor_claim", "after_successor_claim");
+    assert_expected_crash(&crash);
+    let claimed_successor = attempt_identifier(&output_root, Some(&initial_attempt));
+    assert!(output_root.join("attempts").join(&claimed_successor).is_dir());
+
+    let exact_recovery_plan =
+        run_plan(&directory, &inputs, true, Some(claimed_successor.clone()), g_plan::TelemetryMode::Off);
+    let blocked_error =
+        claim_error(Arc::clone(&exact_recovery_plan), &chunk_ranges, "surviving owner claim blocks exact recovery");
+    assert_surviving_owner_claim(blocked_error, &output_root);
+    let exact_recovery_plan = authorize_fenced_owner_claim(exact_recovery_plan, owner_claim_identifier(&output_root));
+    let manager = initialize_manager(exact_recovery_plan, &inputs, &chunk_ranges);
+    let recovery_attempt = attempt_identifier(&output_root, Some(&claimed_successor));
+    assert_ne!(recovery_attempt, claimed_successor);
+    assert!(output_root.join("attempts").join(&recovery_attempt).is_dir());
+    assert!(output_root.join("attempts").join(&claimed_successor).is_dir());
+    manager.abort("successor claim crash recovery test").expect("exact recovery attempt terminates");
+}
+
+#[test]
+fn live_manager_claim_blocks_a_second_process_and_survives_owner_kill() {
+    use std::process::Stdio;
+
+    let directory = TestDirectory::new("live-manager-claim");
+    let inputs = test_inputs(&directory);
+    let ready_path = directory.path.join("live-owner.ready");
+    let mut owner = std::process::Command::new(std::env::current_exe().expect("current test executable resolves"))
+        .args(["--exact", TRANSACTION_HELPER_TEST_NAME, "--nocapture"])
+        .env(TRANSACTION_HELPER_MODE_ENVIRONMENT, "hold_active")
+        .env(TRANSACTION_HELPER_ROOT_ENVIRONMENT, &directory.path)
+        .env(TRANSACTION_HELPER_READY_ENVIRONMENT, &ready_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("live output owner starts");
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready_path.exists() && std::time::Instant::now() < ready_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(ready_path.exists(), "live output owner did not report readiness");
+
+    let output_root = directory.path.join("results");
+    let active_attempt = attempt_identifier(&output_root, None);
+    let active_claim_id = owner_claim_identifier(&output_root);
+    let before_contender = regular_file_snapshot(&output_root);
+    let contender_plan = run_plan(&directory, &inputs, true, Some(active_attempt.clone()), g_plan::TelemetryMode::Off);
+    let contender_error = claim_error(contender_plan, &single_chunk_ranges(2), "live owner claim blocks contender");
+    assert_surviving_owner_claim(contender_error, &output_root);
+    assert_eq!(regular_file_snapshot(&output_root), before_contender);
+
+    owner.kill().expect("live output owner is killed");
+    owner.wait().expect("killed output owner is reaped");
+    let recovery_plan = run_plan(&directory, &inputs, true, Some(active_attempt.clone()), g_plan::TelemetryMode::Off);
+    let stale_error =
+        claim_error(Arc::clone(&recovery_plan), &single_chunk_ranges(2), "killed owner leaves a fail-closed claim");
+    assert_surviving_owner_claim(stale_error, &output_root);
+    assert_eq!(regular_file_snapshot(&output_root), before_contender);
+
+    let wrong_fence_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(active_attempt.clone()), g_plan::TelemetryMode::Off),
+        "owner-wrong-fence".to_string(),
+    );
+    let wrong_fence_error = claim_error(
+        wrong_fence_plan,
+        &single_chunk_ranges(2),
+        "mismatched external fence cannot remove the surviving claim",
+    );
+    assert_surviving_owner_claim(wrong_fence_error, &output_root);
+    assert_eq!(regular_file_snapshot(&output_root), before_contender);
+
+    let recovery_plan = authorize_fenced_owner_claim(recovery_plan, active_claim_id);
+    let manager = initialize_manager(recovery_plan, &inputs, &single_chunk_ranges(2));
+    manager.abort("externally fenced killed-owner recovery test").expect("externally fenced recovery succeeds");
+}
+
+#[cfg(unix)]
+#[test]
+fn path_aliases_to_one_output_root_contend_on_the_same_owner_claim() {
+    let directory = TestDirectory::new("owner-path-alias");
+    let inputs = test_inputs(&directory);
+    let owner_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let owner = initialize_manager(owner_plan, &inputs, &single_chunk_ranges(2));
+    let output_root = directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    let before_contender = regular_file_snapshot(&output_root);
+
+    let alias_path = directory.path.join("root-alias");
+    std::os::unix::fs::symlink(&directory.path, &alias_path).expect("test output-root alias is created");
+    let alias_directory = std::mem::ManuallyDrop::new(TestDirectory { path: alias_path });
+    let contender_plan = run_plan(&alias_directory, &inputs, true, Some(attempt), g_plan::TelemetryMode::Off);
+    let alias_output_root = alias_directory.path.join("results");
+    let error = claim_error(contender_plan, &single_chunk_ranges(2), "path alias observes the live owner claim");
+    assert_surviving_owner_claim(error, &alias_output_root);
+    assert_eq!(
+        output_root.join(".g-output/session.claim.json").metadata().expect("owner claim metadata reads").ino(),
+        alias_output_root
+            .join(".g-output/session.claim.json")
+            .metadata()
+            .expect("aliased owner claim metadata reads")
+            .ino()
+    );
+    assert_eq!(regular_file_snapshot(&output_root), before_contender);
+
+    owner.abort("path alias claim test").expect("owner terminates normally");
+}
+
+#[test]
+fn pending_completed_terminal_is_finalized_after_a_process_crash() {
+    let directory = TestDirectory::new("terminal-claim-crash");
+    let inputs = test_inputs(&directory);
+    let crash = run_crashing_transaction_helper(&directory, "terminal_claim", "after_terminal_claim");
+    assert_expected_crash(&crash);
+
+    let output_root = directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    let run_directory = output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME);
+    assert_eq!(read_json(&run_directory.join("run_manifest.json"))["status"], "running");
+    assert!(run_directory.join("output_stage_timings.json").is_file());
+    assert!(output_root.join(".g-output/outcomes").join(format!("{attempt}.json")).is_file());
+    assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).exists());
+
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let blocked_error = claim_error(
+        Arc::clone(&resume_plan),
+        &single_chunk_ranges(2),
+        "surviving owner claim blocks pending-terminal recovery",
+    );
+    assert_surviving_owner_claim(blocked_error, &output_root);
+    let resume_plan = authorize_fenced_owner_claim(resume_plan, owner_claim_identifier(&output_root));
+    let manager = initialize_manager(resume_plan, &inputs, &single_chunk_ranges(2));
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("completed token builds");
+    assert!(token.is_read_only());
+    drop(token);
+    manager.close_completed().expect("recovered completion reverifies").finish().expect("recovered terminal finishes");
+
+    assert_eq!(read_json(&run_directory.join("run_manifest.json"))["status"], "completed");
+    assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).is_file());
+    assert!(!output_root.join(".g-output/successors").join(format!("{attempt}.json")).exists());
+    assert_eq!(std::fs::read_dir(output_root.join("attempts")).expect("attempt root reads").count(), 1);
 }

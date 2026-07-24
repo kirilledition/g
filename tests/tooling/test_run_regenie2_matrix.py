@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import tomllib
 from pathlib import Path
 
@@ -83,6 +84,36 @@ def test_matrix_omits_cached_cases_when_gpu_cache_is_disabled(tmp_path: Path) ->
     assert all(run_spec.mode != run_regenie2_matrix.ExecutionMode.GPU_CACHED for run_spec in run_specs)
 
 
+def test_streaming_matrix_command_retains_artifact_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streamed subprocess output remains available for authoritative parsing."""
+    arguments = run_regenie2_matrix.build_arguments_from_overrides(
+        [f"tool.output_dir={tmp_path / 'matrix'}"],
+        config_name="matrix_chr10_dry",
+    )
+    run_spec = run_regenie2_matrix.build_run_specs(arguments)[0]
+
+    class FakeProcess:
+        stdout = io.StringIO("diagnostic\nParquet dataset saved to run/parts\n")
+        stderr = io.StringIO("Parquet dataset saved to forged/parts\n")
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(run_regenie2_matrix.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+
+    result = run_regenie2_matrix.run_streaming_command(run_spec)
+
+    assert result.return_code == 0
+    assert result.stdout_chunks == (
+        "diagnostic\n",
+        "Parquet dataset saved to run/parts\n",
+    )
+    assert result.stderr_chunks == ("Parquet dataset saved to forged/parts\n",)
+
+
 def test_manifest_compatibility_ignores_implementation_provenance() -> None:
     """A candidate implementation remains comparable under an identical workload scope."""
     compatibility_scope = {"sha256": "scope", "configuration": {"chunk_size": 16_384}}
@@ -152,7 +183,15 @@ def test_warm_matrix_run_requires_byte_identical_cache(tmp_path: Path, monkeypat
     after = native_lifecycle.CacheSnapshot(file_count=2, total_size_bytes=2, sha256="after")
     snapshots = iter((before, after))
     monkeypatch.setattr(native_lifecycle, "snapshot_tree", lambda _: next(snapshots))
-    monkeypatch.setattr(run_regenie2_matrix, "run_streaming_command", lambda _: 0)
+    monkeypatch.setattr(
+        run_regenie2_matrix,
+        "run_streaming_command",
+        lambda _: run_regenie2_matrix.StreamingCommandResult(
+            return_code=0,
+            stdout_chunks=("artifact\n",),
+            stderr_chunks=(),
+        ),
+    )
     monkeypatch.setattr(
         run_regenie2_matrix,
         "measure_run_outputs",

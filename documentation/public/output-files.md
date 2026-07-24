@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | output file contracts as of 2026-07-22 | Public user docs |
+| Pre-release draft | output file contracts as of 2026-07-23 | Public user docs |
 
 This page is the canonical user-facing output contract for `g regenie`.
 
@@ -18,16 +18,31 @@ run root next to that prefix:
 <out>.g/
 ```
 
-Each phenotype gets a deterministic directory:
+The run root is an append-only transaction container. `.g-output` holds
+immutable lineage authority and `attempts/` holds attempt data:
 
 ```text
 <out>.g/
-  trait_0001_<phenotype>.regenie2_linear.run/
-  trait_0002_<phenotype>.regenie2_linear.run/
+  .g-output/
+    genesis.json
+    session.claim.json
+    owner-transitions/
+    owner-staging/
+    outcomes/
+    successors/
+    terminal-finalizations/
+  attempts/
+    <attempt-id>/
+      <phenotype-output-name>/
 ```
 
-Binary runs use `.regenie2_binary.run`. Unsafe characters in phenotype names are
-replaced with underscores and long names are truncated in directory slugs.
+Each planned phenotype has one deterministic, path-safe
+`<phenotype-output-name>`. Every new or recovered attempt gets a distinct
+path-safe attempt identifier. There is no mutable `HEAD`; readers traverse the
+immutable lineage from `genesis.json`. They also traverse the permanent owner
+root and its reachable transitions to a Released leaf. A normally completed
+tree has no record in `owner-staging/`; that directory contains only temporary
+pre-activation intent while an owner is preparing diagnostics.
 
 `[output].output_run_directory` overrides the default `<out>.g` run root.
 
@@ -38,16 +53,33 @@ single-file consolidation is required. A typical completed run writes:
 
 ```text
 results/example.g/
-  logs/
-    events.jsonl
-  trait_0001_phenotype_continuous.regenie2_linear.run/
-    parts/
-      part_000000000_000000007.parquet
-      part_000000008_000000015.parquet
-      part_000000016_000000023.parquet
-      part_000000024_000000031.parquet
-    effective_config.toml
-    run_manifest.json
+  .g-output/
+    genesis.json
+    outcomes/
+      attempt-<producer>.json
+    successors/
+    terminal-finalizations/
+      attempt-<producer>.json
+    session.claim.json
+    owner-transitions/
+      owner-<claim-id>.json
+    owner-staging/
+  attempts/
+    attempt-<producer>/
+      trait_0001_phenotype_continuous/
+        parts/
+          part_000000000_000000007.parquet
+          part_000000008_000000015.parquet
+          part_000000016_000000023.parquet
+          part_000000024_000000031.parquet
+        commits/
+          part_000000000_000000007.json
+          part_000000008_000000015.json
+          part_000000016_000000023.json
+          part_000000024_000000031.json
+        effective_config.toml
+        output_stage_timings.json
+        run_manifest.json
 ```
 
 The first and last identifiers in a part name are zero-padded engine chunk
@@ -55,7 +87,11 @@ identifiers. A file contains one or more consecutive chunks according to the
 internal output grouping policy. A single-chunk file uses
 `part_<chunk>.parquet`; a grouped file uses `part_<first>_<last>.parquet`.
 Chunk grouping and Parquet compression are internal policies, not public
-configuration keys.
+configuration keys. `output_stage_timings.json` is present only when detailed
+output timing collection is enabled. It reports temporary-file sync, raw
+SHA-256 reread, no-replace part publication/reconciliation, `parts/` directory
+sync, and immutable receipt publication as separate stages as well as in the
+writer total.
 
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns
@@ -72,26 +108,74 @@ Read `parts/` directly as a Parquet dataset. For example:
 import pyarrow.dataset as dataset
 
 results = dataset.dataset(
-    "results/example.g/trait_0001_phenotype_continuous.regenie2_linear.run/parts",
+    "results/example.g/attempts/attempt-<id>/trait_0001_phenotype_continuous/parts",
     format="parquet",
 )
 table = results.to_table()
 ```
 
-Each part is finalized, including its chunk-commit footer metadata, in a
-transaction-scoped create-new temporary file under `parts/`. The writer then
-synchronizes that file, renames it to the final part name, and synchronizes the
-`parts/` directory before the part's commit can enter the run manifest. After a
-failure before the rename, best-effort cleanup is limited to that transaction's
-unpublished temporary file. A failure after the rename never deletes the final
-part, allowing strict resume to reconcile it if it remains present, but the
-failed writer operation does not expose its commit.
+After durable completion, the production CLI prints exactly one completion
+line per phenotype:
 
-This guarantee covers publication of each Parquet part only. It does not make
-the part, run manifest, effective configuration, or timing diagnostics one
-cross-file filesystem transaction. Concurrent processes must not write the same
-run directory: transaction-scoped temporary names prevent temporary-file
-clobbering but do not lease or reserve final part names across processes.
+```text
+Parquet dataset saved to <dataset-path>
+```
+
+`<dataset-path>` is the corresponding `CompletedOutputRun.parts_directory`,
+namely
+`<root>/attempts/<completed-attempt>/<phenotype-output-name>/parts`. Consumers
+may normalize that path against the requested output root, but must not replace
+this contract with recursive directory discovery. The immutable completed
+terminal, its finalization, and its bound manifest hashes remain the authority
+for validating that the reported path is current.
+
+Each part is finalized in a transaction-scoped create-new temporary file under
+`parts/`. Its embedded footer binds the run set, producing attempt, phenotype,
+execution-plan hash, canonical chunk-plan hash, part and receipt identifiers,
+and exact chunk geometry. The writer synchronizes and hashes the raw bytes,
+publishes the final name with a no-replace hard link, synchronizes `parts/`,
+then publishes a separate immutable receipt under `commits/`. The receipt
+repeats the embedded footer and adds the raw byte size and SHA-256.
+
+A crash after the final part link but before receipt publication leaves
+receipt-less bytes, not a committed part. Nonterminal observation ignores those
+bytes for reuse; reprocessing the same chunk transaction may reconcile an
+already-present final part only after the newly produced footer, schema,
+ancestry, geometry, size, and raw hash match exactly, and then publishes its
+own receipt. Pending or finalized terminal validation rejects every
+receipt-less part. Recovery never manufactures a receipt by trusting orphan
+bytes alone. Temporary-file cleanup is limited to the current transaction and
+never deletes a final part.
+
+The first owner claim is a permanent immutable record at
+`.g-output/session.claim.json`. The manager holds the current Active leaf of an
+append-only authority chain; a contender fails before diagnostics or attempt
+authority mutation. Graceful completion, interruption, or failure appends a
+Released transition only after terminal durability. Abrupt process death leaves
+an Active leaf because this BeeGFS mount cannot safely distinguish a crashed
+owner from a live owner with file locking. Resume fails closed and names that
+leaf's claim, host, and process. After an external coordinator has proved that
+the recorded owner can no longer write, rerun resume with
+`fenced_owner_claim_id = "<exact-claim-id>"` or
+`--fenced-output-owner-claim <exact-claim-id>`. The manager verifies that exact
+current identifier and publishes one immutable fenced-takeover transition from
+that predecessor before continuing strict recovery. A missing, different, or
+historical claim fails without changing authority. The permanent root and all
+release, takeover, and reacquisition transitions remain as evidence. Never set
+this control based on claim age, PID lookup alone, or while a graceful owner may
+still publish its competing transition. A crash before an authority hard link
+may leave an inspectable temporary candidate; candidates are
+non-authoritative, are never auto-promoted or auto-deleted, and do not block a
+fresh root claim. Immutable no-replace lineage records remain the durable
+analysis authority.
+
+The manager preserves the configured root text in the execution-plan hash but
+returns a lexically normalized absolute completed path. Filesystem aliases or
+symlinks that resolve to the same root nevertheless resolve to the same
+permanent claim and transition slots, so they contend through the same
+no-replace authority and the loser performs no diagnostics or attempt-authority
+mutation. This assumes the deployed filesystem gives aliases a coherent
+namespace for hard links and directory synchronization.
 
 ## Result Schema
 
@@ -167,10 +251,11 @@ Common files:
 | --- | --- | --- |
 | `events.jsonl` | Progress or profile telemetry is enabled | Lifecycle and profile events. |
 | `profile.summary.json` | Profile telemetry is enabled | Aggregate native stage summary. |
-| `output_stage_timings.json` | Profile telemetry is enabled | Per-phenotype output writer timings. |
+| `attempts/<attempt>/<phenotype>/output_stage_timings.json` | Profile telemetry is enabled | Per-phenotype output writer timings persisted before terminal authority. |
 
-Diagnostics paths are derived from the output run directory; the production
-frontend currently exposes only `[diagnostics].telemetry`.
+Run-level diagnostics use `logs/`; attempt-bound output timings live beside
+their phenotype manifest. The production frontend currently exposes only
+`[diagnostics].telemetry`.
 
 Successful CLI runs print each phenotype run directory and its `parts/`
 Parquet dataset directory.

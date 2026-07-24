@@ -41,6 +41,8 @@ pub(crate) struct RegenieCli {
     pub(crate) out: Option<String>,
     #[arg(long = "recover-output-attempt", value_name = "ATTEMPT_ID", help_heading = "Output")]
     pub(crate) recover_output_attempt: Option<String>,
+    #[arg(long = "fenced-output-owner-claim", value_name = "CLAIM_ID", help_heading = "Output")]
+    pub(crate) fenced_output_owner_claim: Option<String>,
 }
 
 #[derive(Parser)]

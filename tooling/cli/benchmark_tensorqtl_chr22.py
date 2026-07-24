@@ -766,21 +766,17 @@ def load_stage_seconds(path: Path | None) -> dict[str, float]:
     return {str(key): float(value) for key, value in raw_stage_seconds.items()}
 
 
-def discover_g_output_run_directory(case: BenchmarkCase) -> Path:
-    """Discover the g output run directory for one completed case."""
-    expected_root = Path(f"{case.output_directory / 'linear'}.g")
-    return native_lifecycle.discover_completed_run_directory(
-        expected_run_directory=None,
-        output_root=expected_root,
-        glob_pattern="*.regenie2_linear.run",
+def measure_g_outputs(case: BenchmarkCase, stdout_chunks: typing.Sequence[str]) -> OutputMeasurement:
+    """Measure g output rows and bytes."""
+    output_root = Path(f"{case.output_directory / 'linear'}.g")
+    verified_outputs = native_lifecycle.collect_completed_output_evidence(
+        stdout_chunks,
+        output_root=output_root,
+        expected_phenotype_count=1,
         run_label=case.case_id,
     )
-
-
-def measure_g_outputs(case: BenchmarkCase) -> OutputMeasurement:
-    """Measure g output rows and bytes."""
-    output_run_directory = discover_g_output_run_directory(case)
-    output_measurement = native_lifecycle.measure_completed_output_run(output_run_directory)
+    output_measurement = verified_outputs.runs[0]
+    output_run_directory = Path(output_measurement.run_directory)
     return OutputMeasurement(
         row_count=output_measurement.row_count,
         total_bytes=directory_size_bytes(output_run_directory),
@@ -808,10 +804,10 @@ def measure_tensorqtl_outputs(case: BenchmarkCase) -> OutputMeasurement:
     )
 
 
-def measure_case_outputs(case: BenchmarkCase) -> OutputMeasurement:
+def measure_case_outputs(case: BenchmarkCase, command_stdout: str) -> OutputMeasurement:
     """Measure case output rows, bytes, and stage timings."""
     if case.tool == BenchmarkTool.G:
-        return measure_g_outputs(case)
+        return measure_g_outputs(case, (command_stdout,))
     return measure_tensorqtl_outputs(case)
 
 
@@ -862,7 +858,7 @@ def run_one_case(arguments: BenchmarkArguments, case: BenchmarkCase) -> tuple[Ca
     status = case_status_from_command_result(timed_result.result)
     measurement = OutputMeasurement(row_count=None, total_bytes=None, stage_seconds={})
     if status == RunStatus.SUCCESS:
-        measurement = measure_case_outputs(case)
+        measurement = measure_case_outputs(case, timed_result.result.stdout)
     cache_after = native_lifecycle.snapshot_tree(case.cache_directory) if uses_persistent_cache else None
     if (
         status == RunStatus.SUCCESS

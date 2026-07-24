@@ -1,10 +1,8 @@
 //! Python-free association delivery inputs.
 
-use std::sync::Arc;
-
 use g_genotype::ChunkStatisticsPolicy;
 use g_input::AlignedPhenotypeGroup;
-use g_output::OutputWriterSession;
+use g_output::OutputDeliveryToken;
 use g_plan::{GpuGenotypeFormat, NullLogisticNonconvergencePolicy};
 
 use crate::progress::DeliveryProgress;
@@ -17,8 +15,7 @@ pub(crate) struct PreparedGenotypeInput {
 
 /// Runtime controls and output state for one aligned phenotype group.
 pub(crate) struct AssociationDeliverySettings {
-    pub writer_sessions: Vec<Arc<OutputWriterSession>>,
-    pub committed_chunk_identifier_sets: Vec<Arc<std::collections::BTreeSet<usize>>>,
+    pub output: OutputDeliveryToken,
     pub null_logistic_nonconvergence_policy: NullLogisticNonconvergencePolicy,
     pub progress: Option<DeliveryProgress>,
     pub gpu_genotype_format: GpuGenotypeFormat,

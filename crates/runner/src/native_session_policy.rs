@@ -9,12 +9,14 @@ const LOG_QUEUE_SIZE: usize = 65_536;
 const PROFILE_SUMMARY_JSON_FILE_NAME: &str = "profile.summary.json";
 
 #[must_use]
-pub(crate) fn project_native_run_session_policy(run_plan: &g_plan::RunPlan) -> NativeRunSessionPolicy {
+pub(crate) fn project_native_run_session_policy(
+    run_plan: &g_plan::RunPlan,
+    diagnostics_directory: &Path,
+) -> NativeRunSessionPolicy {
     let telemetry_enabled = run_plan.telemetry != g_plan::TelemetryMode::Off;
-    let telemetry_directory = Path::new(&run_plan.output.output_run_root).join("logs");
-    let telemetry_stream_file = telemetry_enabled.then(|| telemetry_directory.join(EVENTS_JSONL_FILE_NAME));
+    let telemetry_stream_file = telemetry_enabled.then(|| diagnostics_directory.join(EVENTS_JSONL_FILE_NAME));
     let profile_summary_file = (run_plan.telemetry == g_plan::TelemetryMode::Profile)
-        .then(|| telemetry_directory.join(PROFILE_SUMMARY_JSON_FILE_NAME));
+        .then(|| diagnostics_directory.join(PROFILE_SUMMARY_JSON_FILE_NAME));
     NativeRunSessionPolicy {
         log_filter: "info".to_string(),
         log_stderr: true,
@@ -42,7 +44,8 @@ mod tests {
         let mut run_plan =
             crate::test_support::run_plan(Path::new("runner-policy"), g_plan::AssociationMode::Regenie2Linear);
 
-        let off_policy = project_native_run_session_policy(&run_plan);
+        let diagnostics_directory = Path::new("claimed-attempt/diagnostics/owner-test");
+        let off_policy = project_native_run_session_policy(&run_plan, diagnostics_directory);
         assert_eq!(off_policy.telemetry_stream_file, None);
         assert_eq!(off_policy.profile_summary_file, None);
         assert_eq!(off_policy.queue_size, LOG_QUEUE_SIZE);
@@ -52,18 +55,18 @@ mod tests {
         assert!(!off_policy.include_span_events);
 
         run_plan.telemetry = g_plan::TelemetryMode::Progress;
-        let progress_policy = project_native_run_session_policy(&run_plan);
+        let progress_policy = project_native_run_session_policy(&run_plan, diagnostics_directory);
         assert_eq!(
             progress_policy.telemetry_stream_file.as_deref(),
-            Some(Path::new("runner-policy/output/logs").join(EVENTS_JSONL_FILE_NAME).as_path())
+            Some(diagnostics_directory.join(EVENTS_JSONL_FILE_NAME).as_path())
         );
         assert_eq!(progress_policy.profile_summary_file, None);
 
         run_plan.telemetry = g_plan::TelemetryMode::Profile;
-        let profile_policy = project_native_run_session_policy(&run_plan);
+        let profile_policy = project_native_run_session_policy(&run_plan, diagnostics_directory);
         assert_eq!(
             profile_policy.profile_summary_file.as_deref(),
-            Some(Path::new("runner-policy/output/logs").join(PROFILE_SUMMARY_JSON_FILE_NAME).as_path())
+            Some(diagnostics_directory.join(PROFILE_SUMMARY_JSON_FILE_NAME).as_path())
         );
     }
 }

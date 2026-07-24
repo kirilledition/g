@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+import types
 import typing
 
 from tooling.cli import profile_regenie2_deep
@@ -72,6 +73,31 @@ def test_headline_environment_omits_debug_and_allocator_overrides() -> None:
     assert headline_environment == {}
     assert diagnostic_environment["JAX_LOGGING_LEVEL"] == "DEBUG"
     assert diagnostic_environment["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
+
+
+def test_profile_child_retains_native_artifact_lines(tmp_path: Path) -> None:
+    """The isolated child verifies native stdout without filesystem discovery."""
+    baseline_paths = types.SimpleNamespace(
+        binary_phenotype_path=tmp_path / "binary.tsv",
+        continuous_phenotype_path=tmp_path / "continuous.tsv",
+        regenie_prediction_list_path=tmp_path / "binary.list",
+        regenie_qt_prediction_list_path=tmp_path / "linear.list",
+        bgen_path=tmp_path / "input.bgen",
+        sample_path=tmp_path / "input.sample",
+        covariate_path=tmp_path / "covariates.tsv",
+    )
+
+    command = profile_deep_commands.build_g_step2_child_command(
+        baseline_paths=baseline_paths,
+        candidate=candidate(),
+        output_prefix=tmp_path / "profile",
+    )
+
+    child_source = command[2]
+    assert "g._core.cli.run" in child_source
+    assert "collect_completed_output_evidence" in child_source
+    assert '"cli_stdout_chunks": list(native_result.stdout_chunks)' in child_source
+    assert "discover_completed_run_directory" not in child_source
 
 
 def test_repeated_trials_keep_profile_run_out_of_headline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

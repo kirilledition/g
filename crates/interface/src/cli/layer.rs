@@ -8,7 +8,8 @@ use super::parser::RegenieCli;
 
 impl RegenieCli {
     pub(crate) fn into_config_layer(self) -> ConfigResult<ConfigLayer> {
-        let RegenieCli { trait_options, input, binary, out, recover_output_attempt, .. } = self;
+        let RegenieCli { trait_options, input, binary, out, recover_output_attempt, fenced_output_owner_claim, .. } =
+            self;
         let partial_config = PartialConfig {
             input: PartialInputConfig {
                 bgen: input.bgen,
@@ -33,6 +34,7 @@ impl RegenieCli {
             output: PartialOutputConfig {
                 out,
                 recover_attempt: recover_output_attempt,
+                fenced_owner_claim_id: fenced_output_owner_claim,
                 ..PartialOutputConfig::default()
             },
             ..PartialConfig::default()

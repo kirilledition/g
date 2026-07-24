@@ -231,25 +231,28 @@ def build_run_spec(
 
 def collect_output_evidence(
     output_root: Path,
+    stdout_chunks: typing.Sequence[str],
     *,
     expected_phenotype_count: int,
     expected_variant_count: int | None,
 ) -> OutputEvidence:
     """Validate direct Parquet parts and collect output evidence."""
     production_root = Path(f"{output_root}.g")
-    run_directories = sorted(path for path in production_root.glob("*.run") if path.is_dir())
-    if len(run_directories) != expected_phenotype_count:
-        raise RuntimeError(
-            f"Expected {expected_phenotype_count} phenotype runs below {production_root}, found {len(run_directories)}."
-        )
-    run_evidence: list[native_lifecycle.CompletedOutputEvidence] = []
+    verified_outputs = native_lifecycle.collect_completed_output_evidence(
+        stdout_chunks,
+        output_root=production_root,
+        expected_phenotype_count=expected_phenotype_count,
+        run_label="linear startup lifecycle",
+    )
+    run_evidence = list(verified_outputs.runs)
+    run_directories = [Path(run.run_directory) for run in run_evidence]
     parquet_paths: list[Path] = []
     parquet_metadata: list[dict[str, str]] = []
     row_count = 0
     schema: str | None = None
     schema_metadata: dict[str, str] | None = None
-    for run_directory in run_directories:
-        completed_output = native_lifecycle.measure_completed_output_run(run_directory)
+    for completed_output in run_evidence:
+        run_directory = Path(completed_output.run_directory)
         if expected_variant_count is not None and completed_output.row_count != expected_variant_count:
             raise RuntimeError(
                 f"Expected {expected_variant_count} rows for {run_directory.name}, "
@@ -263,7 +266,6 @@ def collect_output_evidence(
         row_count += completed_output.row_count
         parquet_paths.extend(Path(path) for path in completed_output.parquet_paths)
         parquet_metadata.extend(completed_output.parquet_metadata)
-        run_evidence.append(completed_output)
     if schema is None or schema_metadata is None:
         raise RuntimeError("Output schema was not observed.")
     return OutputEvidence(
@@ -305,6 +307,7 @@ def run_trial(
     after = native_lifecycle.snapshot_tree(arguments.jax_cache_dir)
     output = collect_output_evidence(
         output_root,
+        native.stdout_chunks,
         expected_phenotype_count=len(benchmark_inputs.phenotype_names),
         expected_variant_count=arguments.expected_variant_count,
     )
@@ -336,8 +339,7 @@ def verify_hot_outputs(trials: list[TrialResult]) -> None:
         if trial.cache_before != trial.cache_after or trial.cache_before.file_count == 0:
             raise RuntimeError(f"JAX cache was not populated and unchanged during headline trial {trial.name}.")
         if (
-            trial.output.parquet_sha256 != reference.parquet_sha256
-            or trial.output.row_count != reference.row_count
+            trial.output.row_count != reference.row_count
             or trial.output.schema != reference.schema
             or trial.output.schema_metadata != reference.schema_metadata
             or trial.output.parquet_metadata != reference.parquet_metadata

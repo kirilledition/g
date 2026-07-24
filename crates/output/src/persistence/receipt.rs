@@ -1,16 +1,24 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{OutputError, OutputResult};
 use crate::persistence::identifier::{AttemptIdentifier, validate_run_set_identifier};
-use crate::persistence::io::{FileIntegrity, NoReplacePublication, publish_json_no_replace};
+use crate::persistence::io::{
+    FileIntegrity, NoReplacePublication, file_size_and_sha256, publish_json_no_replace, sync_directory,
+};
 use crate::persistence::model::{OutputChunkCommit, OutputPartBinding};
+use crate::schema;
 
-const PART_RECORD_SCHEMA_VERSION: u32 = 0;
+pub(crate) const PART_RECORD_SCHEMA_VERSION: u32 = 0;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputPartFooter {
     schema_version: u32,
     pub(crate) run_set_id: String,
@@ -20,13 +28,14 @@ pub(crate) struct OutputPartFooter {
     pub(crate) chunk_plan_sha256: String,
     pub(crate) part_id: String,
     pub(crate) part_file_name: String,
+    pub(crate) receipt_id: String,
     pub(crate) receipt_file_name: String,
     pub(crate) chunks: Vec<OutputChunkCommit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputPartReceipt {
-    #[serde(flatten)]
     pub(crate) footer: OutputPartFooter,
     pub(crate) part_size_bytes: u64,
     pub(crate) part_sha256: String,
@@ -44,7 +53,8 @@ impl OutputPartFooter {
                 OutputError::InvalidInput(format!("Output part file name '{part_file_name}' must end in .parquet."))
             })?
             .to_string();
-        let receipt_file_name = format!("{part_id}.json");
+        let receipt_id = part_id.clone();
+        let receipt_file_name = format!("{receipt_id}.json");
         let footer = Self {
             schema_version: PART_RECORD_SCHEMA_VERSION,
             run_set_id: binding.run_set_id.clone(),
@@ -54,6 +64,7 @@ impl OutputPartFooter {
             chunk_plan_sha256: binding.chunk_plan_sha256.clone(),
             part_id,
             part_file_name,
+            receipt_id,
             receipt_file_name,
             chunks,
         };
@@ -74,14 +85,20 @@ impl OutputPartFooter {
         }
         validate_run_set_identifier(&self.run_set_id)?;
         AttemptIdentifier::parse(self.attempt_id.as_str())?;
-        if self.phenotype_name.is_empty() {
+        if self.phenotype_name.trim().is_empty() {
             return Err(OutputError::InvalidInput("Output part footer phenotype name must not be empty.".to_string()));
         }
         validate_sha256(&self.execution_plan_sha256, "execution plan")?;
         validate_sha256(&self.chunk_plan_sha256, "chunk plan")?;
         validate_path_identifier(&self.part_id, "part")?;
+        validate_path_identifier(&self.receipt_id, "receipt")?;
+        if self.part_id != self.receipt_id {
+            return Err(OutputError::InvalidInput(
+                "Output part and receipt identifiers must be identical.".to_string(),
+            ));
+        }
         if self.part_file_name != format!("{}.parquet", self.part_id)
-            || self.receipt_file_name != format!("{}.json", self.part_id)
+            || self.receipt_file_name != format!("{}.json", self.receipt_id)
         {
             return Err(OutputError::InvalidInput(
                 "Output part footer file names do not match its part identifier.".to_string(),
@@ -149,7 +166,19 @@ pub(crate) fn publish_part_receipt(
 ) -> OutputResult<NoReplacePublication> {
     receipt.validate()?;
     let receipt_path = commits_directory.join(&receipt.footer.receipt_file_name);
-    let publication = publish_json_no_replace(&receipt_path, receipt)?;
+    let publication = match publish_json_no_replace(&receipt_path, receipt) {
+        Ok(publication) => publication,
+        Err(publication_error) => match read_part_receipt(&receipt_path) {
+            Ok(existing) if existing == *receipt => NoReplacePublication::Created,
+            Ok(_) => {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output part receipt '{}' conflicts with an existing immutable receipt.",
+                    receipt_path.display()
+                )));
+            }
+            Err(_) => return Err(publication_error),
+        },
+    };
     if publication == NoReplacePublication::AlreadyExists {
         let existing = read_part_receipt(&receipt_path)?;
         if existing != *receipt {
@@ -159,6 +188,7 @@ pub(crate) fn publish_part_receipt(
             )));
         }
     }
+    sync_directory(commits_directory)?;
     Ok(publication)
 }
 
@@ -173,9 +203,68 @@ pub(crate) fn read_part_receipt(receipt_path: &Path) -> OutputResult<OutputPartR
     Ok(receipt)
 }
 
-pub(crate) fn receipt_path(commits_directory: &Path, part_id: &str) -> OutputResult<PathBuf> {
-    validate_path_identifier(part_id, "part")?;
-    Ok(commits_directory.join(format!("{part_id}.json")))
+pub(crate) fn read_part_footer(part_path: &Path) -> OutputResult<OutputPartFooter> {
+    let input_file = File::open(part_path).map_err(|error| {
+        OutputError::Runtime(format!("Failed to open output part '{}': {error}", part_path.display()))
+    })?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(input_file).map_err(|error| {
+        OutputError::InvalidInput(format!(
+            "Output part '{}' has an invalid Parquet footer: {error}",
+            part_path.display()
+        ))
+    })?;
+    if builder.schema().fields() != schema::REGENIE_STEP2_CHUNK_SCHEMA.fields() {
+        return Err(OutputError::InvalidInput(format!(
+            "Output part '{}' does not match the canonical output schema.",
+            part_path.display()
+        )));
+    }
+    let metadata = builder
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .and_then(|entries| entries.iter().find(|entry| entry.key == schema::PART_BINDING_METADATA_KEY))
+        .and_then(|entry| entry.value.as_deref())
+        .ok_or_else(|| {
+            OutputError::InvalidInput(format!(
+                "Output part '{}' is missing bound part footer metadata.",
+                part_path.display()
+            ))
+        })?;
+    let footer = serde_json::from_str::<OutputPartFooter>(metadata).map_err(|error| {
+        OutputError::InvalidInput(format!(
+            "Output part '{}' has invalid bound footer metadata: {error}",
+            part_path.display()
+        ))
+    })?;
+    footer.validate()?;
+    Ok(footer)
+}
+
+pub(crate) fn verify_part_receipt(parts_directory: &Path, receipt: &OutputPartReceipt) -> OutputResult<()> {
+    receipt.validate()?;
+    let part_path = parts_directory.join(&receipt.footer.part_file_name);
+    let observed_footer = read_part_footer(&part_path)?;
+    if observed_footer != receipt.footer {
+        return Err(OutputError::InvalidInput(format!(
+            "Output part '{}' footer does not match its immutable receipt.",
+            part_path.display()
+        )));
+    }
+    let observed_integrity = file_size_and_sha256(&part_path)?;
+    if observed_integrity.size_bytes != receipt.part_size_bytes || observed_integrity.sha256 != receipt.part_sha256 {
+        return Err(OutputError::InvalidInput(format!(
+            "Output part '{}' raw bytes do not match its immutable receipt.",
+            part_path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn receipt_path(commits_directory: &Path, receipt_id: &str) -> OutputResult<PathBuf> {
+    validate_path_identifier(receipt_id, "receipt")?;
+    Ok(commits_directory.join(format!("{receipt_id}.json")))
 }
 
 fn validate_path_identifier(identifier: &str, role: &str) -> OutputResult<()> {
@@ -191,7 +280,7 @@ fn validate_path_identifier(identifier: &str, role: &str) -> OutputResult<()> {
 }
 
 fn validate_sha256(digest: &str, role: &str) -> OutputResult<()> {
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
         return Err(OutputError::InvalidInput(format!(
             "Output {role} SHA-256 must contain exactly 64 hexadecimal characters."
         )));
@@ -280,5 +369,32 @@ mod tests {
         let error = publish_part_receipt(&directory, &conflicting).expect_err("conflicting receipt is rejected");
         assert!(error.to_string().contains("conflicts"));
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn immutable_part_records_reject_unknown_fields_and_uppercase_hashes() {
+        let receipt = OutputPartReceipt::new(footer(), FileIntegrity { size_bytes: 123, sha256: digest('c') })
+            .expect("receipt builds");
+        let mut forged_receipt = serde_json::to_value(&receipt).expect("receipt serializes");
+        forged_receipt
+            .as_object_mut()
+            .expect("receipt is an object")
+            .insert("ignored_authority".to_string(), serde_json::Value::Bool(true));
+        let error = serde_json::from_value::<OutputPartReceipt>(forged_receipt)
+            .expect_err("unknown receipt fields are rejected");
+        assert!(error.to_string().contains("unknown field"));
+
+        let mut forged_footer = serde_json::to_value(&receipt.footer).expect("footer serializes");
+        forged_footer
+            .as_object_mut()
+            .expect("footer is an object")
+            .insert("ignored_binding".to_string(), serde_json::Value::Bool(true));
+        let error =
+            serde_json::from_value::<OutputPartFooter>(forged_footer).expect_err("unknown footer fields are rejected");
+        assert!(error.to_string().contains("unknown field"));
+
+        let mut uppercase = receipt;
+        uppercase.part_sha256 = digest('C');
+        assert!(uppercase.validate().is_err());
     }
 }

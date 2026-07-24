@@ -2,7 +2,7 @@ use std::sync::{Arc, LazyLock};
 
 use arrow::datatypes::{DataType, Field, Schema};
 
-pub(crate) const CHUNK_COMMITS_METADATA_KEY: &str = "g.output.chunk_commits";
+pub(crate) const PART_BINDING_METADATA_KEY: &str = "g.output.part_binding";
 
 pub(crate) static REGENIE_STEP2_CHUNK_SCHEMA: LazyLock<Arc<Schema>> =
     LazyLock::new(|| Arc::new(build_regenie_step2_chunk_schema()));

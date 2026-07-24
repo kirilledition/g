@@ -115,6 +115,8 @@ pub(crate) struct GOutputConfigData {
     pub resume: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recover_attempt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fenced_owner_claim_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

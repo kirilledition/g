@@ -74,33 +74,6 @@ def test_write_config_and_render_g_regenie_command(tmp_path: Path) -> None:
     ]
 
 
-def test_expected_output_directory_matches_native_naming() -> None:
-    """Single-trait inference includes the native index and sanitized slug."""
-    spec = quantitative_spec()
-    spec = tooling_g_regenie.RegenieRunSpec(
-        trait_kind=spec.trait_kind,
-        command_prefix=spec.command_prefix,
-        inputs=tooling_g_regenie.RegenieInputSpec(
-            bgen_path=spec.inputs.bgen_path,
-            sample_path=spec.inputs.sample_path,
-            phenotype_path=spec.inputs.phenotype_path,
-            phenotype_columns=(" Height / BMI ",),
-            covariate_path=spec.inputs.covariate_path,
-            covariate_columns=spec.inputs.covariate_columns,
-            prediction_list_path=spec.inputs.prediction_list_path,
-            output_prefix=spec.inputs.output_prefix,
-        ),
-        compute=spec.compute,
-        output=spec.output,
-        diagnostics=spec.diagnostics,
-        binary=spec.binary,
-    )
-
-    assert tooling_g_regenie.expected_output_run_directory(spec) == Path(
-        "results/linear.g/trait_0001_Height_BMI.regenie2_linear.run"
-    )
-
-
 def test_binary_spec_requires_binary_options() -> None:
     """A binary trait cannot silently inherit quantitative defaults."""
     invalid_spec = quantitative_spec()

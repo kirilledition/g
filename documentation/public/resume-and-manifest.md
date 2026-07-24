@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 resume and manifest behavior | Public user docs |
+| Pre-release draft | main branch as of 2026-07-23 resume and manifest behavior | Public user docs |
 
 This page is the canonical user-facing reference for resumable output runs.
 
@@ -11,11 +11,14 @@ merge behavior, see [Configuration](configuration.md).
 
 ## Per-Phenotype Metadata
 
-Every phenotype output run writes:
+Every phenotype within an attempt writes:
 
 ```text
-effective_config.toml
-run_manifest.json
+attempts/<attempt-id>/<phenotype-output-name>/
+  commits/
+  parts/
+  effective_config.toml
+  run_manifest.json
 ```
 
 `effective_config.toml` is the final merged config after packaged defaults, the
@@ -36,7 +39,7 @@ optional TOML file, and explicit CLI overrides.
 - binary correction plan and binary kernel settings when applicable;
 - JAX device/precision policy and dtype choices;
 - output writer settings;
-- committed chunk identifiers and Parquet part metadata.
+- committed chunk identifiers and complete immutable Parquet receipts.
 
 Pre-release manifest schema version `0` stores immutable compatibility state once under
 `execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
@@ -44,16 +47,31 @@ fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
 state. The pre-release Parquet output schema is version `0`; it makes `INFO` nullable when
 its expected-variance denominator is undefined.
+The execution plan records
+`resume_policy = "lineage_receipts_exact_coverage"`. This value is hashed and
+intentionally rejects older pre-release manifests that used the removed
+manifest-only committed-chunk recovery model.
 
-The manifest is the resume authority. It is intentionally stricter than a file
-name check.
+The manifest is supporting state bound by the append-only lineage authority
+under `.g-output`. Genesis fixes the run set, phenotype contracts, execution
+plan hashes, and canonical chunk-plan hash. Immutable attempt outcomes select
+exactly one terminal claim or exact nonterminal recovery claim. Terminal
+finalization binds the terminal claim only after every named manifest has been
+materialized and rehashed. There is no mutable `HEAD`.
 
 Completing or interrupting a run first closes each output writer to new chunks,
 flushes every admitted batch, and waits for all part writers before publishing
-the terminal manifest status. Aborting rejects new chunks and waits for any
-batch that was already detached for writing, but discards the not-yet-detached
-tail and leaves the manifest status as `running` for strict resume repair. No
-writer can publish another part after its terminal operation returns.
+the terminal claim. Timing diagnostics are persisted before that claim. The
+claim fixes the exact manifest hashes, after which the manager reconciles any
+verifiable part-without-receipt crash window, materializes the terminal
+manifests, and publishes terminal finalization. A crash at any point after the
+claim is recovered by finishing that same claimed terminal; it cannot select a
+different outcome.
+
+Aborting rejects new chunks and waits for any batch that was already detached
+for writing, but discards the not-yet-detached tail and publishes a failed
+terminal. No writer can publish another part after its terminal operation
+returns.
 
 The run owner attempts every phenotype writer even if an earlier writer fails,
 then centrally closes shared queue admission and joins all output workers.
@@ -78,19 +96,24 @@ large genotype file during normal startup.
 
 ## Starting A New Run
 
-Without `[output].resume = true`, `g` refuses to reuse a non-empty output run directory:
+Without `[output].resume = true`, `g` refuses to reuse an output root that
+already contains lineage or attempt artifacts:
 
 ```text
-Output run directory '<path>' already exists and is not empty. Enable [output].resume or choose a new output path.
+Output run root '<path>' already exists and is not empty.
 ```
 
 Choose a new `--out` prefix, delete stale local output intentionally, or run
-with `[output].resume = true` when the existing manifest belongs to the same planned run.
+with `[output].resume = true` when the existing lineage belongs to the same
+planned run.
 
-Planning a new or resumed run only inspects the selected output paths. `g` does
-not create phenotype run directories until input preparation and validation of
-every selected phenotype output have succeeded. Missing paths are treated as
-absent; other directory or manifest inspection errors stop planning.
+Planning a new or resumed run only inspects the selected output paths. It does
+not create the output root. Claiming then publishes the permanent root or one
+immutable owner transition, repeats lineage and policy validation under that
+authority, reserves a stable attempt identifier, and creates only
+ownership-private diagnostics. Activation publishes genesis or a successor for
+that same attempt identity before writers start. Missing paths are treated as
+absent; other directory or lineage inspection errors stop planning.
 
 ## Enabling Resume
 
@@ -99,33 +122,85 @@ absent; other directory or manifest inspection errors stop planning.
 resume = true
 ```
 
-Resume is always strict: after manifest compatibility passes, `g` reconciles
-committed chunk identifiers with the chunk files on disk before continuing.
-There is no public resume-validation mode.
+Resume is always strict and depends on the leaf state:
 
-Resume requires current chunk commit metadata in every Parquet part.
-Parts without the native writer's `g.output.chunk_commits` footer metadata are
-rejected instead of being reconstructed from data columns. Every part must use
-the current production Parquet schema, and its footer commits must have unique
-chunk identifiers, exact row counts, and ranges matching the current BGEN
-chunk plan.
+- `completed`: fully reverify lineage, terminal binding, manifests, receipts,
+  Parquet footers, raw sizes and hashes, and exact coverage, then return
+  read-only output data while appending only the invocation's owner
+  acquisition and Released transitions;
+- `interrupted` or `failed`: create one immutable normal successor and reuse
+  only verified parts;
+- nonterminal: require both `resume = true` and
+  `recover_attempt = "<exact-leaf-attempt-id>"`, then publish one exact-recovery
+  successor;
+- pending terminal claim: finish receipt reconciliation, manifest
+  materialization, and terminal finalization before applying the rules above,
+  but only after any surviving owner claim has been externally fenced.
+
+There is no public resume-validation mode and no heuristic "latest attempt"
+selection.
+
+The first process permanently publishes `.g-output/session.claim.json`.
+Release, takeover, and reacquisition append immutable records under
+`.g-output/owner-transitions/`; the current authority is the reachable leaf,
+not the root record by itself. A process crash or `SIGKILL` leaves that leaf
+Active. Automatic takeover is unsafe because the deployed BeeGFS mount does not
+provide cross-node file-lock exclusion. Resume returns a typed error containing
+the current claim identifier, host, process, and guidance. Never unlink an
+authority record based on age or assumption. An external coordinator must
+first prove that the recorded owner is fenced and cannot race a graceful
+release. After that proof, set the exact current identifier reported by the
+error:
+
+```toml
+[output]
+resume = true
+fenced_owner_claim_id = "owner-<exact-id>"
+```
+
+The equivalent CLI is
+`--fenced-output-owner-claim owner-<exact-id>`. The manager rejects an absent,
+different, released, or historical identifier without changing authority. An
+exact match competes with graceful release on one predecessor slot and, if it
+wins, publishes an immutable fenced-takeover transition before normal strict
+resume. A nonterminal output attempt also requires its exact
+`recover_attempt`. Do not remove `session.claim.json` or any transition
+manually.
+
+This is an explicit assertion that fencing has already happened, not a
+filesystem lease or an internal liveness check. A crash before an authority
+hard link can leave a uniquely named temporary candidate. It remains
+inspectable but is not authority, is never auto-promoted or auto-deleted, and
+does not block a fresh root claim. The permanent root and every reachable
+transition remain the audit history after ordinary completion, whose authority
+leaf is Released.
+
+Resume requires both the current embedded transaction footer in every Parquet
+part and its separate immutable receipt. Each pair must agree on run set,
+producing attempt, phenotype, execution-plan hash, chunk-plan hash, part and
+receipt identifiers, and exact chunks. The receipt also binds the final raw
+byte size and SHA-256, which resume recomputes. Parts without current metadata
+are rejected instead of being reconstructed from result columns. Every part
+must use the production logical schema, and its chunks must have unique
+identifiers, exact row counts, and ranges matching the canonical BGEN chunk
+plan.
 
 ## Compatibility Checks
 
-Resume first requires an existing pre-release schema-v0 `run_manifest.json`. It then
-compares the current requested run against the canonical `execution_plan` and
-its hash. A mismatch fails with a message naming the first incompatible
-manifest field. Earlier manifest layouts are not adapted because the
-application has no released legacy output contract.
+Resume first requires a valid `.g-output` genesis and traversable immutable
+lineage. It compares the current requested run and every phenotype manifest
+against the canonical `execution_plan` and its hash. A mismatch fails loudly.
+Earlier manifest or lineage layouts are not adapted because the application
+has no released legacy output contract.
 
-Incompatible resume attempts are non-mutating: `run_manifest.json` remains
-unchanged and `effective_config.toml` is not newly created or overwritten until
-all selected phenotype output runs pass compatibility checks.
+Incompatible resume attempts do not create a new attempt or alter a manifest,
+configuration, part, or receipt. A second process sees the surviving-owner
+claim before attempt mutation.
 
-After initialization, `run_manifest.json` must remain present for every
-lifecycle update. If it is missing when an update begins, completion or
-interruption fails instead of treating its absence as success or synthesizing
-a replacement manifest.
+A finalized terminal requires every bound manifest and rejects a missing or
+changed file. A claim-first process crash may leave a specifically authorized
+nonterminal leaf without its attempt directory; only exact
+`recover_attempt` authorization can advance that lineage.
 
 Common mismatch causes:
 
@@ -164,7 +239,7 @@ instead of resuming an older block-Firth-compatible run.
 ## Graceful Interruption
 
 During `g regenie`, the first SIGINT or SIGTERM requests graceful shutdown. The
-engine flushes queued chunks, saves committed output for resume, prints an
+engine flushes queued chunks, publishes an interrupted terminal, prints an
 interruption message, and exits with `128 + signal_number` such as `130` for
 SIGINT.
 
@@ -177,6 +252,8 @@ resume = true
 
 ## Parquet Parts And Resume
 
-Committed Parquet parts are both the resumable unit and the completed dataset.
-After interruption, resume writes only missing chunks and does not perform a
-separate dataset consolidation step.
+Committed Parquet part-plus-receipt pairs are both the resumable unit and the
+completed dataset. After interruption, resume verifies each source pair,
+prefers same-filesystem hard-link reuse, and falls back to a synchronized copy
+followed by a full rehash. It then writes only missing chunks and performs no
+dataset consolidation step.

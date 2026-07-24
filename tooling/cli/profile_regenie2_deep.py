@@ -1624,7 +1624,7 @@ class GTrialApplicationMetadata:
         wall_time_seconds: Wall time measured inside the application child.
         output_row_count: Rows committed by the application run.
         output_path: First readable output artifact produced by the run.
-        application_output_run_directory: Concrete per-trait application run directory.
+        application_output_run_directory: Verified per-trait run directory when child artifacts are available.
         profile_summary_path: Existing application profile-summary path.
         device_diagnostics: Configured device, association backend, and genotype format.
         child_reported_cache_directory: JAX cache directory reported by the application child.
@@ -1634,7 +1634,7 @@ class GTrialApplicationMetadata:
     wall_time_seconds: float | None
     output_row_count: int | None
     output_path: str | None
-    application_output_run_directory: str
+    application_output_run_directory: str | None
     profile_summary_path: str | None
     device_diagnostics: dict[str, typing.Any] | None
     child_reported_cache_directory: str | None
@@ -1672,12 +1672,24 @@ def collect_g_trial_application_metadata(
         raise RuntimeError(message)
     child_payload = child_payload or {}
     raw_run_directory = child_payload.get("application_output_run_directory")
-    application_run_directory = Path(raw_run_directory) if isinstance(raw_run_directory, str) else expected_output_root
-
+    raw_stdout_chunks = child_payload.get("cli_stdout_chunks")
+    application_run_directory: Path | None = None
     completed_output: native_lifecycle.CompletedOutputEvidence | None = None
-    if (application_run_directory / "run_manifest.json").is_file():
+    if isinstance(raw_stdout_chunks, list) and all(isinstance(chunk, str) for chunk in raw_stdout_chunks):
         try:
-            completed_output = native_lifecycle.measure_completed_output_run(application_run_directory)
+            verified_outputs = native_lifecycle.collect_completed_output_evidence(
+                typing.cast("list[str]", raw_stdout_chunks),
+                output_root=expected_output_root,
+                expected_phenotype_count=1,
+                run_label="deep profile application",
+            )
+            completed_output = verified_outputs.runs[0]
+            application_run_directory = Path(completed_output.run_directory)
+            if (
+                isinstance(raw_run_directory, str)
+                and Path(raw_run_directory).resolve(strict=True) != application_run_directory
+            ):
+                raise RuntimeError("Deep-profile child run path differs from its CLI artifact lines.")
         except OSError, RuntimeError, ValueError, json.JSONDecodeError:
             if require_child_artifacts:
                 raise
@@ -1690,7 +1702,6 @@ def collect_g_trial_application_metadata(
     profile_summary_candidates = [
         Path(raw_profile_summary_path) if isinstance(raw_profile_summary_path, str) else None,
         expected_output_root / "logs" / "profile.summary.json",
-        application_run_directory.parent / "logs" / "profile.summary.json",
     ]
     profile_summary_path = next(
         (str(path) for path in profile_summary_candidates if path is not None and path.exists()),
@@ -1723,7 +1734,9 @@ def collect_g_trial_application_metadata(
         wall_time_seconds=wall_time_seconds,
         output_row_count=output_row_count,
         output_path=output_path,
-        application_output_run_directory=str(application_run_directory),
+        application_output_run_directory=(
+            str(application_run_directory) if application_run_directory is not None else None
+        ),
         profile_summary_path=profile_summary_path,
         device_diagnostics=device_diagnostics,
         child_reported_cache_directory=child_reported_cache_directory,

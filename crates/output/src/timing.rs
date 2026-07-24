@@ -4,6 +4,7 @@ use std::time::Instant;
 use serde_json::json;
 
 use crate::error::OutputError;
+use crate::persistence::io::write_json_atomic;
 use crate::writer::RegenieStep2ChunkWriteTiming;
 
 const OUTPUT_STAGE_TIMING_FILE_NAME: &str = "output_stage_timings.json";
@@ -22,9 +23,12 @@ pub(crate) struct OutputStageTimingAccumulator {
     pub(crate) writer_parquet_init_seconds: f64,
     pub(crate) writer_parquet_batch_write_seconds: f64,
     pub(crate) writer_parquet_finish_seconds: f64,
-    pub(crate) writer_parquet_rename_seconds: f64,
+    pub(crate) writer_parquet_file_sync_seconds: f64,
+    pub(crate) writer_parquet_file_hash_seconds: f64,
+    pub(crate) writer_parquet_file_publish_seconds: f64,
+    pub(crate) writer_parquet_directory_sync_seconds: f64,
+    pub(crate) writer_receipt_publish_seconds: f64,
     pub(crate) writer_total_seconds: f64,
-    pub(crate) manifest_commit_seconds: f64,
     pub(crate) finish_total_seconds: f64,
     pub(crate) enqueue_count: u64,
     pub(crate) coordinator_flush_count: u64,
@@ -33,7 +37,6 @@ pub(crate) struct OutputStageTimingAccumulator {
     pub(crate) writer_row_count: u64,
     pub(crate) writer_arrow_array_memory_bytes: u64,
     pub(crate) writer_parquet_file_bytes: u64,
-    pub(crate) manifest_commit_count: u64,
     pub(crate) finish_count: u64,
 }
 
@@ -49,7 +52,11 @@ impl OutputStageTimingAccumulator {
         self.writer_parquet_init_seconds += timing.parquet_writer_init_seconds;
         self.writer_parquet_batch_write_seconds += timing.parquet_batch_write_seconds;
         self.writer_parquet_finish_seconds += timing.parquet_writer_finish_seconds;
-        self.writer_parquet_rename_seconds += timing.parquet_file_rename_seconds;
+        self.writer_parquet_file_sync_seconds += timing.parquet_file_sync_seconds;
+        self.writer_parquet_file_hash_seconds += timing.parquet_file_hash_seconds;
+        self.writer_parquet_file_publish_seconds += timing.parquet_file_publish_seconds;
+        self.writer_parquet_directory_sync_seconds += timing.parquet_directory_sync_seconds;
+        self.writer_receipt_publish_seconds += timing.receipt_publish_seconds;
         self.writer_total_seconds += timing.total_seconds;
         self.writer_chunk_file_count = self.writer_chunk_file_count.saturating_add(timing.chunk_file_count);
         self.writer_chunk_count = self.writer_chunk_count.saturating_add(timing.chunk_count);
@@ -82,9 +89,12 @@ pub(crate) fn write_stage_timing_snapshot(
             "rust_output_writer_parquet_init": stage_timings.writer_parquet_init_seconds,
             "rust_output_writer_parquet_batch_write": stage_timings.writer_parquet_batch_write_seconds,
             "rust_output_writer_parquet_finish": stage_timings.writer_parquet_finish_seconds,
-            "rust_output_writer_parquet_rename": stage_timings.writer_parquet_rename_seconds,
+            "rust_output_writer_parquet_file_sync": stage_timings.writer_parquet_file_sync_seconds,
+            "rust_output_writer_parquet_file_hash": stage_timings.writer_parquet_file_hash_seconds,
+            "rust_output_writer_parquet_file_publish": stage_timings.writer_parquet_file_publish_seconds,
+            "rust_output_writer_parquet_directory_sync": stage_timings.writer_parquet_directory_sync_seconds,
+            "rust_output_writer_receipt_publish": stage_timings.writer_receipt_publish_seconds,
             "rust_output_writer_total": stage_timings.writer_total_seconds,
-            "rust_output_manifest_commit": stage_timings.manifest_commit_seconds,
             "rust_output_finish_total": stage_timings.finish_total_seconds,
         },
         "stage_counts": {
@@ -100,9 +110,12 @@ pub(crate) fn write_stage_timing_snapshot(
             "rust_output_writer_parquet_init": stage_timings.writer_chunk_file_count,
             "rust_output_writer_parquet_batch_write": stage_timings.writer_chunk_count,
             "rust_output_writer_parquet_finish": stage_timings.writer_chunk_file_count,
-            "rust_output_writer_parquet_rename": stage_timings.writer_chunk_file_count,
+            "rust_output_writer_parquet_file_sync": stage_timings.writer_chunk_file_count,
+            "rust_output_writer_parquet_file_hash": stage_timings.writer_chunk_file_count,
+            "rust_output_writer_parquet_file_publish": stage_timings.writer_chunk_file_count,
+            "rust_output_writer_parquet_directory_sync": stage_timings.writer_chunk_file_count,
+            "rust_output_writer_receipt_publish": stage_timings.writer_chunk_file_count,
             "rust_output_writer_total": stage_timings.writer_chunk_file_count,
-            "rust_output_manifest_commit": stage_timings.manifest_commit_count,
             "rust_output_finish_total": stage_timings.finish_count,
         },
         "output_metrics": {
@@ -114,11 +127,7 @@ pub(crate) fn write_stage_timing_snapshot(
         },
     });
     let timing_path = run_directory.join(OUTPUT_STAGE_TIMING_FILE_NAME);
-    let temporary_timing_path = timing_path.with_extension("json.tmp");
-    let mut timing_text = serde_json::to_string_pretty(&payload).map_err(OutputError::runtime)?;
-    timing_text.push('\n');
-    std::fs::write(&temporary_timing_path, timing_text).map_err(OutputError::runtime)?;
-    std::fs::rename(&temporary_timing_path, &timing_path).map_err(OutputError::runtime)
+    write_json_atomic(&timing_path, &payload)
 }
 
 #[cfg(test)]
@@ -172,10 +181,14 @@ mod tests {
             parquet_writer_init_seconds: 0.8,
             parquet_batch_write_seconds: 0.9,
             parquet_writer_finish_seconds: 1.0,
-            parquet_file_rename_seconds: 1.1,
+            parquet_file_sync_seconds: 1.1,
+            parquet_file_hash_seconds: 1.2,
+            parquet_file_publish_seconds: 1.3,
+            parquet_directory_sync_seconds: 1.4,
+            receipt_publish_seconds: 1.5,
             arrow_array_memory_bytes: 5,
             parquet_file_bytes: 6,
-            total_seconds: 1.2,
+            total_seconds: 1.6,
         }
     }
 
@@ -208,8 +221,12 @@ mod tests {
             (accumulator.writer_parquet_init_seconds, 0.8),
             (accumulator.writer_parquet_batch_write_seconds, 0.9),
             (accumulator.writer_parquet_finish_seconds, 1.0),
-            (accumulator.writer_parquet_rename_seconds, 1.1),
-            (accumulator.writer_total_seconds, 1.2),
+            (accumulator.writer_parquet_file_sync_seconds, 1.1),
+            (accumulator.writer_parquet_file_hash_seconds, 1.2),
+            (accumulator.writer_parquet_file_publish_seconds, 1.3),
+            (accumulator.writer_parquet_directory_sync_seconds, 1.4),
+            (accumulator.writer_receipt_publish_seconds, 1.5),
+            (accumulator.writer_total_seconds, 1.6),
         ] {
             assert!((observed - expected).abs() < f64::EPSILON);
         }
@@ -226,6 +243,11 @@ mod tests {
         let stage_timings = OutputStageTimingAccumulator {
             enqueue_seconds: 0.25,
             finish_total_seconds: 0.75,
+            writer_parquet_file_sync_seconds: 0.1,
+            writer_parquet_file_hash_seconds: 0.2,
+            writer_parquet_file_publish_seconds: 0.3,
+            writer_parquet_directory_sync_seconds: 0.4,
+            writer_receipt_publish_seconds: 0.5,
             enqueue_count: 2,
             writer_chunk_file_count: 3,
             writer_chunk_count: 4,
@@ -244,10 +266,18 @@ mod tests {
         let payload: Value = serde_json::from_str(&timing_text).expect("timing snapshot is valid JSON");
         let enqueue = payload["stage_totals_seconds"]["rust_output_enqueue"].as_f64().expect("enqueue is float");
         let finish = payload["stage_totals_seconds"]["rust_output_finish_total"].as_f64().expect("finish is float");
+        let hash =
+            payload["stage_totals_seconds"]["rust_output_writer_parquet_file_hash"].as_f64().expect("hash is float");
         assert!((enqueue - 0.25).abs() < f64::EPSILON);
         assert!((finish - 0.75).abs() < f64::EPSILON);
+        assert!((hash - 0.2).abs() < f64::EPSILON);
         assert_eq!(payload["stage_counts"]["rust_output_enqueue"], 2);
         assert_eq!(payload["stage_counts"]["rust_output_writer_total"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_parquet_file_sync"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_parquet_file_hash"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_parquet_file_publish"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_parquet_directory_sync"], 3);
+        assert_eq!(payload["stage_counts"]["rust_output_writer_receipt_publish"], 3);
         assert_eq!(payload["stage_counts"]["rust_output_writer_metadata_arrays"], 4);
         assert_eq!(payload["output_metrics"]["writer_row_count"], 5);
         assert_eq!(payload["output_metrics"]["writer_arrow_array_memory_bytes"], 6);

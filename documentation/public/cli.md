@@ -169,10 +169,12 @@ for quantitative runs. Exact Firth is not part of the option surface.
 ## Runtime Options
 
 The command line intentionally exposes `--config`, supported REGENIE Step 2
-flags, and the emergency `--recover-output-attempt ATTEMPT_ID` takeover control.
+flags, the emergency `--recover-output-attempt ATTEMPT_ID` nonterminal control,
+and `--fenced-output-owner-claim CLAIM_ID` for externally fenced crash claims.
 Native device, scheduling, BGEN policy, numerical, JAX, writer, normal resume,
 and diagnostics settings use canonical snake_case TOML fields. Exact takeover
-also maps to `[output].recover_attempt` and requires `[output].resume = true`.
+also maps to `[output].recover_attempt`; fenced-claim recovery maps to
+`[output].fenced_owner_claim_id`. Both require `[output].resume = true`.
 This keeps the routine CLI surface REGENIE-compatible without duplicating the
 full native config surface as command-line aliases.
 

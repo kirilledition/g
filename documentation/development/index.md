@@ -85,6 +85,7 @@ configuration, GitHub Pages settings, and documentation workflow behavior.
 | Architecture cleanup and Rust migration | [Architecture Cleanup](architecture-cleanup.md) |
 | CLI/TOML configuration frontend | [Configuration Frontend](configuration-frontend.md) |
 | Native BGEN, sample, output, and manifest boundaries | [Native I/O](native-io.md) |
+| Output transaction BeeGFS deployment gate | [Output Transaction BeeGFS Qualification](output-transaction-beegfs-qualification.md) |
 | Native integer boundary policy | [Integer Policy](integer-policy.md) |
 | Native integer type audit | [Integer Type Audit](integer-type-audit.md) |
 | JAX quantitative, binary, and Firth kernels | [Compute Kernels](compute-kernels.md) |

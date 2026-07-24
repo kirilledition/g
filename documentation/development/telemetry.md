@@ -43,8 +43,10 @@ When telemetry is enabled, the frontend derives:
 ```
 
 Profile mode also writes `profile.summary.json` under that directory. Output
-writers write `output_stage_timings.json` in each phenotype run directory.
-The same native run ID is used by the telemetry stream and profile summary.
+writers write `output_stage_timings.json` under
+`attempts/<attempt>/<phenotype-output-name>/` before terminal authority is
+published. The same native run ID is used by the telemetry stream and profile
+summary.
 
 The telemetry JSONL envelope and `profile.summary.json` currently carry
 `schema_version: 0`. The application is still unreleased, so these persisted
@@ -121,6 +123,19 @@ write error fails an otherwise successful run but never masks the primary run
 or interruption error.
 
 Stage timing records only host stages that have active production producers.
+Output-writer timing keeps the durability boundaries separately attributable:
+
+| Stage key | Boundary |
+| --- | --- |
+| `rust_output_writer_parquet_file_sync` | `sync_all` of the completed temporary Parquet file |
+| `rust_output_writer_parquet_file_hash` | full raw-byte SHA-256 and size reread |
+| `rust_output_writer_parquet_file_publish` | no-replace final-name publication or existing-final reconciliation |
+| `rust_output_writer_parquet_directory_sync` | synchronization of the `parts/` directory |
+| `rust_output_writer_receipt_publish` | immutable receipt write, publication, and directory durability |
+
+All five are also included in `rust_output_writer_total`. Hash time remains a
+separate reread cost so benchmark evidence can decide whether a streaming
+digest is warranted without weakening recovery-time raw-byte verification.
 
 ## Queue Counters
 
