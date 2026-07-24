@@ -30,7 +30,10 @@ to explain a whole-application result:
 - `g-genotype/bgen_read` separates BGEN open/index construction, decoded
   delivery, and raw-DEFLATE packing. Packing includes full and tail batches,
   fresh and pooled storage, and sequential versus deterministic random file
-  offsets. Transfer cases report byte throughput for the fixed GPU slab.
+  offsets. Transfer cases report byte throughput for the fixed GPU slab. The
+  normal warmed-open group computes an authoritative content selector outside
+  measurement and exercises the process snapshot cache; the explicit
+  positioned-source feature remains unselected.
 - `g-output/writer` covers score-only and approximate-Firth chromosome-22
   shapes with one, four, and eight writers. Each writer geometry includes the
   ready-all workload, and the Firth shape also includes paced terminal finish.

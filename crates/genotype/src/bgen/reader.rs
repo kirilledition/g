@@ -14,6 +14,7 @@ use super::decode::{VariantDecodeFailure, u32_to_usize, with_worker_thread_scrat
 use super::error::{BgenError, contextualize_variant_metadata_invariant};
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
+use super::request::BgenOpenRequest;
 use super::sample_selection::{SampleSelection, build_sample_selection};
 use super::source::{BgenSource, coalesced_variant_window_stop};
 use super::{index, packed8};
@@ -98,7 +99,22 @@ impl BgenReaderCore {
     /// variant index is invalid, its layout is unsupported, or it changes while
     /// being indexed.
     pub fn open(bgen_path: &Path) -> Result<Self, BgenError> {
-        Self::open_source(BgenSource::open(bgen_path)?)
+        Self::open_request(BgenOpenRequest { locator: bgen_path, content_selector: None })
+    }
+
+    /// Resolve and index one typed BGEN open request.
+    ///
+    /// A content-selected process-cache hit resolves entirely from authenticated
+    /// immutable bytes and does not access the request locator. Unselected opens
+    /// always acquire their locator independently and never consult or publish
+    /// the process snapshot cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when acquisition fails, selected content does not match,
+    /// a selected input cannot use an owned snapshot, or BGEN parsing fails.
+    pub fn open_request(request: BgenOpenRequest<'_>) -> Result<Self, BgenError> {
+        Self::open_source(BgenSource::open_request(request)?)
     }
 
     /// Open with positioned I/O for same-input benchmark comparisons.
@@ -116,7 +132,6 @@ impl BgenReaderCore {
 
     fn open_source(mut source: BgenSource) -> Result<Self, BgenError> {
         if source.snapshot_payload().is_some() {
-            ensure_source_unchanged(&source, "BGEN source changed while its cached snapshot was being resolved.")?;
             return Ok(Self { source, positioned_index: None, packed8_validation_complete: AtomicBool::new(false) });
         }
         if source.snapshot_bytes().is_none() {
@@ -202,9 +217,23 @@ impl BgenReaderCore {
         self.positioned_index.as_ref().expect("a BGEN reader without a parsed snapshot must own a positioned index")
     }
 
-    /// Return the identity captured from the exact BGEN file opened by this reader.
+    /// Return descriptor metadata from the source acquisition.
+    ///
+    /// On a process snapshot-cache hit this is the original capture identity,
+    /// not evidence that the current request locator was opened. This accessor
+    /// is provenance-only; use [`Self::content_evidence`] for content authority.
     pub fn source_identity(&self) -> &g_genotype_contracts::BgenSourceIdentity {
         self.source.identity()
+    }
+
+    /// Return authoritative snapshot evidence or positioned unattested evidence.
+    pub fn content_evidence(&self) -> &g_genotype_contracts::BgenContentEvidence {
+        self.source.content_evidence()
+    }
+
+    /// Return acquisition provenance for this reader request.
+    pub fn source_provenance(&self) -> &g_genotype_contracts::BgenSourceProvenance {
+        self.source.provenance()
     }
 
     /// Report whether this reader opened from the canonical process snapshot.
@@ -352,7 +381,7 @@ impl BgenReaderCore {
             return Ok(Packed8Compatibility::Compatible);
         }
         let cache_entry = super::packed8_cache::ValidationCacheEntry::build(
-            self.source.identity(),
+            self.source.content_evidence(),
             self.sample_count(),
             self.variant_count(),
         )
@@ -413,6 +442,9 @@ impl BgenReaderCore {
             BgenError::UnsupportedFormat(message) => BgenError::UnsupportedFormat(format!("{context}: {message}")),
             BgenError::Range(message) => BgenError::Range(format!("{context}: {message}")),
             BgenError::Io(source) => BgenError::Io(source),
+            error @ (BgenError::ContentSha256Mismatch { .. }
+            | BgenError::ContentByteCountMismatch { .. }
+            | BgenError::ContentSelectionRequiresOwnedSnapshot { .. }) => error,
         }
     }
 
@@ -566,7 +598,11 @@ mod tests {
     use std::thread;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use g_genotype_contracts::{BgenContentEvidence, BgenContentSha256, BgenSnapshotResolution};
+    use sha2::{Digest, Sha256};
+
     use super::*;
+    use crate::bgen::BgenContentSelector;
     use crate::common::{ChunkStatisticsPolicy, GenotypeBatchPayload, OwnedGenotypeBuffer};
 
     const COMPLETE_STATISTICS_POLICY: ChunkStatisticsPolicy =
@@ -674,6 +710,46 @@ mod tests {
             bytes.extend_from_slice(payload);
         }
         fs::write(path, bytes).expect("BGEN test fixture should be written");
+    }
+
+    fn content_selector(path: &Path) -> BgenContentSelector {
+        let bytes = fs::read(path).expect("selected BGEN fixture should be readable");
+        BgenContentSelector {
+            content_sha256: BgenContentSha256::from_bytes(Sha256::digest(&bytes).into()),
+            expected_byte_count: Some(u64::try_from(bytes.len()).expect("BGEN fixture length should fit uint64")),
+        }
+    }
+
+    fn open_selected_reader(
+        locator: &Path,
+        content_selector: BgenContentSelector,
+        snapshot_cache: &'static super::super::source::BgenSnapshotCache,
+    ) -> BgenReaderCore {
+        let source = BgenSource::open_request_with_test_snapshot_cache(
+            BgenOpenRequest { locator, content_selector: Some(content_selector) },
+            snapshot_cache,
+        )
+        .expect("selected BGEN source should resolve");
+        BgenReaderCore::open_source(source).expect("selected BGEN source should parse")
+    }
+
+    fn snapshot_cache_is_empty(snapshot_cache: &super::super::source::BgenSnapshotCache) -> bool {
+        snapshot_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_none()
+    }
+
+    fn decoded_dosages(reader: &BgenReaderCore) -> Vec<f32> {
+        let session = reader.read_session(&[0, 1, 2]).expect("snapshot read session should build");
+        let batch = session
+            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
+            .expect("snapshot batch should decode");
+        session.finish().expect("owned snapshot should finish without locator access");
+        let GenotypeBatchPayload::Decoded { genotypes, .. } = batch.payload else {
+            panic!("snapshot decode should return decoded values");
+        };
+        let OwnedGenotypeBuffer::Dosage(values) = genotypes else {
+            panic!("snapshot decode should return dosage values");
+        };
+        values
     }
 
     fn write_positioned_single_variant_bgen(path: &Path) {
@@ -793,110 +869,387 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_cache_retains_one_exact_fully_parsed_identity_until_valid_replacement() {
-        let original_path = temporary_bgen_path("snapshot-cache-original");
-        let malformed_path = temporary_bgen_path("snapshot-cache-malformed");
-        let replacement_path = temporary_bgen_path("snapshot-cache-replacement");
+    fn selected_snapshot_hit_uses_only_content_and_unselected_open_stays_isolated() {
+        let original_path = temporary_bgen_path("content-cache-original");
+        let alternate_path = temporary_bgen_path("content-cache-alternate");
+        let missing_path = temporary_bgen_path("content-cache-missing");
         write_single_variant_bgen(&original_path);
-        fs::write(&malformed_path, minimal_bgen_header_bytes(0, 0, (2 << 2) | (1 << 6)))
-            .expect("malformed BGEN fixture should be written");
-        write_single_variant_bgen_with_probabilities(&replacement_path, &[255, 0, 255, 0, 255, 0]);
+        write_single_variant_bgen_with_probabilities(&alternate_path, &[255, 0, 255, 0, 255, 0]);
+        let original_selector = content_selector(&original_path);
         let snapshot_cache = super::super::source::new_test_snapshot_cache();
 
-        let retained_payload = {
-            let first_source = BgenSource::open_with_test_snapshot_cache(&original_path, snapshot_cache)
-                .expect("first snapshot source should open");
-            assert!(!first_source.snapshot_cache_hit());
-            assert!(first_source.snapshot_payload().is_none());
-            let first_reader = BgenReaderCore::open_source(first_source).expect("first snapshot should parse");
-
-            let second_source = BgenSource::open_with_test_snapshot_cache(&original_path, snapshot_cache)
-                .expect("second snapshot source should open");
-            assert!(second_source.snapshot_cache_hit());
-            assert!(second_source.snapshot_payload().is_some());
-            let second_reader =
-                BgenReaderCore::open_source(second_source).expect("same-identity snapshot should reopen");
-            let first_payload =
-                first_reader.source.snapshot_payload_arc().expect("first reader should own a parsed snapshot");
-            let second_payload =
-                second_reader.source.snapshot_payload_arc().expect("second reader should own a parsed snapshot");
-
-            assert!(Arc::ptr_eq(&first_payload, &second_payload));
-            Arc::downgrade(&first_payload)
+        let original_reader = open_selected_reader(&original_path, original_selector, snapshot_cache);
+        let original_payload =
+            original_reader.source.snapshot_payload_arc().expect("selected reader should own a parsed snapshot");
+        let BgenContentEvidence::OwnedSnapshot(original_fingerprint) = original_reader.content_evidence() else {
+            panic!("selected reader should expose owned-snapshot evidence");
         };
-        let cache_retained_payload =
-            retained_payload.upgrade().expect("the one-entry cache should strongly retain its parsed payload");
+        assert_eq!(original_fingerprint.content_sha256, original_selector.content_sha256);
+        assert_eq!(original_reader.source_provenance().requested_path, original_path);
+        assert_eq!(original_reader.source_provenance().resolution, BgenSnapshotResolution::CapturedFromLocator,);
 
-        let malformed_source = BgenSource::open_with_test_snapshot_cache(&malformed_path, snapshot_cache)
-            .expect("malformed snapshot bytes should still be captured safely");
-        let malformed_error =
-            BgenReaderCore::open_source(malformed_source).expect_err("malformed snapshot must not parse or publish");
-        assert!(malformed_error.to_string().contains("reserved flag bits 0x00000040"));
+        let alternate_hit_reader = {
+            let locator_hook_guard = super::super::source::install_test_locator_acquisition_hook(|| {
+                panic!("selected cache hit must not access its request locator");
+            });
+            let reader = open_selected_reader(&alternate_path, original_selector, snapshot_cache);
+            drop(locator_hook_guard);
+            reader
+        };
+        let alternate_hit_payload =
+            alternate_hit_reader.source.snapshot_payload_arc().expect("cache-hit reader should own a parsed snapshot");
+        assert!(Arc::ptr_eq(&original_payload, &alternate_hit_payload));
+        assert_eq!(decoded_dosages(&alternate_hit_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(alternate_hit_reader.source_provenance().requested_path, alternate_path);
+        assert_eq!(
+            alternate_hit_reader.source_provenance().captured_source_identity,
+            original_reader.source_provenance().captured_source_identity,
+        );
+        assert_eq!(alternate_hit_reader.source_provenance().resolution, BgenSnapshotResolution::ProcessSnapshotCache,);
 
-        let reopened_original_source = BgenSource::open_with_test_snapshot_cache(&original_path, snapshot_cache)
-            .expect("original snapshot source should reopen");
-        assert!(reopened_original_source.snapshot_cache_hit());
-        let reopened_original_reader = BgenReaderCore::open_source(reopened_original_source)
-            .expect("the original parsed snapshot should remain cached");
-        let reopened_original_payload = reopened_original_reader
+        let missing_hit_reader = {
+            let locator_hook_guard = super::super::source::install_test_locator_acquisition_hook(|| {
+                panic!("selected cache hit must not inspect a missing locator");
+            });
+            let reader = open_selected_reader(&missing_path, original_selector, snapshot_cache);
+            drop(locator_hook_guard);
+            reader
+        };
+        assert_eq!(decoded_dosages(&missing_hit_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(missing_hit_reader.source_provenance().requested_path, missing_path);
+        assert_eq!(missing_hit_reader.source_provenance().resolution, BgenSnapshotResolution::ProcessSnapshotCache,);
+
+        let digest_only_selector = BgenContentSelector { expected_byte_count: None, ..original_selector };
+        let digest_only_hit_reader = {
+            let locator_hook_guard = super::super::source::install_test_locator_acquisition_hook(|| {
+                panic!("digest-only selected cache hit must not inspect its request locator");
+            });
+            let reader = open_selected_reader(&missing_path, digest_only_selector, snapshot_cache);
+            drop(locator_hook_guard);
+            reader
+        };
+        let BgenContentEvidence::OwnedSnapshot(digest_only_fingerprint) = digest_only_hit_reader.content_evidence()
+        else {
+            panic!("digest-only selected cache hit should inherit the retained fingerprint");
+        };
+        assert_eq!(*digest_only_fingerprint, *original_fingerprint);
+        assert_eq!(digest_only_hit_reader.source_provenance().resolution, BgenSnapshotResolution::ProcessSnapshotCache,);
+
+        let unselected_source =
+            BgenSource::open_unselected_for_test(&alternate_path).expect("unselected alternate source should open");
+        assert!(!unselected_source.snapshot_cache_hit());
+        let unselected_reader =
+            BgenReaderCore::open_source(unselected_source).expect("unselected alternate source should parse");
+        let unselected_payload =
+            unselected_reader.source.snapshot_payload_arc().expect("unselected reader should own a parsed snapshot");
+        assert!(!Arc::ptr_eq(&original_payload, &unselected_payload));
+        assert_eq!(decoded_dosages(&unselected_reader), vec![0.0, 0.0, 0.0]);
+        assert_eq!(unselected_reader.source_provenance().resolution, BgenSnapshotResolution::CapturedFromLocator,);
+
+        let selected_after_unselected = open_selected_reader(&missing_path, original_selector, snapshot_cache);
+        let selected_after_unselected_payload =
+            selected_after_unselected.source.snapshot_payload_arc().expect("retained selected snapshot should resolve");
+        assert!(Arc::ptr_eq(&original_payload, &selected_after_unselected_payload));
+
+        let mismatched_count_selector =
+            BgenContentSelector { expected_byte_count: Some(original_fingerprint.byte_count + 1), ..original_selector };
+        let locator_hook_guard = super::super::source::install_test_locator_acquisition_hook(|| {
+            panic!("cached byte-count mismatch must not inspect the locator");
+        });
+        let count_error = BgenSource::open_request_with_test_snapshot_cache(
+            BgenOpenRequest { locator: &missing_path, content_selector: Some(mismatched_count_selector) },
+            snapshot_cache,
+        )
+        .expect_err("cached byte-count mismatch should fail");
+        drop(locator_hook_guard);
+        assert!(matches!(
+            count_error,
+            BgenError::ContentByteCountMismatch {
+                expected_byte_count,
+                observed_byte_count,
+            } if expected_byte_count == original_fingerprint.byte_count + 1
+                && observed_byte_count == original_fingerprint.byte_count
+        ));
+
+        let _ = fs::remove_file(original_path);
+        let _ = fs::remove_file(alternate_path);
+    }
+
+    #[test]
+    fn unselected_open_never_reuses_identical_or_rewritten_locator_content() {
+        let path = temporary_bgen_path("unselected-equal-metadata");
+        write_single_variant_bgen(&path);
+        let original_metadata = fs::metadata(&path).expect("original metadata should resolve");
+        let original_modified = original_metadata.modified().expect("original modification time should resolve");
+        let snapshot_cache = super::super::source::new_test_snapshot_cache();
+
+        let first_source = BgenSource::open_unselected_for_test(&path).expect("first unselected source should open");
+        let first_reader = BgenReaderCore::open_source(first_source).expect("first unselected source should parse");
+        let first_payload = first_reader.source.snapshot_payload_arc().expect("first source should own its payload");
+        let BgenContentEvidence::OwnedSnapshot(first_fingerprint) = first_reader.content_evidence() else {
+            panic!("first unselected source should have owned evidence");
+        };
+        let first_fingerprint = *first_fingerprint;
+
+        let identical_source =
+            BgenSource::open_unselected_for_test(&path).expect("identical unselected source should open");
+        let identical_reader =
+            BgenReaderCore::open_source(identical_source).expect("identical unselected source should parse");
+        let identical_payload =
+            identical_reader.source.snapshot_payload_arc().expect("identical source should own its payload");
+        assert!(!Arc::ptr_eq(&first_payload, &identical_payload));
+        assert_eq!(first_reader.content_evidence(), identical_reader.content_evidence());
+
+        write_single_variant_bgen_with_probabilities(&path, &[255, 0, 255, 0, 255, 0]);
+        File::options()
+            .write(true)
+            .open(&path)
+            .expect("rewritten fixture should reopen")
+            .set_times(FileTimes::new().set_modified(original_modified))
+            .expect("rewritten fixture modification time should be restored");
+        let rewritten_metadata = fs::metadata(&path).expect("rewritten metadata should resolve");
+        assert_eq!(rewritten_metadata.len(), original_metadata.len());
+
+        let second_source = BgenSource::open_unselected_for_test(&path).expect("second unselected source should open");
+        let second_reader = BgenReaderCore::open_source(second_source).expect("second unselected source should parse");
+        let second_payload = second_reader.source.snapshot_payload_arc().expect("second source should own its payload");
+        let BgenContentEvidence::OwnedSnapshot(second_fingerprint) = second_reader.content_evidence() else {
+            panic!("second unselected source should have owned evidence");
+        };
+        let second_fingerprint = *second_fingerprint;
+
+        assert!(!Arc::ptr_eq(&first_payload, &second_payload));
+        assert_ne!(first_fingerprint, second_fingerprint);
+        assert_eq!(decoded_dosages(&first_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(decoded_dosages(&identical_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(decoded_dosages(&second_reader), vec![0.0, 0.0, 0.0]);
+        assert!(snapshot_cache_is_empty(snapshot_cache), "unselected opens must never publish");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn public_unselected_open_never_participates_in_the_snapshot_cache() {
+        let selected_path = temporary_bgen_path("public-unselected-cache-selected");
+        let unselected_path = temporary_bgen_path("public-unselected-cache-independent");
+        let missing_path = temporary_bgen_path("public-unselected-cache-missing");
+        write_single_variant_bgen(&selected_path);
+        write_single_variant_bgen_with_probabilities(&unselected_path, &[255, 0, 255, 0, 255, 0]);
+        let selector = content_selector(&selected_path);
+
+        let selected_reader =
+            BgenReaderCore::open_request(BgenOpenRequest { locator: &selected_path, content_selector: Some(selector) })
+                .expect("selected public open should seed the process cache");
+        let selected_payload =
+            selected_reader.source.snapshot_payload_arc().expect("selected public open should publish its payload");
+
+        let cache_observation = super::super::source::observe_test_snapshot_cache_operations();
+        let unselected_reader =
+            BgenReaderCore::open(&unselected_path).expect("unselected public open should parse independently");
+        assert_eq!(decoded_dosages(&unselected_reader), vec![0.0, 0.0, 0.0]);
+        assert_eq!(
+            cache_observation.operation_counts().observed_counts(),
+            super::super::source::TestSnapshotCacheOperationCountSnapshot::default(),
+            "unselected public open must not resolve, initialize, consult, lock, publish, or evict the snapshot cache",
+        );
+        drop(cache_observation);
+
+        let selected_reopen =
+            BgenReaderCore::open_request(BgenOpenRequest { locator: &missing_path, content_selector: Some(selector) })
+                .expect("selected payload should remain cached after an unselected public open");
+        let selected_reopen_payload = selected_reopen
             .source
             .snapshot_payload_arc()
-            .expect("reopened original reader should own a parsed snapshot");
-        assert!(
-            Arc::ptr_eq(&cache_retained_payload, &reopened_original_payload),
-            "a failed parse of a different identity must not evict the valid canonical payload",
-        );
+            .expect("selected cache hit should retain the canonical payload");
+        assert!(Arc::ptr_eq(&selected_payload, &selected_reopen_payload));
 
-        fs::rename(&replacement_path, &original_path)
-            .expect("valid replacement should atomically replace the original configured path");
-        let replacement_source = BgenSource::open_with_test_snapshot_cache(&original_path, snapshot_cache)
-            .expect("replacement snapshot source should open through the original configured path");
-        assert!(!replacement_source.snapshot_cache_hit());
-        let replacement_reader = BgenReaderCore::open_source(replacement_source)
-            .expect("valid replacement snapshot should parse and publish");
+        let _ = fs::remove_file(selected_path);
+        let _ = fs::remove_file(unselected_path);
+    }
+
+    #[test]
+    fn selected_failures_preserve_the_retained_valid_content() {
+        let original_path = temporary_bgen_path("selected-failure-original");
+        let alternate_path = temporary_bgen_path("selected-failure-alternate");
+        let malformed_path = temporary_bgen_path("selected-failure-malformed");
+        let missing_path = temporary_bgen_path("selected-failure-missing");
+        write_single_variant_bgen(&original_path);
+        write_single_variant_bgen_with_probabilities(&alternate_path, &[255, 0, 255, 0, 255, 0]);
+        fs::write(&malformed_path, minimal_bgen_header_bytes(0, 0, (2 << 2) | (1 << 6)))
+            .expect("malformed BGEN fixture should be written");
+        let original_selector = content_selector(&original_path);
+        let alternate_selector = content_selector(&alternate_path);
+        let wrong_digest_selector = BgenContentSelector {
+            content_sha256: BgenContentSha256::from_bytes([29; 32]),
+            expected_byte_count: alternate_selector.expected_byte_count,
+        };
+        let malformed_selector = content_selector(&malformed_path);
+        let snapshot_cache = super::super::source::new_test_snapshot_cache();
+
+        let retained_reader = open_selected_reader(&original_path, original_selector, snapshot_cache);
+        let retained_payload =
+            retained_reader.source.snapshot_payload_arc().expect("retained reader should own a parsed payload");
+
+        let wrong_digest_error = BgenSource::open_request_with_test_snapshot_cache(
+            BgenOpenRequest { locator: &alternate_path, content_selector: Some(wrong_digest_selector) },
+            snapshot_cache,
+        )
+        .expect_err("wrong selected digest should fail");
+        assert!(matches!(
+            wrong_digest_error,
+            BgenError::ContentSha256Mismatch { expected, observed }
+                if expected == wrong_digest_selector.content_sha256 && observed == alternate_selector.content_sha256
+        ));
+
+        let malformed_source = BgenSource::open_request_with_test_snapshot_cache(
+            BgenOpenRequest { locator: &malformed_path, content_selector: Some(malformed_selector) },
+            snapshot_cache,
+        )
+        .expect("digest-matching malformed bytes should be captured");
+        let malformed_error =
+            BgenReaderCore::open_source(malformed_source).expect_err("malformed selected BGEN must not publish");
+        assert!(malformed_error.to_string().contains("reserved flag bits 0x00000040"));
+
+        let reopened_reader = open_selected_reader(&missing_path, original_selector, snapshot_cache);
+        let reopened_payload =
+            reopened_reader.source.snapshot_payload_arc().expect("retained selected content should reopen");
+        assert!(Arc::ptr_eq(&retained_payload, &reopened_payload));
+
+        let _ = fs::remove_file(original_path);
+        let _ = fs::remove_file(alternate_path);
+        let _ = fs::remove_file(malformed_path);
+    }
+
+    #[test]
+    fn selected_replacement_preserves_live_readers_and_releases_after_drop() {
+        let original_path = temporary_bgen_path("selected-replacement-original");
+        let replacement_path = temporary_bgen_path("selected-replacement-new");
+        let missing_path = temporary_bgen_path("selected-replacement-missing");
+        write_single_variant_bgen(&original_path);
+        write_single_variant_bgen_with_probabilities(&replacement_path, &[255, 0, 255, 0, 255, 0]);
+        let original_selector = content_selector(&original_path);
+        let replacement_selector = content_selector(&replacement_path);
+        let snapshot_cache = super::super::source::new_test_snapshot_cache();
+
+        let original_reader = open_selected_reader(&original_path, original_selector, snapshot_cache);
+        let original_payload =
+            original_reader.source.snapshot_payload_arc().expect("original reader should own its payload");
+        let original_payload_weak = Arc::downgrade(&original_payload);
+        let replacement_reader = open_selected_reader(&replacement_path, replacement_selector, snapshot_cache);
         let replacement_payload =
-            replacement_reader.source.snapshot_payload_arc().expect("replacement reader should own a parsed snapshot");
-        assert!(!Arc::ptr_eq(&reopened_original_payload, &replacement_payload));
+            replacement_reader.source.snapshot_payload_arc().expect("replacement reader should own its payload");
 
-        let original_session =
-            reopened_original_reader.read_session(&[0, 1, 2]).expect("retained original snapshot should remain usable");
-        let original_batch = original_session
-            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
-            .expect("cache replacement must not affect an existing snapshot reader");
-        let GenotypeBatchPayload::Decoded { genotypes, .. } = original_batch.payload else {
-            panic!("retained original snapshot should return decoded values");
-        };
-        let OwnedGenotypeBuffer::Dosage(values) = genotypes else {
-            panic!("retained original snapshot should return dosage values");
-        };
-        assert_eq!(values, vec![2.0, 0.0, 1.0]);
-        original_session.finish().expect("immutable original snapshot should remain valid");
+        assert!(!Arc::ptr_eq(&original_payload, &replacement_payload));
+        assert_eq!(decoded_dosages(&original_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(decoded_dosages(&replacement_reader), vec![0.0, 0.0, 0.0]);
+        let reopened_replacement = open_selected_reader(&missing_path, replacement_selector, snapshot_cache);
+        let reopened_replacement_payload =
+            reopened_replacement.source.snapshot_payload_arc().expect("replacement cache hit should own its payload");
+        assert!(Arc::ptr_eq(&replacement_payload, &reopened_replacement_payload));
 
-        let replacement_session =
-            replacement_reader.read_session(&[0, 1, 2]).expect("replacement snapshot session should build");
-        let replacement_batch = replacement_session
-            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
-            .expect("replacement snapshot should decode its own bytes");
-        let GenotypeBatchPayload::Decoded { genotypes, .. } = replacement_batch.payload else {
-            panic!("replacement snapshot should return decoded values");
-        };
-        let OwnedGenotypeBuffer::Dosage(values) = genotypes else {
-            panic!("replacement snapshot should return dosage values");
-        };
-        assert_eq!(values, vec![0.0, 0.0, 0.0]);
-        replacement_session.finish().expect("replacement snapshot should remain valid");
-
-        drop(cache_retained_payload);
-        drop(reopened_original_payload);
-        drop(reopened_original_reader);
+        drop(original_payload);
+        drop(original_reader);
         assert!(
-            retained_payload.upgrade().is_none(),
-            "successful replacement should release the old payload after its readers are dropped",
+            original_payload_weak.upgrade().is_none(),
+            "replaced content should release after its final live reader drops",
         );
 
         let _ = fs::remove_file(original_path);
-        let _ = fs::remove_file(malformed_path);
         let _ = fs::remove_file(replacement_path);
+    }
+
+    #[test]
+    fn concurrent_selected_misses_canonicalize_after_independent_parsing() {
+        let path = temporary_bgen_path("selected-concurrent-canonicalization");
+        write_single_variant_bgen(&path);
+        let selector = content_selector(&path);
+        let snapshot_cache = super::super::source::new_test_snapshot_cache();
+        let capture_barrier = Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let thread_path = path.clone();
+            let thread_barrier = Arc::clone(&capture_barrier);
+            handles.push(thread::spawn(move || {
+                let capture_hook_guard = super::super::source::install_test_snapshot_capture_hook(move || {
+                    thread_barrier.wait();
+                });
+                let reader = open_selected_reader(&thread_path, selector, snapshot_cache);
+                drop(capture_hook_guard);
+                reader
+            }));
+        }
+        let first_reader = handles.remove(0).join().expect("first selected open thread should finish");
+        let second_reader = handles.remove(0).join().expect("second selected open thread should finish");
+        let first_payload = first_reader.source.snapshot_payload_arc().expect("first reader should own its payload");
+        let second_payload = second_reader.source.snapshot_payload_arc().expect("second reader should own its payload");
+
+        assert!(Arc::ptr_eq(&first_payload, &second_payload));
+        assert_eq!(first_reader.source_provenance().resolution, BgenSnapshotResolution::CapturedFromLocator,);
+        assert_eq!(second_reader.source_provenance().resolution, BgenSnapshotResolution::CapturedFromLocator,);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn selected_positioned_source_is_rejected_without_cache_publication() {
+        let path = temporary_bgen_path("selected-positioned-rejection");
+        write_positioned_single_variant_bgen(&path);
+        let snapshot_cache = super::super::source::new_test_snapshot_cache();
+        let selector =
+            BgenContentSelector { content_sha256: BgenContentSha256::from_bytes([23; 32]), expected_byte_count: None };
+
+        let error = BgenSource::open_request_with_test_snapshot_cache(
+            BgenOpenRequest { locator: &path, content_selector: Some(selector) },
+            snapshot_cache,
+        )
+        .expect_err("selected positioned source should be rejected");
+        assert!(matches!(
+            error,
+            BgenError::ContentSelectionRequiresOwnedSnapshot {
+                source_byte_count,
+                maximum_snapshot_byte_count,
+            } if source_byte_count > maximum_snapshot_byte_count
+                && maximum_snapshot_byte_count == crate::bgen::source::MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT
+        ));
+        assert!(snapshot_cache_is_empty(snapshot_cache));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn selected_capture_uses_the_open_descriptor_after_locator_deletion_or_retargeting() {
+        let deleted_path = temporary_bgen_path("selected-capture-deleted-locator");
+        write_single_variant_bgen(&deleted_path);
+        let deleted_selector = content_selector(&deleted_path);
+        let deleted_cache = super::super::source::new_test_snapshot_cache();
+        let deleted_hook_path = deleted_path.clone();
+        let deletion_hook_guard = super::super::source::install_test_snapshot_capture_hook(move || {
+            fs::remove_file(deleted_hook_path).expect("capture hook should delete the configured locator");
+        });
+        let deleted_reader = open_selected_reader(&deleted_path, deleted_selector, deleted_cache);
+        drop(deletion_hook_guard);
+        assert_eq!(decoded_dosages(&deleted_reader), vec![2.0, 0.0, 1.0]);
+        assert_eq!(deleted_reader.source_provenance().requested_path, deleted_path);
+
+        let retargeted_path = temporary_bgen_path("selected-capture-retargeted-locator");
+        let replacement_path = temporary_bgen_path("selected-capture-retargeted-replacement");
+        write_single_variant_bgen(&retargeted_path);
+        write_single_variant_bgen_with_probabilities(&replacement_path, &[255, 0, 255, 0, 255, 0]);
+        let retargeted_selector = content_selector(&retargeted_path);
+        let retargeted_cache = super::super::source::new_test_snapshot_cache();
+        let retargeted_hook_path = retargeted_path.clone();
+        let replacement_hook_path = replacement_path.clone();
+        let retarget_hook_guard = super::super::source::install_test_snapshot_capture_hook(move || {
+            fs::rename(replacement_hook_path, retargeted_hook_path)
+                .expect("capture hook should retarget the configured locator");
+        });
+        let retargeted_reader = open_selected_reader(&retargeted_path, retargeted_selector, retargeted_cache);
+        drop(retarget_hook_guard);
+        assert_eq!(decoded_dosages(&retargeted_reader), vec![2.0, 0.0, 1.0]);
+        let current_reader = BgenReaderCore::open(&retargeted_path).expect("retargeted locator should remain readable");
+        assert_eq!(decoded_dosages(&current_reader), vec![0.0, 0.0, 0.0]);
+
+        let _ = fs::remove_file(retargeted_path);
     }
 
     #[test]

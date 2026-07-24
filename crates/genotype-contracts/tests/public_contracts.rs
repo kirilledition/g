@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use g_genotype_contracts::{
-    BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, RAW_DEFLATE_MEMBER_ALIGNMENT,
-    VariantMetadataColumns, VariantMetadataInvariantError, VariantMetadataStore,
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, BgenContentSha256ParseError,
+    BgenSnapshotResolution, BgenSourceIdentity, BgenSourceProvenance, ChunkOutputStatistics, NullableFloat32Column,
+    RAW_DEFLATE_MEMBER_ALIGNMENT, VariantMetadataColumns, VariantMetadataInvariantError, VariantMetadataStore,
 };
 
 const FLOAT_TOLERANCE: f32 = 1.0e-7;
@@ -89,6 +91,77 @@ fn bgen_source_identity_retains_every_opened_file_field() {
 }
 
 #[test]
+fn bgen_content_sha256_requires_canonical_lowercase_hexadecimal() {
+    let canonical = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    let digest = BgenContentSha256::from_str(canonical).expect("canonical SHA-256 should parse");
+    let expected_bytes = std::array::from_fn(|index| u8::try_from(index).expect("digest index should fit uint8"));
+
+    assert_eq!(digest.as_bytes(), &expected_bytes);
+    assert_eq!(digest.to_string(), canonical);
+    assert_eq!(
+        BgenContentSha256::from_str(&canonical[..63]).unwrap_err(),
+        BgenContentSha256ParseError::InvalidLength { observed_byte_count: 63 },
+    );
+    assert_eq!(
+        BgenContentSha256::from_str(&format!("{canonical}0")).unwrap_err(),
+        BgenContentSha256ParseError::InvalidLength { observed_byte_count: 65 },
+    );
+    let mut uppercase = canonical.to_string();
+    uppercase.replace_range(10..11, "A");
+    assert_eq!(
+        BgenContentSha256::from_str(&uppercase).unwrap_err(),
+        BgenContentSha256ParseError::InvalidCharacter { character_index: 10, character_byte: b'A' },
+    );
+    let mut non_hexadecimal = canonical.to_string();
+    non_hexadecimal.replace_range(31..32, "g");
+    assert_eq!(
+        BgenContentSha256::from_str(&non_hexadecimal).unwrap_err(),
+        BgenContentSha256ParseError::InvalidCharacter { character_index: 31, character_byte: b'g' },
+    );
+}
+
+#[test]
+fn bgen_content_sha256_serde_uses_one_canonical_string() {
+    let digest = BgenContentSha256::from_bytes([0xab; 32]);
+    let serialized = serde_json::to_string(&digest).expect("digest should serialize");
+    let deserialized: BgenContentSha256 = serde_json::from_str(&serialized).expect("digest should deserialize");
+
+    assert_eq!(serialized, "\"abababababababababababababababababababababababababababababababab\"",);
+    assert_eq!(deserialized, digest);
+    assert!(serde_json::from_str::<BgenContentSha256>("17").is_err());
+    assert!(
+        serde_json::from_str::<BgenContentSha256>("\"ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB\"",)
+            .is_err(),
+    );
+}
+
+#[test]
+fn bgen_content_evidence_and_provenance_keep_content_separate_from_locator_history() {
+    let captured_source_identity = BgenSourceIdentity {
+        configured_path: PathBuf::from("/captured/a.bgen"),
+        canonical_path: Some(PathBuf::from("/canonical/a.bgen")),
+        device_identifier: 2,
+        inode_identifier: 3,
+        change_time_nanoseconds: 5,
+        modification_time_nanoseconds: 7,
+        file_size: 11,
+    };
+    let content_fingerprint =
+        BgenContentFingerprint { content_sha256: BgenContentSha256::from_bytes([13; 32]), byte_count: 11 };
+    let evidence = BgenContentEvidence::OwnedSnapshot(content_fingerprint);
+    let provenance = BgenSourceProvenance {
+        requested_path: PathBuf::from("requested/b.bgen"),
+        captured_source_identity: captured_source_identity.clone(),
+        resolution: BgenSnapshotResolution::ProcessSnapshotCache,
+    };
+
+    assert_eq!(evidence, BgenContentEvidence::OwnedSnapshot(content_fingerprint));
+    assert_eq!(provenance.requested_path, PathBuf::from("requested/b.bgen"));
+    assert_eq!(provenance.captured_source_identity, captured_source_identity);
+    assert_eq!(provenance.resolution, BgenSnapshotResolution::ProcessSnapshotCache);
+}
+
+#[test]
 fn metadata_columns_expose_the_selected_range_without_copying_dictionary_values() {
     let MetadataFixture { columns, chromosome_x } = build_metadata_fixture(1..3);
     let cloned_columns = columns.clone();
@@ -122,7 +195,7 @@ fn empty_metadata_range_has_empty_exact_size_views() {
     assert_eq!(fixture.columns.variant_identifiers().len(), 0);
     assert_eq!(fixture.columns.allele_ones().len(), 0);
     assert_eq!(fixture.columns.allele_twos().len(), 0);
-    assert_eq!(fixture.columns.position(), &[]);
+    assert!(fixture.columns.position().is_empty());
     assert_eq!(fixture.columns.shared_chromosome(0), None);
 }
 

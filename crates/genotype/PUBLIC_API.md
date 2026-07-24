@@ -12,7 +12,8 @@ delivery path.
 
 ## Public types
 
-`BgenReaderCore`, `BgenReadSession`, `BgenError`,
+`BgenReaderCore`, `BgenReadSession`, `BgenOpenRequest`,
+`BgenContentSelector`, `BgenError`,
 `GenotypeError`/`GenotypeResult`, chunk and statistics contracts, the canonical
 `GenotypeBatch`/`GenotypeBatchPayload`, `OwnedGenotypeBuffer`,
 `PooledPacked8Buffer`, and the typed `Packed8Compatibility` negotiation result.
@@ -25,22 +26,40 @@ not re-exported here.
 
 ## Public functions
 
-`BgenReaderCore` opens and indexes a BGEN, reads metadata, plans
-full-scan chromosome-homogeneous chunks, resolves packed8 compatibility through
-a best-effort persistent fingerprint cache tied to the exact opened file, and
-validates the header sample count against aligned sample metadata through
-`validate_expected_sample_count`. It creates a `BgenReadSession` from one sample
-selection. The immutable session
+`BgenReaderCore::open` is the temporary unselected compatibility entry point:
+it always acquires and parses the supplied locator and never consults or
+publishes the process snapshot cache. `BgenReaderCore::open_request`
+additionally accepts an authoritative SHA-256 selector and optional expected
+byte count. Selected small-file opens reuse an already authenticated matching
+process snapshot without resolving, opening, stating, or canonicalizing the
+supplied locator. A selected miss captures the locator bytes, verifies the
+selector, and publishes only after the full header and index parse succeeds.
+Selected inputs that cannot fit the 256 MiB owned-snapshot ceiling are rejected
+with a typed error rather than silently falling back to unattested positioned
+I/O.
+
+The reader exposes content evidence and request provenance separately.
+`source_identity()` temporarily returns the identity captured with the original
+source acquisition; on a selected cache hit it does not describe the current
+request locator. It is provenance-only and must not be used as content
+authority.
+`source_provenance()` records both that capture identity and the locator supplied
+by the current request.
+
+`BgenReaderCore` reads metadata, plans full-scan chromosome-homogeneous chunks,
+resolves packed8 compatibility through a best-effort persistent fingerprint
+cache tied to authoritative content, and validates the header sample count
+against aligned sample metadata through `validate_expected_sample_count`. It
+creates a `BgenReadSession` from one sample selection. The immutable session
 uses the crate-owned 32-variant decode-tile policy and decodes owned
 variant-major dosage or validated packed8 batches. Sample selection is
 session-local, decode-tile policy is private and fixed, and no process-global
-decode state is exposed. Source metadata is captured from the opened file and
-verified while indexing. Positioned sources are also rechecked before each
-session and after delivery. The exact opened-file identity is exposed to the
-engine for strict output-manifest compatibility; callers do not restat it from
-the configured path. The compatibility cache stores typed compatible and
-dosage-required outcomes so an incompatible source is not rescanned on every
-run.
+decode state is exposed. Source metadata is captured from the opened descriptor
+and verified while indexing. Positioned sources are also rechecked before each
+session and after delivery. The compatibility cache stores typed compatible and
+dosage-required outcomes for authoritative owned content so an incompatible
+snapshot is not rescanned on every run. Positioned unattested sources do not
+read or write persistent compatibility markers.
 
 Files no larger than 256 MiB are copied once into a private immutable byte
 vector; indexing, decode, compatibility validation, and raw-DEFLATE packing
@@ -51,26 +70,27 @@ parallel 32-variant compute tiles; compatibility validation uses the same
 coalescing policy. Snapshot indexing uses a concrete bounds-checked slice
 cursor, while positioned indexing streams bounded source windows. The reader
 never exposes a safe file-backed memory map.
-Exact opened-file and configured-path identities are checked around indexing
-and before a captured snapshot is published. Once published, that immutable
-payload isolates its readers from later in-place mutation or configured-path
-replacement, so snapshot sessions deliberately require no per-delivery or
-terminal restat. Positioned batches recheck both identities after every
-delivered batch and at session finish. Concurrent truncation or replacement of
-a positioned source therefore becomes a typed error rather than an invalid
-memory access.
+The opened descriptor identity is checked after an owned snapshot capture.
+Deletion or retargeting of the configured locator after that capture is
+provenance-only: parsing continues from the immutable bytes already read. Once
+published, that payload isolates its readers from later in-place mutation or
+configured-path replacement, so snapshot sessions deliberately require no
+per-delivery or terminal restat. Positioned batches recheck both the descriptor
+and configured-path identities after every delivered batch and at session
+finish. Concurrent truncation or replacement of a positioned source therefore
+becomes a typed error rather than an invalid memory access.
 
 A private one-entry process registry strongly owns the most recent completely
-parsed small-file payload by exact source identity: snapshot bytes, header
-properties, variant records, metadata, and chromosome boundaries. Reopening
-the unchanged file shares the canonical payload even after all earlier readers
-close. A different identity replaces the entry atomically only after its
-snapshot is captured, its header and index pass open-time validation, and its
-identity is verified; a candidate rejected before publication does not evict
-the valid entry. Probability-semantic corruption discovered later during
-compatibility validation or decode still fails safely, but its published
-identity may already have replaced the earlier cache entry. Readers of an
-older identity keep their payload alive across a replacement.
+parsed selected small-file payload under a revision-0 key containing its full
+SHA-256 and byte count. A digest-only lookup inherits the stored byte count; an
+explicit byte count is an additional assertion. Selected hits share the
+canonical payload even after all earlier readers close. Unselected opens never
+consult or replace the entry, including when their bytes are identical. A
+different selected fingerprint replaces the entry atomically only after
+capture, digest verification, and open-time header/index validation; a rejected
+candidate does not evict the valid entry. Concurrent misses parse independently
+outside the registry lock and canonicalize the matching payload at publication.
+Readers of an older fingerprint keep their payload alive across a replacement.
 
 The registry retains up to 256 MiB of source bytes plus parsed index and
 metadata allocations until a replacement passes open/index validation or the
@@ -82,7 +102,10 @@ candidate outside the registry lock, so transient candidate memory scales with
 in-flight opens. After publication, live readers of the previous identity can
 extend the overlap between old and new payloads.
 
-For compatible zlib sources, `BgenReaderCore` derives one opaque compressed slab
+For authoritative owned content, the persistent packed8 marker uses a
+revision-0 fingerprint over the content digest, content byte count, sample
+count, and variant count. It contains no path or filesystem metadata. For
+compatible zlib sources, `BgenReaderCore` derives one opaque compressed slab
 layout from the actual pending chunk plan; non-zlib sources return no compressed
 layout so callers can retain host delivery. `BgenReadSession` exposes invariant
 sample-transfer geometry once and packs each logical chunk as aligned raw-DEFLATE

@@ -1,4 +1,4 @@
-use g_genotype_contracts::VariantMetadataInvariantError;
+use g_genotype_contracts::{BgenContentSha256, VariantMetadataInvariantError};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -9,6 +9,14 @@ pub enum BgenError {
     UnsupportedFormat(String),
     #[error("{0}")]
     Range(String),
+    #[error("BGEN content SHA-256 mismatch: expected {expected}, observed {observed}.")]
+    ContentSha256Mismatch { expected: BgenContentSha256, observed: BgenContentSha256 },
+    #[error("BGEN content byte-count mismatch: expected {expected_byte_count}, observed {observed_byte_count}.")]
+    ContentByteCountMismatch { expected_byte_count: u64, observed_byte_count: u64 },
+    #[error(
+        "Content-selected BGEN input contains {source_byte_count} bytes, exceeding the owned-snapshot limit of {maximum_snapshot_byte_count} bytes."
+    )]
+    ContentSelectionRequiresOwnedSnapshot { source_byte_count: u64, maximum_snapshot_byte_count: u64 },
     #[error("I/O error while reading BGEN file: {0}")]
     Io(#[from] std::io::Error),
 }

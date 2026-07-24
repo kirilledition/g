@@ -8,5 +8,8 @@
 pub const RAW_DEFLATE_MEMBER_ALIGNMENT: usize = 4;
 
 pub use crate::metadata::{VariantMetadataColumns, VariantMetadataInvariantError, VariantMetadataStore};
-pub use crate::source::BgenSourceIdentity;
+pub use crate::source::{
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, BgenContentSha256ParseError,
+    BgenSnapshotResolution, BgenSourceIdentity, BgenSourceProvenance,
+};
 pub use crate::statistics::{ChunkOutputStatistics, NullableFloat32Column};
