@@ -90,3 +90,20 @@ def test_raw_cuda_mode_requires_exact_registered_target(
         benchmark_firth_compute.register_firth_components_implementation(arguments)
         == cuda_ffi.FIRTH_COMPONENTS_FFI_TARGET
     )
+
+
+def test_summary_schema_version_is_integer_zero() -> None:
+    payload = {"schema_version": benchmark_firth_compute.SUMMARY_SCHEMA_VERSION}
+
+    assert payload["schema_version"] == 0
+    benchmark_firth_compute._validate_summary_schema_version(payload)
+
+
+def test_summary_schema_version_rejects_non_integer_payload() -> None:
+    with pytest.raises(ValueError, match="integer 0"):
+        benchmark_firth_compute._validate_summary_schema_version({"schema_version": True})
+
+
+def test_summary_schema_version_rejects_unexpected_version() -> None:
+    with pytest.raises(ValueError, match="Expected CUDA qualification schema_version"):
+        benchmark_firth_compute._validate_summary_schema_version({"schema_version": 1})
