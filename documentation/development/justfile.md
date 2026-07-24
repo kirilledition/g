@@ -88,12 +88,18 @@ Justfile entrypoint model. Use the
 [trusted scheduler launch](regenie-parity-suite.md#trusted-scheduler-launch):
 the scheduler selects a full commit, extracts and hashes that commit's
 qualification bootstrap with replacement-disabled `/usr/bin/git`, and invokes
-the temporary executable on `landau` under a clean environment. The bootstrap
-validates the live job and step, creates an isolated detached non-local clone,
-builds a nonce-stamped exact-source release extension, runs exactly every
-required upstream-REGENIE workflow plus the bundle node, and independently
-validates the unique immutable sanitized bundle. Missing required local
-fixtures fail.
+the temporary executable directly on `landau` under a clean environment. The
+bootstrap executes commit-bound checkout and Slurm helpers. The latter
+validates two controller snapshots plus exact host PID/start,
+`listpids`/namespace/cgroup-v2 membership, and job/numeric-step resources,
+emitting canonical schema-0 evidence with scheduler entitlement true and
+kernel enforcement false on `abraxas`. The bootstrap creates an isolated
+detached non-local clone, builds a nonce-stamped exact-source release
+extension, validates its ELF/`ExtensionFileLoader`/PyO3 identity, runs exactly
+every required upstream-REGENIE workflow plus the bundle node, and
+independently validates the unique immutable sanitized schema-0 bundle. Each
+private schema-0 workflow report binds the run's Slurm-attestation digest.
+Missing required local fixtures fail.
 
 `just test-parity-required`, `just test-parity-required-exact`, and
 `just slurm-gpu-test-parity-required` intentionally refuse to run or publish

@@ -5,12 +5,17 @@ from __future__ import annotations
 import datetime
 import hashlib
 import importlib
+import importlib.machinery
 import importlib.metadata
 import importlib.util
 import json
 import os
 import socket
+import stat
+import struct
 import subprocess
+import sys
+import types
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +24,7 @@ import pytest
 
 import tests.parity.harness
 import tooling.science_gate
+import tooling.server.exact_parity_slurm
 
 if typing.TYPE_CHECKING:
     import polars as pl
@@ -34,6 +40,9 @@ EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_SCIENC
 EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_PATH"
 EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_SHA256"
 EXPECTED_BUNDLE_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_EXPECTED_BUNDLE_PATH"
+SLURM_ATTESTATION_RELATIVE_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_ATTESTATION_RELATIVE_PATH"
+SLURM_ATTESTATION_PATH_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_ATTESTATION_PATH"
+SLURM_ATTESTATION_SHA256_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_ATTESTATION_SHA256"
 RUN_NONCE_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_RUN_NONCE"
 RUN_STARTED_AT_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_RUN_STARTED_AT_UTC"
 SLURM_JOB_ID_ENVIRONMENT_VARIABLE = "G_REGENIE_PARITY_SLURM_JOB_ID"
@@ -53,11 +62,16 @@ TRUSTED_SYSTEM_TOOL_PATHS = {
     "scontrol": "/usr/bin/scontrol",
 }
 DEFAULT_REPORT_DIRECTORY = REPOSITORY_ROOT / "results" / "parity" / "qualification"
+QUALIFICATION_REPORT_SCHEMA_VERSION = 0
+QUALIFICATION_BUNDLE_SCHEMA_VERSION = 0
 PARITY_METADATA = tests.parity.harness.load_golden_metadata()
 tests.parity.harness.assert_metadata_covers_required_workflows(PARITY_METADATA)
 QUANTITATIVE_WORKFLOW = PARITY_METADATA.workflow_by_identifier("quantitative_single_bgen_loco")
 BINARY_SCORE_ONLY_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_score_only")
 BINARY_APPROXIMATE_FIRTH_WORKFLOW = PARITY_METADATA.workflow_by_identifier("binary_approximate_firth")
+_QUALIFICATION_NATIVE_MODULE: types.ModuleType | None = None
+_CANONICAL_EXTENSION_CREATE_MODULE = importlib.machinery.ExtensionFileLoader.create_module
+_CANONICAL_EXTENSION_EXEC_MODULE = importlib.machinery.ExtensionFileLoader.exec_module
 
 pytestmark = [pytest.mark.phase0_data, pytest.mark.phase1_parity]
 
@@ -87,6 +101,8 @@ class NativeCoreProtocol(typing.Protocol):
     __build_source_clean__: bool
     __build_profile__: str
     __build_run_nonce__: str
+    __loader__: object
+    __spec__: importlib.machinery.ModuleSpec
     cli: NativeCliProtocol
 
 
@@ -128,11 +144,23 @@ class ExpectedNativeArtifact:
 
     library_path: Path
     library_sha256: str
+    device: int
+    inode: int
+    size_bytes: int
+    modification_time_nanoseconds: int
 
 
 @dataclass(frozen=True)
 class QualificationBootstrapIdentity:
     """Committed entrypoint selected by the trusted scheduler launcher."""
+
+    relative_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class QualificationSlurmAttestationIdentity:
+    """Durable canonical scheduler proof bound by each private report."""
 
     relative_path: str
     sha256: str
@@ -247,27 +275,183 @@ def require_exact_bundle_mode() -> None:
         pytest.skip("Exact-source bundle publication applies only to the required parity recipe.")
 
 
+def validate_native_module_specification(
+    native_specification: importlib.machinery.ModuleSpec | None,
+    expected_artifact: ExpectedNativeArtifact,
+    *,
+    label: str,
+) -> importlib.machinery.ExtensionFileLoader:
+    """Require the canonical CPython extension loader and exact artifact origin."""
+    if native_specification is None or native_specification.origin is None:
+        raise AssertionError(f"{label} could not locate the native extension")
+    if native_specification.name != "g._core":
+        raise AssertionError(f"{label} resolved the wrong native module name: {native_specification.name}")
+    native_loader = native_specification.loader
+    if type(native_loader) is not importlib.machinery.ExtensionFileLoader:
+        raise AssertionError(f"{label} did not use ExtensionFileLoader exactly")
+    discovered_library_path = Path(native_specification.origin)
+    if (
+        not discovered_library_path.is_absolute()
+        or discovered_library_path.is_symlink()
+        or discovered_library_path.resolve(strict=True) != discovered_library_path
+        or discovered_library_path != expected_artifact.library_path
+    ):
+        raise AssertionError(
+            f"{label} import path differs from the just-built artifact: "
+            f"expected {expected_artifact.library_path}, observed {discovered_library_path}"
+        )
+    expected_loader_state = {
+        "name": "g._core",
+        "path": str(expected_artifact.library_path),
+    }
+    if (
+        vars(native_loader) != expected_loader_state
+        or getattr(native_loader.create_module, "__func__", None) is not _CANONICAL_EXTENSION_CREATE_MODULE
+        or getattr(native_loader.exec_module, "__func__", None) is not _CANONICAL_EXTENSION_EXEC_MODULE
+    ):
+        raise AssertionError(f"{label} ExtensionFileLoader has noncanonical executable state")
+    if (
+        Path(native_loader.path) != expected_artifact.library_path
+        or native_loader.name != "g._core"
+        or not native_specification.has_location
+        or native_specification.cached is not None
+        or native_specification.submodule_search_locations is not None
+    ):
+        raise AssertionError(f"{label} extension loader metadata is not canonical")
+    return native_loader
+
+
+def rollback_unvalidated_native_module(native_module: types.ModuleType | None = None) -> None:
+    """Remove a first-load module that failed post-execution validation."""
+    cached_native_module = sys.modules.get("g._core")
+    if native_module is None or cached_native_module is native_module:
+        sys.modules.pop("g._core", None)
+    parent_module = sys.modules.get("g")
+    if isinstance(parent_module, types.ModuleType) and (
+        native_module is None or getattr(parent_module, "_core", None) is native_module
+    ):
+        vars(parent_module).pop("_core", None)
+
+
+def execute_validated_native_specification(
+    native_specification: importlib.machinery.ModuleSpec,
+    native_loader: importlib.machinery.ExtensionFileLoader,
+) -> types.ModuleType:
+    """Execute one already-validated extension spec without finder re-resolution."""
+    parent_module = sys.modules.get("g")
+    if (
+        not isinstance(parent_module, types.ModuleType)
+        or parent_module.__name__ != "g"
+        or "g._core" in sys.modules
+        or "_core" in vars(parent_module)
+    ):
+        raise AssertionError("Required parity native extension parent package is not fresh")
+    native_module: types.ModuleType | None = None
+    try:
+        created_module = importlib.util.module_from_spec(native_specification)
+        if not isinstance(created_module, types.ModuleType):
+            raise AssertionError("Required parity extension loader created a nonmodule object")
+        native_module = created_module
+        if "g._core" in sys.modules or "_core" in vars(parent_module):
+            raise AssertionError("Required parity extension creation injected an unvalidated module")
+        sys.modules["g._core"] = native_module
+        _CANONICAL_EXTENSION_EXEC_MODULE(native_loader, native_module)
+        if sys.modules.get("g._core") is not native_module:
+            raise AssertionError("Required parity extension execution replaced its module cache entry")
+        setattr(parent_module, "_core", native_module)
+        return native_module
+    except BaseException:
+        rollback_unvalidated_native_module(native_module)
+        raise
+
+
+def validate_loaded_native_build_identity(
+    native_core: NativeCoreProtocol,
+    expected_artifact: ExpectedNativeArtifact,
+) -> None:
+    """Require the PyO3-exported build identity immediately after import."""
+    expected_git_commit = required_environment_value(EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE)
+    expected_science_source_sha256 = required_environment_value(EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE)
+    expected_run_nonce = required_environment_value(RUN_NONCE_ENVIRONMENT_VARIABLE)
+    if (
+        native_core.__build_git_commit__ != expected_git_commit
+        or native_core.__build_science_source_sha256__ != expected_science_source_sha256
+        or native_core.__build_source_clean__ is not True
+        or native_core.__build_profile__ != tests.parity.harness.NativeBuildProfile.RELEASE.value
+        or native_core.__build_run_nonce__ != expected_run_nonce
+    ):
+        raise AssertionError("Loaded PyO3 extension build identity differs from the trusted build request")
+    if (
+        native_core.__file__ is None
+        or Path(native_core.__file__).resolve(strict=True) != expected_artifact.library_path
+    ):
+        raise AssertionError("Loaded PyO3 extension path differs from the just-built artifact")
+    if (
+        not isinstance(native_core.cli, types.ModuleType)
+        or not isinstance(native_core.cli.run, types.BuiltinFunctionType)
+        or native_core.cli.run.__module__ != "g._core.cli"
+        or native_core.cli.run.__name__ != "run"
+    ):
+        raise AssertionError("Loaded PyO3 extension does not expose the expected native CLI boundary")
+
+
 def load_native_core() -> NativeCoreProtocol:
-    """Load the extension only at the native execution boundary."""
-    if parity_data_is_required():
-        expected_artifact = expected_native_artifact()
-        native_specification = importlib.util.find_spec("g._core")
-        if native_specification is None or native_specification.origin is None:
-            raise AssertionError("Required parity could not locate the native extension")
-        discovered_library_path = Path(native_specification.origin).resolve(strict=True)
-        if discovered_library_path != expected_artifact.library_path:
-            raise AssertionError(
-                f"Native extension import path differs from the just-built artifact: "
-                f"expected {expected_artifact.library_path}, observed {discovered_library_path}"
-            )
-        discovered_library_sha256 = tests.parity.harness.sha256_file(discovered_library_path)
-        if discovered_library_sha256 != expected_artifact.library_sha256:
-            raise AssertionError(
-                f"Native extension import bytes differ from the just-built artifact: "
-                f"expected {expected_artifact.library_sha256}, observed {discovered_library_sha256}"
-            )
-    native_module = importlib.import_module("g._core")
-    return typing.cast("NativeCoreProtocol", native_module)
+    """Load the extension only through a verified fresh CPython extension boundary."""
+    global _QUALIFICATION_NATIVE_MODULE
+
+    if not parity_data_is_required():
+        return typing.cast("NativeCoreProtocol", importlib.import_module("g._core"))
+
+    expected_artifact_before_import = expected_native_artifact()
+    existing_native_module = sys.modules.get("g._core")
+    if _QUALIFICATION_NATIVE_MODULE is None:
+        if existing_native_module is not None:
+            raise AssertionError("Required parity refuses a native extension loaded before validation")
+    elif existing_native_module is not _QUALIFICATION_NATIVE_MODULE:
+        raise AssertionError("Required parity native extension cache identity changed")
+    if existing_native_module is not None:
+        existing_specification = existing_native_module.__spec__
+        existing_loader = validate_native_module_specification(
+            existing_specification,
+            expected_artifact_before_import,
+            label="Required parity cached-module specification",
+        )
+        if existing_native_module.__loader__ is not existing_loader:
+            raise AssertionError("Required parity cached module has inconsistent extension loaders")
+        native_module = existing_native_module
+    else:
+        native_specification_before_import = importlib.util.find_spec("g._core")
+        native_loader_before_import = validate_native_module_specification(
+            native_specification_before_import,
+            expected_artifact_before_import,
+            label="Required parity pre-import specification",
+        )
+        if native_specification_before_import is None:
+            raise AssertionError("Required parity pre-import specification disappeared")
+        native_module = execute_validated_native_specification(
+            native_specification_before_import,
+            native_loader_before_import,
+        )
+    native_core = typing.cast("NativeCoreProtocol", native_module)
+    try:
+        native_loader_after_import = validate_native_module_specification(
+            native_core.__spec__,
+            expected_artifact_before_import,
+            label="Required parity post-import specification",
+        )
+        if native_loader_after_import is not native_core.__loader__:
+            raise AssertionError("Required parity module specification and module loader disagree")
+        validate_loaded_native_build_identity(native_core, expected_artifact_before_import)
+        expected_artifact_after_import = expected_native_artifact()
+        if expected_artifact_after_import != expected_artifact_before_import:
+            raise AssertionError("Native extension file identity changed during import")
+    except BaseException:
+        if _QUALIFICATION_NATIVE_MODULE is None:
+            rollback_unvalidated_native_module(native_module)
+        raise
+    if _QUALIFICATION_NATIVE_MODULE is None:
+        _QUALIFICATION_NATIVE_MODULE = native_module
+    return native_core
 
 
 def required_environment_value(variable_name: str) -> str:
@@ -279,7 +463,7 @@ def required_environment_value(variable_name: str) -> str:
 
 
 def expected_native_artifact() -> ExpectedNativeArtifact:
-    """Validate the trusted path and digest before importing native code."""
+    """Validate a canonical regular ELF with embedded PyO3 build identity."""
     library_path_value = required_environment_value(EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE)
     library_sha256 = required_environment_value(EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE)
     if tests.parity.harness.SHA256_PATTERN.fullmatch(library_sha256) is None:
@@ -287,16 +471,60 @@ def expected_native_artifact() -> ExpectedNativeArtifact:
     library_path = Path(library_path_value)
     if not library_path.is_absolute():
         raise AssertionError("Required parity expected native library path must be absolute")
-    library_path = library_path.resolve(strict=True)
-    observed_library_sha256 = tests.parity.harness.sha256_file(library_path)
+    if library_path.is_symlink() or library_path.resolve(strict=True) != library_path:
+        raise AssertionError("Required parity expected native library path must be canonical and nonsymbolic")
+    initial_status = library_path.lstat()
+    if not stat.S_ISREG(initial_status.st_mode):
+        raise AssertionError("Required parity expected native library must be a regular file")
+    library_bytes = library_path.read_bytes()
+    observed_library_sha256 = sha256_bytes(library_bytes)
     if observed_library_sha256 != library_sha256:
         raise AssertionError(
             f"Just-built native extension bytes changed before import: "
             f"expected {library_sha256}, observed {observed_library_sha256}"
         )
+    if len(library_bytes) < 64 or library_bytes[:4] != b"\x7fELF":
+        raise AssertionError("Just-built native extension is not an ELF file")
+    if library_bytes[4:7] != b"\x02\x01\x01":
+        raise AssertionError("Just-built native extension is not a 64-bit little-endian ELF v1 file")
+    elf_type, elf_machine, elf_version = struct.unpack_from("<HHI", library_bytes, offset=16)
+    if elf_type != 3 or elf_machine != 62 or elf_version != 1:
+        raise AssertionError("Just-built native extension has the wrong ELF type, machine, or version")
+    required_embedded_values = (
+        b"PyInit__core",
+        b"__build_git_commit__",
+        b"__build_science_source_sha256__",
+        b"__build_source_clean__",
+        b"__build_profile__",
+        b"__build_run_nonce__",
+        required_environment_value(EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE).encode(),
+        required_environment_value(EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE).encode(),
+        required_environment_value(RUN_NONCE_ENVIRONMENT_VARIABLE).encode(),
+    )
+    if any(embedded_value not in library_bytes for embedded_value in required_embedded_values):
+        raise AssertionError("Just-built native ELF lacks the expected PyO3 build identity")
+    final_status = library_path.lstat()
+    expected_status_fields = (
+        initial_status.st_dev,
+        initial_status.st_ino,
+        initial_status.st_size,
+        initial_status.st_mtime_ns,
+    )
+    observed_status_fields = (
+        final_status.st_dev,
+        final_status.st_ino,
+        final_status.st_size,
+        final_status.st_mtime_ns,
+    )
+    if observed_status_fields != expected_status_fields:
+        raise AssertionError("Just-built native extension file identity changed during validation")
     return ExpectedNativeArtifact(
         library_path=library_path,
         library_sha256=library_sha256,
+        device=initial_status.st_dev,
+        inode=initial_status.st_ino,
+        size_bytes=initial_status.st_size,
+        modification_time_nanoseconds=initial_status.st_mtime_ns,
     )
 
 
@@ -834,6 +1062,48 @@ def validated_bootstrap_identity() -> QualificationBootstrapIdentity:
     )
 
 
+def validated_slurm_attestation() -> QualificationSlurmAttestationIdentity:
+    """Validate the durable canonical scheduler proof for this private run."""
+    relative_path = required_environment_value(SLURM_ATTESTATION_RELATIVE_PATH_ENVIRONMENT_VARIABLE)
+    if relative_path != "slurm_process_attestation.json":
+        raise AssertionError(f"Required parity Slurm attestation path is unknown: {relative_path}")
+    attestation_path = Path(required_environment_value(SLURM_ATTESTATION_PATH_ENVIRONMENT_VARIABLE))
+    expected_attestation_path = qualification_report_directory() / relative_path
+    if (
+        not attestation_path.is_absolute()
+        or attestation_path != expected_attestation_path
+        or attestation_path.is_symlink()
+        or not attestation_path.is_file()
+        or attestation_path.resolve(strict=True) != attestation_path
+    ):
+        raise AssertionError("Required parity Slurm attestation path is not the durable run ancestor")
+    attestation_sha256 = required_environment_value(SLURM_ATTESTATION_SHA256_ENVIRONMENT_VARIABLE)
+    if (
+        tests.parity.harness.SHA256_PATTERN.fullmatch(attestation_sha256) is None
+        or tests.parity.harness.sha256_file(attestation_path) != attestation_sha256
+    ):
+        raise AssertionError("Required parity Slurm attestation digest is malformed or stale")
+    attestation_bytes = attestation_path.read_bytes()
+    attestation = tooling.server.exact_parity_slurm.parse_slurm_process_attestation(json.loads(attestation_bytes))
+    if tooling.server.exact_parity_slurm.canonical_slurm_process_attestation(attestation) != attestation_bytes:
+        raise AssertionError("Required parity Slurm attestation is not canonical JSON")
+    bootstrap_identity = validated_bootstrap_identity()
+    if (
+        attestation.cluster_name != "abraxas"
+        or attestation.node_name != qualification_node_name()
+        or attestation.job_id != validated_slurm_job_id()
+        or attestation.step_id != validated_slurm_step_id()
+        or attestation.bootstrap_sha256 != bootstrap_identity.sha256
+        or attestation.scheduler_entitlement_proven is not True
+        or attestation.kernel_enforcement_proven is not False
+    ):
+        raise AssertionError("Required parity Slurm attestation does not cover this qualification run")
+    return QualificationSlurmAttestationIdentity(
+        relative_path=relative_path,
+        sha256=attestation_sha256,
+    )
+
+
 def qualification_tool_evidence(tool_name: str) -> tests.parity.harness.QualificationToolEvidence:
     """Return one bootstrap-recorded executable identity."""
     environment_tool_name = tool_name.upper()
@@ -935,8 +1205,8 @@ def observe_qualification_device() -> tests.parity.harness.QualificationDeviceEv
     """Observe and require one homogeneous JAX CUDA device family."""
     jax_module = typing.cast("JaxModuleProtocol", importlib.import_module("jax"))
     devices = tuple(jax_module.devices())
-    if not devices:
-        raise AssertionError("Required CUDA qualification observed no JAX devices")
+    if len(devices) != tests.parity.harness.REQUIRED_QUALIFICATION_GPU_COUNT:
+        raise AssertionError("Required CUDA qualification must observe exactly one JAX device")
     platforms = {device.platform for device in devices}
     device_kinds = {device.device_kind for device in devices}
     backend_platform_versions = {device.client.platform_version for device in devices}
@@ -1070,25 +1340,27 @@ def write_qualification_report(
         if qualification_passed
         else None
     )
+    slurm_attestation_identity = validated_slurm_attestation() if qualification_evidence is not None else None
+    report_run_payload: dict[str, object] | None = None
+    if qualification_evidence is not None and slurm_attestation_identity is not None:
+        report_run_payload = {
+            "qualification_node": qualification_evidence.qualification_node,
+            "slurm_job_id": qualification_evidence.slurm_job_id,
+            "slurm_step_id": qualification_evidence.slurm_step_id,
+            "run_nonce": qualification_evidence.run_nonce,
+            "run_started_at_utc": qualification_evidence.run_started_at_utc,
+            "bootstrap_relative_path": qualification_evidence.bootstrap_relative_path,
+            "bootstrap_sha256": qualification_evidence.bootstrap_sha256,
+            "slurm_attestation_relative_path": slurm_attestation_identity.relative_path,
+            "slurm_attestation_sha256": slurm_attestation_identity.sha256,
+            "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(
+                qualification_evidence.toolchain
+            ),
+        }
     report_payload: dict[str, object] = {
-        "schema_version": 3,
+        "schema_version": QUALIFICATION_REPORT_SCHEMA_VERSION,
         "generated_at_utc": generated_at.isoformat(),
-        "run": (
-            None
-            if qualification_evidence is None
-            else {
-                "qualification_node": qualification_evidence.qualification_node,
-                "slurm_job_id": qualification_evidence.slurm_job_id,
-                "slurm_step_id": qualification_evidence.slurm_step_id,
-                "run_nonce": qualification_evidence.run_nonce,
-                "run_started_at_utc": qualification_evidence.run_started_at_utc,
-                "bootstrap_relative_path": qualification_evidence.bootstrap_relative_path,
-                "bootstrap_sha256": qualification_evidence.bootstrap_sha256,
-                "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(
-                    qualification_evidence.toolchain
-                ),
-            }
-        ),
+        "run": report_run_payload,
         "workflow": {
             "identifier": workflow.identifier,
             "gate_status": workflow.gate_status.value,
@@ -1367,9 +1639,14 @@ def load_report_qualification_evidence(
 ) -> LoadedQualificationReport:
     """Load and validate promotable evidence from one ignored report."""
     report_directory = qualification_report_directory().resolve(strict=True)
-    if report.report_path.is_symlink() or not report.report_path.is_file():
-        raise AssertionError(f"Qualification report is not a regular file: {report.report_path}")
-    report_path = report.report_path.resolve(strict=True)
+    if (
+        not report.report_path.is_absolute()
+        or report.report_path.is_symlink()
+        or not report.report_path.is_file()
+        or report.report_path.resolve(strict=True) != report.report_path
+    ):
+        raise AssertionError(f"Qualification report is not a canonical nonsymbolic file: {report.report_path}")
+    report_path = report.report_path
     try:
         report_relative_path = report_path.relative_to(report_directory)
     except ValueError as error:
@@ -1397,7 +1674,14 @@ def load_report_qualification_evidence(
             "statistics",
         },
     )
-    if payload.get("schema_version") != 3:
+    try:
+        schema_version = tests.parity.harness.parse_integer(
+            payload["schema_version"],
+            label="qualification report.schema_version",
+        )
+    except ValueError as error:
+        raise AssertionError(f"Unsupported qualification report schema: {report_path}") from error
+    if schema_version != QUALIFICATION_REPORT_SCHEMA_VERSION:
         raise AssertionError(f"Unsupported qualification report schema: {report_path}")
     workflow_payload = tests.parity.harness.parse_mapping(payload["workflow"], label="qualification report.workflow")
     tests.parity.harness.require_mapping_fields(
@@ -1435,8 +1719,20 @@ def load_report_qualification_evidence(
             "run_started_at_utc",
             "bootstrap_relative_path",
             "bootstrap_sha256",
+            "slurm_attestation_relative_path",
+            "slurm_attestation_sha256",
             "toolchain",
         },
+    )
+    slurm_attestation_relative_path = tests.parity.harness.parse_nonempty_string(
+        run_payload["slurm_attestation_relative_path"],
+        label="qualification report.run.slurm_attestation_relative_path",
+    )
+    if slurm_attestation_relative_path != "slurm_process_attestation.json":
+        raise AssertionError(f"Qualification report Slurm attestation path is unknown: {report_path}")
+    slurm_attestation_sha256 = tests.parity.harness.parse_sha256(
+        run_payload["slurm_attestation_sha256"],
+        label="qualification report.run.slurm_attestation_sha256",
     )
     expected_run_payload = {
         "qualification_node": evidence.qualification_node,
@@ -1446,10 +1742,35 @@ def load_report_qualification_evidence(
         "run_started_at_utc": evidence.run_started_at_utc,
         "bootstrap_relative_path": evidence.bootstrap_relative_path,
         "bootstrap_sha256": evidence.bootstrap_sha256,
+        "slurm_attestation_relative_path": slurm_attestation_relative_path,
+        "slurm_attestation_sha256": slurm_attestation_sha256,
         "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(evidence.toolchain),
     }
     if run_payload != expected_run_payload:
         raise AssertionError(f"Qualification report run identity mismatch: {report_path}")
+    slurm_attestation_path = report_directory / slurm_attestation_relative_path
+    if (
+        slurm_attestation_path.is_symlink()
+        or not slurm_attestation_path.is_file()
+        or slurm_attestation_path.resolve(strict=True) != slurm_attestation_path
+        or tests.parity.harness.sha256_file(slurm_attestation_path) != slurm_attestation_sha256
+    ):
+        raise AssertionError(f"Qualification report Slurm attestation ancestor mismatch: {report_path}")
+    slurm_attestation_bytes = slurm_attestation_path.read_bytes()
+    slurm_attestation = tooling.server.exact_parity_slurm.parse_slurm_process_attestation(
+        json.loads(slurm_attestation_bytes)
+    )
+    if (
+        tooling.server.exact_parity_slurm.canonical_slurm_process_attestation(slurm_attestation)
+        != slurm_attestation_bytes
+        or slurm_attestation.node_name != evidence.qualification_node
+        or slurm_attestation.job_id != evidence.slurm_job_id
+        or slurm_attestation.step_id != evidence.slurm_step_id
+        or slurm_attestation.bootstrap_sha256 != evidence.bootstrap_sha256
+        or slurm_attestation.scheduler_entitlement_proven is not True
+        or slurm_attestation.kernel_enforcement_proven is not False
+    ):
+        raise AssertionError(f"Qualification report Slurm attestation claim mismatch: {report_path}")
     output_payload = tests.parity.harness.parse_mapping(
         payload["output"],
         label="qualification report.output",
@@ -1912,7 +2233,7 @@ def write_qualification_bundle(reports: tuple[WorkflowQualificationReport, ...])
     if generated_at < run_started_at:
         raise AssertionError("Qualification bundle predates its scheduler run")
     bundle_payload: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": QUALIFICATION_BUNDLE_SCHEMA_VERSION,
         "generated_at_utc": generated_at.isoformat(),
         "qualified_git_commit": source_state.git_commit,
         "science_source_sha256": source_state.science_source_sha256,
@@ -1979,6 +2300,13 @@ def validate_published_qualification_bundle(
 ) -> None:
     """Independently validate one freshly published sanitized bundle."""
     report_directory = qualification_report_directory().resolve(strict=True)
+    if (
+        not bundle_path.is_absolute()
+        or bundle_path.is_symlink()
+        or not bundle_path.is_file()
+        or bundle_path.resolve(strict=True) != bundle_path
+    ):
+        raise AssertionError(f"Qualification bundle path is not a canonical nonsymbolic file: {bundle_path}")
     resolved_bundle_path = bundle_path.resolve(strict=True)
     try:
         resolved_bundle_path.relative_to(report_directory)
@@ -2000,7 +2328,14 @@ def validate_published_qualification_bundle(
             "workflows",
         },
     )
-    if payload["schema_version"] != 2:
+    try:
+        schema_version = tests.parity.harness.parse_integer(
+            payload["schema_version"],
+            label="qualification bundle.schema_version",
+        )
+    except ValueError as error:
+        raise AssertionError("Unsupported qualification bundle schema") from error
+    if schema_version != QUALIFICATION_BUNDLE_SCHEMA_VERSION:
         raise AssertionError("Unsupported qualification bundle schema")
     if payload["qualified_git_commit"] != expected_git_commit:
         raise AssertionError("Qualification bundle Git commit mismatch")
@@ -2113,12 +2448,23 @@ def validate_published_qualification_bundle(
         )
         if evidence_generated_at > generated_at:
             raise AssertionError(f"Qualification evidence postdates its bundle for {workflow_identifier}")
-        report_relative_path = Path(
-            tests.parity.harness.parse_nonempty_string(
-                workflow_payload["qualification_report_relative_path"],
-                label="qualification bundle.workflow.qualification_report_relative_path",
-            )
+        report_relative_path_value = tests.parity.harness.parse_nonempty_string(
+            workflow_payload["qualification_report_relative_path"],
+            label="qualification bundle.workflow.qualification_report_relative_path",
         )
+        report_relative_path = Path(report_relative_path_value)
+        if (
+            report_relative_path.is_absolute()
+            or not report_relative_path.parts
+            or ".." in report_relative_path.parts
+            or report_relative_path.as_posix() != report_relative_path_value
+            or len(report_relative_path.parts) != 2
+            or report_relative_path.parts[0] != workflow_identifier
+            or report_relative_path.suffix != ".json"
+        ):
+            raise AssertionError(
+                f"Qualification report path is not canonical and relative: {report_relative_path_value}"
+            )
         report_path = (report_directory / report_relative_path).resolve(strict=True)
         try:
             report_path.relative_to(report_directory)

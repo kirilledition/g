@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Exact-head foundation | Python tests as of 2026-07-23 | Correctness maintainers |
+| Exact-head foundation | Python tests as of 2026-07-24 | Correctness maintainers |
 
 The active Python suite is intentionally a mathematical and external-parity
 surface. It does not pretend that deleted product tests still protect the
@@ -25,8 +25,9 @@ code. Product tests for deleted Python orchestration modules are not revived.
 
 ## Plumbing Repairs
 
-- `just test-local-focused` now names an existing login-safe test instead of
-  deleted `tests/test_core.py` and `tests/test_io_output.py`.
+- `just test-local-focused` names the login-safe exact-checkout, synthetic
+  Slurm-attestation, and parity-harness modules instead of deleted product
+  tests.
 - GitHub workflows no longer require deleted `tests/test_cli_smoke.py`. The
   package-install job remains the real installed-console-script smoke check.
 - Non-data CI still collects the active mathematical suite and the parity
@@ -34,10 +35,21 @@ code. Product tests for deleted Python orchestration modules are not revived.
 - Exact-head publication starts from a scheduler-selected full commit. The
   trusted launcher extracts and hashes that commit's
   `tooling/server/exact_parity_bootstrap.sh`, then invokes it on `landau`
-  through system Bash under `env -i`. The bootstrap validates the live Slurm
-  job/step/user/node/state, creates a unique detached non-local clone, invokes
-  exact required node IDs, and turns absent protected fixtures into failures.
+  directly through its fixed system-Bash shebang under `env -i`. The bootstrap
+  extracts commit-bound checkout and Slurm helpers. The Slurm helper validates
+  two controller snapshots, the exact host PID/start and direct command,
+  local `listpids`, namespaces, structural cgroup-v2 membership, and scheduler
+  resources. It emits strict canonical schema-0 evidence with scheduler
+  entitlement proven and kernel enforcement unproven on `abraxas`.
+  The bootstrap creates a unique detached non-local clone, invokes exact
+  required node IDs, and turns absent protected fixtures into failures.
 - Qualification evidence binds the job, step, nonce, bootstrap, and the
+  private run-ancestor Slurm attestation path and SHA-256. Each workflow report
+  uses strict schema 0; the sanitized schema-0 bundle covers that binding through the
+  report digest without exposing the private attestation. Evidence also binds
+  the sole live native ELF through its exact path/digest/file identity,
+  CPython `ExtensionFileLoader`, and PyO3 build identity before and after
+  import. It records
   paths, versions, and SHA-256 digests of `bash`, `ar`, `as`, `cc`, GCC
   `cc1`/`cc1plus`/`collect2`, `cargo`, `c++`, `env`, `git`, `just`, Maturin,
   Mold, the selected and private-venv Python interpreters, `ranlib`, `rustc`,

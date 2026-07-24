@@ -4,9 +4,11 @@ import ast
 import dataclasses
 import datetime
 import hashlib
+import importlib.machinery
 import json
-import os
+import struct
 import subprocess
+import sys
 import types
 import typing
 from pathlib import Path
@@ -18,6 +20,82 @@ import pytest
 import tests.numerical
 import tests.parity.harness
 import tooling.science_gate
+import tooling.server.exact_parity_slurm
+
+
+def write_synthetic_native_elf(
+    file_path: Path,
+    *,
+    git_commit: str,
+    science_source_sha256: str,
+    run_nonce: str,
+) -> None:
+    """Write the minimal ELF and embedded identity accepted by focused tests."""
+    elf_header = bytearray(64)
+    elf_header[:7] = b"\x7fELF\x02\x01\x01"
+    struct.pack_into("<HHI", elf_header, 16, 3, 62, 1)
+    embedded_values = (
+        b"PyInit__core",
+        b"__build_git_commit__",
+        b"__build_science_source_sha256__",
+        b"__build_source_clean__",
+        b"__build_profile__",
+        b"__build_run_nonce__",
+        git_commit.encode(),
+        science_source_sha256.encode(),
+        run_nonce.encode(),
+    )
+    file_path.write_bytes(bytes(elf_header) + b"\0".join(embedded_values) + b"\0")
+
+
+def write_synthetic_slurm_attestation(
+    file_path: Path,
+    *,
+    evidence: tests.parity.harness.QualificationEvidence,
+) -> str:
+    """Write a canonical private Slurm attestation for bundle tests."""
+    bootstrap_path = "/tmp/exact_parity_bootstrap.sh"
+    attestation = tooling.server.exact_parity_slurm.SlurmProcessAttestation(
+        schema_version=tooling.server.exact_parity_slurm.SCHEMA_VERSION,
+        cluster_name="abraxas",
+        node_name=evidence.qualification_node,
+        job_id=evidence.slurm_job_id,
+        step_id=evidence.slurm_step_id,
+        user_name="parity-user",
+        user_id=1017,
+        host_boot_id="12345678-1234-5678-9234-567812345678",
+        host_process_id=4242,
+        host_process_start_time_ticks=9001,
+        host_process_pid_namespace_inode=4026533662,
+        host_process_cgroup_namespace_inode=4026531835,
+        cgroup_v2_path=f"/system.slice/slurmstepd.scope/job_{evidence.slurm_job_id}/step_{evidence.slurm_step_id}/user/task_0",
+        job_node_count=1,
+        job_cpu_count=8,
+        job_memory_bytes=64 * 1024**3,
+        job_gpu_count=1,
+        job_task_count=1,
+        step_node_count=1,
+        step_cpu_count=8,
+        step_memory_bytes=64 * 1024**3,
+        step_gpu_count=1,
+        step_task_count=1,
+        first_job_record_sha256="1" * 64,
+        second_job_record_sha256="2" * 64,
+        first_step_record_sha256="3" * 64,
+        second_step_record_sha256="4" * 64,
+        listpids_sha256="5" * 64,
+        bootstrap_path=bootstrap_path,
+        bootstrap_sha256=evidence.bootstrap_sha256,
+        job_command=bootstrap_path,
+        bootstrap_process_command_sha256="6" * 64,
+        constrain_cores=False,
+        constrain_ram_space=False,
+        constrain_devices=False,
+        scheduler_entitlement_proven=True,
+        kernel_enforcement_proven=False,
+    )
+    file_path.write_bytes(tooling.server.exact_parity_slurm.canonical_slurm_process_attestation(attestation))
+    return tests.parity.harness.sha256_file(file_path)
 
 
 def variant_frame(*, beta_values: list[float], log10p_values: list[float]) -> pl.DataFrame:
@@ -49,6 +127,23 @@ def test_golden_metadata_covers_only_required_external_workflows() -> None:
     assert all(
         workflow.qualification_hosts == tests.parity.harness.REQUIRED_QUALIFICATION_HOSTS
         for workflow in metadata.workflows
+    )
+
+
+def test_unreleased_qualification_schemas_remain_zero() -> None:
+    """Keep every private pre-release evidence contract at schema zero."""
+    import tests.test_regenie2_parity
+
+    assert tooling.server.exact_parity_slurm.SCHEMA_VERSION == 0
+    assert tests.test_regenie2_parity.QUALIFICATION_REPORT_SCHEMA_VERSION == 0
+    assert tests.test_regenie2_parity.QUALIFICATION_BUNDLE_SCHEMA_VERSION == 0
+
+
+def test_exact_qualification_gpu_count_matches_slurm_attestation() -> None:
+    """Keep runtime-device evidence aligned with the exact scheduler lane."""
+    assert (
+        tests.parity.harness.REQUIRED_QUALIFICATION_GPU_COUNT
+        == tooling.server.exact_parity_slurm.QUALIFICATION_GPU_COUNT
     )
 
 
@@ -372,6 +467,18 @@ def test_qualification_rejects_wrong_host_or_non_cuda_device() -> None:
             science_source_sha256=science_source_sha256,
         )
 
+    multiple_device_evidence = dataclasses.replace(
+        evidence,
+        actual_device=dataclasses.replace(evidence.actual_device, device_count=2),
+    )
+    with pytest.raises(AssertionError, match="exactly one JAX CUDA device"):
+        tests.parity.harness.assert_workflow_qualification_is_current(
+            workflow,
+            multiple_device_evidence,
+            git_commit=evidence.qualified_git_commit,
+            science_source_sha256=science_source_sha256,
+        )
+
     stale_run_evidence = dataclasses.replace(evidence, run_nonce="2" * 32)
     with pytest.raises(AssertionError, match="run nonce differs"):
         tests.parity.harness.assert_workflow_qualification_is_current(
@@ -532,13 +639,28 @@ def test_exact_source_rejects_committed_science_symlink(tmp_path: Path) -> None:
         tooling.science_gate.assert_clean_exact_source(repository_root, git_commit)
 
 
-@pytest.mark.parametrize("forbidden_environment_name", ["BASH_ENV", "LD_PRELOAD"])
+@pytest.mark.parametrize(
+    "forbidden_environment_name",
+    [
+        "BASH_ENV",
+        "G_REGENIE_PARITY_LD_LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "SLURM_CLUSTERS",
+        "SLURM_CONF",
+        "SLURM_CONF_SERVER",
+    ],
+)
 def test_exact_bootstrap_rejects_pre_shell_injection_environment(
     forbidden_environment_name: str,
 ) -> None:
     bootstrap_path = tests.parity.harness.REPOSITORY_ROOT / tests.parity.harness.QUALIFICATION_BOOTSTRAP_RELATIVE_PATH
-    launch_environment = os.environ.copy()
-    launch_environment[forbidden_environment_name] = ""
+    launch_environment = {
+        "HOME": str(Path.home()),
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        forbidden_environment_name: "",
+    }
 
     completed_process = subprocess.run(
         [
@@ -605,7 +727,12 @@ def test_exact_qualification_rejects_stale_native_extension(
         science_source_sha256=science_source_sha256,
     )
     native_library_path = tmp_path / "_core.so"
-    native_library_path.write_bytes(b"native")
+    write_synthetic_native_elf(
+        native_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce="1" * 32,
+    )
     native_core = types.SimpleNamespace(
         __file__=str(native_library_path),
         __build_git_commit__=git_commit,
@@ -650,8 +777,18 @@ def test_exact_qualification_binds_loaded_native_path_and_run_nonce(
     science_source_sha256 = "b" * 64
     loaded_library_path = tmp_path / "loaded_core.so"
     expected_library_path = tmp_path / "expected_core.so"
-    loaded_library_path.write_bytes(b"native")
-    expected_library_path.write_bytes(b"native")
+    write_synthetic_native_elf(
+        loaded_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce="1" * 32,
+    )
+    write_synthetic_native_elf(
+        expected_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce="1" * 32,
+    )
     native_core = types.SimpleNamespace(
         __file__=str(loaded_library_path),
         __build_git_commit__=git_commit,
@@ -694,6 +831,16 @@ def test_exact_qualification_binds_loaded_native_path_and_run_nonce(
         str(loaded_library_path),
     )
     monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, "2" * 32)
+    write_synthetic_native_elf(
+        loaded_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce="2" * 32,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(loaded_library_path),
+    )
     with pytest.raises(AssertionError, match="wrong qualification nonce"):
         tests.test_regenie2_parity.assert_exact_qualification_source(
             typing.cast("tests.test_regenie2_parity.NativeCoreProtocol", native_core)
@@ -708,9 +855,34 @@ def test_required_native_import_rejects_wrong_spec_before_execution(
 
     expected_library_path = tmp_path / "expected_core.so"
     unexpected_library_path = tmp_path / "unexpected_core.so"
-    expected_library_path.write_bytes(b"expected")
-    unexpected_library_path.write_bytes(b"unexpected")
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    run_nonce = "1" * 32
+    write_synthetic_native_elf(
+        expected_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
+    write_synthetic_native_elf(
+        unexpected_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
     monkeypatch.setenv(tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE, "1")
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE,
+        git_commit,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE,
+        run_nonce,
+    )
     monkeypatch.setenv(
         tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
         str(expected_library_path),
@@ -719,10 +891,21 @@ def test_required_native_import_rejects_wrong_spec_before_execution(
         tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
         tests.parity.harness.sha256_file(expected_library_path),
     )
+    unexpected_loader = importlib.machinery.ExtensionFileLoader(
+        "g._core",
+        str(unexpected_library_path),
+    )
+    unexpected_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        unexpected_loader,
+        origin=str(unexpected_library_path),
+        is_package=False,
+    )
+    unexpected_specification.has_location = True
     monkeypatch.setattr(
         tests.test_regenie2_parity.importlib.util,
         "find_spec",
-        lambda _module_name: types.SimpleNamespace(origin=str(unexpected_library_path)),
+        lambda _module_name: unexpected_specification,
     )
     imported_modules: list[str] = []
     monkeypatch.setattr(
@@ -734,6 +917,245 @@ def test_required_native_import_rejects_wrong_spec_before_execution(
     with pytest.raises(AssertionError, match="import path differs"):
         tests.test_regenie2_parity.load_native_core()
     assert imported_modules == []
+
+
+def test_required_native_import_rejects_noncanonical_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    run_nonce = "1" * 32
+    native_library_path = tmp_path / "_core.so"
+    write_synthetic_native_elf(
+        native_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE,
+        git_commit,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, run_nonce)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(native_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(native_library_path),
+    )
+    expected_artifact = tests.test_regenie2_parity.expected_native_artifact()
+    source_loader = importlib.machinery.SourceFileLoader("g._core", str(native_library_path))
+    source_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        source_loader,
+        origin=str(native_library_path),
+        is_package=False,
+    )
+
+    with pytest.raises(AssertionError, match="did not use ExtensionFileLoader"):
+        tests.test_regenie2_parity.validate_native_module_specification(
+            source_specification,
+            expected_artifact,
+            label="synthetic",
+        )
+
+    class ForgedExtensionFileLoader(importlib.machinery.ExtensionFileLoader):
+        """Loader subclass that could override extension execution."""
+
+    forged_loader = ForgedExtensionFileLoader("g._core", str(native_library_path))
+    forged_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        forged_loader,
+        origin=str(native_library_path),
+        is_package=False,
+    )
+    with pytest.raises(AssertionError, match="did not use ExtensionFileLoader"):
+        tests.test_regenie2_parity.validate_native_module_specification(
+            forged_specification,
+            expected_artifact,
+            label="synthetic",
+        )
+
+    overridden_loader = importlib.machinery.ExtensionFileLoader("g._core", str(native_library_path))
+    setattr(overridden_loader, "exec_module", lambda _module: None)
+    overridden_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        overridden_loader,
+        origin=str(native_library_path),
+        is_package=False,
+    )
+    with pytest.raises(AssertionError, match="noncanonical executable state"):
+        tests.test_regenie2_parity.validate_native_module_specification(
+            overridden_specification,
+            expected_artifact,
+            label="synthetic",
+        )
+
+
+def test_required_native_import_uses_one_validated_finder_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    run_nonce = "1" * 32
+    native_library_path = tmp_path / "_core.so"
+    write_synthetic_native_elf(
+        native_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE, "1")
+    monkeypatch.setenv(tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE, git_commit)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, run_nonce)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(native_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(native_library_path),
+    )
+    native_loader = importlib.machinery.ExtensionFileLoader("g._core", str(native_library_path))
+    native_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        native_loader,
+        origin=str(native_library_path),
+        is_package=False,
+    )
+    native_specification.has_location = True
+    finder_call_count = 0
+
+    def find_spec_once(_module_name: str) -> importlib.machinery.ModuleSpec:
+        nonlocal finder_call_count
+        finder_call_count += 1
+        if finder_call_count > 1:
+            raise AssertionError("Required parity performed a second finder resolution")
+        return native_specification
+
+    monkeypatch.setattr(tests.test_regenie2_parity.importlib.util, "find_spec", find_spec_once)
+    monkeypatch.setattr(tests.test_regenie2_parity, "_QUALIFICATION_NATIVE_MODULE", None)
+    monkeypatch.delitem(sys.modules, "g._core", raising=False)
+    parent_module = importlib.import_module("g")
+    monkeypatch.delattr(parent_module, "_core", raising=False)
+
+    with pytest.raises(ImportError):
+        tests.test_regenie2_parity.load_native_core()
+
+    assert finder_call_count == 1
+    assert "g._core" not in sys.modules
+    assert not hasattr(parent_module, "_core")
+
+
+def test_required_native_import_rejects_preloaded_module(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    run_nonce = "1" * 32
+    native_library_path = tmp_path / "_core.so"
+    write_synthetic_native_elf(
+        native_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.REQUIRE_DATA_ENVIRONMENT_VARIABLE, "1")
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE,
+        git_commit,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, run_nonce)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(native_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(native_library_path),
+    )
+    native_loader = importlib.machinery.ExtensionFileLoader("g._core", str(native_library_path))
+    native_specification = importlib.machinery.ModuleSpec(
+        "g._core",
+        native_loader,
+        origin=str(native_library_path),
+        is_package=False,
+    )
+    native_specification.has_location = True
+    monkeypatch.setattr(
+        tests.test_regenie2_parity.importlib.util,
+        "find_spec",
+        lambda _module_name: native_specification,
+    )
+    monkeypatch.setattr(tests.test_regenie2_parity, "_QUALIFICATION_NATIVE_MODULE", None)
+    monkeypatch.setitem(sys.modules, "g._core", types.ModuleType("g._core"))
+
+    with pytest.raises(AssertionError, match="loaded before validation"):
+        tests.test_regenie2_parity.load_native_core()
+
+
+def test_required_native_artifact_rejects_wrong_elf_machine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.test_regenie2_parity
+
+    git_commit = "a" * 40
+    science_source_sha256 = "b" * 64
+    run_nonce = "1" * 32
+    native_library_path = tmp_path / "_core.so"
+    write_synthetic_native_elf(
+        native_library_path,
+        git_commit=git_commit,
+        science_source_sha256=science_source_sha256,
+        run_nonce=run_nonce,
+    )
+    native_library_bytes = bytearray(native_library_path.read_bytes())
+    struct.pack_into("<H", native_library_bytes, 18, 183)
+    native_library_path.write_bytes(native_library_bytes)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_GIT_COMMIT_ENVIRONMENT_VARIABLE,
+        git_commit,
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_SCIENCE_SOURCE_ENVIRONMENT_VARIABLE,
+        science_source_sha256,
+    )
+    monkeypatch.setenv(tests.test_regenie2_parity.RUN_NONCE_ENVIRONMENT_VARIABLE, run_nonce)
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_PATH_ENVIRONMENT_VARIABLE,
+        str(native_library_path),
+    )
+    monkeypatch.setenv(
+        tests.test_regenie2_parity.EXPECTED_NATIVE_LIBRARY_SHA256_ENVIRONMENT_VARIABLE,
+        tests.parity.harness.sha256_file(native_library_path),
+    )
+
+    with pytest.raises(AssertionError, match="wrong ELF type, machine, or version"):
+        tests.test_regenie2_parity.expected_native_artifact()
 
 
 def test_observed_qualification_device_requires_actual_jax_cuda(
@@ -775,6 +1197,10 @@ def test_observed_qualification_device_requires_actual_jax_cuda(
             cuda_runtime_version="12.9.79",
         )
     )
+
+    fake_jax_module.devices = lambda: [cuda_device, cuda_device]
+    with pytest.raises(AssertionError, match="exactly one JAX device"):
+        tests.test_regenie2_parity.observe_qualification_device()
 
     fake_jax_module.devices = lambda: [
         types.SimpleNamespace(
@@ -826,8 +1252,17 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
     native_library_path.parent.mkdir()
     native_library_path.write_bytes(b"x")
     native_library_sha256 = tests.parity.harness.sha256_file(native_library_path)
+    workflows = tests.parity.harness.load_golden_metadata().workflows
+    slurm_attestation_relative_path = "slurm_process_attestation.json"
+    slurm_attestation_sha256 = write_synthetic_slurm_attestation(
+        report_directory / slurm_attestation_relative_path,
+        evidence=qualification_evidence(
+            workflows[0],
+            science_source_sha256=science_source_sha256,
+        ),
+    )
     reports: list[tests.test_regenie2_parity.WorkflowQualificationReport] = []
-    for workflow in tests.parity.harness.load_golden_metadata().workflows:
+    for workflow in workflows:
         evidence = qualification_evidence(
             workflow,
             science_source_sha256=science_source_sha256,
@@ -863,7 +1298,7 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
         report_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 3,
+                    "schema_version": tests.test_regenie2_parity.QUALIFICATION_REPORT_SCHEMA_VERSION,
                     "generated_at_utc": evidence.qualification_generated_at_utc,
                     "run": {
                         "qualification_node": evidence.qualification_node,
@@ -873,6 +1308,8 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
                         "run_started_at_utc": evidence.run_started_at_utc,
                         "bootstrap_relative_path": evidence.bootstrap_relative_path,
                         "bootstrap_sha256": evidence.bootstrap_sha256,
+                        "slurm_attestation_relative_path": slurm_attestation_relative_path,
+                        "slurm_attestation_sha256": slurm_attestation_sha256,
                         "toolchain": tests.parity.harness.qualification_toolchain_evidence_payload(evidence.toolchain),
                     },
                     "workflow": {
@@ -1038,6 +1475,28 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
     with pytest.raises(AssertionError, match="workflow mismatch"):
         tests.test_regenie2_parity.write_qualification_bundle(tuple(reports[:-1]))
 
+    first_report_path = reports[0].report_path
+    first_report_text = first_report_path.read_text(encoding="utf-8")
+    wrong_report_schema = json.loads(first_report_text)
+    wrong_report_schema["schema_version"] = 1
+    first_report_path.write_text(json.dumps(wrong_report_schema), encoding="utf-8")
+    with pytest.raises(AssertionError, match="Unsupported qualification report schema"):
+        tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
+    first_report_path.write_text(first_report_text, encoding="utf-8")
+    boolean_report_schema = json.loads(first_report_text)
+    boolean_report_schema["schema_version"] = False
+    first_report_path.write_text(json.dumps(boolean_report_schema), encoding="utf-8")
+    with pytest.raises(AssertionError, match="Unsupported qualification report schema"):
+        tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
+    first_report_path.write_text(first_report_text, encoding="utf-8")
+
+    slurm_attestation_path = report_directory / slurm_attestation_relative_path
+    slurm_attestation_bytes = slurm_attestation_path.read_bytes()
+    slurm_attestation_path.write_bytes(slurm_attestation_bytes + b" ")
+    with pytest.raises(AssertionError, match="Slurm attestation ancestor mismatch"):
+        tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
+    slurm_attestation_path.write_bytes(slurm_attestation_bytes)
+
     bundle_path = tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
     bundle_text = bundle_path.read_text(encoding="utf-8")
     assert str(tmp_path / "protected") not in bundle_text
@@ -1045,10 +1504,78 @@ def test_sanitized_bundle_requires_all_workflows_and_omits_protected_paths(
         workflow_payload["identifier"] for workflow_payload in json.loads(bundle_text)["workflows"]
     } == tests.parity.harness.REQUIRED_WORKFLOW_IDENTIFIERS
 
+    bundle_alias_path = report_directory / "qualification_bundle_alias.json"
+    bundle_alias_path.symlink_to(bundle_path.name)
+    with pytest.raises(AssertionError, match="canonical nonsymbolic file"):
+        tests.test_regenie2_parity.validate_published_qualification_bundle(
+            bundle_alias_path,
+            expected_git_commit="a" * 40,
+            expected_science_source_sha256=science_source_sha256,
+            expected_slurm_job_id="12345",
+            expected_slurm_step_id="0",
+            expected_run_nonce="1" * 32,
+            expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+            expected_bootstrap_sha256="9" * 64,
+        )
+    bundle_alias_path.unlink()
+
     with pytest.raises(FileExistsError):
         tests.test_regenie2_parity.write_qualification_bundle(tuple(reports))
 
     original_bundle_text = bundle_path.read_text(encoding="utf-8")
+    wrong_bundle_schema = json.loads(original_bundle_text)
+    wrong_bundle_schema["schema_version"] = 1
+    bundle_path.write_text(json.dumps(wrong_bundle_schema), encoding="utf-8")
+    with pytest.raises(AssertionError, match="Unsupported qualification bundle schema"):
+        tests.test_regenie2_parity.validate_published_qualification_bundle(
+            bundle_path,
+            expected_git_commit="a" * 40,
+            expected_science_source_sha256=science_source_sha256,
+            expected_slurm_job_id="12345",
+            expected_slurm_step_id="0",
+            expected_run_nonce="1" * 32,
+            expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+            expected_bootstrap_sha256="9" * 64,
+        )
+    bundle_path.write_text(original_bundle_text, encoding="utf-8")
+    boolean_bundle_schema = json.loads(original_bundle_text)
+    boolean_bundle_schema["schema_version"] = False
+    bundle_path.write_text(json.dumps(boolean_bundle_schema), encoding="utf-8")
+    with pytest.raises(AssertionError, match="Unsupported qualification bundle schema"):
+        tests.test_regenie2_parity.validate_published_qualification_bundle(
+            bundle_path,
+            expected_git_commit="a" * 40,
+            expected_science_source_sha256=science_source_sha256,
+            expected_slurm_job_id="12345",
+            expected_slurm_step_id="0",
+            expected_run_nonce="1" * 32,
+            expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+            expected_bootstrap_sha256="9" * 64,
+        )
+    bundle_path.write_text(original_bundle_text, encoding="utf-8")
+
+    original_bundle_payload = json.loads(original_bundle_text)
+    original_report_relative_path = original_bundle_payload["workflows"][0]["qualification_report_relative_path"]
+    for noncanonical_report_path in (
+        str(report_directory / original_report_relative_path),
+        f"{Path(original_report_relative_path).parent}/../{original_report_relative_path}",
+    ):
+        noncanonical_bundle_payload = json.loads(original_bundle_text)
+        noncanonical_bundle_payload["workflows"][0]["qualification_report_relative_path"] = noncanonical_report_path
+        bundle_path.write_text(json.dumps(noncanonical_bundle_payload), encoding="utf-8")
+        with pytest.raises(AssertionError, match="not canonical and relative"):
+            tests.test_regenie2_parity.validate_published_qualification_bundle(
+                bundle_path,
+                expected_git_commit="a" * 40,
+                expected_science_source_sha256=science_source_sha256,
+                expected_slurm_job_id="12345",
+                expected_slurm_step_id="0",
+                expected_run_nonce="1" * 32,
+                expected_run_started_at_utc="2026-07-23T00:00:00+00:00",
+                expected_bootstrap_sha256="9" * 64,
+            )
+    bundle_path.write_text(original_bundle_text, encoding="utf-8")
+
     future_bundle_payload = json.loads(original_bundle_text)
     future_bundle_payload["generated_at_utc"] = (
         datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)

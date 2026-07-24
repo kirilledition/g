@@ -13,7 +13,7 @@ share the same defect.
 
 | Tier | Command | Execution policy |
 | --- | --- | --- |
-| External-contract harness | `just test-local-focused` | Login-node safe; reads metadata and tiny in-memory frames only. |
+| External-contract harness | `just test-local-focused` | Login-node safe; uses metadata, temporary Git repositories, synthetic Slurm observations, and tiny in-memory frames only. |
 | Active non-data Python suite | `just test-local` | Run on an appropriate CPU allocation when JAX compilation would be material. |
 | Optional external parity | `just test-parity` | Full chr22 GPU work when fixtures exist; missing local fixtures skip. |
 | Exact-head required-fixture parity | [Trusted scheduler launch](regenie-parity-suite.md#trusted-scheduler-launch) | An extracted, hash-bound bootstrap runs one serialized `landau` allocation; missing fixtures fail. |
@@ -87,32 +87,54 @@ The trusted scheduler selects a full commit and uses replacement-disabled
 `/usr/bin/git` to write that commit's
 `tooling/server/exact_parity_bootstrap.sh` blob to a temporary executable. It
 computes the bootstrap SHA-256 and launches that exact file on `landau` with
-`/usr/bin/bash --noprofile --norc` under `env -i`. Only the required launch
-home, Slurm, CUDA, fixture/report, bootstrap, and scheduler-selected absolute
+its fixed `/usr/bin/bash` shebang as the direct `srun` command under `env -i`.
+Only the required launch home, fixture/report, bootstrap, numeric resource
+expectations, and scheduler-selected absolute
 `uv`/`just`/direct `cargo`/direct `rustc`/`mold`/Python values, Cargo-cache
 snapshot, and Rustup installation enter the launch. The bootstrap replaces the
-launch home with a private run home. An explicit trusted CUDA library path may
-be supplied when the host requires one; inherited loader/compiler overrides
-are rejected.
+launch home with a private run home. Inherited loader/compiler overrides,
+including every dynamic-loader path override, are rejected.
 
-The bootstrap uses system `git`, `bash`, and `scontrol` to bind itself to the
-selected commit, verify the live scheduler job, step, user, node, and state,
-and create a unique detached non-local clone without checkout filters. It
-neutralizes inherited Git configuration, replacement objects, hooks,
+The bootstrap binds itself and its extracted checkout/Slurm helpers to the
+selected commit. The Slurm helper takes two controller snapshots around exact
+host-PID/start, local `listpids`, namespace, command-line, and structural
+cgroup-v2 observations. Its commit-bound constants require eight CPUs, 64 GiB,
+one task, and one GPU, and any GPU field exposed by allocated TRES must agree.
+Environment variables are consistency assertions, not the scheduler
+authority. The resulting strict canonical schema-0 attestation
+records scheduler entitlement as proven and kernel enforcement as unproven on
+`abraxas`; strict enforcement mode is unsupported and fails closed. The
+bootstrap then creates a unique detached non-local clone without checkout
+filters. It neutralizes inherited Git configuration, replacement objects, hooks,
 templates, Python paths/environments, uv configuration, and pytest arguments
 and plugins. It then re-executes the exact inner recipe with an explicit
 allowlist. After the locked sync, both `VIRTUAL_ENV` and `UV_PYTHON` are bound
 to the verified private `.venv` before Maturin runs; uv's managed base
 interpreter is never an installation target. An unselected `patchelf` on the
-fixed build PATH is rejected. The imported release extension is bound to its
-just-built path, SHA-256, and run nonce.
+fixed build PATH is rejected. The sole live release extension is validated as
+a canonical regular ELF before import, loaded only through the exact
+nonsubclassed `ExtensionFileLoader` type from that exact path, checked through
+its PyO3 identity, and rechecked for unchanged bytes and file identity after
+import. The validated specification executes directly without a second finder
+resolution, failed validation rolls the module cache back, and live plus
+durable evidence must expose exactly one JAX CUDA device. No extension copy
+becomes evidence.
 
 Qualification reports live below
 `results/parity/qualification/<Slurm job>/<Slurm step>/<run nonce>/`.
+The run root contains `slurm_process_attestation.json`; every private schema-0
+workflow report is a canonical nonsymlink regular file and binds the
+attestation's relative path and SHA-256.
 The final node atomically publishes
 `qualification_bundle_<exact Git SHA>_<Slurm job>_<Slurm step>_<run nonce>.json`,
-which covers all three workflows and binds their report and Parquet-output
-digests. Reports and bundles record the bootstrap identity and the path,
+whose strict schema version is 0. It covers all three workflows and binds their
+report and Parquet-output digests. The sanitized bundle thereby covers the
+private attestation binding
+through each report digest without publishing the attestation's absolute
+paths. Schema versions must be JSON integers, report references must be
+canonical relative paths below their workflow directory, and the published
+bundle must be a canonical nonsymlink regular file. Reports and bundles record
+the bootstrap identity and the path,
 version, and SHA-256 of `bash`, `ar`, `as`, `cc`, GCC
 `cc1`/`cc1plus`/`collect2`, `cargo`, `c++`, `env`, `git`, `just`, Maturin,
 Mold, both selected and private-venv Python interpreters, `ranlib`, `rustc`,

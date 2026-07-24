@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; server-specific development operations | main branch as of 2026-06-30 gauss SLURM workflows | Development maintainers |
+| Pre-release draft; server-specific development operations | main branch as of 2026-07-24 gauss SLURM workflows | Development maintainers |
 
 This repository was originally developed inside the Nix flake on a personal machine. On the Ubuntu SLURM server, keep `just` as the single entrypoint and split work between:
 
@@ -28,16 +28,17 @@ preinstalled globally if `uv python install` works in your account.
 Exact-head qualification additionally requires trusted absolute paths for
 `uv`, `just`, `mold`, Python 3.14, and direct pinned `cargo` and `rustc`
 binaries, plus an absolute existing Rustup installation. It also requires an
-absolute scheduler-trusted Cargo-cache snapshot and, when needed, an explicit
-trusted CUDA library path. It fixes the C and C++ compilers to `/usr/bin/cc`
-and `/usr/bin/c++`, and fixes the native archive/assembly helpers to
+absolute scheduler-trusted Cargo-cache snapshot. It fixes the C and C++
+compilers to `/usr/bin/cc` and `/usr/bin/c++`, and fixes the native
+archive/assembly helpers to
 `/usr/bin/ar`, `/usr/bin/as`, and `/usr/bin/ranlib`; all five are serialized
 with the other fifteen primary tools. The bootstrap also resolves and records
 the exact GCC `cc1`, `cc1plus`, and `collect2` children from the sanitized
 system compiler, plus `env`, lock-installed Maturin, and the private-venv
 Python interpreter. It does not select these inputs from a mutable worktree's
-`PATH` or inherit loader/compiler overrides. An unselected `patchelf` on the
-fixed PATH is rejected before Maturin runs.
+`PATH` or inherit loader/compiler overrides. `LD_LIBRARY_PATH`, `LD_PRELOAD`,
+and `LD_AUDIT` are rejected. An unselected `patchelf` on the fixed PATH is
+rejected before Maturin runs.
 `just doctor-server` probes the bootstrap's hardcoded login-host `/usr/bin`
 helpers, including `/usr/bin/srun`. Remaining unrecorded helpers remain part
 of the trusted host image; `/usr/bin/nvidia-smi` is allocation-local and is
@@ -116,9 +117,16 @@ fixtures are present, use the
 The scheduler selects a full commit, extracts and hashes that commit's
 `tooling/server/exact_parity_bootstrap.sh` with replacement-disabled system
 Git, and invokes the temporary executable on `landau` through
-`/usr/bin/bash --noprofile --norc` under a clean `env -i`. It supplies only the
-required home, Slurm, CUDA, data/report, bootstrap, and absolute trusted
-`uv`/`just`/Rust build-tool values. The mutable
+its fixed `/usr/bin/bash` shebang as the direct `srun` command under a clean
+`env -i`. It supplies only the required home, data/report, bootstrap, numeric
+resource assertions, and absolute trusted `uv`/`just`/Rust build-tool values.
+The commit-bound helper rejects any entitlement other than eight CPUs, 64 GiB,
+one task, and one GPU. The extracted schema-0 Slurm helper verifies two live
+controller snapshots, local PID/namespace/cgroup-v2 membership, and the exact
+numeric-step resources, including agreement with any GPU field exposed by
+allocated TRES.
+On current `abraxas` configuration it reports scheduler entitlement as proven
+and kernel enforcement as unproven. The mutable
 `just slurm-gpu-test-parity-required` recipe refuses qualification and evidence
 publication.
 

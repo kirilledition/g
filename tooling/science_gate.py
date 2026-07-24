@@ -39,7 +39,10 @@ SCIENCE_SOURCE_EXACT_PATHS = frozenset(
         "tests/test_regenie2_parity.py",
         "tooling/__init__.py",
         "tooling/science_gate.py",
+        "tooling/server/__init__.py",
         "tooling/server/exact_parity_bootstrap.sh",
+        "tooling/server/exact_parity_checkout.sh",
+        "tooling/server/exact_parity_slurm.py",
         "tooling/server/server_env.sh",
         "uv.lock",
     }

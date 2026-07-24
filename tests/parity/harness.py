@@ -32,6 +32,7 @@ REQUIRED_WORKFLOW_IDENTIFIERS = frozenset(
     }
 )
 REQUIRED_QUALIFICATION_HOSTS = ("landau",)
+REQUIRED_QUALIFICATION_GPU_COUNT = 1
 QUALIFICATION_BOOTSTRAP_RELATIVE_PATH = "tooling/server/exact_parity_bootstrap.sh"
 QUALIFICATION_CLOCK_SKEW = datetime.timedelta(minutes=5)
 PARQUET_DATASET_COMPLETION_PREFIX = "Parquet dataset saved to "
@@ -910,8 +911,8 @@ def assert_workflow_qualification_is_current(
         raise AssertionError(f"Qualification did not use a JAX GPU platform for {workflow.identifier}")
     if "cuda" not in actual_device.backend_platform_version.lower():
         raise AssertionError(f"Qualification did not use the JAX CUDA backend for {workflow.identifier}")
-    if actual_device.device_count <= 0:
-        raise AssertionError(f"Qualification observed no JAX CUDA devices for {workflow.identifier}")
+    if actual_device.device_count != REQUIRED_QUALIFICATION_GPU_COUNT:
+        raise AssertionError(f"Qualification did not observe exactly one JAX CUDA device for {workflow.identifier}")
     required_device_strings = (
         actual_device.device_kind,
         actual_device.nvidia_driver_version,

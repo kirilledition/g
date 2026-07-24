@@ -774,7 +774,7 @@ typecheck-local:
 # Focused login-node-safe checks for the external-parity contract
 test-local-focused:
     uv sync --group dev --frozen --no-install-project
-    PYTHONPATH=src:. uv run --no-sync pytest --confcutdir=tests/parity tests/parity/test_regenie_parity_harness.py
+    PYTHONPATH=src:. uv run --no-sync pytest --confcutdir=tests/parity tests/parity/test_exact_parity_checkout.py tests/parity/test_exact_parity_slurm.py tests/parity/test_regenie_parity_harness.py
 
 # Non-heavy no-Nix test suite
 test-local:
@@ -866,13 +866,35 @@ test-parity-required-exact-inner:
     expected_git_commit="${G_REGENIE_PARITY_EXPECTED_GIT_COMMIT:-}"
     bootstrap_relative_path="${G_REGENIE_PARITY_BOOTSTRAP_RELATIVE_PATH:-}"
     bootstrap_sha256="${G_REGENIE_PARITY_BOOTSTRAP_SHA256:-}"
+    checkout_helper_relative_path="${G_REGENIE_PARITY_CHECKOUT_HELPER_RELATIVE_PATH:-}"
+    checkout_helper_sha256="${G_REGENIE_PARITY_CHECKOUT_HELPER_SHA256:-}"
+    slurm_helper_relative_path="${G_REGENIE_PARITY_SLURM_HELPER_RELATIVE_PATH:-}"
+    slurm_helper_sha256="${G_REGENIE_PARITY_SLURM_HELPER_SHA256:-}"
     if [[ "${bootstrap_relative_path}" != "tooling/server/exact_parity_bootstrap.sh" || ! "${bootstrap_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
       echo "Exact parity inner recipe is missing its trusted bootstrap identity." >&2
+      exit 1
+    fi
+    if [[ "${checkout_helper_relative_path}" != "tooling/server/exact_parity_checkout.sh" || ! "${checkout_helper_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Exact parity inner recipe is missing its trusted checkout-helper identity." >&2
+      exit 1
+    fi
+    if [[ "${slurm_helper_relative_path}" != "tooling/server/exact_parity_slurm.py" || ! "${slurm_helper_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+      echo "Exact parity inner recipe is missing its trusted Slurm-helper identity." >&2
       exit 1
     fi
     observed_bootstrap_sha256="$(/usr/bin/git --no-replace-objects cat-file blob "HEAD:${bootstrap_relative_path}" | /usr/bin/sha256sum | /usr/bin/cut -d ' ' -f 1)"
     if [[ "${observed_bootstrap_sha256}" != "${bootstrap_sha256}" ]]; then
       echo "Exact parity inner recipe has the wrong bootstrap blob." >&2
+      exit 1
+    fi
+    observed_checkout_helper_sha256="$(/usr/bin/git --no-replace-objects cat-file blob "HEAD:${checkout_helper_relative_path}" | /usr/bin/sha256sum | /usr/bin/cut -d ' ' -f 1)"
+    if [[ "${observed_checkout_helper_sha256}" != "${checkout_helper_sha256}" ]]; then
+      echo "Exact parity inner recipe has the wrong checkout-helper blob." >&2
+      exit 1
+    fi
+    observed_slurm_helper_sha256="$(/usr/bin/git --no-replace-objects cat-file blob "HEAD:${slurm_helper_relative_path}" | /usr/bin/sha256sum | /usr/bin/cut -d ' ' -f 1)"
+    if [[ "${observed_slurm_helper_sha256}" != "${slurm_helper_sha256}" ]]; then
+      echo "Exact parity inner recipe has the wrong Slurm-helper blob." >&2
       exit 1
     fi
     trusted_uv_path="${G_REGENIE_PARITY_TOOL_UV_PATH:-}"
@@ -894,10 +916,19 @@ test-parity-required-exact-inner:
     expected_temporary_directory="${qualification_root}/tmp"
     expected_pytest_basetemp="${qualification_root}/pytest"
     expected_home_directory="${qualification_root}/home"
-    if [[ "${UV_NO_CONFIG:-}" != "1" || "${UV_NO_MANAGED_PYTHON:-}" != "1" || "${UV_PYTHON_DOWNLOADS:-}" != "never" || "${UV_PYTHON:-}" != "${trusted_python_interpreter_path}" || "${UV_CACHE_DIR:-}" != "${expected_uv_cache_directory}" || "${AR:-}" != "/usr/bin/ar" || "${AS:-}" != "/usr/bin/as" || "${CC:-}" != "/usr/bin/cc" || "${CARGO:-}" != "${trusted_cargo_path}" || "${CARGO_HOME:-}" != "${expected_cargo_home}" || "${CARGO_TARGET_DIR:-}" != "${expected_cargo_target_directory}" || "${CXX:-}" != "/usr/bin/c++" || "${HOME:-}" != "${expected_home_directory}" || "${RANLIB:-}" != "/usr/bin/ranlib" || "${RUSTC:-}" != "${trusted_rustc_path}" || "${RUSTUP_HOME:-}" != /* || "${TMPDIR:-}" != "${expected_temporary_directory}" || "${XDG_RUNTIME_DIR:-}" != "${expected_runtime_directory}" || "${G_REGENIE_PARITY_PYTEST_BASETEMP:-}" != "${expected_pytest_basetemp}" || "${PATH}" != "${expected_trusted_path}" || -v PYTHONPATH || -v VIRTUAL_ENV ]]; then
+    slurm_attestation_relative_path="${G_REGENIE_PARITY_SLURM_ATTESTATION_RELATIVE_PATH:-}"
+    slurm_attestation_path="${G_REGENIE_PARITY_SLURM_ATTESTATION_PATH:-}"
+    slurm_attestation_sha256="${G_REGENIE_PARITY_SLURM_ATTESTATION_SHA256:-}"
+    expected_slurm_attestation_path="${G_REGENIE_PARITY_REPORT_DIRECTORY:-}/${slurm_attestation_relative_path}"
+    if [[ "${GIT_NO_LAZY_FETCH:-}" != "1" || "${UV_NO_CONFIG:-}" != "1" || "${UV_NO_MANAGED_PYTHON:-}" != "1" || "${UV_PYTHON_DOWNLOADS:-}" != "never" || "${UV_PYTHON:-}" != "${trusted_python_interpreter_path}" || "${UV_CACHE_DIR:-}" != "${expected_uv_cache_directory}" || "${AR:-}" != "/usr/bin/ar" || "${AS:-}" != "/usr/bin/as" || "${CC:-}" != "/usr/bin/cc" || "${CARGO:-}" != "${trusted_cargo_path}" || "${CARGO_HOME:-}" != "${expected_cargo_home}" || "${CARGO_TARGET_DIR:-}" != "${expected_cargo_target_directory}" || "${CXX:-}" != "/usr/bin/c++" || "${HOME:-}" != "${expected_home_directory}" || "${RANLIB:-}" != "/usr/bin/ranlib" || "${RUSTC:-}" != "${trusted_rustc_path}" || "${RUSTUP_HOME:-}" != /* || "${TMPDIR:-}" != "${expected_temporary_directory}" || "${XDG_RUNTIME_DIR:-}" != "${expected_runtime_directory}" || "${G_REGENIE_PARITY_PYTEST_BASETEMP:-}" != "${expected_pytest_basetemp}" || "${PATH}" != "${expected_trusted_path}" || -v PYTHONPATH || -v VIRTUAL_ENV || -v LD_LIBRARY_PATH || -v LD_AUDIT || -v LD_PRELOAD ]]; then
       echo "Exact parity inner recipe requires isolated uv/Cargo configuration and the selected Rust toolchain." >&2
       exit 1
     fi
+    if [[ "${slurm_attestation_relative_path}" != "slurm_process_attestation.json" || "${slurm_attestation_path}" != "${expected_slurm_attestation_path}" || ! "${slurm_attestation_sha256}" =~ ^[0-9a-f]{64}$ || -L "${slurm_attestation_path}" || ! -f "${slurm_attestation_path}" || "$(/usr/bin/realpath "${slurm_attestation_path}")" != "${slurm_attestation_path}" || "$(/usr/bin/sha256sum "${slurm_attestation_path}" | /usr/bin/cut -d ' ' -f 1)" != "${slurm_attestation_sha256}" ]]; then
+      echo "Exact parity inner recipe requires the bootstrap's immutable Slurm attestation." >&2
+      exit 1
+    fi
+    "${trusted_python_interpreter_path}" -I -c 'import json, os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.server.exact_parity_slurm as slurm; attestation_path = pathlib.Path(os.environ["G_REGENIE_PARITY_SLURM_ATTESTATION_PATH"]); attestation_bytes = attestation_path.read_bytes(); attestation = slurm.parse_slurm_process_attestation(json.loads(attestation_bytes)); assert slurm.canonical_slurm_process_attestation(attestation) == attestation_bytes; assert attestation.job_id == os.environ["G_REGENIE_PARITY_SLURM_JOB_ID"]; assert attestation.step_id == os.environ["G_REGENIE_PARITY_SLURM_STEP_ID"]; assert attestation.bootstrap_sha256 == os.environ["G_REGENIE_PARITY_BOOTSTRAP_SHA256"]; assert attestation.scheduler_entitlement_proven is True; assert attestation.kernel_enforcement_proven is False'
     if [[ ! "${CARGO_BUILD_JOBS:-}" =~ ^[1-9][0-9]*$ || "${CARGO_BUILD_JOBS}" != "${SLURM_CPUS_PER_TASK:-}" || "${GWAS_ENGINE_ALLOCATED_CPU_COUNT:-}" != "${SLURM_CPUS_PER_TASK:-}" ]]; then
       echo "Exact parity inner recipe requires the scheduler CPU allocation for Cargo." >&2
       exit 1
@@ -967,10 +998,6 @@ test-parity-required-exact-inner:
       exit 1
     fi
     export PYO3_PYTHON="${virtual_environment_python_path}"
-    python_library_directory="$("${virtual_environment_python_path}" -I -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')"
-    if [[ -n "${python_library_directory}" ]]; then
-      export LD_LIBRARY_PATH="${python_library_directory}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-    fi
     science_source_sha256="$("${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.science_gate as gate; state = gate.assert_clean_exact_source(repository_root, os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"]); print(state.science_source_sha256)')"
     if [[ "${science_source_sha256}" != "${pre_sync_science_source_sha256}" ]]; then
       echo "Dependency synchronization changed the exact science source." >&2
@@ -995,10 +1022,11 @@ test-parity-required-exact-inner:
       exit 1
     fi
     "${trusted_maturin_path}" develop --profile release --uv
-    native_library_path="$("${virtual_environment_python_path}" -I -c 'import pathlib; paths = list(pathlib.Path("src/g").glob("_core*.so")); assert len(paths) == 1, paths; print(paths[0].resolve(strict=True))')"
+    native_library_path="$("${virtual_environment_python_path}" -I -c 'import pathlib; paths = list(pathlib.Path("src/g").glob("_core*.so")); assert len(paths) == 1, paths; path = paths[0]; assert path.is_file() and not path.is_symlink(); resolved_path = path.resolve(strict=True); assert path.absolute() == resolved_path; print(resolved_path)')"
     native_library_sha256="$(/usr/bin/sha256sum "${native_library_path}" | /usr/bin/cut -d ' ' -f 1)"
     export G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_PATH="${native_library_path}"
     export G_REGENIE_PARITY_EXPECTED_NATIVE_LIBRARY_SHA256="${native_library_sha256}"
+    "${virtual_environment_python_path}" -I -c 'import pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path[0:0] = [str(repository_root / "src"), str(repository_root)]; import tests.test_regenie2_parity as parity; parity.expected_native_artifact()'
     "${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path.insert(0, str(repository_root)); import tooling.science_gate as gate; gate.assert_clean_exact_source(repository_root, os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"])'
     "${trusted_just_path}" test-parity-required-inner
     "${virtual_environment_python_path}" -I -c 'import os, pathlib, sys; repository_root = pathlib.Path.cwd(); sys.path[0:0] = [str(repository_root / "src"), str(repository_root)]; import tests.test_regenie2_parity as parity; parity.validate_published_qualification_bundle(pathlib.Path(os.environ["G_REGENIE_PARITY_EXPECTED_BUNDLE_PATH"]), expected_git_commit=os.environ["G_REGENIE_PARITY_EXPECTED_GIT_COMMIT"], expected_science_source_sha256=os.environ["G_REGENIE_PARITY_EXPECTED_SCIENCE_SOURCE_SHA256"], expected_slurm_job_id=os.environ["G_REGENIE_PARITY_SLURM_JOB_ID"], expected_slurm_step_id=os.environ["G_REGENIE_PARITY_SLURM_STEP_ID"], expected_run_nonce=os.environ["G_REGENIE_PARITY_RUN_NONCE"], expected_run_started_at_utc=os.environ["G_REGENIE_PARITY_RUN_STARTED_AT_UTC"], expected_bootstrap_sha256=os.environ["G_REGENIE_PARITY_BOOTSTRAP_SHA256"])'

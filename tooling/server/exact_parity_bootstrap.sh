@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 
 set -euo pipefail
 umask 077
@@ -12,20 +12,28 @@ readonly system_git="/usr/bin/git"
 readonly system_scontrol="/usr/bin/scontrol"
 readonly system_environment="/usr/bin/env"
 readonly system_git_upload_pack="/usr/bin/git-upload-pack"
+readonly system_python="/usr/bin/python3"
 readonly system_ranlib="/usr/bin/ranlib"
 readonly system_tar="/usr/bin/tar"
 readonly bootstrap_relative_path="tooling/server/exact_parity_bootstrap.sh"
+readonly checkout_helper_relative_path="tooling/server/exact_parity_checkout.sh"
+readonly slurm_helper_relative_path="tooling/server/exact_parity_slurm.py"
+readonly qualification_cpu_count="8"
+readonly qualification_memory_bytes="68719476736"
+readonly qualification_gpu_count="1"
 
 if [[ "$#" -ne 2 ]]; then
   echo "Usage: exact_parity_bootstrap.sh SOURCE_REPOSITORY EXPECTED_GIT_COMMIT" >&2
   exit 2
 fi
+readonly bootstrap_process_id="${BASHPID}"
 for forbidden_environment_name in \
   BASH_ENV \
   ENV \
   LD_AUDIT \
   LD_PRELOAD \
   LD_LIBRARY_PATH \
+  G_REGENIE_PARITY_LD_LIBRARY_PATH \
   PYTHONHOME \
   PYTHONINSPECT \
   PYTHONPATH \
@@ -63,11 +71,15 @@ for forbidden_environment_name in \
   GIT_DIR \
   GIT_EXEC_PATH \
   GIT_INDEX_FILE \
+  GIT_NO_LAZY_FETCH \
   GIT_OBJECT_DIRECTORY \
   GIT_REPLACE_REF_BASE \
   GIT_SHALLOW_FILE \
   GIT_TEMPLATE_DIR \
   GIT_WORK_TREE \
+  SLURM_CLUSTERS \
+  SLURM_CONF \
+  SLURM_CONF_SERVER \
   RUSTC \
   RUSTC_WRAPPER \
   RUSTFLAGS \
@@ -94,6 +106,7 @@ for system_executable in \
   "${system_scontrol}" \
   "${system_environment}" \
   "${system_git_upload_pack}" \
+  "${system_python}" \
   "${system_ranlib}" \
   "/usr/bin/cp" \
   "/usr/bin/mktemp" \
@@ -130,6 +143,8 @@ done
 source_repository="$(/usr/bin/realpath "$1")"
 expected_git_commit="$2"
 expected_bootstrap_sha256="${G_REGENIE_PARITY_BOOTSTRAP_SHA256:-}"
+expected_memory_bytes="${G_REGENIE_PARITY_EXPECTED_MEMORY_BYTES:-}"
+expected_gpu_count="${G_REGENIE_PARITY_EXPECTED_GPU_COUNT:-}"
 configured_uv_path="${G_REGENIE_PARITY_UV_PATH:-}"
 configured_just_path="${G_REGENIE_PARITY_JUST_PATH:-}"
 configured_cargo_path="${G_REGENIE_PARITY_CARGO_PATH:-}"
@@ -144,6 +159,10 @@ if [[ ! "${expected_git_commit}" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 if [[ ! "${expected_bootstrap_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
   echo "The trusted scheduler must provide G_REGENIE_PARITY_BOOTSTRAP_SHA256." >&2
+  exit 1
+fi
+if [[ "${expected_memory_bytes}" != "${qualification_memory_bytes}" || "${expected_gpu_count}" != "${qualification_gpu_count}" ]]; then
+  echo "The trusted scheduler must provide the exact 64-GiB and one-GPU qualification expectations." >&2
   exit 1
 fi
 executed_bootstrap_path="$(/usr/bin/realpath "$0")"
@@ -200,40 +219,15 @@ if [[ ! "${slurm_job_id}" =~ ^[0-9]+$ || ! "${slurm_step_id}" =~ ^[0-9]+$ ]]; th
   echo "Qualification requires numeric Slurm job and step IDs." >&2
   exit 1
 fi
-if [[ ! "${slurm_cpus_per_task}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "Qualification requires a positive Slurm CPU allocation." >&2
-  exit 1
-fi
-slurm_job_record="$("${system_scontrol}" show job "${slurm_job_id}" --oneliner)"
-slurm_step_record="$("${system_scontrol}" show step "${slurm_job_id}.${slurm_step_id}" --oneliner)"
-if [[ " ${slurm_job_record} " != *" JobState=RUNNING "* ]]; then
-  echo "Slurm job ${slurm_job_id} is not running." >&2
-  exit 1
-fi
-if [[ " ${slurm_job_record} " != *" NodeList=landau "* ]]; then
-  echo "Slurm job ${slurm_job_id} is not allocated to landau." >&2
-  exit 1
-fi
-if [[ " ${slurm_job_record} " != *" UserId=${qualification_user}(${qualification_user_identifier}) "* ]]; then
-  echo "Slurm job ${slurm_job_id} belongs to a different user." >&2
-  exit 1
-fi
-if [[ " ${slurm_step_record} " != *" StepId=${slurm_job_id}.${slurm_step_id} "* ]]; then
-  echo "Slurm step identity does not match ${slurm_job_id}.${slurm_step_id}." >&2
-  exit 1
-fi
-if [[ " ${slurm_step_record} " != *" State=RUNNING "* ]]; then
-  echo "Slurm step ${slurm_job_id}.${slurm_step_id} is not running." >&2
-  exit 1
-fi
-if [[ " ${slurm_step_record} " != *" NodeList=landau "* ]]; then
-  echo "Slurm step ${slurm_job_id}.${slurm_step_id} is not running on landau." >&2
+if [[ "${slurm_cpus_per_task}" != "${qualification_cpu_count}" ]]; then
+  echo "Qualification requires exactly eight Slurm CPUs per task." >&2
   exit 1
 fi
 
 export GIT_CONFIG_COUNT=0
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
+export GIT_NO_LAZY_FETCH=1
 export GIT_NO_REPLACE_OBJECTS=1
 unset BASH_ENV ENV CDPATH LD_AUDIT LD_PRELOAD
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
@@ -245,9 +239,31 @@ for git_config_variable in "${!GIT_CONFIG_KEY_@}" "${!GIT_CONFIG_VALUE_@}"; do
   unset "${git_config_variable}"
 done
 
-"${system_git}" -C "${source_repository}" --no-replace-objects cat-file -e "${expected_git_commit}^{commit}"
+source_git_environment=(
+  "${system_environment}"
+  -i
+  "GIT_CONFIG_COUNT=1"
+  "GIT_CONFIG_GLOBAL=/dev/null"
+  "GIT_CONFIG_KEY_0=core.alternateRefsCommand"
+  "GIT_CONFIG_NOSYSTEM=1"
+  "GIT_CONFIG_SYSTEM=/dev/null"
+  "GIT_CONFIG_VALUE_0=/usr/bin/false"
+  "GIT_NO_LAZY_FETCH=1"
+  "GIT_NO_REPLACE_OBJECTS=1"
+  "HOME=/tmp"
+  "LC_ALL=C"
+  "PATH=/usr/bin:/bin"
+)
+selected_object_type="$(
+  "${source_git_environment[@]}" "${system_git}" -C "${source_repository}" \
+    --no-replace-objects cat-file -t "${expected_git_commit}"
+)"
+if [[ "${selected_object_type}" != "commit" ]]; then
+  echo "Scheduler-selected Git SHA must identify a commit object exactly." >&2
+  exit 1
+fi
 committed_bootstrap_sha256="$(
-  "${system_git}" -C "${source_repository}" --no-replace-objects \
+  "${source_git_environment[@]}" "${system_git}" -C "${source_repository}" --no-replace-objects \
     cat-file blob "${expected_git_commit}:${bootstrap_relative_path}" |
     /usr/bin/sha256sum |
     /usr/bin/cut -d ' ' -f 1
@@ -256,6 +272,18 @@ if [[ "${committed_bootstrap_sha256}" != "${expected_bootstrap_sha256}" ]]; then
   echo "Executed bootstrap digest does not match the scheduler-selected commit." >&2
   exit 1
 fi
+committed_checkout_helper_sha256="$(
+  "${source_git_environment[@]}" "${system_git}" -C "${source_repository}" --no-replace-objects \
+    cat-file blob "${expected_git_commit}:${checkout_helper_relative_path}" |
+    /usr/bin/sha256sum |
+    /usr/bin/cut -d ' ' -f 1
+)"
+committed_slurm_helper_sha256="$(
+  "${source_git_environment[@]}" "${system_git}" -C "${source_repository}" --no-replace-objects \
+    cat-file blob "${expected_git_commit}:${slurm_helper_relative_path}" |
+    /usr/bin/sha256sum |
+    /usr/bin/cut -d ' ' -f 1
+)"
 
 run_nonce="$(/usr/bin/python3 -I -c 'import secrets; print(secrets.token_hex(16))')"
 run_started_at_utc="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
@@ -293,19 +321,52 @@ cleanup_qualification_root() {
 }
 trap cleanup_qualification_root EXIT
 checkout_directory="${qualification_root}/checkout"
-git_template_directory="${qualification_root}/empty-git-template"
+checkout_helper_path="${qualification_root}/exact-parity-checkout.sh"
+slurm_helper_path="${qualification_root}/exact-parity-slurm.py"
+private_slurm_attestation_path="${qualification_root}/slurm-process-attestation.json"
 cargo_home_directory="${qualification_root}/cargo-home"
 trusted_bin_directory="${qualification_root}/trusted-bin"
 runtime_directory="${qualification_root}/runtime"
 temporary_directory="${qualification_root}/tmp"
 pytest_basetemp_directory="${qualification_root}/pytest"
 home_directory="${qualification_root}/home"
-/usr/bin/mkdir "${git_template_directory}"
 /usr/bin/mkdir "${cargo_home_directory}"
 /usr/bin/mkdir "${trusted_bin_directory}"
 /usr/bin/mkdir "${runtime_directory}"
 /usr/bin/mkdir "${temporary_directory}"
 /usr/bin/mkdir "${home_directory}"
+"${source_git_environment[@]}" "${system_git}" -C "${source_repository}" --no-replace-objects \
+  cat-file blob "${expected_git_commit}:${checkout_helper_relative_path}" >"${checkout_helper_path}"
+/usr/bin/chmod 0500 "${checkout_helper_path}"
+executed_checkout_helper_sha256="$(/usr/bin/sha256sum "${checkout_helper_path}" | /usr/bin/cut -d ' ' -f 1)"
+if [[ "${executed_checkout_helper_sha256}" != "${committed_checkout_helper_sha256}" ]]; then
+  echo "Extracted exact-checkout helper differs from the selected commit." >&2
+  exit 1
+fi
+"${source_git_environment[@]}" "${system_git}" -C "${source_repository}" --no-replace-objects \
+  cat-file blob "${expected_git_commit}:${slurm_helper_relative_path}" >"${slurm_helper_path}"
+/usr/bin/chmod 0400 "${slurm_helper_path}"
+executed_slurm_helper_sha256="$(/usr/bin/sha256sum "${slurm_helper_path}" | /usr/bin/cut -d ' ' -f 1)"
+if [[ "${executed_slurm_helper_sha256}" != "${committed_slurm_helper_sha256}" ]]; then
+  echo "Extracted exact-Slurm helper differs from the selected commit." >&2
+  exit 1
+fi
+"${system_python}" -I "${slurm_helper_path}" \
+  --cluster-name abraxas \
+  --node-name landau \
+  --job-id "${slurm_job_id}" \
+  --step-id "${slurm_step_id}" \
+  --user-name "${qualification_user}" \
+  --user-id "${qualification_user_identifier}" \
+  --process-id "${bootstrap_process_id}" \
+  --bootstrap-path "${executed_bootstrap_path}" \
+  --bootstrap-sha256 "${expected_bootstrap_sha256}" \
+  --source-repository "${source_repository}" \
+  --expected-git-commit "${expected_git_commit}" \
+  --expected-cpu-count "${qualification_cpu_count}" \
+  --expected-memory-bytes "${qualification_memory_bytes}" \
+  --expected-gpu-count "${qualification_gpu_count}" \
+  >"${private_slurm_attestation_path}"
 for cargo_cache_entry in git registry; do
   if [[ -d "${cargo_cache_home}/${cargo_cache_entry}" ]]; then
     /usr/bin/cp -a "${cargo_cache_home}/${cargo_cache_entry}" "${cargo_home_directory}/${cargo_cache_entry}"
@@ -334,33 +395,49 @@ data_directory="$(/usr/bin/realpath -m "${configured_data_directory}")"
 report_base="$(/usr/bin/realpath "${configured_report_base}")"
 report_directory="${report_base}/${slurm_job_id}/${slurm_step_id}/${run_nonce}"
 /usr/bin/mkdir -p "${report_directory}"
+slurm_attestation_relative_path="slurm_process_attestation.json"
+slurm_attestation_path="${report_directory}/${slurm_attestation_relative_path}"
+if [[ -e "${slurm_attestation_path}" || -L "${slurm_attestation_path}" ]]; then
+  echo "Qualification refuses an existing Slurm attestation path: ${slurm_attestation_path}" >&2
+  exit 1
+fi
+"${system_python}" -I -c \
+  'import os, pathlib, sys
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+with destination.open("xb") as output_file:
+    output_file.write(source.read_bytes())
+    output_file.flush()
+    os.fsync(output_file.fileno())' \
+  "${private_slurm_attestation_path}" \
+  "${slurm_attestation_path}"
+/usr/bin/chmod 0400 "${slurm_attestation_path}"
+private_slurm_attestation_sha256="$(/usr/bin/sha256sum "${private_slurm_attestation_path}" | /usr/bin/cut -d ' ' -f 1)"
+slurm_attestation_sha256="$(/usr/bin/sha256sum "${slurm_attestation_path}" | /usr/bin/cut -d ' ' -f 1)"
+if [[ "${slurm_attestation_sha256}" != "${private_slurm_attestation_sha256}" ]]; then
+  echo "Durable Slurm attestation differs from the validated private bytes." >&2
+  exit 1
+fi
+slurm_attestation_claims="$(
+  "${system_python}" -I -c \
+    'import json, pathlib, sys; payload = json.loads(pathlib.Path(sys.argv[1]).read_bytes()); print(payload.get("scheduler_entitlement_proven"), payload.get("kernel_enforcement_proven"))' \
+    "${slurm_attestation_path}"
+)"
+if [[ "${slurm_attestation_claims}" != "True False" ]]; then
+  echo "Exact parity requires scheduler entitlement without an unsupported kernel-enforcement claim." >&2
+  exit 1
+fi
 expected_bundle_path="${report_directory}/qualification_bundle_${expected_git_commit}_${slurm_job_id}_${slurm_step_id}_${run_nonce}.json"
 if [[ -e "${expected_bundle_path}" ]]; then
   echo "Qualification refuses an existing bundle path: ${expected_bundle_path}" >&2
   exit 1
 fi
 
-"${system_git}" \
-  -c core.hooksPath=/dev/null \
-  -c core.attributesFile=/dev/null \
-  -c protocol.file.allow=always \
-  --no-replace-objects \
-  clone \
-  --template="${git_template_directory}" \
-  --upload-pack="${system_git_upload_pack}" \
-  --no-local \
-  --no-hardlinks \
-  --no-checkout \
+"${checkout_helper_path}" \
   "${source_repository}" \
-  "${checkout_directory}"
-"${system_git}" -C "${checkout_directory}" config core.hooksPath /dev/null
-"${system_git}" -C "${checkout_directory}" config core.attributesFile /dev/null
-"${system_git}" -C "${checkout_directory}" config core.fsmonitor false
-"${system_git}" -C "${checkout_directory}" config core.untrackedCache false
-"${system_git}" -C "${checkout_directory}" update-ref --no-deref HEAD "${expected_git_commit}"
-"${system_git}" -C "${checkout_directory}" read-tree --reset "${expected_git_commit}"
-"${system_git}" -C "${checkout_directory}" --no-replace-objects archive --format=tar "${expected_git_commit}" |
-  "${system_tar}" -xf - -C "${checkout_directory}"
+  "${expected_git_commit}" \
+  "${checkout_directory}" \
+  "${qualification_root}"
 observed_git_commit="$("${system_git}" -C "${checkout_directory}" --no-replace-objects rev-parse HEAD)"
 if [[ "${observed_git_commit}" != "${expected_git_commit}" ]]; then
   echo "Detached qualification checkout resolved the wrong commit." >&2
@@ -374,6 +451,26 @@ checkout_bootstrap_sha256="$(
 )"
 if [[ "${checkout_bootstrap_sha256}" != "${expected_bootstrap_sha256}" ]]; then
   echo "Detached checkout contains the wrong qualification bootstrap." >&2
+  exit 1
+fi
+checkout_helper_sha256="$(
+  "${system_git}" -C "${checkout_directory}" --no-replace-objects \
+    cat-file blob "HEAD:${checkout_helper_relative_path}" |
+    /usr/bin/sha256sum |
+    /usr/bin/cut -d ' ' -f 1
+)"
+if [[ "${checkout_helper_sha256}" != "${executed_checkout_helper_sha256}" ]]; then
+  echo "Detached checkout contains the wrong exact-checkout helper." >&2
+  exit 1
+fi
+checkout_slurm_helper_sha256="$(
+  "${system_git}" -C "${checkout_directory}" --no-replace-objects \
+    cat-file blob "HEAD:${slurm_helper_relative_path}" |
+    /usr/bin/sha256sum |
+    /usr/bin/cut -d ' ' -f 1
+)"
+if [[ "${checkout_slurm_helper_sha256}" != "${executed_slurm_helper_sha256}" ]]; then
+  echo "Detached checkout contains the wrong exact-Slurm helper." >&2
   exit 1
 fi
 cargo_config_search_directory="$(/usr/bin/dirname "${checkout_directory}")"
@@ -407,9 +504,6 @@ tool_version_environment=(
   "RUSTUP_HOME=${rustup_home}"
   "UV_NO_CONFIG=1"
 )
-if [[ -n "${G_REGENIE_PARITY_LD_LIBRARY_PATH:-}" ]]; then
-  tool_version_environment+=("LD_LIBRARY_PATH=${G_REGENIE_PARITY_LD_LIBRARY_PATH}")
-fi
 toolchain_probe_directory="${qualification_root}/toolchain-probe"
 /usr/bin/mkdir "${toolchain_probe_directory}"
 toolchain_probe_environment=(
@@ -506,6 +600,13 @@ inner_environment=(
   "G_REGENIE_PARITY_RUN_STARTED_AT_UTC=${run_started_at_utc}"
   "G_REGENIE_PARITY_BOOTSTRAP_RELATIVE_PATH=${bootstrap_relative_path}"
   "G_REGENIE_PARITY_BOOTSTRAP_SHA256=${expected_bootstrap_sha256}"
+  "G_REGENIE_PARITY_CHECKOUT_HELPER_RELATIVE_PATH=${checkout_helper_relative_path}"
+  "G_REGENIE_PARITY_CHECKOUT_HELPER_SHA256=${executed_checkout_helper_sha256}"
+  "G_REGENIE_PARITY_SLURM_HELPER_RELATIVE_PATH=${slurm_helper_relative_path}"
+  "G_REGENIE_PARITY_SLURM_HELPER_SHA256=${executed_slurm_helper_sha256}"
+  "G_REGENIE_PARITY_SLURM_ATTESTATION_RELATIVE_PATH=${slurm_attestation_relative_path}"
+  "G_REGENIE_PARITY_SLURM_ATTESTATION_PATH=${slurm_attestation_path}"
+  "G_REGENIE_PARITY_SLURM_ATTESTATION_SHA256=${slurm_attestation_sha256}"
   "G_REGENIE_PARITY_EXPECTED_BUNDLE_PATH=${expected_bundle_path}"
   "G_REGENIE_PARITY_QUALIFICATION_CHECKOUT=${checkout_directory}"
   "G_REGENIE_PARITY_TOOL_BASH_PATH=${system_bash}"
@@ -571,6 +672,7 @@ inner_environment=(
   "GIT_CONFIG_COUNT=0"
   "GIT_CONFIG_GLOBAL=/dev/null"
   "GIT_CONFIG_NOSYSTEM=1"
+  "GIT_NO_LAZY_FETCH=1"
   "GIT_NO_REPLACE_OBJECTS=1"
 )
 for allowed_environment_name in \
@@ -594,13 +696,12 @@ for allowed_environment_name in \
     inner_environment+=("${allowed_environment_name}=${!allowed_environment_name}")
   fi
 done
-if [[ -n "${G_REGENIE_PARITY_LD_LIBRARY_PATH:-}" ]]; then
-  inner_environment+=("LD_LIBRARY_PATH=${G_REGENIE_PARITY_LD_LIBRARY_PATH}")
-fi
 
 echo "qualification_node=${qualification_node}"
 echo "slurm_job_id=${slurm_job_id}"
 echo "slurm_step_id=${slurm_step_id}"
+echo "scheduler_entitlement_proven=true"
+echo "kernel_enforcement_proven=false"
 echo "run_nonce=${run_nonce}"
 echo "bootstrap_sha256=${expected_bootstrap_sha256}"
 echo "checkout_directory=${checkout_directory}"
