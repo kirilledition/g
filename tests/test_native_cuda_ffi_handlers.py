@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import concurrent.futures
+import enum
 import importlib
 import math
 import os
 import struct
 import subprocess
 import sys
+import threading
+import time
 import typing
 import zlib
 from dataclasses import dataclass
@@ -41,6 +45,14 @@ PACKED8_PRODUCTION_GEOMETRIES = (
     (31, 16_384, 16_384),
     (257, 257, 16_384),
 )
+
+
+class NativeRegistrationKind(enum.StrEnum):
+    """Native FFI registration path exercised in a fresh process."""
+
+    FIRTH_COMPONENTS = "firth_components"
+    PACKED8_DEFLATE = "packed8_deflate"
+
 
 pytestmark = [
     pytest.mark.cuda_native,
@@ -263,6 +275,94 @@ def test_native_registration_is_exact_and_idempotent(cuda_test_support: CudaFfiT
     assert cuda_test_support.register_firth_components_ffi() == cuda_ffi.FIRTH_COMPONENTS_FFI_TARGET
     assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
     assert cuda_test_support.register_packed8_deflate_ffi() == cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+
+
+def run_concurrent_native_registration_regression(registration_kind: NativeRegistrationKind) -> None:
+    """Require Python-attached native registration to be exact single-flight."""
+    jax.config.update("jax_enable_x64", True)  # noqa: FBT003 - Native Firth operands require f64.
+    jax.config.update("jax_platforms", "cuda")
+    cuda_test_support = load_cuda_test_support()
+    if registration_kind is NativeRegistrationKind.FIRTH_COMPONENTS:
+        register_target = cuda_test_support.register_firth_components_ffi
+        expected_target = cuda_ffi.FIRTH_COMPONENTS_FFI_TARGET
+    else:
+        register_target = cuda_test_support.register_packed8_deflate_ffi
+        expected_target = cuda_ffi.PACKED8_DEFLATE_FFI_TARGET
+
+    original_register_ffi_target = jax.ffi.register_ffi_target
+    initializer_entered = threading.Event()
+    second_registration_started = threading.Event()
+    initializer_call_count_lock = threading.Lock()
+    initializer_call_count = 0
+
+    def delayed_register_ffi_target(
+        name: str,
+        function_pointer: typing.Any,
+        platform: str = "cpu",
+        api_version: int = 1,
+        **keyword_arguments: typing.Any,
+    ) -> None:
+        nonlocal initializer_call_count
+        with initializer_call_count_lock:
+            initializer_call_count += 1
+            current_call_count = initializer_call_count
+        if current_call_count == 1:
+            initializer_entered.set()
+            if not second_registration_started.wait(timeout=30):
+                raise AssertionError("The second registration thread did not start.")
+            time.sleep(1.0)
+        original_register_ffi_target(
+            name,
+            function_pointer,
+            platform=platform,
+            api_version=api_version,
+            **keyword_arguments,
+        )
+
+    def register_second_target() -> str:
+        second_registration_started.set()
+        return register_target()
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(jax.ffi, "register_ffi_target", delayed_register_ffi_target)
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="native-registration",
+    ) as executor:
+        first_future = executor.submit(register_target)
+        if not initializer_entered.wait(timeout=30):
+            raise AssertionError("The first registration did not enter JAX FFI registration.")
+        second_future = executor.submit(register_second_target)
+        registration_results = [first_future.result(timeout=30), second_future.result(timeout=30)]
+
+    assert registration_results == [expected_target, expected_target]
+    assert initializer_call_count == 1
+
+
+@pytest.mark.parametrize("registration_kind", tuple(NativeRegistrationKind))
+def test_native_registration_is_python_attached_single_flight(
+    registration_kind: NativeRegistrationKind,
+) -> None:
+    script = (
+        "from tests.test_native_cuda_ffi_handlers import "
+        "NativeRegistrationKind, run_concurrent_native_registration_regression; "
+        "run_concurrent_native_registration_regression("
+        f"NativeRegistrationKind.{registration_kind.name})"
+    )
+    completed_process = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+        timeout=120,
+    )
+
+    assert completed_process.returncode == 0, (
+        f"Concurrent {registration_kind.value} registration subprocess failed.\n"
+        f"stdout:\n{completed_process.stdout}\n"
+        f"stderr:\n{completed_process.stderr}"
+    )
 
 
 def run_unqualified_packed8_handler_regression() -> None:
