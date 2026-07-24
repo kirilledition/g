@@ -33,6 +33,7 @@ using CudaFunction = CudaFunctionOpaque*;
 using CudaStream = CUstream_st*;
 
 inline constexpr CudaResult kCudaSuccess = 0;
+inline constexpr CudaResult kCudaErrorInvalidDevice = 101;
 inline constexpr CudaDeviceAttribute kComputeCapabilityMajor = 75;
 inline constexpr CudaDeviceAttribute kComputeCapabilityMinor = 76;
 
@@ -77,6 +78,19 @@ enum class CudaRuntimeFailureKind {
   kInternal,
   kFailedPrecondition,
 };
+
+[[nodiscard]] constexpr CudaInitializationFailureKind cuda_device_lookup_failure_kind(CudaResult status) {
+  return status == kCudaErrorInvalidDevice ? CudaInitializationFailureKind::kCudaDeviceUnavailable
+                                           : CudaInitializationFailureKind::kCudaDriverFailure;
+}
+
+static_assert(cuda_device_lookup_failure_kind(kCudaErrorInvalidDevice) ==
+              CudaInitializationFailureKind::kCudaDeviceUnavailable);
+static_assert(cuda_device_lookup_failure_kind(1) == CudaInitializationFailureKind::kCudaDriverFailure);
+static_assert(cuda_device_lookup_failure_kind(3) == CudaInitializationFailureKind::kCudaDriverFailure);
+static_assert(cuda_device_lookup_failure_kind(4) == CudaInitializationFailureKind::kCudaDriverFailure);
+static_assert(cuda_device_lookup_failure_kind(201) == CudaInitializationFailureKind::kCudaDriverFailure);
+static_assert(cuda_device_lookup_failure_kind(999) == CudaInitializationFailureKind::kCudaDriverFailure);
 
 [[nodiscard]] static std::string dynamic_loader_error(std::string_view operation) {
   const char* detail = ::dlerror();
@@ -162,7 +176,7 @@ class CudaDriverApi {
     CudaDevice device = 0;
     const CudaResult device_status = device_get_(&device, device_ordinal);
     if (device_status != kCudaSuccess) {
-      throw ErrorFactory::initialization_failure(CudaInitializationFailureKind::kCudaDeviceUnavailable,
+      throw ErrorFactory::initialization_failure(cuda_device_lookup_failure_kind(device_status),
                                                  "query CUDA device ordinal " + std::to_string(device_ordinal) +
                                                      " failed with status " + std::to_string(device_status));
     }
@@ -185,6 +199,7 @@ class CudaDriverApi {
 
   void validate_current_context_device(CudaDevice qualified_device,
                                        std::int32_t minimum_compute_capability_major,
+                                       std::int32_t minimum_compute_capability_minor,
                                        std::string_view unsupported_device_detail) const {
     CudaDevice device = 0;
     check_runtime(context_get_device_(&device), "query current XLA CUDA context device");
@@ -200,7 +215,9 @@ class CudaDriverApi {
                   "query current XLA CUDA context compute-capability major version");
     check_runtime(device_get_attribute_(&compute_capability_minor, kComputeCapabilityMinor, device),
                   "query current XLA CUDA context compute-capability minor version");
-    if (compute_capability_major < minimum_compute_capability_major) {
+    if (compute_capability_major < minimum_compute_capability_major ||
+        (compute_capability_major == minimum_compute_capability_major &&
+         compute_capability_minor < minimum_compute_capability_minor)) {
       throw ErrorFactory::runtime_failure(
           CudaRuntimeFailureKind::kFailedPrecondition,
           "current XLA CUDA context uses device " + std::to_string(device) + " with unsupported compute capability " +

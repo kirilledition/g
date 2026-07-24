@@ -14,6 +14,17 @@ pub enum OutputError {
     )]
     ExistingOutputUnattestedBgenContent { manifest_path: PathBuf },
     #[error(
+        "Existing output phenotype manifests '{}' and '{}' disagree on association implementation compatibility.",
+        first_manifest_path.display(),
+        conflicting_manifest_path.display()
+    )]
+    ExistingOutputAssociationImplementationDisagreement {
+        first_manifest_path: PathBuf,
+        conflicting_manifest_path: PathBuf,
+    },
+    #[error("Current association implementation does not match existing output authority.")]
+    CurrentAssociationImplementationMismatch,
+    #[error(
         "Output owner claim '{claim_id}' at '{}' survives from process {process_id} on host '{host_name}'. Its owner may be live or may have crashed; this BeeGFS mount cannot distinguish those states safely. First use an external coordinator to fence the recorded owner, then resume with --fenced-output-owner-claim '{claim_id}' (or output.fenced_owner_claim_id). Do not remove the claim manually or infer fencing from age or PID state.",
         claim_path.display()
     )]

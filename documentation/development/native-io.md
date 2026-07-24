@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; development contract | Rust I/O and output runtime as of 2026-07-22 | Native runtime maintainers |
+| Pre-release draft; development contract | Rust I/O and output runtime as of 2026-07-24 | Native runtime maintainers |
 
 Native I/O owns the parts of the hot path that should not depend on Python
 DataFrame libraries: BGEN decode, sample/covariate/phenotype alignment, chunk
@@ -162,9 +162,11 @@ manifest header input from the reader's actual content evidence. Output claim
 then independently reinspects BGEN agreement, validates that evidence and
 format, and constructs and binds every phenotype manifest header before
 publishing the durable no-replace owner claim. It repeats complete
-execution-plan validation under that authority. Activation then consumes only
-those stored headers, publishes genesis or successor authority, and creates
-attempt-specific state.
+execution-plan validation under that authority. After backend construction,
+activation accepts the current association implementation, freshly rereads
+existing manifest agreement under the held claim, and rejects a mismatch before
+authority or writers are published. It then consumes only the stored headers,
+publishes genesis or successor authority, and creates attempt-specific state.
 
 ## Manifest And Resume Contract
 
@@ -197,12 +199,18 @@ authority.
 Construction and parsing share one exact typed schema for the complete nested
 execution-plan graph. Unknown or missing nested fields and inconsistent
 backend, device, association-mode, or correction-policy combinations are
-rejected. Attempt runtime device and writer-thread metadata must also agree
-with the corresponding execution-plan fields, and the nested execution-plan
-phenotype must equal the attempt and genesis phenotype. Schema zero preserves
-its flat, status-dependent top-level wire layout because canonical manifest
-bytes are terminal authority; a tagged or nested status model requires a
-schema revision.
+rejected. Attempt runtime requires a closed association-implementation object
+with exact JAX/JAXlib versions and, when approximate Firth is planned, one valid
+JAX/raw-CUDA/fallback combination. Every raw-CUDA request includes the exact
+FFI target/API, framed source/ABI handler SHA-256, and PTX
+SHA-256/ISA/target plus the reviewed minimum CUDA driver and compute-capability
+thresholds; observational CUDA state and free-text errors are forbidden.
+Runtime device and writer-thread metadata must
+also agree with the corresponding execution-plan fields, and the nested
+execution-plan phenotype must equal the attempt and genesis phenotype. Schema
+zero preserves its flat, status-dependent top-level wire layout because
+canonical manifest bytes are terminal authority; a tagged or nested status
+model requires a schema revision.
 
 Every recovery path reads `run_manifest.json` through one descriptor-backed
 reader. It rejects symbolic links and other non-regular files, checks the
@@ -220,10 +228,11 @@ control-plane schema rather than increasing recovery memory without review.
 
 `OutputManager::existing_output_resume_agreement` reads all materialized
 phenotype manifests under one fresh lineage snapshot and returns one
-`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint` and
-`gpu_genotype_format`. Each manifest must bind to the genesis phenotype and
-chunk-plan contracts, current leaf attempt, and any finalized terminal
-manifest digest. Digest, byte count, and format must agree across the plan.
+`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint`,
+`gpu_genotype_format`, and exact association-implementation compatibility.
+Each manifest must bind to the genesis phenotype and chunk-plan contracts,
+current leaf attempt, and any finalized terminal manifest digest. Digest, byte
+count, format, and association implementation must agree across the plan.
 Terminal authority requires all manifests; a missing nonterminal manifest is
 skipped. A pending terminal still reads its fully typed, genesis-bound running
 manifests because recovery has not materialized the claimed terminal bytes yet.

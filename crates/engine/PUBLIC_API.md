@@ -20,9 +20,18 @@ private to the engine; `g-runner` observes only its purpose and engine-owned
 renderable error. Backend capability and transfer-preparation enums are owned
 here with the backend lifecycle. The validated association implementation
 state is also engine-owned: its constructors admit only valid requested,
-effective, FFI-target, and fallback combinations, and its accessors separate
-stable implementation and fallback-reason names from diagnostic-only free text.
+effective, raw-artifact, fallback, and reason-specific observation shapes.
+Every raw-CUDA request, including a recoverable JAX fallback, retains the exact
+FFI target/API, framed source/ABI handler SHA-256, and PTX
+SHA-256/ISA/target plus the reviewed minimum driver and compute-capability
+thresholds in a validated `RawCudaFirthCapabilityRequirements` value. Selection
+validates native observations against those thresholds.
+Its accessors separate stable implementation and fallback-reason names from
+diagnostic-only free text and CUDA observations.
 Every production JAX backend retains its exact observed JAX and JAXlib versions.
+The current `AssociationBackend` contract is deliberately JAX-specific despite
+its device-agnostic scheduling envelope. A future non-JAX backend must extend
+the implementation-state and output schema instead of inventing JAX versions.
 Genotype batches, compressed transfer descriptors, and raw statistics remain
 owned by `g-genotype`. Input and output payloads remain owned by their domain
 crates and are referenced directly rather than mirrored or re-exported. Run
@@ -104,15 +113,23 @@ summaries, which the genotype crate validates and converts on the
 materialization worker before any writer sees the batch.
 
 The root JAX adapter captures exact observed JAX/JAXlib versions when it builds
-the association implementation state. Effective raw CUDA carries the exact FFI
-target supplied by `g-compute-cuda`; JAX and fallback states cannot carry a
-target. Run/output integration must read this state before opening output and
-project only requested implementation, effective implementation, typed
-fallback reason, exact JAX/JAXlib versions, and the FFI target ABI name when raw
-CUDA is effective into compatibility state.
-Host-specific diagnostic detail, device ordinal, UUID, and description remain
-non-hashed. The pre-release contract version remains `0`; execution-plan hashing
-alone carries this compatibility state.
+the association implementation state. It decides once per selected JAX device:
+unsupported platform, missing driver/library symbol, old driver, unavailable
+device, and unsupported compute capability may select JAX with a typed reason.
+CUDA driver-operation failures, unknown native failures, and every JAX
+capsule/import/registration failure are fatal; they cannot be represented as a
+fallback or cached as one.
+
+After logging and backend construction but before output activation, the
+coordinator emits exactly one structured implementation-selection observation,
+projects the engine state into the output-owned compatibility DTO, and passes
+that value to activation. Raw-CUDA artifact identity and exact JAX/JAXlib
+versions participate in resume compatibility even when JAX is effective.
+Host-specific diagnostic detail and observed driver/device/compute-capability
+fields remain non-hashed. Schema-zero stores this compatibility under
+`runtime.association_implementation`; activation rereads existing manifest
+agreement under the held claim and rejects a mismatch before attempt authority
+or writers are published.
 
 ## Allowed downstream users
 

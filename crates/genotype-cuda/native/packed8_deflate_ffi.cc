@@ -58,10 +58,10 @@ using xla::ffi::ResultBufferR1;
 using xla::ffi::ResultBufferR3;
 using xla::ffi::ScratchAllocator;
 
+#include "packed8_artifact_identity.inc"
+
 constexpr char kDescriptorKernelName[] = "build_nvcomp_descriptors";
 constexpr char kFinalizeKernelName[] = "finalize_packed8";
-constexpr std::int32_t kMinimumCudaDriverVersion = 12020;
-constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;
 constexpr unsigned int kKernelBlockSize = 256;
 // For a row of n bytes, the unreduced Adler B numerator is bounded by
 // n + 255*n*(n+1)/2. This sample limit keeps that expression within uint64_t
@@ -272,7 +272,10 @@ class NvcompApi {
 class Packed8Kernels {
  public:
   explicit Packed8Kernels(const CudaDriverApi& driver)
-      : driver_(driver), module_(driver, driver.load_module(kPacked8KernelPtx, "load packed8 compute_70 PTX")) {
+      : driver_(driver),
+        module_(
+            driver,
+            driver.load_module(kPacked8KernelPtx, std::string("load packed8 ") + kPacked8DeflatePtxTarget + " PTX")) {
     descriptor_function_ = driver_.get_function(module_.get(), kDescriptorKernelName);
     finalize_function_ = driver_.get_function(module_.get(), kFinalizeKernelName);
   }
@@ -413,7 +416,10 @@ class Packed8KernelCache {
     if (iterator == kernels_.end()) {
       driver_.validate_current_context_device(qualified_device,
                                               kMinimumComputeCapabilityMajor,
-                                              "packed8 nvCOMP FFI requires 7.0 or newer");
+                                              kMinimumComputeCapabilityMinor,
+                                              "packed8 nvCOMP FFI requires compute capability " +
+                                                  std::to_string(kMinimumComputeCapabilityMajor) + "." +
+                                                  std::to_string(kMinimumComputeCapabilityMinor) + " or newer");
       iterator = kernels_.emplace(context, std::make_unique<Packed8Kernels>(driver_)).first;
     }
     thread_cache = ThreadCache{this, context, iterator->second.get()};
@@ -449,7 +455,9 @@ class RuntimeState {
     }
     if (capability.cuda_driver_version < kMinimumCudaDriverVersion) {
       fail_initialization(InitializationStatus::kCudaDriverTooOld,
-                          "embedded PTX ISA 8.2 requires CUDA driver API version 12020 or newer");
+                          std::string("embedded PTX ISA ") + kPacked8DeflatePtxIsa +
+                              " requires CUDA driver API version " + std::to_string(kMinimumCudaDriverVersion) +
+                              " or newer");
     }
     if (!is_power_of_two(member_alignment)) {
       fail_initialization(InitializationStatus::kInternal,
@@ -463,9 +471,13 @@ class RuntimeState {
     }
 
     const CudaDevice inspected_device = driver_.inspect_device(device_ordinal, capability);
-    if (capability.compute_capability_major < kMinimumComputeCapabilityMajor) {
+    if (capability.compute_capability_major < kMinimumComputeCapabilityMajor ||
+        (capability.compute_capability_major == kMinimumComputeCapabilityMajor &&
+         capability.compute_capability_minor < kMinimumComputeCapabilityMinor)) {
       fail_initialization(InitializationStatus::kComputeCapabilityUnsupported,
-                          "nvCOMP DEFLATE requires compute capability 7.0 or newer");
+                          "nvCOMP DEFLATE requires compute capability " +
+                              std::to_string(kMinimumComputeCapabilityMajor) + "." +
+                              std::to_string(kMinimumComputeCapabilityMinor) + " or newer");
     }
     CudaDevice unqualified_device = kUnqualifiedDevice;
     if (!qualified_device_.compare_exchange_strong(unqualified_device, inspected_device) &&

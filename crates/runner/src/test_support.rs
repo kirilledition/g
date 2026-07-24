@@ -167,6 +167,14 @@ impl AssociationBackend for TestAssociationBackend {
     type DeviceResult = ();
     type Error = Infallible;
 
+    fn association_implementation_state(&self) -> g_engine::AssociationImplementationState {
+        g_engine::AssociationImplementationState::jax(
+            g_engine::JaxRuntimeVersions::new("0.11.0".to_string(), "0.11.0".to_string())
+                .expect("valid test JAX versions"),
+            None,
+        )
+    }
+
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability {
         GenotypeDeliveryCapability::HostOnly
     }

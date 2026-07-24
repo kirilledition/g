@@ -73,8 +73,17 @@ process-global private target once.
 Only GPU binary-Firth backend construction probes the optional CUDA component
 target. The binding passes the resulting static capability into the typed JAX
 configuration; it does not expose an environment or user configuration knob.
-Capability or registration failure selects the JAX implementation and does
-not affect packed8 target registration.
+Only the six engine-owned recoverable capability classes select JAX. CUDA
+driver-operation and unknown native failures are fatal, as are capsule
+construction, JAX import, and FFI registration failures. A final selection is
+cached per exact JAX device and cannot change in flight. This policy does not
+affect packed8 target registration.
+
+Any process-global lock or once cell reached while Python is attached must use
+PyO3's attached-thread synchronization helpers. A Python-running initializer
+uses `OnceLockExt::get_or_init_py_attached`, and short map access uses
+`MutexExt::lock_py_attached`; no ordinary Rust guard may be held while importing
+Python modules, loading nvCOMP, probing CUDA, or registering an FFI target.
 
 ## Namespace Policy
 

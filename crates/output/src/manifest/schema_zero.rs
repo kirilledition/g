@@ -357,6 +357,11 @@ impl ExecutionPlanSchemaZero {
         self.output_writer.writer_thread_count
     }
 
+    pub(crate) fn uses_approximate_firth(&self) -> bool {
+        self.association_mode == g_plan::AssociationMode::Regenie2Binary
+            && self.binary_correction_plan.method == g_plan::BinaryFallbackMethod::FirthApproximate
+    }
+
     pub(crate) fn validate(&self) -> OutputResult<()> {
         self.bgen.validate();
         self.sample.validate("sample")?;

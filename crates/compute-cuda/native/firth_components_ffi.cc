@@ -39,9 +39,9 @@ using xla::ffi::DataType;
 using xla::ffi::Error;
 using xla::ffi::ErrorCode;
 
+#include "firth_components_artifact_identity.inc"
+
 constexpr char kKernelName[] = "compute_firth_components";
-constexpr std::int32_t kMinimumCudaDriverVersion = 12020;
-constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;
 constexpr unsigned int kKernelBlockSize = 256;
 
 constexpr char kFirthComponentsKernelPtx[] =
@@ -124,7 +124,9 @@ class FirthComponentsKernel {
  public:
   explicit FirthComponentsKernel(const CudaDriverApi& driver)
       : driver_(driver),
-        module_(driver, driver.load_module(kFirthComponentsKernelPtx, "load Firth component compute_70 PTX")) {
+        module_(driver,
+                driver.load_module(kFirthComponentsKernelPtx,
+                                   std::string("load Firth component ") + kFirthComponentsPtxTarget + " PTX")) {
     function_ = driver_.get_function(module_.get(), kKernelName);
   }
 
@@ -202,7 +204,10 @@ class FirthComponentsKernelCache {
     if (iterator == kernels_.end()) {
       driver_.validate_current_context_device(qualified_device,
                                               kMinimumComputeCapabilityMajor,
-                                              "CUDA Firth components require 7.0 or newer");
+                                              kMinimumComputeCapabilityMinor,
+                                              "CUDA Firth components require compute capability " +
+                                                  std::to_string(kMinimumComputeCapabilityMajor) + "." +
+                                                  std::to_string(kMinimumComputeCapabilityMinor) + " or newer");
       iterator = kernels_.emplace(context, std::make_unique<FirthComponentsKernel>(driver_)).first;
     }
     thread_cache = ThreadCache{this, context, iterator->second.get()};
@@ -227,12 +232,18 @@ class RuntimeState {
     capability.device_ordinal = device_ordinal;
     if (capability.cuda_driver_version < kMinimumCudaDriverVersion) {
       fail_initialization(InitializationStatus::kCudaDriverTooOld,
-                          "embedded PTX ISA 8.2 requires CUDA driver API version 12020 or newer");
+                          std::string("embedded PTX ISA ") + kFirthComponentsPtxIsa +
+                              " requires CUDA driver API version " + std::to_string(kMinimumCudaDriverVersion) +
+                              " or newer");
     }
     const CudaDevice inspected_device = driver_.inspect_device(device_ordinal, capability);
-    if (capability.compute_capability_major < kMinimumComputeCapabilityMajor) {
+    if (capability.compute_capability_major < kMinimumComputeCapabilityMajor ||
+        (capability.compute_capability_major == kMinimumComputeCapabilityMajor &&
+         capability.compute_capability_minor < kMinimumComputeCapabilityMinor)) {
       fail_initialization(InitializationStatus::kComputeCapabilityUnsupported,
-                          "CUDA Firth components require compute capability 7.0 or newer");
+                          "CUDA Firth components require compute capability " +
+                              std::to_string(kMinimumComputeCapabilityMajor) + "." +
+                              std::to_string(kMinimumComputeCapabilityMinor) + " or newer");
     }
     CudaDevice unqualified_device = kUnqualifiedDevice;
     if (!qualified_device_.compare_exchange_strong(unqualified_device, inspected_device) &&

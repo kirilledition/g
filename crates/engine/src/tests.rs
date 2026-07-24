@@ -37,6 +37,7 @@ use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
 use crate::run::{RunPreparationError, validate_jax_integer_domain};
+use crate::{AssociationImplementationState, JaxRuntimeVersions};
 
 const TEST_SAMPLE_COUNT: usize = 3;
 const TEST_SYNCHRONIZATION_TIMEOUT: Duration = Duration::from_secs(5);
@@ -186,6 +187,13 @@ impl AssociationBackend for TestBackend {
     type TransferredInput = GenotypeBatch;
     type DeviceResult = TestDeviceResult;
     type Error = TestBackendError;
+
+    fn association_implementation_state(&self) -> AssociationImplementationState {
+        AssociationImplementationState::jax(
+            JaxRuntimeVersions::new("0.11.0".to_string(), "0.11.0".to_string()).expect("valid test JAX versions"),
+            None,
+        )
+    }
 
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability {
         GenotypeDeliveryCapability::HostOnly

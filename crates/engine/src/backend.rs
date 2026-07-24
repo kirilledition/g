@@ -65,7 +65,11 @@ pub enum MaterializedGenotypeStatistics {
     Packed8Raw(g_genotype::Packed8RawStatistics),
 }
 
-/// Chunk-oriented association compute implemented by the device runtime.
+/// Chunk-oriented association compute implemented by the current JAX runtime.
+///
+/// Every production implementation must report exact JAX/`JAXlib` state. A
+/// future non-JAX backend requires an explicit implementation-state and output
+/// schema extension rather than fabricated JAX versions.
 pub trait AssociationBackend: Send + Sync {
     type GroupState: Send + Sync + 'static;
     type ChromosomeState: Send + 'static;
@@ -74,11 +78,7 @@ pub trait AssociationBackend: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Return the runtime-selected implementations that affect reproducibility.
-    ///
-    /// Backends without optional implementations retain the empty default.
-    fn association_implementation_state(&self) -> crate::AssociationImplementationState {
-        crate::AssociationImplementationState::default()
-    }
+    fn association_implementation_state(&self) -> crate::AssociationImplementationState;
 
     /// Return the genotype delivery modes supported by this backend instance.
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability;

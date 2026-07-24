@@ -69,6 +69,16 @@ mod tests {
                 "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
                 "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
                 "parquet_compression": "zstd",
+                "association_implementation": {
+                    "jax_version": "0.11.0",
+                    "jaxlib_version": "0.11.0",
+                    "firth_components": {
+                        "requested": "jax",
+                        "effective": "jax",
+                        "fallback_reason": null,
+                        "raw_cuda_artifact": null,
+                    },
+                },
             },
         })
     }

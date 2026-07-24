@@ -386,15 +386,26 @@ impl ClaimedRun {
         self.output_manager.abort_before_activation()
     }
 
+    /// Reject backend compatibility before publishing attempt authority.
+    pub(crate) fn reject_activation(self, source: g_output::OutputError) -> RunActivationOutcome {
+        let error = self.output_manager.reject_activation(source);
+        RunActivationOutcome { result: Err(run_activation_error(error)), post_session_cleanup: None }
+    }
+
     /// Publish attempt authority after backend construction.
     ///
     /// # Errors
     ///
     /// The result records any output activation or delivery-token construction
     /// failure. Completed-noop cleanup remains orthogonal to that result.
-    pub(crate) fn activate(self) -> RunActivationOutcome {
+    pub(crate) fn activate(
+        self,
+        association_implementation: g_output::AssociationImplementationCompatibility,
+    ) -> RunActivationOutcome {
         let Self { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;
-        let output_manager = match output_manager.activate_with_deferred_completed_noop_cleanup() {
+        let output_manager = match output_manager
+            .activate_with_deferred_completed_noop_cleanup(association_implementation)
+        {
             Ok(output_manager) => output_manager,
             Err(error) => {
                 return RunActivationOutcome { result: Err(run_activation_error(error)), post_session_cleanup: None };
@@ -914,7 +925,20 @@ mod tests {
         content_fingerprint: BgenContentFingerprint,
         gpu_genotype_format: GpuGenotypeFormat,
     ) -> g_output::ExistingOutputResumeAgreement {
-        g_output::ExistingOutputResumeAgreement { bgen_content_fingerprint: content_fingerprint, gpu_genotype_format }
+        g_output::ExistingOutputResumeAgreement {
+            bgen_content_fingerprint: content_fingerprint,
+            gpu_genotype_format,
+            association_implementation: bgen_test_association_implementation(),
+        }
+    }
+
+    fn bgen_test_association_implementation() -> g_output::AssociationImplementationCompatibility {
+        g_output::AssociationImplementationCompatibility::new(
+            "0.11.0".to_string(),
+            "0.11.0".to_string(),
+            Some(g_output::FirthComponentsCompatibility::jax()),
+        )
+        .expect("test association implementation is valid")
     }
 
     fn bgen_test_kernel_plan() -> g_plan::KernelPlan {
@@ -1032,7 +1056,12 @@ mod tests {
         let planned_chunk_range = 0..1;
         g_output::OutputManager::open(Arc::new(run_plan), "# test output authority\n".to_string())
             .expect("test output authority should plan")
-            .initialize(vec![header], std::slice::from_ref(&planned_chunk_range), false)
+            .initialize(
+                vec![header],
+                std::slice::from_ref(&planned_chunk_range),
+                false,
+                bgen_test_association_implementation(),
+            )
             .expect("test output authority should initialize")
             .finish_interrupted("SIGTERM")
             .expect("test output authority should publish an interrupted terminal");

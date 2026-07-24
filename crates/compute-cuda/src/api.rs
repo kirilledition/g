@@ -10,6 +10,8 @@ use std::ptr::NonNull;
 /// Stable approximate-Firth component target registered by the private binding.
 pub const FIRTH_COMPONENTS_FFI_TARGET: &str = "g.firth.components.v1";
 
+include!(concat!(env!("OUT_DIR"), "/firth_components_artifact_identity.rs"));
+
 #[cfg(target_os = "linux")]
 const INITIALIZATION_SUCCESS: c_int = 0;
 #[cfg(target_os = "linux")]
@@ -29,7 +31,37 @@ const COMPUTE_CAPABILITY_UNSUPPORTED: c_int = 6;
 #[must_use]
 #[derive(Debug, Eq, PartialEq)]
 pub struct FirthComponentsCapability {
+    cuda_driver_version: i32,
+    device_ordinal: i32,
+    compute_capability_major: i32,
+    compute_capability_minor: i32,
     private: (),
+}
+
+impl FirthComponentsCapability {
+    /// Returns the CUDA driver API version observed during qualification.
+    #[must_use]
+    pub const fn cuda_driver_version(&self) -> i32 {
+        self.cuda_driver_version
+    }
+
+    /// Returns the CUDA-visible device ordinal qualified for this capability.
+    #[must_use]
+    pub const fn device_ordinal(&self) -> i32 {
+        self.device_ordinal
+    }
+
+    /// Returns the qualified device's compute-capability major version.
+    #[must_use]
+    pub const fn compute_capability_major(&self) -> i32 {
+        self.compute_capability_major
+    }
+
+    /// Returns the qualified device's compute-capability minor version.
+    #[must_use]
+    pub const fn compute_capability_minor(&self) -> i32 {
+        self.compute_capability_minor
+    }
 }
 
 /// Reason the optional CUDA Firth component path cannot be selected.
@@ -46,9 +78,15 @@ pub enum FirthComponentsInitializationError {
     /// The driver predates CUDA 12.2 and cannot consume PTX ISA 8.2.
     CudaDriverTooOld { version: i32, detail: String },
     /// The requested CUDA-visible device ordinal is unavailable.
-    CudaDeviceUnavailable { device_ordinal: i32, detail: String },
+    CudaDeviceUnavailable { cuda_driver_version: i32, device_ordinal: i32, detail: String },
     /// The requested device predates compute capability 7.0.
-    UnsupportedComputeCapability { device_ordinal: i32, major: i32, minor: i32, detail: String },
+    UnsupportedComputeCapability {
+        cuda_driver_version: i32,
+        device_ordinal: i32,
+        major: i32,
+        minor: i32,
+        detail: String,
+    },
     /// An unexpected native initialization failure occurred.
     Internal { detail: String },
 }
@@ -64,10 +102,10 @@ impl fmt::Display for FirthComponentsInitializationError {
             Self::CudaDriverTooOld { version, detail } => {
                 write!(formatter, "CUDA driver API version {version} is too old: {detail}")
             }
-            Self::CudaDeviceUnavailable { device_ordinal, detail } => {
+            Self::CudaDeviceUnavailable { device_ordinal, detail, .. } => {
                 write!(formatter, "CUDA device {device_ordinal} is unavailable: {detail}")
             }
-            Self::UnsupportedComputeCapability { device_ordinal, major, minor, detail } => write!(
+            Self::UnsupportedComputeCapability { device_ordinal, major, minor, detail, .. } => write!(
                 formatter,
                 "CUDA device {device_ordinal} has unsupported compute capability {major}.{minor}: {detail}"
             ),
@@ -111,7 +149,7 @@ pub fn initialize_firth_components_runtime(
         )
     };
     if status == INITIALIZATION_SUCCESS {
-        return Ok(FirthComponentsCapability { private: () });
+        return Ok(firth_components_capability_from_native(&native_capability));
     }
     let detail = if native_detail.is_null() {
         "native CUDA compute initialization returned no diagnostic".to_owned()
@@ -121,6 +159,17 @@ pub fn initialize_firth_components_runtime(
         unsafe { CStr::from_ptr(native_detail) }.to_string_lossy().into_owned()
     };
     Err(initialization_error_from_native_status(status, &native_capability, device_ordinal, detail))
+}
+
+#[cfg(target_os = "linux")]
+fn firth_components_capability_from_native(native_capability: &NativeCapability) -> FirthComponentsCapability {
+    FirthComponentsCapability {
+        cuda_driver_version: native_capability.cuda_driver_version,
+        device_ordinal: native_capability.device_ordinal,
+        compute_capability_major: native_capability.compute_capability_major,
+        compute_capability_minor: native_capability.compute_capability_minor,
+        private: (),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -138,8 +187,13 @@ fn initialization_error_from_native_status(
             version: native_capability.cuda_driver_version,
             detail,
         },
-        CUDA_DEVICE_UNAVAILABLE => FirthComponentsInitializationError::CudaDeviceUnavailable { device_ordinal, detail },
+        CUDA_DEVICE_UNAVAILABLE => FirthComponentsInitializationError::CudaDeviceUnavailable {
+            cuda_driver_version: native_capability.cuda_driver_version,
+            device_ordinal,
+            detail,
+        },
         COMPUTE_CAPABILITY_UNSUPPORTED => FirthComponentsInitializationError::UnsupportedComputeCapability {
+            cuda_driver_version: native_capability.cuda_driver_version,
             device_ordinal,
             major: native_capability.compute_capability_major,
             minor: native_capability.compute_capability_minor,
@@ -205,8 +259,27 @@ mod tests {
     const NATIVE_INTERNAL_FAILURE: c_int = 7;
 
     #[test]
-    fn ffi_target_name_is_stable() {
+    fn ffi_and_embedded_ptx_identity_are_stable() {
         assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_FFI_TARGET), "g.firth.components.v1");
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_FFI_API_VERSION), 1);
+        assert_eq!(
+            std::hint::black_box(FIRTH_COMPONENTS_HANDLER_SHA256),
+            "005f72c4d5ab3d81f16db305bd94bc7bd1eb9febf0e0ba9e10a486122d935ff8"
+        );
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_MINIMUM_CUDA_DRIVER_VERSION), 12_020);
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MAJOR), 7);
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MINOR), 0);
+        assert_eq!(
+            std::hint::black_box(FIRTH_COMPONENTS_PTX_SHA256),
+            "a22c9866447f21c7f7cd484ec1e12c3c249a5a84acf3850cb3eb3a56697c736f"
+        );
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_PTX_ISA), "8.2");
+        assert_eq!(std::hint::black_box(FIRTH_COMPONENTS_PTX_TARGET), "sm_70");
+        let ptx = include_str!("../native/firth_components_kernel.compute_70.ptx");
+        let declared_isa = ptx.lines().find_map(|line| line.trim().strip_prefix(".version "));
+        let declared_target = ptx.lines().find_map(|line| line.trim().strip_prefix(".target "));
+        assert_eq!(declared_isa, Some(FIRTH_COMPONENTS_PTX_ISA));
+        assert_eq!(declared_target, Some(FIRTH_COMPONENTS_PTX_TARGET));
     }
 
     #[cfg(target_os = "linux")]
@@ -261,6 +334,7 @@ mod tests {
             },
             DisplayCase {
                 error: FirthComponentsInitializationError::CudaDeviceUnavailable {
+                    cuda_driver_version: 12_090,
                     device_ordinal: 3,
                     detail: "ordinal is not visible".to_owned(),
                 },
@@ -268,6 +342,7 @@ mod tests {
             },
             DisplayCase {
                 error: FirthComponentsInitializationError::UnsupportedComputeCapability {
+                    cuda_driver_version: 12_090,
                     device_ordinal: 4,
                     major: 6,
                     minor: 1,
@@ -289,13 +364,25 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn every_native_failure_status_maps_to_the_public_error_taxonomy() {
+    fn successful_native_capability_observations_are_retained() {
         let native_capability = NativeCapability {
-            cuda_driver_version: 12_010,
-            device_ordinal: 99,
-            compute_capability_major: 6,
-            compute_capability_minor: 1,
+            cuda_driver_version: 12_090,
+            device_ordinal: 2,
+            compute_capability_major: 7,
+            compute_capability_minor: 5,
         };
+
+        let capability = firth_components_capability_from_native(&native_capability);
+
+        assert_eq!(capability.cuda_driver_version(), 12_090);
+        assert_eq!(capability.device_ordinal(), 2);
+        assert_eq!(capability.compute_capability_major(), 7);
+        assert_eq!(capability.compute_capability_minor(), 5);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn every_native_failure_status_maps_to_the_public_error_taxonomy() {
         let requested_device_ordinal = 3;
         let cases = [
             MappingCase {
@@ -320,6 +407,7 @@ mod tests {
             MappingCase {
                 status: CUDA_DEVICE_UNAVAILABLE,
                 expected: FirthComponentsInitializationError::CudaDeviceUnavailable {
+                    cuda_driver_version: 12_090,
                     device_ordinal: requested_device_ordinal,
                     detail: "detail".to_owned(),
                 },
@@ -327,6 +415,7 @@ mod tests {
             MappingCase {
                 status: COMPUTE_CAPABILITY_UNSUPPORTED,
                 expected: FirthComponentsInitializationError::UnsupportedComputeCapability {
+                    cuda_driver_version: 12_090,
                     device_ordinal: requested_device_ordinal,
                     major: 6,
                     minor: 1,
@@ -344,6 +433,12 @@ mod tests {
         ];
 
         for case in cases {
+            let native_capability = NativeCapability {
+                cuda_driver_version: if case.status == CUDA_DRIVER_TOO_OLD { 12_010 } else { 12_090 },
+                device_ordinal: 99,
+                compute_capability_major: 6,
+                compute_capability_minor: 1,
+            };
             let observed = initialization_error_from_native_status(
                 case.status,
                 &native_capability,
@@ -357,13 +452,22 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn capability_gates_a_stable_non_null_handler_address() {
-        let capability = FirthComponentsCapability { private: () };
+        let native_capability = NativeCapability {
+            cuda_driver_version: 12_090,
+            device_ordinal: 2,
+            compute_capability_major: 7,
+            compute_capability_minor: 0,
+        };
+        let capability = firth_components_capability_from_native(&native_capability);
 
         let first_handler = firth_components_ffi_handler(&capability);
         let second_handler = firth_components_ffi_handler(&capability);
 
         assert_eq!(first_handler, second_handler);
-        assert_eq!(capability, FirthComponentsCapability { private: () });
+        assert_eq!(capability.cuda_driver_version(), 12_090);
+        assert_eq!(capability.device_ordinal(), 2);
+        assert_eq!(capability.compute_capability_major(), 7);
+        assert_eq!(capability.compute_capability_minor(), 0);
         assert!(format!("{capability:?}").contains("FirthComponentsCapability"));
     }
 }

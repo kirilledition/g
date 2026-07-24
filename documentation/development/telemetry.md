@@ -124,12 +124,18 @@ name through immediate JSON serialization (production levels map to static
 uppercase labels); only the timestamp and final JSONL record are owned per
 event.
 
-An enabled telemetry session receives progress, execution-plan preparation, and
-JAX setup diagnostics directly as typed events. When telemetry is disabled,
-execution-plan preparation and JAX setup diagnostics use the tracing diagnostic
-route instead. No diagnostic is sent through both routes, and progress
-bookkeeping is not constructed when telemetry is off. The persistent-cache
-diagnostic always reports `enabled=true`, the resolved directory,
+An enabled telemetry session receives progress, execution-plan preparation,
+JAX setup, and the once-per-run `association_implementation_selected`
+observation directly as typed events. When telemetry is disabled,
+execution-plan preparation, JAX setup, and implementation selection use the
+tracing diagnostic route instead. No diagnostic is sent through both routes,
+and progress bookkeeping is not constructed when telemetry is off. The
+implementation-selection event records exact JAX/JAXlib versions; optional
+Firth requested/effective/fallback names; raw-CUDA target, API, handler and PTX
+identity, and minimum driver/compute-capability thresholds; and the
+reason-appropriate observed driver/device fields. Free-text fallback detail is
+excluded. The persistent-cache diagnostic always reports `enabled=true`, the
+resolved directory,
 `min_entry_size_bytes=-1`, and `min_compile_time_seconds=0`. Auxiliary-cache and
 transfer-guard diagnostics report their fixed disabled policy. Diagnostic
 emission after runtime work starts is best-effort: failures are warned about but
@@ -138,6 +144,23 @@ before its completed-setup diagnostics are emitted. Progress and lifecycle
 telemetry emission follow the same best-effort rule, including the final
 progress update after durable output completion. Observer calls and the warning
 path that reports their failure are panic-contained.
+
+The optional CUDA observation fields use this exact presence matrix:
+
+| Selection result | `cuda_driver_version` | `cuda_device_ordinal` | `cuda_compute_capability_major` / `cuda_compute_capability_minor` |
+|---|---:|---:|---:|
+| Qualified raw CUDA | present | present | present |
+| `unsupported_platform`, `cuda_driver_unavailable`, or `required_symbol_unavailable` | absent | absent | absent |
+| `cuda_driver_too_old` | present | absent | absent |
+| `cuda_device_unavailable` | present | present | absent |
+| `unsupported_compute_capability` | present | present | present |
+
+Whenever raw CUDA was requested, the event also carries
+`raw_cuda_ffi_target`, `raw_cuda_ffi_api_version`,
+`raw_cuda_handler_sha256`, `raw_cuda_ptx_sha256`, `raw_cuda_ptx_isa`,
+`raw_cuda_ptx_target`, `raw_cuda_minimum_cuda_driver_version`,
+`raw_cuda_minimum_compute_capability_major`, and
+`raw_cuda_minimum_compute_capability_minor`.
 
 Progress registers one uniquely owned counter entry per delivery; the joined
 phenotype label is payload text, not an identity key. Complete-plan totals are

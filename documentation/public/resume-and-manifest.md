@@ -39,15 +39,21 @@ optional TOML file, and explicit CLI overrides.
 - binary correction plan and binary kernel settings when applicable, including
   the active approximate-Firth sparse pseudo-budget policy;
 - JAX device/precision policy and dtype choices;
+- runtime-selected exact JAX/JAXlib versions and, for approximate Firth, the
+  requested and effective component implementation, typed recoverable fallback
+  reason, and raw-CUDA FFI/handler/PTX artifact identity when raw CUDA was requested;
 - output writer settings;
 - committed chunk identifiers and complete immutable Parquet receipts.
 
-Pre-release manifest schema version `0` stores immutable compatibility state once under
-`execution_plan`, with its SHA-256 digest in `execution_plan_hash`. Top-level
-fields are limited to manifest/output schema versions and mutable lifecycle
-metadata such as status, committed chunks, command, runtime, and interruption
-state. The pre-release Parquet output schema is version `0`; it makes `INFO` nullable when
-its expected-variance denominator is undefined.
+Pre-release manifest schema version `0` stores prepared-run compatibility once
+under `execution_plan`, with its SHA-256 digest in `execution_plan_hash`.
+Runtime-selected association compatibility is stored separately under
+`runtime.association_implementation` and is checked exactly during activation
+and resume. Other top-level fields are limited to manifest/output schema
+versions and lifecycle metadata such as status, committed chunks, command,
+runtime, and interruption state. The pre-release Parquet output schema is
+version `0`; it makes `INFO` nullable when its expected-variance denominator is
+undefined.
 Attempt-manifest schema version `0` rejects duplicate, unknown, missing, and
 wrong-typed fields. Its exact base field set is `schema_version`,
 `output_schema_version`, `execution_plan`, `execution_plan_hash`,
@@ -58,9 +64,43 @@ completed manifests contain only that base set. Interrupted manifests add one
 non-empty string `interrupted_signal`; failed manifests add one non-empty string
 `failure_reason`. Inapplicable terminal-detail fields must be absent rather than
 `null`. Command and runtime objects also use their exact typed schema. Runtime
-device and writer-thread values must agree with the corresponding immutable
-execution-plan fields, and the execution-plan phenotype must equal the
-attempt/genesis phenotype; CPU-thread count remains runtime diagnostics.
+requires the closed `association_implementation` object. Its exact JAX/JAXlib
+versions are nonempty; approximate-Firth state admits only JAX, raw CUDA, or one
+of six typed recoverable raw-CUDA-to-JAX fallback states. Every raw-CUDA request
+stores the exact FFI target/API, canonical lowercase framed source/ABI handler
+SHA-256, PTX SHA-256 plus PTX ISA and target, and reviewed minimum driver and
+compute-capability thresholds. Free-text errors and observed driver/device
+state are forbidden. The raw-CUDA form is exactly:
+
+```json
+{
+  "jax_version": "<exact JAX version>",
+  "jaxlib_version": "<exact JAXlib version>",
+  "firth_components": {
+    "requested": "raw_cuda",
+    "effective": "raw_cuda",
+    "fallback_reason": null,
+    "raw_cuda_artifact": {
+      "ffi_target": "<stable typed-XLA target>",
+      "ffi_api_version": 1,
+      "handler_sha256": "<64 lowercase hexadecimal characters>",
+      "ptx_sha256": "<64 lowercase hexadecimal characters>",
+      "ptx_isa": "<declared PTX ISA>",
+      "ptx_target": "<declared PTX target>",
+      "minimum_cuda_driver_version": 12020,
+      "minimum_compute_capability_major": 7,
+      "minimum_compute_capability_minor": 0
+    }
+  }
+}
+```
+
+A recoverable fallback changes `effective` to `"jax"` and
+`fallback_reason` to one of the six permitted stable values while retaining
+the same required raw artifact object.
+Runtime device and writer-thread values must agree with the corresponding
+immutable execution-plan fields, and the execution-plan phenotype must equal
+the attempt/genesis phenotype; CPU-thread count remains runtime diagnostics.
 The `schema_version`, `output_schema_version`, and
 `attempt_manifest_schema_version` fields are JSON integers with value `0`, not
 strings.
@@ -101,8 +141,9 @@ When startup asks existing output for resume agreement, the reader resolves one
 fresh lineage snapshot and validates every materialized phenotype manifest
 against the genesis run set, phenotype execution-plan digest, canonical
 chunk-plan digest, and current leaf attempt. It compares the BGEN content
-SHA-256, BGEN byte count, and GPU genotype format across those manifests and
-returns one plan-wide agreement only when all three fields match. A finalized
+SHA-256, BGEN byte count, GPU genotype format, and exact association
+implementation compatibility across those manifests and returns one plan-wide
+agreement only when all fields match. A finalized
 terminal additionally requires each exact raw manifest SHA-256 recorded for its
 phenotype, and terminal authority rejects any missing phenotype manifest. A
 missing nonterminal manifest remains absent supporting state and is skipped. A
@@ -193,9 +234,12 @@ concurrent lineage change from turning the earlier agreement into claim
 authority. Claim then publishes the permanent root or one immutable owner
 transition, repeats lineage and complete execution-plan validation under that
 authority, reserves a fresh staging-attempt identifier, and creates only
-ownership-private diagnostics. Activation accepts no new headers; it publishes
-genesis or a successor from the claim-bound headers for that same attempt
-identity before writers start. Completed read-only activation instead leaves
+ownership-private diagnostics. Activation accepts the current association
+implementation selected during backend construction, freshly rereads existing
+manifest agreement under the held claim, and rejects a mismatch before
+publishing genesis, a successor, or writers. It otherwise publishes from the
+claim-bound headers for that same attempt identity. Completed read-only
+activation instead leaves
 the fresh staging attempt and its owner-staging intent unreferenced through
 final verification. After the runtime session closes, a non-cloneable,
 idempotent cleanup capability removes that staging and releases the exact
@@ -278,6 +322,13 @@ are rejected instead of being reconstructed from result columns. Every part
 must use the production logical schema, and its chunks must have unique
 identifiers, exact row counts, and ranges matching the canonical BGEN chunk
 plan.
+
+When a successor reuses verified parts, it durably writes an empty-receipt
+running manifest containing the selected association implementation before it
+publishes any reused receipt. It then refreshes that manifest with the reused
+receipt subset. A crash at either point therefore retains implementation
+authority. A nonterminal attempt that has durable receipts but no manifest is
+invalid and cannot authorize exact recovery.
 
 ## Compatibility Checks
 

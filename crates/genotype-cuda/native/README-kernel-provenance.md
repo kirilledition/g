@@ -15,6 +15,15 @@ The PTX was generated twice reproducibly with CUDA NVRTC 12.2.140 for
 tool only and is not a build-time or runtime dependency of this crate. Native
 initialization requires CUDA driver API version 12020 or newer because the
 embedded artifact uses the CUDA 12.2 PTX ISA.
+The build verifies the pinned PTX digest, parses the `.version` and `.target`
+directives, and generates both the public Rust artifact identity and the native
+driver-qualification constants. Registration and native diagnostics therefore
+consume one crate-owned identity rather than repeating PTX metadata literals.
+The public handler digest additionally frames the FFI wrapper, nvCOMP ABI, PTX,
+shared CUDA-driver support, and vendored XLA FFI headers. It identifies that
+semantic source/ABI set rather than compiler-dependent native-library bytes.
+Packed8 delivery remains semantics-preserving and can fall back to host
+decoding, so this identity is diagnostic rather than output resume authority.
 
 The finalizer computes the packed8 genotype mean with explicit
 `cvt.rn.f32.u64`, `mul.rn.f32`, and `div.rn.f32` instructions. This preserves

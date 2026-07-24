@@ -115,6 +115,20 @@ class NativeSourceInventory:
 
 
 @dataclass(frozen=True)
+class GeneratedIncludePlaceholder:
+    """Parse-only content for one build-script-generated native include.
+
+    Attributes:
+        file_name: Generated include file name.
+        content: Minimal valid C++ content required by Clang-Tidy.
+
+    """
+
+    file_name: str
+    content: str
+
+
+@dataclass(frozen=True)
 class ClangTidyCommand:
     """One deterministic Clang-Tidy invocation.
 
@@ -189,9 +203,29 @@ REQUIRED_TRANSITIVE_HEADERS = {
     Path("crates/genotype-cuda/native/packed8_deflate_ffi.cc"): ("cuda_driver.h", "nvcomp_abi.h"),
 }
 NATIVE_SOURCE_SUFFIXES = frozenset({".cc", ".cu", ".h"})
-PLACEHOLDER_INCLUDE_NAMES = (
-    "firth_components_kernel_ptx.inc",
-    "packed8_kernel_ptx.inc",
+GENERATED_INCLUDE_PLACEHOLDERS = (
+    GeneratedIncludePlaceholder(file_name="firth_components_kernel_ptx.inc", content='""\n'),
+    GeneratedIncludePlaceholder(
+        file_name="firth_components_artifact_identity.inc",
+        content=(
+            "constexpr std::int32_t kMinimumCudaDriverVersion = 12020;\n"
+            "constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;\n"
+            "constexpr std::int32_t kMinimumComputeCapabilityMinor = 0;\n"
+            'constexpr char kFirthComponentsPtxIsa[] = "8.2";\n'
+            'constexpr char kFirthComponentsPtxTarget[] = "sm_70";\n'
+        ),
+    ),
+    GeneratedIncludePlaceholder(file_name="packed8_kernel_ptx.inc", content='""\n'),
+    GeneratedIncludePlaceholder(
+        file_name="packed8_artifact_identity.inc",
+        content=(
+            "constexpr std::int32_t kMinimumCudaDriverVersion = 12020;\n"
+            "constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;\n"
+            "constexpr std::int32_t kMinimumComputeCapabilityMinor = 0;\n"
+            'constexpr char kPacked8DeflatePtxIsa[] = "8.2";\n'
+            'constexpr char kPacked8DeflatePtxTarget[] = "sm_70";\n'
+        ),
+    ),
 )
 JUSTFILE_NATIVE_SOURCES_PATTERN = re.compile(r"^cuda_native_sources := '([^']+)'$", re.MULTILINE)
 
@@ -310,10 +344,10 @@ def create_cuda_toolkit_layout(root_directory: Path, sources: CudaToolkitSources
 
 
 def create_placeholder_includes(directory: Path) -> None:
-    """Write parse-only string literals for build-script-generated PTX includes."""
+    """Write parse-only build-script-generated includes for native lint."""
     directory.mkdir(parents=True)
-    for include_name in PLACEHOLDER_INCLUDE_NAMES:
-        (directory / include_name).write_text('""\n', encoding="utf-8")
+    for placeholder in GENERATED_INCLUDE_PLACEHOLDERS:
+        (directory / placeholder.file_name).write_text(placeholder.content, encoding="utf-8")
 
 
 def build_native_translation_unit(relative_path: Path) -> NativeTranslationUnit:

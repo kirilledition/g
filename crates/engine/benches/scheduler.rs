@@ -41,6 +41,14 @@ impl AssociationBackend for MockBackend {
     type DeviceResult = ChunkOutputStatistics;
     type Error = Infallible;
 
+    fn association_implementation_state(&self) -> AssociationImplementationState {
+        AssociationImplementationState::jax(
+            g_engine::JaxRuntimeVersions::new("0.11.0".to_string(), "0.11.0".to_string())
+                .expect("valid benchmark JAX versions"),
+            None,
+        )
+    }
+
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability {
         GenotypeDeliveryCapability::HostOnly
     }

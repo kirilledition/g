@@ -13,7 +13,13 @@ writing.
 `OutputActivationError`, `OutputActivationFailureParts`, native chunk handles,
 `OutputTerminalError`, `OutputTerminalFailureParts`, typed manifest
 inputs/fingerprints, `ExistingOutputResumeAgreement`, trait-major statistic
-batches, and `OutputError`. Writer sessions are private implementation details.
+batches, `AssociationImplementationCompatibility`,
+`FirthComponentsCompatibility`,
+`FirthComponentsImplementationCompatibility`,
+`FirthComponentsFallbackReasonCompatibility`,
+`RawCudaFirthCapabilityRequirementsCompatibility`,
+`RawCudaFirthArtifactCompatibility`, and `OutputError`. Writer sessions are
+private implementation details.
 Strict on-disk reconciliation is fixed policy owned by this crate.
 
 ## Public functions
@@ -24,17 +30,23 @@ chunks, and complete, interrupt, or abort the owned attempt.
 `OutputManager::open` only inspects paths and immutable lineage hints.
 `existing_output_resume_agreement` reads all materialized phenotype manifests
 under one lineage snapshot and returns one plan-wide
-`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint` and
-`gpu_genotype_format`. `claim` validates current BGEN agreement, constructs and
-binds every manifest header, and rejects incompatible existing authority before
-owner acquisition. It then acquires durable owner authority, repeats lineage
-and complete execution-plan validation under that authority, reserves a fresh
-attempt identity, and creates ownership-private diagnostic staging without
-publishing attempt authority. Writable `activate` takes no header inputs: it
-publishes genesis or a successor from the headers already bound by `claim` and
-starts writers. Completed read-only activation leaves the fresh staging attempt
-unreferenced. `initialize` is the convenience composition of `claim` and
-`activate`.
+`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint`,
+`gpu_genotype_format`, and `association_implementation`. `claim` validates
+current BGEN agreement, constructs and binds every manifest header, and rejects
+incompatible existing authority before owner acquisition. It then acquires
+durable owner authority, repeats lineage and complete execution-plan validation
+under that authority, reserves a fresh attempt identity, and creates
+ownership-private diagnostic staging without publishing attempt authority.
+Writable `activate` takes the required current
+`AssociationImplementationCompatibility`, freshly rereads materialized
+manifest agreement under the held claim, rejects any exact mismatch, stores the
+validated state, then publishes genesis or a successor from the headers already
+bound by `claim` and starts writers. Completed read-only activation leaves the
+fresh staging attempt unreferenced. `initialize` is the convenience composition
+of `claim` and `activate` and likewise requires current compatibility.
+`reject_activation` converts a backend compatibility-construction failure into
+an unpublished `OutputActivationError` with rollback authority, allowing
+claim-scoped diagnostics to close before ownership is released.
 `close_completed` drains writers and returns `Covered` only after exact
 canonical chunk coverage is proven. Individual writer-session lifecycle
 methods remain crate-private.
@@ -93,6 +105,12 @@ receipt repeats that footer and adds the raw byte size and SHA-256. Resume
 accepts a part only after schema, footer, receipt, raw bytes, chunk geometry,
 producer ancestry, execution plan, and chunk plan all verify. Verified reuse
 prefers a hard link and falls back to a synchronized copy plus rehash.
+Before any verified receipt is reused into a successor, output durably writes
+that successor's running manifest with the selected association
+implementation. It refreshes the manifest after reuse with the complete
+receipt subset. A nonterminal attempt with durable receipts but no
+implementation-bearing manifest is rejected, so crash recovery cannot combine
+parts produced by one compute implementation with new parts from another.
 Attempt-manifest schema version `0` is exact: unknown, missing, duplicate, or
 wrong-typed fields are rejected. Running and completed manifests omit terminal
 detail fields; interrupted manifests contain only a non-empty
@@ -104,6 +122,26 @@ attempt phenotype. Schema zero intentionally retains this flat,
 status-dependent object because its canonical JSON bytes participate in
 terminal hashes; a tagged or nested status representation requires a future
 schema revision.
+
+Every attempt manifest requires the closed
+`runtime.association_implementation` object. It stores exact nonempty `jax` and
+`jaxlib` versions plus required-nullable `firth_components`. Approximate-Firth
+accepts exactly three states: requested/effective JAX with null fallback and
+null raw artifact; requested/effective raw CUDA with null fallback and a raw
+artifact; or requested raw CUDA/effective JAX with one typed recoverable
+fallback reason and the requested raw artifact. The raw artifact contains the
+stable FFI target, positive integer FFI API version, canonical lowercase framed
+source/ABI handler SHA-256 in `handler_sha256`, PTX SHA-256, PTX ISA, and PTX
+target, plus the reviewed minimum CUDA driver and compute-capability
+major/minor thresholds. Only `unsupported_platform`, `cuda_driver_unavailable`,
+`required_symbol_unavailable`,
+`cuda_driver_too_old`, `cuda_device_unavailable`, and
+`unsupported_compute_capability` are persistable fallback reasons. Driver
+operation failures, internal/native failures, and JAX registration failures are
+fatal and have no compatibility variant. Free-text diagnostics, device
+identity, driver observations, and other observational detail are not part of
+the schema.
+
 The complete nested `execution_plan` graph is typed and closed as well:
 unknown or missing nested fields, unsupported enum values, and inconsistent
 backend/device/mode policy combinations are rejected. The schema-zero
@@ -125,12 +163,25 @@ execution plan and therefore share one `execution_plan_hash`.
 Existing-output agreement is accepted only from manifest bytes bound to the
 freshly resolved genesis contract, current leaf attempt, canonical chunk plan,
 and, when finalized, immutable terminal manifest digest. The reader compares
-the BGEN digest, byte count, and GPU genotype format across every materialized
-phenotype manifest. A terminal authority requires every phenotype manifest;
-an absent nonterminal manifest is skipped. A pending terminal can still expose
-its bound running manifests so recovery can materialize the claimed terminal
-bytes. After all reads, one final lineage-snapshot equality check prevents a
-concurrent successor or terminal publication from authorizing the result.
+the BGEN digest, byte count, GPU genotype format, and exact association
+implementation compatibility across every materialized phenotype manifest. A
+terminal authority requires every phenotype manifest; an absent nonterminal
+manifest is skipped. A pending terminal can still expose its bound running
+manifests so recovery can materialize the claimed terminal bytes. After all
+reads, one final lineage-snapshot equality check prevents a concurrent
+successor or terminal publication from authorizing the result.
+
+Association implementation agreement provides owner-excluded, fail-closed
+activation and resume compatibility: activation rereads it after owner claim
+and before attempt authority or writer publication, and all emitted running and
+terminal manifests retain the selected value. Terminal manifests are
+cryptographically bound by immutable terminal authority. Schema zero does not
+add association compatibility to `execution_plan_hash`, lineage phenotype
+contracts, or part receipts, so it does not claim cryptographic detection of an
+external rewrite of otherwise valid nonterminal manifest bytes. A nonterminal
+attempt with no materialized manifests has no persisted implementation
+agreement and is accepted under the documented absent-manifest recovery rule.
+
 All recovery reads open `run_manifest.json` as a non-symlink regular file and
 consume at most 1 GiB plus one detection byte. Writes larger than the same
 1 GiB schema-zero ceiling are rejected before publication, and terminal

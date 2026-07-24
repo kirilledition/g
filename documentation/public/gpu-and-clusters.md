@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-07-19 GPU and cluster operation | Public user docs |
+| Pre-release draft | main branch as of 2026-07-24 GPU and cluster operation | Public user docs |
 
 `g` executes statistical kernels through JAX. Choose the target device in TOML:
 
@@ -189,14 +189,25 @@ the project to the CUDA 13 extra.
 Binary approximate-Firth GPU runs also use a private raw-CUDA component kernel
 when the CUDA driver exposes API 12.2 or newer and the device has compute
 capability 7.0 or newer. This compute path is independent from nvCOMP and does
-not add a user-facing switch. If its capability check or private target
-registration fails, `g` transparently retains the numerically equivalent JAX
-component reduction; the requested GPU association run continues.
+not add a user-facing switch. JAX is retained only for a typed recoverable
+capability result: unsupported platform, unavailable driver library, unavailable
+required symbol, driver too old, unavailable selected device, or unsupported
+compute capability. CUDA driver-operation failures, unexpected native
+initialization failures, and JAX FFI capsule/import/registration failures stop
+the run before output activation.
+For the selected device lookup, only CUDA's `INVALID_DEVICE` result means that
+the configured ordinal is unavailable and permits the typed JAX fallback.
+Invalid arguments, uninitialized or deinitialized driver state, invalid
+contexts, deferred errors, and unknown statuses are fatal driver failures.
 An unexpected CUDA module or launch failure after that selection is reported
 as an execution error; `g` does not change implementations inside a compiled
-solver lifecycle. Run provenance records the requested and effective component
-implementation and a typed reason when the JAX fallback is selected. Free-text
-driver or registration detail is diagnostic only and is not part of resume
+solver lifecycle. Run provenance records exact JAX/JAXlib versions, requested
+and effective component implementations, a typed reason when JAX fallback is
+selected, and the raw artifact's FFI target/API plus framed source/ABI handler
+SHA-256, PTX SHA-256/ISA/target, and reviewed minimum CUDA driver and
+compute-capability thresholds whenever raw CUDA was requested. Free-text detail
+and observed
+driver/device/compute capability are diagnostic only and are not part of resume
 compatibility.
 
 Fair performance comparisons require equivalent statistical modes. Compare score-only to score-only,

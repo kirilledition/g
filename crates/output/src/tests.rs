@@ -17,8 +17,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager,
-    Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
+    AssociationImplementationCompatibility, CurrentRunManifestHeaderInput, FirthComponentsCompatibility,
+    NativeChunkHandle, NativeVariantMetadataHandle, OutputManager, RawCudaFirthArtifactCompatibility,
+    RawCudaFirthCapabilityRequirementsCompatibility, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
 
 const PHENOTYPE_NAME: &str = "trait_alpha";
@@ -260,7 +261,54 @@ fn expected_resume_agreement(
     crate::ExistingOutputResumeAgreement {
         bgen_content_fingerprint: bgen_content_fingerprint(&inputs.bgen),
         gpu_genotype_format,
+        association_implementation: test_association_implementation(),
     }
+}
+
+fn test_association_implementation() -> AssociationImplementationCompatibility {
+    AssociationImplementationCompatibility::new(
+        "test-jax".to_string(),
+        "test-jaxlib".to_string(),
+        Some(FirthComponentsCompatibility::jax()),
+    )
+    .expect("test association implementation compatibility is valid")
+}
+
+fn test_non_firth_association_implementation() -> AssociationImplementationCompatibility {
+    AssociationImplementationCompatibility::new("test-jax".to_string(), "test-jaxlib".to_string(), None)
+        .expect("test non-Firth association implementation compatibility is valid")
+}
+
+fn test_raw_cuda_association_implementation_with_digests(
+    handler_sha256_character: char,
+    ptx_sha256_character: char,
+) -> AssociationImplementationCompatibility {
+    let capability_requirements = RawCudaFirthCapabilityRequirementsCompatibility::new(12_020, 7, 0)
+        .expect("test raw-CUDA capability requirements are valid");
+    let raw_cuda_artifact = RawCudaFirthArtifactCompatibility::new(
+        "g.firth.components.v1".to_string(),
+        1,
+        std::iter::repeat_n(handler_sha256_character, 64).collect(),
+        std::iter::repeat_n(ptx_sha256_character, 64).collect(),
+        "8.2".to_string(),
+        "sm_70".to_string(),
+        capability_requirements,
+    )
+    .expect("test raw-CUDA artifact compatibility is valid");
+    AssociationImplementationCompatibility::new(
+        "test-jax".to_string(),
+        "test-jaxlib".to_string(),
+        Some(FirthComponentsCompatibility::raw_cuda(raw_cuda_artifact)),
+    )
+    .expect("test raw-CUDA association implementation is valid")
+}
+
+#[test]
+fn raw_cuda_handler_digest_participates_in_exact_compatibility() {
+    let first = test_raw_cuda_association_implementation_with_digests('a', 'c');
+    let changed_handler = test_raw_cuda_association_implementation_with_digests('b', 'c');
+
+    assert_ne!(first, changed_handler);
 }
 
 fn positioned_unattested_evidence(path: &Path) -> Arc<BgenContentEvidence> {
@@ -318,7 +366,7 @@ fn initialize_manager(
     let variant_count = chunk_ranges.last().map_or(0, |range| range.end);
     OutputManager::open(run_plan, "# test configuration\n".to_string())
         .expect("manager opens")
-        .initialize(vec![header(inputs, variant_count)], chunk_ranges, true)
+        .initialize(vec![header(inputs, variant_count)], chunk_ranges, true, test_association_implementation())
         .expect("manager initializes")
 }
 
@@ -365,7 +413,7 @@ fn completed_noop_cleanup_fixture(label: &str) -> CompletedNoopCleanupFixture {
     let staging_attempt_id =
         lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
     let completion = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume reverifies")
@@ -899,6 +947,67 @@ fn generated_manifest_uses_typed_sparse_pseudo_budget_policy_for_each_associatio
     }
 }
 
+fn assert_non_firth_association_implementation_contract(association_mode: g_plan::AssociationMode, label: &str) {
+    let accepted_directory = TestDirectory::new(&format!("{label}-null-firth-accepted"));
+    let accepted_inputs = test_inputs(&accepted_directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let accepted_plan = with_association_and_correction(
+        run_plan(&accepted_directory, &accepted_inputs, false, None, g_plan::TelemetryMode::Off),
+        association_mode,
+        g_plan::BinaryFallbackMethod::ScoreOnly,
+    );
+    OutputManager::open(accepted_plan, "# non-Firth compatibility acceptance\n".to_string())
+        .expect("non-Firth manager plans")
+        .initialize(
+            vec![header(&accepted_inputs, 2)],
+            &chunk_ranges,
+            false,
+            test_non_firth_association_implementation(),
+        )
+        .expect("null Firth compatibility matches the non-Firth plan")
+        .finish_interrupted("SIGTERM")
+        .expect("non-Firth output publishes an interrupted terminal");
+    let accepted_output_root = accepted_directory.path.join("results");
+    let accepted_attempt_id = attempt_identifier(&accepted_output_root, None);
+    let accepted_manifest_path = accepted_output_root
+        .join("attempts")
+        .join(accepted_attempt_id)
+        .join(OUTPUT_DIRECTORY_NAME)
+        .join("run_manifest.json");
+    assert_eq!(
+        read_json(&accepted_manifest_path)["runtime"]["association_implementation"]["firth_components"],
+        Value::Null
+    );
+    assert_owner_authority_released(&accepted_output_root);
+
+    let rejected_directory = TestDirectory::new(&format!("{label}-non-null-firth-rejected"));
+    let rejected_inputs = test_inputs(&rejected_directory);
+    let rejected_plan = with_association_and_correction(
+        run_plan(&rejected_directory, &rejected_inputs, false, None, g_plan::TelemetryMode::Off),
+        association_mode,
+        g_plan::BinaryFallbackMethod::ScoreOnly,
+    );
+    let rejected_output_root = rejected_directory.path.join("results");
+    let rejection_result = OutputManager::open(rejected_plan, "# non-Firth compatibility rejection\n".to_string())
+        .expect("non-Firth rejection manager plans")
+        .initialize(vec![header(&rejected_inputs, 2)], &chunk_ranges, false, test_association_implementation());
+    let Err(rejection) = rejection_result else {
+        panic!("non-null Firth compatibility must not match a non-Firth plan");
+    };
+    assert!(rejection.to_string().contains("does not match the planned association and correction mode"));
+    assert_owner_authority_released(&rejected_output_root);
+    assert!(
+        !rejected_output_root.join(".g-output/genesis.json").exists(),
+        "rejected activation must not publish lineage authority"
+    );
+}
+
+#[test]
+fn non_firth_plans_require_null_firth_implementation_state() {
+    assert_non_firth_association_implementation_contract(g_plan::AssociationMode::Regenie2Binary, "score-only");
+    assert_non_firth_association_implementation_contract(g_plan::AssociationMode::Regenie2Linear, "linear");
+}
+
 #[test]
 fn positioned_unattested_bgen_can_create_fresh_output_but_cannot_authorize_resume() {
     let directory = TestDirectory::new("unattested-bgen-fresh-only");
@@ -917,7 +1026,7 @@ fn positioned_unattested_bgen_can_create_fresh_output_but_cannot_authorize_resum
         "# unattested fresh output\n".to_string(),
     )
     .expect("fresh unattested output plans")
-    .initialize(vec![unattested_header()], &chunk_ranges, false)
+    .initialize(vec![unattested_header()], &chunk_ranges, false, test_association_implementation())
     .expect("fresh unattested output initializes")
     .finish_interrupted("SIGTERM")
     .expect("fresh unattested output publishes a terminal");
@@ -1042,7 +1151,7 @@ fn existing_multi_phenotype_manifests_require_exact_bgen_agreement() {
             "# active two-phenotype output\n".to_string(),
         )
         .expect("two-phenotype output plans")
-        .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+        .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
         .expect("two-phenotype output initializes");
         let output_root = directory.path.join("results");
         let attempt_id = attempt_identifier(&output_root, None);
@@ -1089,6 +1198,181 @@ fn existing_multi_phenotype_manifests_require_exact_bgen_agreement() {
 }
 
 #[test]
+fn existing_multi_phenotype_manifests_require_exact_association_implementation_agreement() {
+    let directory = TestDirectory::new("existing-association-implementation-agreement");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let manager = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# active two-phenotype output\n".to_string(),
+    )
+    .expect("two-phenotype output plans")
+    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
+    .expect("two-phenotype output initializes");
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let first_manifest_path =
+        output_root.join("attempts").join(&attempt_id).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let second_manifest_path =
+        output_root.join("attempts").join(&attempt_id).join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let original_second_manifest_bytes = std::fs::read(&second_manifest_path).expect("second manifest reads");
+    let mut changed_second_manifest: Value =
+        serde_json::from_slice(&original_second_manifest_bytes).expect("second manifest parses");
+    changed_second_manifest["runtime"]["association_implementation"]["jax_version"] =
+        Value::String("different-jax".to_string());
+    std::fs::write(
+        &second_manifest_path,
+        serde_json::to_vec_pretty(&changed_second_manifest).expect("changed manifest serializes"),
+    )
+    .expect("changed manifest writes");
+
+    let error = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, true, Some(attempt_id), g_plan::TelemetryMode::Off),
+        "# disagreeing association implementations\n".to_string(),
+    )
+    .expect("existing output plans")
+    .existing_output_resume_agreement()
+    .expect_err("association implementation disagreement is rejected");
+    assert!(matches!(
+        error,
+        crate::OutputError::ExistingOutputAssociationImplementationDisagreement {
+            first_manifest_path: observed_first,
+            conflicting_manifest_path: observed_second,
+        } if observed_first == first_manifest_path && observed_second == second_manifest_path
+    ));
+
+    std::fs::write(&second_manifest_path, original_second_manifest_bytes).expect("second manifest restores");
+    manager.abort("association agreement test cleanup").expect("active output terminates");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn activation_rejects_handler_only_mismatch_under_claim_before_publication() {
+    let directory = TestDirectory::new("activation-handler-identity-mismatch");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    OutputManager::open(
+        run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# initial raw-CUDA implementation\n".to_string(),
+    )
+    .expect("initial output plans")
+    .initialize(
+        vec![header(&inputs, 2)],
+        &chunk_ranges,
+        true,
+        test_raw_cuda_association_implementation_with_digests('a', 'c'),
+    )
+    .expect("initial raw-CUDA output initializes")
+    .finish_interrupted("SIGTERM")
+    .expect("initial output publishes interrupted terminal");
+    let output_root = directory.path.join("results");
+    let parent_attempt_id = attempt_identifier(&output_root, None);
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let parent_attempt =
+        crate::persistence::identifier::AttemptIdentifier::parse(&parent_attempt_id).expect("parent attempt parses");
+    let successor_path = lineage_paths.normal_successor_path(&parent_attempt);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let mut planned_manager =
+        OutputManager::open(resume_plan, "# mismatched implementation resume\n".to_string()).expect("resume plans");
+    let hint_control =
+        planned_manager.install_manifest_hint_pause_for_test().expect("activation agreement pause installs");
+    let claimed_manager = planned_manager
+        .claim(vec![header(&inputs, 2)], &chunk_ranges, true)
+        .expect("matching execution plan claims output");
+    let claim_id = owner_claim_identifier(&output_root);
+    let staging_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
+    let staged_run_directory = lineage_paths.attempt_directory(&staging_attempt_id).join(OUTPUT_DIRECTORY_NAME);
+
+    let activation_error = std::thread::scope(|scope| {
+        let activation_thread = scope.spawn(move || {
+            claimed_manager.activate_with_deferred_completed_noop_cleanup(
+                test_raw_cuda_association_implementation_with_digests('b', 'c'),
+            )
+        });
+        hint_control.wait_until_reached().expect("activation pauses after its fresh manifest reads");
+        assert!(!successor_path.exists(), "mismatch check precedes successor authority");
+        assert!(!staged_run_directory.exists(), "mismatch check precedes manifests and writers");
+        hint_control.resume();
+        match activation_thread.join().expect("activation thread does not panic") {
+            Err(error) => error,
+            Ok(_) => panic!("mismatched implementation must reject activation"),
+        }
+    });
+    assert_eq!(hint_control.reach_count(), 1);
+    assert_eq!(hint_control.final_inspect_count(), 1);
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(matches!(source, crate::OutputError::CurrentAssociationImplementationMismatch));
+    assert!(!successor_path.exists(), "mismatch cannot publish successor authority");
+    assert!(!staged_run_directory.exists(), "mismatch cannot publish writer state");
+    let mut rollback = rollback.expect("unpublished mismatch retains rollback authority");
+    rollback.abort_before_activation().expect("mismatched claim rolls back after diagnostics close");
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn backend_projection_failure_can_reject_activation_without_publication() {
+    let directory = TestDirectory::new("backend-projection-rejects-activation");
+    let inputs = test_inputs(&directory);
+    let output_root = directory.path.join("results");
+    let claimed_manager = OutputManager::open(
+        run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# rejected\n".to_string(),
+    )
+    .expect("fresh output plans")
+    .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), true)
+    .expect("fresh output claims");
+    let diagnostics_directory = claimed_manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let activation_error = claimed_manager.reject_activation(crate::OutputError::InvalidInput(
+        "backend omitted required implementation state".to_string(),
+    ));
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("backend omitted required implementation state"));
+    assert!(diagnostics_directory.is_dir());
+    assert!(!output_root.join(".g-output/genesis.json").exists());
+    assert!(
+        std::fs::read_dir(output_root.join("attempts")).expect("attempt staging root reads").all(|entry| !entry
+            .expect("attempt entry reads")
+            .path()
+            .join(OUTPUT_DIRECTORY_NAME)
+            .exists()),
+        "rejected activation must not create phenotype manifests or writers"
+    );
+    let mut rollback = rollback.expect("projection rejection retains rollback authority");
+    rollback.abort_before_activation().expect("projection rejection rolls back after diagnostics close");
+    assert!(!diagnostics_directory.exists());
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn identical_raw_cuda_association_implementation_allows_resume_activation() {
+    let directory = TestDirectory::new("identical-raw-cuda-association-implementation-resume");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let association_implementation = test_raw_cuda_association_implementation_with_digests('a', 'c');
+    OutputManager::open(
+        run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# initial raw-CUDA implementation\n".to_string(),
+    )
+    .expect("initial output plans")
+    .initialize(vec![header(&inputs, 2)], &chunk_ranges, true, association_implementation.clone())
+    .expect("initial raw-CUDA output initializes")
+    .finish_interrupted("SIGTERM")
+    .expect("initial output publishes interrupted terminal");
+    let output_root = directory.path.join("results");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let resumed_manager = OutputManager::open(resume_plan, "# identical implementation resume\n".to_string())
+        .expect("resume plans")
+        .claim(vec![header(&inputs, 2)], &chunk_ranges, false)
+        .expect("matching execution plan claims output")
+        .activate(association_implementation)
+        .expect("identical implementation activates a successor");
+    resumed_manager.abort("identical implementation test cleanup").expect("resumed output terminates");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
 fn aggregate_resume_agreement_preserves_terminal_missing_manifest_rule() {
     let directory = TestDirectory::new("terminal-missing-manifest-agreement");
     let inputs = test_inputs(&directory);
@@ -1097,7 +1381,7 @@ fn aggregate_resume_agreement_preserves_terminal_missing_manifest_rule() {
         "# terminal with two manifests\n".to_string(),
     )
     .expect("two-phenotype output plans")
-    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false, test_association_implementation())
     .expect("two-phenotype output initializes")
     .finish_interrupted("SIGTERM")
     .expect("two-phenotype terminal publishes");
@@ -1120,6 +1404,37 @@ fn aggregate_resume_agreement_preserves_terminal_missing_manifest_rule() {
 }
 
 #[test]
+fn activation_rollback_refuses_authority_that_appears_after_compatibility_rejection() {
+    let directory = TestDirectory::new("compatibility-rejection-authority-race");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let output_root = directory.path.join("results");
+    let claimed_manager = OutputManager::open(
+        run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# compatibility rejection authority race\n".to_string(),
+    )
+    .expect("manager plans")
+    .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
+    .expect("manager claims");
+    let diagnostics_directory = claimed_manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let activation_error = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(test_non_firth_association_implementation())
+        .err()
+        .expect("planned approximate Firth rejects null Firth compatibility");
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("does not match the planned association and correction mode"));
+    let mut rollback = rollback.expect("compatibility rejection returns unpublished rollback authority");
+
+    let genesis_path = output_root.join(".g-output/genesis.json");
+    std::fs::write(&genesis_path, b"{}\n").expect("competing immutable authority appears");
+    let rollback_error =
+        rollback.abort_before_activation().expect_err("rollback must fail closed after immutable authority appears");
+    assert!(rollback_error.to_string().contains("immutable authority appeared"));
+    assert!(diagnostics_directory.is_dir());
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+}
+
+#[test]
 fn aggregate_resume_agreement_skips_missing_nonterminal_manifest() {
     let directory = TestDirectory::new("nonterminal-missing-manifest-agreement");
     let inputs = test_inputs(&directory);
@@ -1128,7 +1443,7 @@ fn aggregate_resume_agreement_skips_missing_nonterminal_manifest() {
         "# active output with two manifests\n".to_string(),
     )
     .expect("two-phenotype output plans")
-    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false, test_association_implementation())
     .expect("two-phenotype output initializes");
     let output_root = directory.path.join("results");
     let attempt_id = attempt_identifier(&output_root, None);
@@ -1255,7 +1570,7 @@ fn swapped_two_phenotype_execution_plans_fail_before_gpu_format_hint() {
         "# two phenotype terminal\n".to_string(),
     )
     .expect("two phenotype manager plans")
-    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
     .expect("two phenotype manager initializes");
     manager.finish_interrupted("SIGTERM").expect("two phenotype terminal publishes");
 
@@ -1465,9 +1780,21 @@ fn controlled_initialization_failures_never_leave_an_owner_claim() {
         let manager =
             OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
         let initialization_result = match failure_stage {
-            "writer_settings" => manager.initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false),
-            "chunk_plan" => manager.initialize(vec![header(&inputs, 2)], &single_chunk_ranges_from(1, 2), false),
-            "headers" => manager.initialize(Vec::new(), &single_chunk_ranges(2), false),
+            "writer_settings" => manager.initialize(
+                vec![header(&inputs, 2)],
+                &single_chunk_ranges(2),
+                false,
+                test_association_implementation(),
+            ),
+            "chunk_plan" => manager.initialize(
+                vec![header(&inputs, 2)],
+                &single_chunk_ranges_from(1, 2),
+                false,
+                test_association_implementation(),
+            ),
+            "headers" => {
+                manager.initialize(Vec::new(), &single_chunk_ranges(2), false, test_association_implementation())
+            }
             _ => unreachable!("failure stages are exhaustive"),
         };
         assert!(initialization_result.is_err());
@@ -1482,7 +1809,7 @@ fn controlled_initialization_failures_never_leave_an_owner_claim() {
         let failure_guard = crate::manager::install_initialization_failure_for_test(failure_point);
         let error = OutputManager::open(plan, "# test configuration\n".to_string())
             .expect("failure case manager plans")
-            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
             .err()
             .expect("configured staging failure fires");
         drop(failure_guard);
@@ -1503,6 +1830,38 @@ fn controlled_initialization_failures_never_leave_an_owner_claim() {
 }
 
 #[test]
+fn claim_staging_failure_retains_owner_when_guarded_authority_appears_before_cleanup() {
+    let directory = TestDirectory::new("claim-staging-authority-race");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let output_root = directory.path.join("results");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_claim_diagnostics_creation");
+    let authority_race_guard =
+        crate::manager::install_initialization_cleanup_failure_for_test("before_failed_claim_staging_cleanup");
+    let error = OutputManager::open(plan, "# claim staging authority race\n".to_string())
+        .expect("race manager plans")
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
+        .err()
+        .expect("claim staging initialization failure fires");
+    drop(authority_race_guard);
+    drop(failure_guard);
+
+    let error_text = error.to_string();
+    assert!(error_text.contains("after_claim_diagnostics_creation"));
+    assert!(error_text.contains("immutable authority appeared"));
+    assert!(error_text.contains("remains authoritative"));
+    let claim_id = owner_claim_identifier(&output_root);
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let staging_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent reads").expect("staging intent remains");
+    assert!(lineage_paths.genesis_path.is_file());
+    assert!(lineage_paths.attempt_directory(&staging_attempt_id).join("diagnostics").join(&claim_id).is_dir());
+    let surviving_owner_error =
+        lineage_paths.reject_surviving_owner_claim().expect_err("cleanup refusal must retain exact owner authority");
+    assert_surviving_owner_claim(surviving_owner_error, &output_root);
+}
+
+#[test]
 fn postclaim_initialization_failures_publish_failed_terminals_and_release() {
     for failure_point in ["after_owner_claim", "after_attempt_claim", "after_attempt_preparation", "after_writer_start"]
     {
@@ -1514,7 +1873,7 @@ fn postclaim_initialization_failures_publish_failed_terminals_and_release() {
         let manager =
             OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
         let error = manager
-            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+            .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
             .err()
             .expect("configured initialization stage fails");
         drop(failure_guard);
@@ -1545,7 +1904,7 @@ fn initialization_abort_cleanup_failure_is_recorded_without_retaining_the_claim(
     let cleanup_failure_guard = crate::manager::install_initialization_cleanup_failure_for_test("after_writer_abort");
     let manager = OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
     let error = manager
-        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
         .err()
         .expect("configured initialization and cleanup stages fail");
     drop(cleanup_failure_guard);
@@ -1569,7 +1928,7 @@ fn initialization_release_conflict_reports_the_surviving_owner() {
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim_release_conflict");
     let manager = OutputManager::open(plan, "# test configuration\n".to_string()).expect("failure case manager plans");
     let error = manager
-        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
         .err()
         .expect("claim-release conflict fails initialization");
     drop(failure_guard);
@@ -1592,7 +1951,7 @@ fn failed_multi_phenotype_preactivation_allows_a_fresh_retry() {
     let output_root = directory.path.join("results");
     let initialization_error = OutputManager::open(Arc::clone(&plan), "# incomplete initialization\n".to_string())
         .expect("multi-phenotype manager plans")
-        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
         .err()
         .expect("missing second phenotype header rejects claim");
     assert!(initialization_error.to_string().contains("do not cover planned phenotypes exactly"));
@@ -1604,6 +1963,7 @@ fn failed_multi_phenotype_preactivation_allows_a_fresh_retry() {
             vec![header(&inputs, 2), header_for_phenotype(&inputs, 2, SECOND_PHENOTYPE_NAME)],
             &single_chunk_ranges(2),
             false,
+            test_association_implementation(),
         )
         .expect("fresh multi-phenotype retry activates");
     let attempt = attempt_identifier(&output_root, None);
@@ -1633,7 +1993,7 @@ fn preactivation_failure_retains_ownership_until_explicit_rollback() {
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .err()
         .expect("prepublication activation failure is injected");
     drop(failure_guard);
@@ -1684,7 +2044,9 @@ fn preactivation_rollback_retries_after_transient_staging_cleanup_failure() {
     let staging_attempt_id =
         lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent reads").expect("staging intent exists");
     let activation_failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
-    let Err(activation_error) = manager.activate_with_deferred_completed_noop_cleanup() else {
+    let Err(activation_error) =
+        manager.activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+    else {
         panic!("prepublication activation failure must be injected");
     };
     drop(activation_failure_guard);
@@ -1730,7 +2092,7 @@ fn dropped_deferred_rollback_fails_closed_until_exactly_fenced() {
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .err()
         .expect("prepublication activation failure is injected");
     drop(failure_guard);
@@ -1770,8 +2132,10 @@ fn postpublication_activation_failure_terminalizes_without_rollback_authority() 
         .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
         .expect("manager claims");
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_attempt_claim");
-    let activation_error =
-        manager.activate_with_deferred_completed_noop_cleanup().err().expect("postpublication failure is injected");
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+        .err()
+        .expect("postpublication failure is injected");
     drop(failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
     assert!(source.to_string().contains("after_attempt_claim"));
@@ -1803,7 +2167,7 @@ fn prelink_genesis_failure_returns_rollback_and_rechecks_before_deletion() {
         let failure_guard =
             crate::persistence::io::install_immutable_publication_file_sync_failure_for_test(genesis_path.clone());
         let activation_error = manager
-            .activate_with_deferred_completed_noop_cleanup()
+            .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
             .err()
             .expect("prelink synchronization failure rejects activation");
         drop(failure_guard);
@@ -1848,7 +2212,7 @@ fn visible_genesis_after_durability_error_never_exposes_rollback() {
         3,
     );
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .err()
         .expect("postlink durability failure rejects activation");
     drop(failure_guard);
@@ -1911,7 +2275,10 @@ fn visible_successor_after_durability_error_never_loses_staging() {
         successor_path.clone(),
         3,
     );
-    let activation_error = manager.activate().err().expect("postlink successor durability failure rejects activation");
+    let activation_error = manager
+        .activate(test_association_implementation())
+        .err()
+        .expect("postlink successor durability failure rejects activation");
     drop(failure_guard);
     assert!(activation_error.to_string().contains("directory durability"));
     assert!(successor_path.is_file());
@@ -1948,8 +2315,10 @@ fn conflicting_genesis_target_fails_closed_without_rollback() {
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
     let genesis_path = output_root.join(".g-output/genesis.json");
     std::fs::write(&genesis_path, b"{}\n").expect("conflicting target publishes");
-    let activation_error =
-        manager.activate_with_deferred_completed_noop_cleanup().err().expect("conflicting genesis rejects activation");
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+        .err()
+        .expect("conflicting genesis rejects activation");
     let crate::OutputActivationFailureParts { rollback, .. } = activation_error.into_parts();
     assert!(rollback.is_none(), "present conflicting authority must fail closed");
     assert!(diagnostics_directory.is_dir());
@@ -1999,8 +2368,9 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
         claim_error(Arc::clone(&resume_plan), &inputs, &chunk_ranges, "unfinalized completed claim remains exclusive");
     assert_surviving_owner_claim(contender_error, &output_root);
 
-    let completed_manager =
-        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed output activates read-only");
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+        .expect("completed output activates read-only");
     let token =
         completed_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("read-only token builds");
     assert!(token.is_read_only());
@@ -2186,7 +2556,7 @@ fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
         .expect("completed resume plans")
         .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims")
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume reverifies")
@@ -2242,7 +2612,7 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
             .expect("completed resume plans")
             .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
             .expect("completed resume claims")
-            .activate_with_deferred_completed_noop_cleanup()
+            .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
             .expect("completed resume activates");
         let lifecycle_guard =
             (operation == "close").then(|| crate::manager::install_lifecycle_failure_for_test("close_completed_noop"));
@@ -2269,7 +2639,7 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
         .expect("completed resume plans")
         .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims")
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume first verification succeeds");
@@ -2352,8 +2722,9 @@ fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     let predecessor_diagnostics =
         claimed_manager.diagnostics_directory().expect("predecessor diagnostics exist").to_path_buf();
     let predecessor_claim_id = owner_claim_identifier(&output_root);
-    let completed_manager =
-        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed predecessor activates");
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+        .expect("completed predecessor activates");
     let completion = completed_manager
         .close_completed()
         .expect("completed predecessor reverifies")
@@ -2419,8 +2790,9 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
         .owner_staging_attempt(&predecessor_claim_id)
         .expect("predecessor staging reads")
         .expect("predecessor staging exists");
-    let completed_manager =
-        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed output activates read-only");
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
+        .expect("completed output activates read-only");
     let completion = completed_manager
         .close_completed()
         .expect("completed output reverifies")
@@ -2486,7 +2858,7 @@ fn completed_preactivation_failure_returns_only_rollback_authority() {
         claimed_manager.diagnostics_directory().expect("completed claim diagnostics exist").to_path_buf();
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup()
+        .activate_with_deferred_completed_noop_cleanup(test_association_implementation())
         .err()
         .expect("prepublication activation failure is injected");
     drop(failure_guard);
@@ -2514,7 +2886,12 @@ fn existing_lineage_is_preflighted_before_owner_claim_acquisition() {
         OutputManager::open(mismatch_plan, "# test configuration\n".to_string()).expect("resume manager plans");
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let mismatch_error = mismatch_manager
-        .initialize(vec![header(&mismatch_inputs, 1)], &single_chunk_ranges(1), false)
+        .initialize(
+            vec![header(&mismatch_inputs, 1)],
+            &single_chunk_ranges(1),
+            false,
+            test_association_implementation(),
+        )
         .err()
         .expect("mismatched chunk plan fails");
     drop(failure_guard);
@@ -2542,7 +2919,12 @@ fn existing_lineage_is_preflighted_before_owner_claim_acquisition() {
         OutputManager::open(corruption_plan, "# test configuration\n".to_string()).expect("resume manager plans");
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let corruption_error = corruption_manager
-        .initialize(vec![header(&corruption_inputs, 2)], &single_chunk_ranges(2), false)
+        .initialize(
+            vec![header(&corruption_inputs, 2)],
+            &single_chunk_ranges(2),
+            false,
+            test_association_implementation(),
+        )
         .err()
         .expect("corrupt lineage fails");
     drop(failure_guard);
@@ -2586,7 +2968,7 @@ fn resume_rejects_noncanonical_attempt_manifest_schema_versions_without_a_succes
         let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
         let error = OutputManager::open(resume_plan, "# invalid schema resume\n".to_string())
             .expect("resume manager plans")
-            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false)
+            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false, test_association_implementation())
             .err()
             .expect("noncanonical attempt manifest schema is rejected");
         assert!(error.to_string().contains("unsupported schema version"));
@@ -2728,7 +3110,7 @@ fn resume_rejects_nonexact_attempt_manifest_schema_without_a_successor() {
         let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
         let error = OutputManager::open(resume_plan, format!("# invalid schema {label}\n"))
             .expect("resume manager plans")
-            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false)
+            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false, test_association_implementation())
             .err()
             .expect("nonexact attempt manifest schema is rejected");
         assert!(error.to_string().contains(expected_error), "{label} returned unexpected error: {error}");
@@ -2961,7 +3343,7 @@ fn output_transaction_subprocess_helper() {
             let plan = two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
             let manager = OutputManager::open(plan, "# partial two phenotype terminal\n".to_string())
                 .expect("two phenotype transaction helper plans")
-                .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+                .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
                 .expect("two phenotype transaction helper initializes");
             manager.finish_interrupted("SIGTERM").expect("two phenotype interrupted terminal publishes");
         }
@@ -3184,7 +3566,7 @@ fn nonterminal_recovery_rejects_a_dangling_manifest_symlink_as_present_but_inval
     let recovery_plan = authorize_fenced_owner_claim(recovery_plan, owner_claim_identifier(&output_root));
     let error = OutputManager::open(recovery_plan, "# dangling manifest recovery\n".to_string())
         .expect("recovery manager plans")
-        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false, test_association_implementation())
         .err()
         .expect("dangling nonterminal manifest symlink is rejected");
     assert!(error.to_string().contains("must not be a symbolic link"));
@@ -3226,6 +3608,116 @@ fn successor_claim_crash_is_exactly_recoverable_without_an_orphan_candidate() {
     assert!(output_root.join("attempts").join(&recovery_attempt).is_dir());
     assert!(output_root.join("attempts").join(&claimed_successor).is_dir());
     manager.abort("successor claim crash recovery test").expect("exact recovery attempt terminates");
+}
+
+#[test]
+fn reused_receipt_crash_retains_exact_implementation_authority() {
+    let directory = TestDirectory::new("reused-receipt-implementation-crash");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    initial_manager.finish_interrupted("SIGTERM").expect("initial attempt is interrupted");
+
+    let output_root = directory.path.join("results");
+    let initial_attempt = attempt_identifier(&output_root, None);
+    let crash =
+        run_crashing_transaction_helper(&directory, "successor_claim", "after_reused_receipts_before_manifest_update");
+    assert_expected_crash(&crash);
+    let crashed_successor = attempt_identifier(&output_root, Some(&initial_attempt));
+    let crashed_run_directory = output_root.join("attempts").join(&crashed_successor).join(OUTPUT_DIRECTORY_NAME);
+    let crashed_manifest = read_json(&crashed_run_directory.join("run_manifest.json"));
+    assert_eq!(crashed_manifest["status"], "running");
+    assert_eq!(crashed_manifest["runtime"]["association_implementation"]["jax_version"], "test-jax");
+    assert!(
+        std::fs::read_dir(crashed_run_directory.join("commits"))
+            .expect("reused receipt directory reads")
+            .next()
+            .is_some(),
+        "the crash point must follow durable receipt reuse"
+    );
+
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let crashed_attempt_identifier = crate::persistence::identifier::AttemptIdentifier::parse(&crashed_successor)
+        .expect("crashed successor identifier parses");
+    let next_successor_path = lineage_paths.outcome_path(&crashed_attempt_identifier);
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(crashed_successor.clone()), g_plan::TelemetryMode::Off),
+        owner_claim_identifier(&output_root),
+    );
+    let claimed_manager = OutputManager::open(recovery_plan, "# mismatched crash recovery\n".to_string())
+        .expect("mismatched recovery plans")
+        .claim(vec![header(&inputs, 2)], &chunk_ranges, false)
+        .expect("exact fence claims recovery");
+    let activation_error = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(test_raw_cuda_association_implementation_with_digests('a', 'c'))
+        .err()
+        .expect("changed implementation is rejected");
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(matches!(source, crate::OutputError::CurrentAssociationImplementationMismatch));
+    assert!(!next_successor_path.exists(), "mismatched recovery cannot publish another successor");
+    let mut rollback = rollback.expect("mismatched recovery retains rollback authority");
+    rollback.abort_before_activation().expect("mismatched recovery rolls back");
+    assert_owner_authority_released(&output_root);
+
+    let matching_plan =
+        run_plan(&directory, &inputs, true, Some(crashed_successor.clone()), g_plan::TelemetryMode::Off);
+    let matching_manager = initialize_manager(matching_plan, &inputs, &chunk_ranges);
+    let recovery_attempt = attempt_identifier(&output_root, Some(&crashed_successor));
+    assert_ne!(recovery_attempt, crashed_successor);
+    matching_manager.abort("matching implementation crash recovery").expect("matching recovery terminates");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn nonterminal_receipts_without_an_implementation_manifest_fail_closed() {
+    let directory = TestDirectory::new("manifestless-reused-receipts");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    initial_manager.finish_interrupted("SIGTERM").expect("initial attempt is interrupted");
+
+    let output_root = directory.path.join("results");
+    let initial_attempt = attempt_identifier(&output_root, None);
+    let crash =
+        run_crashing_transaction_helper(&directory, "successor_claim", "after_reused_receipts_before_manifest_update");
+    assert_expected_crash(&crash);
+    let crashed_successor = attempt_identifier(&output_root, Some(&initial_attempt));
+    let crashed_run_directory = output_root.join("attempts").join(&crashed_successor).join(OUTPUT_DIRECTORY_NAME);
+    assert!(
+        std::fs::read_dir(crashed_run_directory.join("commits"))
+            .expect("reused receipt directory reads")
+            .next()
+            .is_some(),
+        "the invalid fixture must contain a durable reused receipt"
+    );
+    let crashed_manifest = crashed_run_directory.join("run_manifest.json");
+    std::fs::remove_file(&crashed_manifest).expect("implementation-bearing manifest removes");
+
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let crashed_attempt_identifier = crate::persistence::identifier::AttemptIdentifier::parse(&crashed_successor)
+        .expect("crashed successor identifier parses");
+    let next_successor_path = lineage_paths.outcome_path(&crashed_attempt_identifier);
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(crashed_successor), g_plan::TelemetryMode::Off),
+        owner_claim_identifier(&output_root),
+    );
+    let error = claim_error(recovery_plan, &inputs, &chunk_ranges, "manifestless durable receipts must fail closed");
+    let crate::OutputError::InvalidInput(message) = error else {
+        panic!("expected invalid manifest state");
+    };
+    assert!(message.contains("has durable receipts but is missing its implementation-bearing manifest"));
+    assert!(!next_successor_path.exists(), "invalid recovery cannot publish another successor");
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
@@ -3357,7 +3849,12 @@ fn partially_materialized_interrupted_terminal_hints_and_recovers_both_phenotype
     let recovery_plan = authorize_fenced_owner_claim(resume_plan, owner_claim_identifier(&output_root));
     let recovery_manager = OutputManager::open(recovery_plan, "# fenced partial terminal recovery\n".to_string())
         .expect("fenced recovery plans")
-        .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+        .initialize(
+            two_phenotype_headers(&inputs, 2),
+            &single_chunk_ranges(2),
+            false,
+            test_association_implementation(),
+        )
         .expect("fenced recovery initializes a successor");
     assert_eq!(read_json(&first_manifest_path)["status"], "interrupted");
     assert_eq!(read_json(&second_manifest_path)["status"], "interrupted");
@@ -3376,7 +3873,7 @@ fn whole_plan_resume_agreement_pauses_and_reinspects_once_after_all_manifest_rea
         "# two phenotype interrupted terminal\n".to_string(),
     )
     .expect("initial manager plans")
-    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
     .expect("initial manager activates")
     .finish_interrupted("SIGTERM")
     .expect("interrupted terminal publishes");
@@ -3390,7 +3887,7 @@ fn whole_plan_resume_agreement_pauses_and_reinspects_once_after_all_manifest_rea
         hint_control.wait_until_reached().expect("hint pauses before lineage reinspection");
         let successor = OutputManager::open(resume_plan, "# successor\n".to_string())
             .expect("successor plans")
-            .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+            .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false, test_association_implementation())
             .expect("successor initializes");
         hint_control.resume();
 
@@ -3453,4 +3950,37 @@ fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).is_file());
     assert!(!output_root.join(".g-output/successors").join(format!("{attempt}.json")).exists());
     assert_eq!(std::fs::read_dir(output_root.join("attempts")).expect("attempt root reads").count(), 1);
+}
+
+#[test]
+fn pending_terminal_claim_can_roll_back_before_activation() {
+    let directory = TestDirectory::new("pending-terminal-preactivation-rollback");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let crash = run_crashing_transaction_helper(&directory, "terminal_claim", "after_terminal_claim");
+    assert_expected_crash(&crash);
+
+    let output_root = directory.path.join("results");
+    let source_attempt_id = attempt_identifier(&output_root, None);
+    let resume_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+        owner_claim_identifier(&output_root),
+    );
+    let claimed_manager = OutputManager::open(resume_plan, "# pending terminal rejection\n".to_string())
+        .expect("pending-terminal recovery plans")
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
+        .expect("pending-terminal recovery claims");
+    let activation_error =
+        claimed_manager.reject_activation(crate::OutputError::Runtime("backend projection rejected".to_string()));
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("backend projection rejected"));
+    rollback
+        .expect("pending-terminal rejection returns rollback authority")
+        .abort_before_activation()
+        .expect("pending-terminal rejection rolls back against the absent successor path");
+
+    assert!(output_root.join(".g-output/outcomes").join(format!("{source_attempt_id}.json")).is_file());
+    assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{source_attempt_id}.json")).exists());
+    assert!(!output_root.join(".g-output/successors").join(format!("{source_attempt_id}.json")).exists());
+    assert_owner_authority_released(&output_root);
 }

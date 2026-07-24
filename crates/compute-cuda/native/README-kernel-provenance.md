@@ -16,6 +16,16 @@ The artifact declares PTX ISA 8.2 and target `sm_70`. NVRTC is a generation
 tool only and is not a build-time or runtime dependency. Native initialization
 requires CUDA driver API version 12.2 or newer and compute capability 7.0 or
 newer; unsupported configurations retain the pure-JAX implementation.
+The build verifies the pinned PTX digest, parses the `.version` and `.target`
+directives, and generates both the public Rust artifact identity and the native
+driver-qualification constants. Registration, compatibility output, and native
+diagnostics therefore consume one crate-owned identity rather than repeating
+PTX metadata literals.
+The public handler digest additionally frames the FFI wrapper, PTX, shared
+CUDA-driver support, and vendored XLA FFI headers so wrapper-only
+launch-contract changes cannot retain the same resume identity. It identifies
+that semantic source/ABI set rather than compiler-dependent native-library
+bytes.
 
 CUDA 12.9.86 `ptxas` reports 38 registers, one barrier, 256 bytes of static
 shared memory, no stack frame, and no spills when compiling the artifact for

@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::association_implementation::{
+    AssociationImplementationCompatibility, FirthComponentsCompatibility, FirthComponentsFallbackReasonCompatibility,
+    FirthComponentsImplementationCompatibility, RawCudaFirthArtifactCompatibility,
+    RawCudaFirthCapabilityRequirementsCompatibility,
+};
 use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
     ExecutionPlanSchemaZero, OUTPUT_SCHEMA_VERSION, RUN_MANIFEST_SCHEMA_VERSION, build_manifest_value_sha256,
@@ -53,8 +58,15 @@ const ATTEMPT_MANIFEST_BASE_FIELD_NAMES: [&str; 15] = [
     "runtime",
 ];
 const ATTEMPT_MANIFEST_COMMAND_FIELD_NAMES: [&str; 3] = ["interface", "phenotype", "effective_config"];
-const ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES: [&str; 6] =
-    ["device", "cpu_threads", "writer_threads", "writer_queue_depth", "chunks_per_parquet_file", "parquet_compression"];
+const ATTEMPT_MANIFEST_RUNTIME_FIELD_NAMES: [&str; 7] = [
+    "device",
+    "cpu_threads",
+    "writer_threads",
+    "writer_queue_depth",
+    "chunks_per_parquet_file",
+    "parquet_compression",
+    "association_implementation",
+];
 const ATTEMPT_MANIFEST_BOUNDED_READ_LIMIT_BYTES: u64 = ATTEMPT_MANIFEST_MAXIMUM_SIZE_BYTES + 1;
 const LINUX_OPEN_NO_FOLLOW_FLAG: i32 = 0o400_000;
 const LINUX_OPEN_NONBLOCKING_FLAG: i32 = 0o4_000;
@@ -148,11 +160,61 @@ struct AttemptManifestRuntimeSchemaZero {
     writer_queue_depth: u64,
     chunks_per_parquet_file: u64,
     parquet_compression: String,
+    association_implementation: AssociationImplementationSchemaZero,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(transparent)]
 struct RequiredNullableCpuThreads(Option<u32>);
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AssociationImplementationSchemaZero {
+    jax_version: String,
+    jaxlib_version: String,
+    firth_components: RequiredNullableAttemptManifestSchemaZero<FirthComponentsSchemaZero>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FirthComponentsSchemaZero {
+    requested: FirthComponentsImplementationCompatibility,
+    effective: FirthComponentsImplementationCompatibility,
+    fallback_reason: RequiredNullableAttemptManifestSchemaZero<FirthComponentsFallbackReasonCompatibility>,
+    raw_cuda_artifact: RequiredNullableAttemptManifestSchemaZero<RawCudaFirthArtifactSchemaZero>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCudaFirthArtifactSchemaZero {
+    ffi_target: String,
+    ffi_api_version: u32,
+    handler_sha256: String,
+    ptx_sha256: String,
+    ptx_isa: String,
+    ptx_target: String,
+    minimum_cuda_driver_version: i32,
+    minimum_compute_capability_major: i32,
+    minimum_compute_capability_minor: i32,
+}
+
+// Unlike `Option`, this wrapper rejects a missing required field while
+// retaining the exact value-or-null JSON representation.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RequiredNullableAttemptManifestSchemaZero<ValueType> {
+    Value(ValueType),
+    Null(()),
+}
+
+impl<ValueType> RequiredNullableAttemptManifestSchemaZero<ValueType> {
+    fn as_ref(&self) -> Option<&ValueType> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Null(()) => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct ValidatedAttemptManifestSchemaZero {
@@ -167,6 +229,7 @@ pub(crate) struct ValidatedAttemptManifestSchemaZero {
     pub(crate) committed_chunks: Vec<OutputChunkCommit>,
     execution_plan: ExecutionPlanSchemaZero,
     command: AttemptManifestCommandSchemaZero,
+    association_implementation: AssociationImplementationCompatibility,
 }
 
 impl ValidatedAttemptManifestSchemaZero {
@@ -175,6 +238,7 @@ impl ValidatedAttemptManifestSchemaZero {
             crate::agreement::ExistingOutputResumeAgreement {
                 bgen_content_fingerprint: fingerprint,
                 gpu_genotype_format: self.execution_plan.gpu_genotype_format(),
+                association_implementation: self.association_implementation.clone(),
             }
         })
     }
@@ -212,6 +276,7 @@ pub(crate) struct AttemptManifestWrite<'value> {
     pub(crate) failure_reason: Option<&'value str>,
     pub(crate) receipts: &'value [OutputPartReceipt],
     pub(crate) run_plan: &'value g_plan::RunPlan,
+    pub(crate) association_implementation: &'value AssociationImplementationCompatibility,
 }
 
 impl AttemptRunPaths {
@@ -305,6 +370,7 @@ pub(crate) fn build_attempt_manifest_value(input: &AttemptManifestWrite<'_>) -> 
             "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
             "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
             "parquet_compression": "zstd",
+            "association_implementation": association_implementation_value(input.association_implementation)?,
         }),
     );
     match input.interrupted_signal {
@@ -556,6 +622,12 @@ pub(crate) fn inspect_unmaterialized_attempt_run(
         allowed_producer_attempts,
         OrphanPartPolicy::Observe,
     )?;
+    if !receipts.is_empty() {
+        return Err(OutputError::InvalidInput(format!(
+            "Nonterminal output attempt has durable receipts but is missing its implementation-bearing manifest '{}'.",
+            paths.manifest_path.display()
+        )));
+    }
     Ok(VerifiedAttemptRun {
         status: AttemptManifestStatus::Running,
         committed_chunk_identifiers: receipt_chunk_identifiers(&receipts)?,
@@ -752,6 +824,7 @@ pub(crate) fn validate_attempt_manifest_schema_zero_shape(
     })?;
     validate_attempt_manifest_schema_zero_semantics(&mut schema, &execution_plan_sha256)?;
     let attempt_id = AttemptIdentifier::parse(&schema.attempt_id)?;
+    let association_implementation = schema.runtime.association_implementation.compatibility()?;
     Ok(ValidatedAttemptManifestSchemaZero {
         status: schema.status,
         run_set_id: schema.run_set_id,
@@ -764,6 +837,7 @@ pub(crate) fn validate_attempt_manifest_schema_zero_shape(
         committed_chunks: schema.committed_chunks,
         execution_plan: schema.execution_plan,
         command: schema.command,
+        association_implementation,
     })
 }
 
@@ -976,6 +1050,7 @@ fn validate_attempt_manifest_runtime(runtime: &AttemptManifestRuntimeSchemaZero)
             "Output attempt manifest runtime field 'parquet_compression' must be 'zstd'.".to_string(),
         ));
     }
+    runtime.association_implementation.compatibility()?;
     Ok(())
 }
 
@@ -993,7 +1068,108 @@ fn validate_attempt_manifest_runtime_execution_plan_binding(
             "Output attempt manifest runtime field 'writer_threads' does not match its execution plan.".to_string(),
         ));
     }
+    let association_implementation = runtime.association_implementation.compatibility()?;
+    if association_implementation.firth_components().is_some() != execution_plan.uses_approximate_firth() {
+        return Err(OutputError::InvalidInput(
+            "Output attempt manifest runtime association implementation does not match its execution plan.".to_string(),
+        ));
+    }
     Ok(())
+}
+
+impl AssociationImplementationSchemaZero {
+    fn compatibility(&self) -> OutputResult<AssociationImplementationCompatibility> {
+        let firth_components =
+            self.firth_components.as_ref().map(FirthComponentsSchemaZero::compatibility).transpose()?;
+        AssociationImplementationCompatibility::new(
+            self.jax_version.clone(),
+            self.jaxlib_version.clone(),
+            firth_components,
+        )
+    }
+}
+
+impl FirthComponentsSchemaZero {
+    fn compatibility(&self) -> OutputResult<FirthComponentsCompatibility> {
+        let fallback_reason = self.fallback_reason.as_ref().copied();
+        let raw_cuda_artifact =
+            self.raw_cuda_artifact.as_ref().map(RawCudaFirthArtifactSchemaZero::compatibility).transpose()?;
+        match (self.requested, self.effective, fallback_reason, raw_cuda_artifact) {
+            (
+                FirthComponentsImplementationCompatibility::Jax,
+                FirthComponentsImplementationCompatibility::Jax,
+                None,
+                None,
+            ) => Ok(FirthComponentsCompatibility::jax()),
+            (
+                FirthComponentsImplementationCompatibility::RawCuda,
+                FirthComponentsImplementationCompatibility::RawCuda,
+                None,
+                Some(raw_cuda_artifact),
+            ) => Ok(FirthComponentsCompatibility::raw_cuda(raw_cuda_artifact)),
+            (
+                FirthComponentsImplementationCompatibility::RawCuda,
+                FirthComponentsImplementationCompatibility::Jax,
+                Some(fallback_reason),
+                Some(raw_cuda_artifact),
+            ) => Ok(FirthComponentsCompatibility::raw_cuda_fallback(raw_cuda_artifact, fallback_reason)),
+            _ => Err(OutputError::InvalidInput(
+                "Output attempt manifest Firth implementation fields have an invalid combination.".to_string(),
+            )),
+        }
+    }
+}
+
+impl RawCudaFirthArtifactSchemaZero {
+    fn compatibility(&self) -> OutputResult<RawCudaFirthArtifactCompatibility> {
+        let capability_requirements = RawCudaFirthCapabilityRequirementsCompatibility::new(
+            self.minimum_cuda_driver_version,
+            self.minimum_compute_capability_major,
+            self.minimum_compute_capability_minor,
+        )?;
+        RawCudaFirthArtifactCompatibility::new(
+            self.ffi_target.clone(),
+            self.ffi_api_version,
+            self.handler_sha256.clone(),
+            self.ptx_sha256.clone(),
+            self.ptx_isa.clone(),
+            self.ptx_target.clone(),
+            capability_requirements,
+        )
+    }
+}
+
+fn association_implementation_value(compatibility: &AssociationImplementationCompatibility) -> OutputResult<Value> {
+    let firth_components = compatibility.firth_components().map(|firth_components| {
+        let raw_cuda_artifact = firth_components.raw_cuda_artifact().map(|artifact| {
+            json!({
+                "ffi_target": artifact.ffi_target(),
+                "ffi_api_version": artifact.ffi_api_version(),
+                "handler_sha256": artifact.handler_sha256(),
+                "ptx_sha256": artifact.ptx_sha256(),
+                "ptx_isa": artifact.ptx_isa(),
+                "ptx_target": artifact.ptx_target(),
+                "minimum_cuda_driver_version": artifact.minimum_cuda_driver_version(),
+                "minimum_compute_capability_major": artifact.minimum_compute_capability_major(),
+                "minimum_compute_capability_minor": artifact.minimum_compute_capability_minor(),
+            })
+        });
+        Ok(json!({
+            "requested": serde_json::to_value(firth_components.requested()).map_err(OutputError::runtime)?,
+            "effective": serde_json::to_value(firth_components.effective()).map_err(OutputError::runtime)?,
+            "fallback_reason": firth_components
+                .fallback_reason()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(OutputError::runtime)?,
+            "raw_cuda_artifact": raw_cuda_artifact,
+        }))
+    });
+    Ok(json!({
+        "jax_version": compatibility.jax_version(),
+        "jaxlib_version": compatibility.jaxlib_version(),
+        "firth_components": firth_components.transpose()?,
+    }))
 }
 
 fn validate_sha256(digest: &str, role: &str) -> OutputResult<()> {
@@ -1236,10 +1412,15 @@ mod tests {
     use super::{
         ATTEMPT_MANIFEST_MAXIMUM_SIZE_BYTES, ATTEMPT_MANIFEST_SCHEMA_VERSION, AttemptManifestBinding,
         AttemptManifestStatus, AttemptManifestWrite, AttemptRunPaths, MATERIALIZED_MANIFEST_TEST_REPLACEMENT,
-        MaterializedManifestTestReplacement, OrphanPartPolicy, OutputPartReceipt, attempt_manifest_value_sha256,
-        build_attempt_manifest_value, materialize_attempt_manifest, parse_attempt_manifest_json,
-        read_optional_attempt_manifest_bytes, reject_or_ignore_uncommitted_parts,
+        MaterializedManifestTestReplacement, OrphanPartPolicy, OutputPartReceipt, association_implementation_value,
+        attempt_manifest_value_sha256, build_attempt_manifest_value, materialize_attempt_manifest,
+        parse_attempt_manifest_json, read_optional_attempt_manifest_bytes, reject_or_ignore_uncommitted_parts,
         validate_attempt_manifest_encoded_size, validate_attempt_manifest_schema_zero,
+    };
+    use crate::association_implementation::{
+        AssociationImplementationCompatibility, FirthComponentsCompatibility,
+        FirthComponentsFallbackReasonCompatibility, RawCudaFirthArtifactCompatibility,
+        RawCudaFirthCapabilityRequirementsCompatibility,
     };
     use crate::manifest::build_manifest_value_sha256;
     use crate::persistence::identifier::AttemptIdentifier;
@@ -1272,6 +1453,44 @@ mod tests {
 
     fn schema_test_execution_plan() -> Value {
         crate::manifest::canonical_execution_plan_schema_zero_test_value()
+    }
+
+    fn schema_test_association_implementation() -> AssociationImplementationCompatibility {
+        AssociationImplementationCompatibility::new(
+            "0.11.0".to_string(),
+            "0.11.0".to_string(),
+            Some(FirthComponentsCompatibility::jax()),
+        )
+        .expect("schema test association implementation is valid")
+    }
+
+    fn schema_test_raw_cuda_artifact() -> RawCudaFirthArtifactCompatibility {
+        let capability_requirements = RawCudaFirthCapabilityRequirementsCompatibility::new(12_020, 7, 0)
+            .expect("schema test raw-CUDA capability requirements are valid");
+        RawCudaFirthArtifactCompatibility::new(
+            "g.firth.components.v1".to_string(),
+            1,
+            "b".repeat(64),
+            "a".repeat(64),
+            "8.2".to_string(),
+            "sm_70".to_string(),
+            capability_requirements,
+        )
+        .expect("schema test raw-CUDA artifact is valid")
+    }
+
+    fn schema_test_raw_cuda_artifact_value() -> Value {
+        json!({
+            "ffi_target": "g.firth.components.v1",
+            "ffi_api_version": 1,
+            "handler_sha256": "b".repeat(64),
+            "ptx_sha256": "a".repeat(64),
+            "ptx_isa": "8.2",
+            "ptx_target": "sm_70",
+            "minimum_cuda_driver_version": 12_020,
+            "minimum_compute_capability_major": 7,
+            "minimum_compute_capability_minor": 0,
+        })
     }
 
     fn schema_test_header() -> Value {
@@ -1356,6 +1575,16 @@ mod tests {
                 "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
                 "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
                 "parquet_compression": "zstd",
+                "association_implementation": {
+                    "jax_version": "0.11.0",
+                    "jaxlib_version": "0.11.0",
+                    "firth_components": {
+                        "requested": "jax",
+                        "effective": "jax",
+                        "fallback_reason": null,
+                        "raw_cuda_artifact": null,
+                    },
+                },
             },
         });
         match status {
@@ -1426,8 +1655,26 @@ mod tests {
             failure_reason: None,
             receipts,
             run_plan: &schema_test_run_plan(),
+            association_implementation: &schema_test_association_implementation(),
         })
         .expect("representative attempt manifest emits")
+    }
+
+    fn emitted_schema_test_manifest_with_association(
+        association_implementation: &AssociationImplementationCompatibility,
+    ) -> Value {
+        build_attempt_manifest_value(&AttemptManifestWrite {
+            paths: &schema_test_paths(),
+            binding: &schema_test_binding(),
+            header: &schema_test_header(),
+            status: AttemptManifestStatus::Running,
+            interrupted_signal: None,
+            failure_reason: None,
+            receipts: &[],
+            run_plan: &schema_test_run_plan(),
+            association_implementation,
+        })
+        .expect("schema test attempt manifest emits")
     }
 
     fn encoded_manifest_size(manifest: &Value) -> u64 {
@@ -1657,6 +1904,7 @@ mod tests {
                 failure_reason,
                 receipts: &[],
                 run_plan: &run_plan,
+                association_implementation: &schema_test_association_implementation(),
             })
             .expect("attempt manifest emits");
             let emitted_object = emitted.as_object().expect("emitted manifest is an object");
@@ -1664,6 +1912,11 @@ mod tests {
             assert_eq!(emitted_object.get("failure_reason").and_then(Value::as_str), failure_reason);
             assert_eq!(emitted_object.contains_key("interrupted_signal"), interrupted_signal.is_some());
             assert_eq!(emitted_object.contains_key("failure_reason"), failure_reason.is_some());
+            assert_eq!(
+                emitted["runtime"]["association_implementation"],
+                association_implementation_value(&schema_test_association_implementation())
+                    .expect("schema test compatibility serializes")
+            );
 
             let mut encoded = serde_json::to_vec_pretty(&emitted).expect("emitted manifest serializes");
             encoded.push(b'\n');
@@ -1675,6 +1928,266 @@ mod tests {
             let validated = validate_attempt_manifest_schema_zero(parsed, &paths, &binding)
                 .expect("emitted manifest strictly validates");
             assert_eq!(validated.status, expected_status);
+        }
+    }
+
+    #[test]
+    fn association_implementation_serialization_is_closed_and_explicitly_nullable() {
+        let no_firth = AssociationImplementationCompatibility::new("0.11.0".to_string(), "0.11.0".to_string(), None)
+            .expect("non-Firth JAX compatibility is valid");
+        assert_eq!(
+            association_implementation_value(&no_firth).expect("non-Firth compatibility serializes"),
+            json!({
+                "jax_version": "0.11.0",
+                "jaxlib_version": "0.11.0",
+                "firth_components": null,
+            })
+        );
+
+        let jax_firth = schema_test_association_implementation();
+        assert_eq!(
+            association_implementation_value(&jax_firth).expect("JAX Firth compatibility serializes"),
+            json!({
+                "jax_version": "0.11.0",
+                "jaxlib_version": "0.11.0",
+                "firth_components": {
+                    "requested": "jax",
+                    "effective": "jax",
+                    "fallback_reason": null,
+                    "raw_cuda_artifact": null,
+                },
+            })
+        );
+
+        for (firth_components, expected_effective, expected_fallback_reason) in [
+            (FirthComponentsCompatibility::raw_cuda(schema_test_raw_cuda_artifact()), "raw_cuda", Value::Null),
+            (
+                FirthComponentsCompatibility::raw_cuda_fallback(
+                    schema_test_raw_cuda_artifact(),
+                    FirthComponentsFallbackReasonCompatibility::CudaDriverTooOld,
+                ),
+                "jax",
+                Value::String("cuda_driver_too_old".to_string()),
+            ),
+        ] {
+            let compatibility = AssociationImplementationCompatibility::new(
+                "0.11.0".to_string(),
+                "0.11.0".to_string(),
+                Some(firth_components),
+            )
+            .expect("raw-CUDA compatibility is valid");
+            let manifest = emitted_schema_test_manifest_with_association(&compatibility);
+            let association = &manifest["runtime"]["association_implementation"];
+            assert_eq!(association["firth_components"]["requested"], "raw_cuda");
+            assert_eq!(association["firth_components"]["effective"], expected_effective);
+            assert_eq!(association["firth_components"]["fallback_reason"], expected_fallback_reason);
+            assert_eq!(association["firth_components"]["raw_cuda_artifact"], schema_test_raw_cuda_artifact_value());
+            validate_schema_test_manifest(&manifest).expect("emitted raw-CUDA compatibility validates");
+        }
+    }
+
+    #[test]
+    fn association_implementation_schema_rejects_missing_unknown_and_observational_fields() {
+        let baseline = valid_schema_test_manifest(&AttemptManifestStatus::Running);
+        let mut invalid_manifests = Vec::new();
+
+        let mut missing_runtime_field = baseline.clone();
+        missing_runtime_field["runtime"]
+            .as_object_mut()
+            .expect("runtime is an object")
+            .remove("association_implementation");
+        invalid_manifests.push(missing_runtime_field);
+
+        for field_path in [
+            &["runtime", "association_implementation", "firth_components"][..],
+            &["runtime", "association_implementation", "firth_components", "fallback_reason"][..],
+            &["runtime", "association_implementation", "firth_components", "raw_cuda_artifact"][..],
+        ] {
+            let mut missing = baseline.clone();
+            let (parent_path, field_name) = field_path.split_at(field_path.len() - 1);
+            let mut parent = &mut missing;
+            for component in parent_path {
+                parent = &mut parent[*component];
+            }
+            parent.as_object_mut().expect("required-field parent is an object").remove(field_name[0]);
+            invalid_manifests.push(missing);
+        }
+
+        for (object_pointer, field_name, value) in [
+            ("/runtime/association_implementation", "device_identity", Value::String("GPU:0".to_string())),
+            (
+                "/runtime/association_implementation/firth_components",
+                "fallback_detail",
+                Value::String("driver observation".to_string()),
+            ),
+        ] {
+            let mut unknown = baseline.clone();
+            unknown
+                .pointer_mut(object_pointer)
+                .and_then(Value::as_object_mut)
+                .expect("unknown-field target is an object")
+                .insert(field_name.to_string(), value);
+            invalid_manifests.push(unknown);
+        }
+
+        let raw_cuda = AssociationImplementationCompatibility::new(
+            "0.11.0".to_string(),
+            "0.11.0".to_string(),
+            Some(FirthComponentsCompatibility::raw_cuda(schema_test_raw_cuda_artifact())),
+        )
+        .expect("raw-CUDA compatibility is valid");
+        for required_field in [
+            "handler_sha256",
+            "minimum_cuda_driver_version",
+            "minimum_compute_capability_major",
+            "minimum_compute_capability_minor",
+        ] {
+            let mut missing_raw_artifact_field = emitted_schema_test_manifest_with_association(&raw_cuda);
+            missing_raw_artifact_field["runtime"]["association_implementation"]["firth_components"]
+                ["raw_cuda_artifact"]
+                .as_object_mut()
+                .expect("raw artifact is an object")
+                .remove(required_field);
+            invalid_manifests.push(missing_raw_artifact_field);
+        }
+
+        let mut raw_manifest = emitted_schema_test_manifest_with_association(&raw_cuda);
+        raw_manifest["runtime"]["association_implementation"]["firth_components"]["raw_cuda_artifact"]
+            .as_object_mut()
+            .expect("raw artifact is an object")
+            .insert("driver_version".to_string(), Value::from(12_020));
+        invalid_manifests.push(raw_manifest);
+
+        for invalid_manifest in invalid_manifests {
+            validate_schema_test_manifest(&invalid_manifest)
+                .expect_err("missing, unknown, and observational compatibility fields are rejected");
+        }
+    }
+
+    #[test]
+    fn association_implementation_schema_rejects_invalid_combinations_and_types() {
+        let baseline = valid_schema_test_manifest(&AttemptManifestStatus::Running);
+        let mut missing_planned_firth = baseline.clone();
+        missing_planned_firth["runtime"]["association_implementation"]["firth_components"] = Value::Null;
+        assert!(
+            validate_schema_test_manifest(&missing_planned_firth)
+                .expect_err("approximate-Firth plan requires implementation state")
+                .contains("does not match its execution plan")
+        );
+
+        let artifact = schema_test_raw_cuda_artifact_value();
+        let invalid_firth_components = [
+            json!({
+                "requested": "jax",
+                "effective": "raw_cuda",
+                "fallback_reason": null,
+                "raw_cuda_artifact": artifact,
+            }),
+            json!({
+                "requested": "jax",
+                "effective": "jax",
+                "fallback_reason": null,
+                "raw_cuda_artifact": schema_test_raw_cuda_artifact_value(),
+            }),
+            json!({
+                "requested": "raw_cuda",
+                "effective": "raw_cuda",
+                "fallback_reason": "cuda_driver_unavailable",
+                "raw_cuda_artifact": schema_test_raw_cuda_artifact_value(),
+            }),
+            json!({
+                "requested": "raw_cuda",
+                "effective": "jax",
+                "fallback_reason": null,
+                "raw_cuda_artifact": schema_test_raw_cuda_artifact_value(),
+            }),
+            json!({
+                "requested": "raw_cuda",
+                "effective": "jax",
+                "fallback_reason": "cuda_driver_unavailable",
+                "raw_cuda_artifact": null,
+            }),
+        ];
+        for firth_components in invalid_firth_components {
+            let mut invalid = baseline.clone();
+            invalid["runtime"]["association_implementation"]["firth_components"] = firth_components;
+            validate_schema_test_manifest(&invalid).expect_err("invalid Firth compatibility combination is rejected");
+        }
+
+        for recoverable_reason in [
+            "unsupported_platform",
+            "cuda_driver_unavailable",
+            "required_symbol_unavailable",
+            "cuda_driver_too_old",
+            "cuda_device_unavailable",
+            "unsupported_compute_capability",
+        ] {
+            let mut valid_fallback = baseline.clone();
+            valid_fallback["runtime"]["association_implementation"]["firth_components"] = json!({
+                "requested": "raw_cuda",
+                "effective": "jax",
+                "fallback_reason": recoverable_reason,
+                "raw_cuda_artifact": schema_test_raw_cuda_artifact_value(),
+            });
+            validate_schema_test_manifest(&valid_fallback).expect("recoverable fallback reason is accepted");
+        }
+
+        for fatal_reason in ["cuda_driver_failure", "native_initialization_failure", "jax_registration_failure"] {
+            let mut invalid = baseline.clone();
+            invalid["runtime"]["association_implementation"]["firth_components"] = json!({
+                "requested": "raw_cuda",
+                "effective": "jax",
+                "fallback_reason": fatal_reason,
+                "raw_cuda_artifact": schema_test_raw_cuda_artifact_value(),
+            });
+            validate_schema_test_manifest(&invalid).expect_err("fatal fallback reason is not persistable");
+        }
+
+        for (pointer, invalid_value) in [
+            ("/runtime/association_implementation/jax_version", Value::Bool(true)),
+            ("/runtime/association_implementation/jaxlib_version", Value::String(String::new())),
+        ] {
+            let mut invalid = baseline.clone();
+            *invalid.pointer_mut(pointer).expect("invalid typed field exists") = invalid_value;
+            validate_schema_test_manifest(&invalid).expect_err("wrong or empty runtime version is rejected");
+        }
+    }
+
+    #[test]
+    fn association_implementation_schema_rejects_invalid_raw_cuda_artifact_fields() {
+        let raw_cuda = AssociationImplementationCompatibility::new(
+            "0.11.0".to_string(),
+            "0.11.0".to_string(),
+            Some(FirthComponentsCompatibility::raw_cuda(schema_test_raw_cuda_artifact())),
+        )
+        .expect("raw-CUDA compatibility is valid");
+        for (field_name, invalid_value) in [
+            ("ffi_target", Value::String(String::new())),
+            ("ffi_api_version", Value::Bool(true)),
+            ("ffi_api_version", Value::from(0)),
+            ("handler_sha256", Value::String("B".repeat(64))),
+            ("ptx_sha256", Value::String("A".repeat(64))),
+            ("ptx_isa", Value::String(String::new())),
+            ("ptx_target", Value::String(String::new())),
+            ("minimum_cuda_driver_version", Value::from(0)),
+            ("minimum_compute_capability_major", Value::from(0)),
+            ("minimum_compute_capability_major", Value::from(8)),
+            ("minimum_compute_capability_minor", Value::from(-1)),
+        ] {
+            let mut invalid = emitted_schema_test_manifest_with_association(&raw_cuda);
+            invalid["runtime"]["association_implementation"]["firth_components"]["raw_cuda_artifact"][field_name] =
+                invalid_value;
+            validate_schema_test_manifest(&invalid).expect_err("invalid raw-CUDA artifact field is rejected");
+        }
+    }
+
+    #[test]
+    fn emitted_manifest_schema_versions_remain_json_integer_zero() {
+        let manifest = emitted_schema_test_manifest_with_association(&schema_test_association_implementation());
+        for pointer in ["/schema_version", "/output_schema_version", "/attempt_manifest_schema_version"] {
+            let value = manifest.pointer(pointer).expect("schema version exists");
+            assert_eq!(value.as_i64(), Some(0));
+            assert!(value.is_number());
         }
     }
 

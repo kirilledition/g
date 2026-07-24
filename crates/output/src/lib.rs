@@ -5,6 +5,7 @@ compile_error!("g requires a 64-bit target.");
 
 mod agreement;
 mod api;
+mod association_implementation;
 mod chunk;
 mod digest;
 mod error;

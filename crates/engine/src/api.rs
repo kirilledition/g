@@ -2,7 +2,8 @@
 
 pub use crate::association_implementation::{
     AssociationImplementationState, FirthComponentsFallbackReason, FirthComponentsImplementation,
-    FirthComponentsImplementationState, JaxRuntimeVersions,
+    FirthComponentsImplementationState, JaxRuntimeVersions, RawCudaFirthArtifactIdentity,
+    RawCudaFirthCapabilityRequirements, RawCudaFirthRuntimeObservation,
 };
 pub use crate::backend::{
     AssociationBackend, GenotypeDeliveryCapability, GenotypeTransferPreparation, GroupPreparationInput,

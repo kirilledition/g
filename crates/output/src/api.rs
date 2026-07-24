@@ -1,6 +1,11 @@
 //! Public output crate facade.
 
 pub use crate::agreement::ExistingOutputResumeAgreement;
+pub use crate::association_implementation::{
+    AssociationImplementationCompatibility, FirthComponentsCompatibility, FirthComponentsFallbackReasonCompatibility,
+    FirthComponentsImplementationCompatibility, RawCudaFirthArtifactCompatibility,
+    RawCudaFirthCapabilityRequirementsCompatibility,
+};
 pub use crate::chunk::{NativeChunkHandle, NativeVariantMetadataHandle};
 pub use crate::error::OutputError;
 pub use crate::manager::{

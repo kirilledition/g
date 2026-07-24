@@ -11,6 +11,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::association_implementation::AssociationImplementationCompatibility;
 use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, build_current_run_manifest_header_value_with_cache,
@@ -327,6 +328,7 @@ struct OutputManagerCore {
     claimed_attempt_id: Option<AttemptIdentifier>,
     completed_noop_cleanup: Option<OutputPostSessionCleanup>,
     canonical_chunk_plan: Option<CanonicalChunkPlan>,
+    association_implementation: Option<AssociationImplementationCompatibility>,
     collect_stage_timings: bool,
     lifecycle_state: OutputManagerLifecycleState,
     #[cfg(test)]
@@ -500,6 +502,7 @@ impl OutputManager<Planned> {
                 claimed_attempt_id: None,
                 completed_noop_cleanup: None,
                 canonical_chunk_plan: None,
+                association_implementation: None,
                 collect_stage_timings: false,
                 lifecycle_state: OutputManagerLifecycleState {
                     attempt_authority_publication: AttemptAuthorityPublication::NotAttempted,
@@ -513,7 +516,7 @@ impl OutputManager<Planned> {
         })
     }
 
-    /// Return the BGEN content and GPU representation required by all existing manifests.
+    /// Return the BGEN, GPU representation, and association implementation required by existing manifests.
     ///
     /// # Errors
     ///
@@ -609,6 +612,7 @@ impl OutputManager<Planned> {
                 return Err(core.release_after_unmutated_error(error));
             }
         }
+        core.arm_attempt_authority_rollback_guard();
         let referenced_attempts =
             core.lineage_snapshot.as_ref().map_or_else(BTreeSet::new, lineage_attempt_identifiers);
         let current_claim_identifier = match core.owner_claim.as_ref() {
@@ -626,19 +630,22 @@ impl OutputManager<Planned> {
         }
         let staging_result = core.initialize_claim_staging_directory();
         if let Err(error) = staging_result {
-            let cleanup_result = core.cleanup_claim_staging();
-            let release_result = core.release_owner_claim();
-            let primary_error = match cleanup_result {
-                Ok(()) => error,
-                Err(cleanup_error) => OutputError::OutputOperationAndOwnerClaimRelease {
+            #[cfg(test)]
+            publish_guarded_authority_at_initialization_cleanup_test_point(
+                &core,
+                "before_failed_claim_staging_cleanup",
+            );
+            if let Err(cleanup_error) = core.cleanup_claim_staging() {
+                let retained_reason = OutputError::OutputOperationAndOwnerClaimRelease {
                     primary: Box::new(error),
                     release: Box::new(cleanup_error),
-                },
-            };
-            return Err(match release_result {
-                Ok(()) => primary_error,
+                };
+                return Err(core.retained_owner_claim_error(&retained_reason));
+            }
+            return Err(match core.release_owner_claim() {
+                Ok(()) => error,
                 Err(release_error) => OutputError::OutputOperationAndOwnerClaimRelease {
-                    primary: Box::new(primary_error),
+                    primary: Box::new(error),
                     release: Box::new(release_error),
                 },
             });
@@ -650,16 +657,17 @@ impl OutputManager<Planned> {
     ///
     /// # Errors
     ///
-    /// Returns an error when header coverage, lineage compatibility, durable
-    /// recovery, attempt publication, or writer creation fails.
+    /// Returns an error when header coverage, compatibility, durable recovery,
+    /// attempt publication, or writer creation fails.
     pub fn initialize(
         self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
         planned_chunk_ranges: &[Range<usize>],
         collect_stage_timings: bool,
+        association_implementation: AssociationImplementationCompatibility,
     ) -> OutputResult<OutputManager<Active>> {
         let claimed_manager = self.claim(current_header_inputs, planned_chunk_ranges, collect_stage_timings)?;
-        claimed_manager.activate()
+        claimed_manager.activate(association_implementation)
     }
 }
 
@@ -678,14 +686,30 @@ impl OutputManager<Claimed> {
             .ok_or_else(|| OutputError::Runtime("Claimed output has no diagnostics staging directory.".to_string()))
     }
 
+    /// Reject activation without publishing attempt authority.
+    ///
+    /// This transition preserves the claim as explicit rollback authority so a
+    /// caller can close claim-scoped diagnostics before releasing ownership.
+    #[must_use = "the returned activation error contains rollback authority that must be consumed"]
+    pub fn reject_activation(mut self, source: OutputError) -> OutputActivationError {
+        match self.core.take() {
+            Some(core) => unpublished_activation_error(core, source),
+            None => OutputActivationError::Published(source),
+        }
+    }
+
     /// Publish immutable attempt authority and start the output writers.
     ///
     /// # Errors
     ///
     /// Returns an error when header coverage, lineage compatibility, durable
     /// recovery, attempt publication, or writer creation fails.
-    pub fn activate(self) -> OutputResult<OutputManager<Active>> {
-        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Immediate).map_err(resolve_activation_error)
+    pub fn activate(
+        self,
+        association_implementation: AssociationImplementationCompatibility,
+    ) -> OutputResult<OutputManager<Active>> {
+        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Immediate, association_implementation)
+            .map_err(resolve_activation_error)
     }
 
     /// Publish attempt authority while deferring completed-noop cleanup until
@@ -698,16 +722,40 @@ impl OutputManager<Claimed> {
     /// retain any unpublished rollback and consume it only after claim-scoped
     /// diagnostics close. Dropping it deliberately leaves ownership active so
     /// recovery fails closed until an exact external fence is supplied.
-    pub fn activate_with_deferred_completed_noop_cleanup(self) -> Result<OutputManager<Active>, OutputActivationError> {
-        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Deferred)
+    pub fn activate_with_deferred_completed_noop_cleanup(
+        self,
+        association_implementation: AssociationImplementationCompatibility,
+    ) -> Result<OutputManager<Active>, OutputActivationError> {
+        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Deferred, association_implementation)
     }
 
     fn activate_with_cleanup_policy(
         mut self,
         completed_noop_cleanup_policy: CompletedNoopCleanupPolicy,
+        association_implementation: AssociationImplementationCompatibility,
     ) -> Result<OutputManager<Active>, OutputActivationError> {
         let mut core = self.take_core()?;
         core.lifecycle_state.completed_noop_cleanup_policy = completed_noop_cleanup_policy;
+        let activation_snapshot = match inspect_expected_lineage_snapshot(&core) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return Err(OutputActivationError::Published(error)),
+        };
+        let existing_resume_agreement =
+            match inspect_existing_output_resume_agreement_in_snapshot(&core, activation_snapshot, true) {
+                Ok(existing_resume_agreement) => existing_resume_agreement,
+                Err(error @ OutputError::ConcurrentLineageUpdate { .. }) => {
+                    return Err(OutputActivationError::Published(error));
+                }
+                Err(error) => return Err(unpublished_activation_error(core, error)),
+            };
+        if let Err(error) = validate_current_association_implementation(
+            &core.run_plan,
+            &association_implementation,
+            existing_resume_agreement.as_ref(),
+        ) {
+            return Err(unpublished_activation_error(core, error));
+        }
+        core.association_implementation = Some(association_implementation);
         let Some(canonical_chunk_plan) = core.canonical_chunk_plan.clone() else {
             return Err(unpublished_activation_error(
                 core,
@@ -1237,6 +1285,18 @@ impl<State> Drop for OutputManager<State> {
 }
 
 impl OutputManagerCore {
+    fn arm_attempt_authority_rollback_guard(&mut self) {
+        let record_path = match self.lineage_snapshot.as_ref() {
+            None => self.lineage_paths.genesis_path.clone(),
+            Some(snapshot) if snapshot.leaf_terminal.is_some() || snapshot.pending_terminal.is_some() => {
+                self.lineage_paths.normal_successor_path(&snapshot.leaf_attempt_id)
+            }
+            Some(snapshot) => self.lineage_paths.outcome_path(&snapshot.leaf_attempt_id),
+        };
+        self.lifecycle_state.attempt_authority_publication =
+            AttemptAuthorityPublication::DefinitelyUnpublished { record_path };
+    }
+
     fn classify_attempt_authority_publication<ValueType>(
         &mut self,
         record_path: PathBuf,
@@ -1393,6 +1453,12 @@ impl OutputManagerCore {
         self.active_attempt
             .as_ref()
             .ok_or_else(|| OutputError::Runtime("Output manager has no active attempt.".to_string()))
+    }
+
+    fn association_implementation(&self) -> OutputResult<&AssociationImplementationCompatibility> {
+        self.association_implementation.as_ref().ok_or_else(|| {
+            OutputError::Runtime("Output manager has no association implementation compatibility.".to_string())
+        })
     }
 
     fn install_prepared_attempt(
@@ -1707,9 +1773,11 @@ impl OutputManagerCore {
         self.refresh_active_attempt(OrphanPartPolicy::Observe, false)?;
         let run_set_id = self.active_attempt()?.run_set_id.clone();
         let attempt_id = self.active_attempt()?.attempt_id.clone();
+        let association_implementation = self.association_implementation()?.clone();
         let StagedTerminalRuns { terminal, .. } = stage_terminal_runs(
             &self.runs,
             &self.run_plan,
+            &association_implementation,
             run_set_id,
             attempt_id,
             status,
@@ -1730,6 +1798,7 @@ impl OutputManagerCore {
         let staged_terminal_runs = stage_terminal_runs(
             &self.runs,
             &self.run_plan,
+            &association_implementation,
             terminal.run_set_id.clone(),
             terminal.attempt_id.clone(),
             status,
@@ -1953,7 +2022,25 @@ fn inspect_existing_output_resume_agreement(
     core: &OutputManagerCore,
     pause_after_reads: bool,
 ) -> OutputResult<Option<crate::agreement::ExistingOutputResumeAgreement>> {
-    let Some(snapshot) = core.lineage_paths.inspect()? else {
+    let snapshot = inspect_expected_lineage_snapshot(core)?;
+    inspect_existing_output_resume_agreement_in_snapshot(core, snapshot, pause_after_reads)
+}
+
+fn inspect_expected_lineage_snapshot(core: &OutputManagerCore) -> OutputResult<Option<LineageSnapshot>> {
+    let snapshot = core.lineage_paths.inspect()?;
+    if snapshot != core.lineage_snapshot {
+        return Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() });
+    }
+    Ok(snapshot)
+}
+
+fn inspect_existing_output_resume_agreement_in_snapshot(
+    core: &OutputManagerCore,
+    snapshot: Option<LineageSnapshot>,
+    pause_after_reads: bool,
+) -> OutputResult<Option<crate::agreement::ExistingOutputResumeAgreement>> {
+    let Some(snapshot) = snapshot else {
+        verify_lineage_snapshot_unchanged(core, None)?;
         return Ok(None);
     };
     validate_planned_names(&snapshot, &core.runs)?;
@@ -1990,7 +2077,7 @@ fn inspect_existing_output_resume_agreement(
         let agreement = validated.existing_output_resume_agreement().ok_or_else(|| {
             OutputError::ExistingOutputUnattestedBgenContent { manifest_path: paths.manifest_path.clone() }
         })?;
-        observed_agreements.push(agreement);
+        observed_agreements.push((paths.manifest_path, agreement));
     }
     #[cfg(test)]
     if pause_after_reads && let Some(pause) = core.manifest_hint_pause.as_ref() {
@@ -2002,13 +2089,11 @@ fn inspect_existing_output_resume_agreement(
     if pause_after_reads && let Some(pause) = core.manifest_hint_pause.as_ref() {
         pause.record_final_inspect();
     }
-    if core.lineage_paths.inspect()?.as_ref() != Some(&snapshot) {
-        return Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() });
-    }
-    let Some(expected_agreement) = observed_agreements.first().copied() else {
+    verify_lineage_snapshot_unchanged(core, Some(&snapshot))?;
+    let Some((expected_manifest_path, expected_agreement)) = observed_agreements.first() else {
         return Ok(None);
     };
-    for observed_agreement in &observed_agreements[1..] {
+    for (observed_manifest_path, observed_agreement) in &observed_agreements[1..] {
         if observed_agreement.bgen_content_fingerprint.content_sha256
             != expected_agreement.bgen_content_fingerprint.content_sha256
         {
@@ -2028,8 +2113,46 @@ fn inspect_existing_output_resume_agreement(
                 "Existing output phenotype manifests disagree on GPU genotype format.".to_string(),
             ));
         }
+        if observed_agreement.association_implementation != expected_agreement.association_implementation {
+            return Err(OutputError::ExistingOutputAssociationImplementationDisagreement {
+                first_manifest_path: expected_manifest_path.clone(),
+                conflicting_manifest_path: observed_manifest_path.clone(),
+            });
+        }
     }
-    Ok(Some(expected_agreement))
+    Ok(Some(expected_agreement.clone()))
+}
+
+fn verify_lineage_snapshot_unchanged(
+    core: &OutputManagerCore,
+    expected_snapshot: Option<&LineageSnapshot>,
+) -> OutputResult<()> {
+    match core.lineage_paths.inspect() {
+        Ok(observed_snapshot) if observed_snapshot.as_ref() == expected_snapshot => Ok(()),
+        Ok(_) | Err(_) => {
+            Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() })
+        }
+    }
+}
+
+fn validate_current_association_implementation(
+    run_plan: &g_plan::RunPlan,
+    current_compatibility: &AssociationImplementationCompatibility,
+    existing_resume_agreement: Option<&crate::agreement::ExistingOutputResumeAgreement>,
+) -> OutputResult<()> {
+    let uses_approximate_firth = run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate;
+    if current_compatibility.firth_components().is_some() != uses_approximate_firth {
+        return Err(OutputError::InvalidInput(
+            "Current association implementation does not match the planned association and correction mode."
+                .to_string(),
+        ));
+    }
+    if existing_resume_agreement.is_some_and(|agreement| agreement.association_implementation != *current_compatibility)
+    {
+        return Err(OutputError::CurrentAssociationImplementationMismatch);
+    }
+    Ok(())
 }
 
 fn validate_resume_terminal_authority_shape(snapshot: &LineageSnapshot, runs: &[ManagedOutputRun]) -> OutputResult<()> {
@@ -2450,9 +2573,11 @@ fn finalize_pending_terminal(
         OrphanPartPolicy::Observe,
     )?;
     install_verified_leaf_run_state(core, snapshot, canonical_chunk_plan, observed_runs)?;
+    let association_implementation = core.association_implementation()?.clone();
     let StagedTerminalRuns { terminal: observed_terminal, .. } = stage_terminal_runs(
         &core.runs,
         &core.run_plan,
+        &association_implementation,
         terminal.run_set_id.clone(),
         terminal.attempt_id.clone(),
         &status,
@@ -2477,6 +2602,7 @@ fn finalize_pending_terminal(
     let staged_terminal_runs = stage_terminal_runs(
         &core.runs,
         &core.run_plan,
+        &association_implementation,
         terminal.run_set_id.clone(),
         terminal.attempt_id.clone(),
         &status,
@@ -2549,21 +2675,6 @@ fn prepare_attempt(
             execution_plan_sha256: execution_plan_hash(run)?,
             chunk_plan_sha256: canonical_chunk_plan.sha256().to_string(),
         };
-        let receipts = if let Some((source_attempt_id, source_receipts)) = reuse_source {
-            let source_paths = AttemptRunPaths::new(
-                &core.lineage_paths.attempts_directory,
-                source_attempt_id,
-                &run.output_directory_name,
-            )?;
-            let receipts = source_receipts
-                .get(run_index)
-                .cloned()
-                .ok_or_else(|| OutputError::Runtime("Output reuse receipt count is inconsistent.".to_string()))?;
-            reuse_verified_receipts(&source_paths, &paths, &receipts)?;
-            receipts
-        } else {
-            Vec::new()
-        };
         write_effective_config(&paths, &core.effective_config_toml)?;
         let header = run
             .current_header
@@ -2576,9 +2687,40 @@ fn prepare_attempt(
             status: AttemptManifestStatus::Running,
             interrupted_signal: None,
             failure_reason: None,
-            receipts: &receipts,
+            receipts: &[],
             run_plan: &core.run_plan,
+            association_implementation: core.association_implementation()?,
         })?;
+        let receipts = if let Some((source_attempt_id, source_receipts)) = reuse_source {
+            let source_paths = AttemptRunPaths::new(
+                &core.lineage_paths.attempts_directory,
+                source_attempt_id,
+                &run.output_directory_name,
+            )?;
+            let receipts = source_receipts
+                .get(run_index)
+                .cloned()
+                .ok_or_else(|| OutputError::Runtime("Output reuse receipt count is inconsistent.".to_string()))?;
+            reuse_verified_receipts(&source_paths, &paths, &receipts)?;
+            #[cfg(test)]
+            crash_at_test_failpoint("after_reused_receipts_before_manifest_update");
+            receipts
+        } else {
+            Vec::new()
+        };
+        if !receipts.is_empty() {
+            write_attempt_manifest(&AttemptManifestWrite {
+                paths: &paths,
+                binding: &binding,
+                header,
+                status: AttemptManifestStatus::Running,
+                interrupted_signal: None,
+                failure_reason: None,
+                receipts: &receipts,
+                run_plan: &core.run_plan,
+                association_implementation: core.association_implementation()?,
+            })?;
+        }
         let committed_chunk_identifiers = receipt_chunk_identifiers(&receipts)?;
         prepared_runs.push(PreparedAttemptRun { binding, paths, receipts, committed_chunk_identifiers });
     }
@@ -2703,6 +2845,7 @@ fn prepared_attempt_from_verified(
 fn stage_terminal_runs(
     runs: &[ManagedOutputRun],
     run_plan: &g_plan::RunPlan,
+    association_implementation: &AssociationImplementationCompatibility,
     run_set_id: String,
     attempt_id: AttemptIdentifier,
     status: &AttemptManifestStatus,
@@ -2733,6 +2876,7 @@ fn stage_terminal_runs(
             failure_reason,
             receipts: &run.receipts,
             run_plan,
+            association_implementation,
         })?;
         let manifest_sha256 = attempt_manifest_value_sha256(&manifest)?;
         phenotype_records.push(TerminalPhenotypeRecord {
@@ -3048,6 +3192,33 @@ fn fail_initialization_cleanup_at_test_point(observed_failure_point: &str) -> Ou
             Ok(())
         }
     })
+}
+
+#[cfg(test)]
+fn publish_guarded_authority_at_initialization_cleanup_test_point(
+    core: &OutputManagerCore,
+    observed_failure_point: &str,
+) {
+    let should_publish = INITIALIZATION_CLEANUP_FAILURE_POINT.with(|installed_failure_point| {
+        let mut installed_failure_point = installed_failure_point.borrow_mut();
+        if installed_failure_point.as_deref() == Some(observed_failure_point) {
+            *installed_failure_point = None;
+            true
+        } else {
+            false
+        }
+    });
+    if !should_publish {
+        return;
+    }
+    let AttemptAuthorityPublication::DefinitelyUnpublished { record_path } =
+        &core.lifecycle_state.attempt_authority_publication
+    else {
+        panic!("claim-staging authority race requires one guarded immutable record path");
+    };
+    std::fs::create_dir_all(record_path.parent().expect("guarded authority path has a parent"))
+        .expect("guarded authority parent is created");
+    std::fs::write(record_path, b"{}\n").expect("guarded immutable authority race is injected");
 }
 
 #[cfg(test)]

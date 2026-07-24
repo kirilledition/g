@@ -9,8 +9,9 @@ use g_genotype_contracts::{
     VariantMetadataColumns, VariantMetadataStore,
 };
 use g_output::{
-    Active, CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken,
-    OutputManager, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
+    Active, AssociationImplementationCompatibility, CurrentRunManifestHeaderInput, FirthComponentsCompatibility,
+    NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken, OutputManager, Regenie2StatisticBatch,
+    write_regenie2_multi_trait_chunk_f32,
 };
 use sha2::{Digest, Sha256};
 
@@ -395,12 +396,21 @@ fn prepare_benchmark_run(
         .expect("benchmark output manager should open");
     let planned_chunk_ranges = (0..BENCHMARK_CHUNK_COUNT).map(benchmark_chunk_range).collect::<Vec<Range<usize>>>();
     let output_manager = output_manager
-        .initialize(
+        .claim(
             vec![benchmark_manifest_header(&bgen_path, BENCHMARK_TOTAL_ROW_COUNT)],
             &planned_chunk_ranges,
             collect_stage_timings,
         )
-        .expect("benchmark output manager should initialize");
+        .expect("benchmark output manager should claim")
+        .activate(
+            AssociationImplementationCompatibility::new(
+                "benchmark-jax".to_string(),
+                "benchmark-jaxlib".to_string(),
+                Some(FirthComponentsCompatibility::jax()),
+            )
+            .expect("benchmark association implementation should be valid"),
+        )
+        .expect("benchmark output manager should activate");
     let delivery_token = output_manager
         .delivery_token_for_phenotypes(&[BENCHMARK_PHENOTYPE_NAME.to_string()])
         .expect("benchmark output delivery token should be available");

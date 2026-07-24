@@ -117,6 +117,19 @@ It deliberately omits paths, filesystem metadata, and algorithm or selector
 fields. Explicit `null` is valid only as fresh unattested output evidence and
 cannot authorize a later resume.
 
+Schema zero also requires `runtime.association_implementation`. It records exact
+JAX/JAXlib versions and, for approximate Firth, the requested/effective JAX or
+raw-CUDA implementation. A raw-CUDA request always includes its FFI target/API,
+framed source/ABI handler SHA-256 under the literal `handler_sha256` field, and
+PTX SHA-256/ISA/target, including when a typed recoverable capability result
+selects JAX. Free-text diagnostics and observed driver/device properties are
+not persisted. Resume requires exact agreement before output activation. The
+complete raw artifact field set is `ffi_target`, `ffi_api_version`,
+`handler_sha256`, `ptx_sha256`, `ptx_isa`, `ptx_target`,
+`minimum_cuda_driver_version`, `minimum_compute_capability_major`, and
+`minimum_compute_capability_minor`; it is closed, so unknown or missing fields
+are invalid.
+
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns
 use `BYTE_STREAM_SPLIT` before Zstandard compression. These are physical

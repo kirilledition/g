@@ -12,6 +12,8 @@ pub const PACKED8_DEFLATE_FFI_TARGET: &str = "g.bgen.packed8_deflate.v1";
 /// Device status bit emitted when packed8 descriptor bounds or alignment validation fails.
 pub const PACKED8_DESCRIPTOR_FAILURE_STATUS: u32 = 0x0000_0800;
 
+include!(concat!(env!("OUT_DIR"), "/packed8_artifact_identity.rs"));
+
 #[cfg(target_os = "linux")]
 const INITIALIZATION_SUCCESS: c_int = 0;
 #[cfg(target_os = "linux")]
@@ -40,11 +42,53 @@ const NVCOMP_INPUT_ALIGNMENT_UNSUPPORTED: c_int = 9;
 #[must_use]
 #[derive(Debug, Eq, PartialEq)]
 pub struct NvcompCapability {
+    nvcomp_version: u32,
+    nvcomp_cuda_runtime_version: u32,
+    cuda_driver_version: i32,
+    device_ordinal: i32,
+    compute_capability_major: i32,
+    compute_capability_minor: i32,
     input_alignment: usize,
     private: (),
 }
 
 impl NvcompCapability {
+    /// Returns the loaded nvCOMP encoded version.
+    #[must_use]
+    pub const fn nvcomp_version(&self) -> u32 {
+        self.nvcomp_version
+    }
+
+    /// Returns the CUDA runtime version reported by nvCOMP.
+    #[must_use]
+    pub const fn nvcomp_cuda_runtime_version(&self) -> u32 {
+        self.nvcomp_cuda_runtime_version
+    }
+
+    /// Returns the CUDA driver API version observed during qualification.
+    #[must_use]
+    pub const fn cuda_driver_version(&self) -> i32 {
+        self.cuda_driver_version
+    }
+
+    /// Returns the CUDA-visible device ordinal qualified for this capability.
+    #[must_use]
+    pub const fn device_ordinal(&self) -> i32 {
+        self.device_ordinal
+    }
+
+    /// Returns the qualified device's compute-capability major version.
+    #[must_use]
+    pub const fn compute_capability_major(&self) -> i32 {
+        self.compute_capability_major
+    }
+
+    /// Returns the qualified device's compute-capability minor version.
+    #[must_use]
+    pub const fn compute_capability_minor(&self) -> i32 {
+        self.compute_capability_minor
+    }
+
     /// Returns the required alignment of each compressed DEFLATE member.
     #[must_use]
     pub const fn input_alignment(&self) -> usize {
@@ -150,7 +194,7 @@ pub fn initialize_nvcomp_runtime(device_ordinal: i32) -> Result<NvcompCapability
     };
 
     if status == INITIALIZATION_SUCCESS {
-        return Ok(NvcompCapability { input_alignment: native_capability.nvcomp_input_alignment, private: () });
+        return Ok(nvcomp_capability_from_native(&native_capability));
     }
 
     let detail = if native_detail.is_null() {
@@ -161,6 +205,20 @@ pub fn initialize_nvcomp_runtime(device_ordinal: i32) -> Result<NvcompCapability
         unsafe { CStr::from_ptr(native_detail) }.to_string_lossy().into_owned()
     };
     Err(initialization_error_from_native_status(status, &native_capability, device_ordinal, detail))
+}
+
+#[cfg(target_os = "linux")]
+fn nvcomp_capability_from_native(native_capability: &NativeCapability) -> NvcompCapability {
+    NvcompCapability {
+        nvcomp_version: native_capability.nvcomp_version,
+        nvcomp_cuda_runtime_version: native_capability.nvcomp_cuda_runtime_version,
+        cuda_driver_version: native_capability.cuda_driver_version,
+        device_ordinal: native_capability.device_ordinal,
+        compute_capability_major: native_capability.compute_capability_major,
+        compute_capability_minor: native_capability.compute_capability_minor,
+        input_alignment: native_capability.nvcomp_input_alignment,
+        private: (),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -271,14 +329,54 @@ mod tests {
     const NATIVE_INTERNAL_FAILURE: c_int = 10;
 
     #[test]
-    fn ffi_target_and_member_alignment_are_stable() {
+    fn ffi_artifact_identity_and_member_alignment_are_stable() {
         assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_TARGET), "g.bgen.packed8_deflate.v1");
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_API_VERSION), 1);
+        assert_eq!(
+            std::hint::black_box(PACKED8_DEFLATE_HANDLER_SHA256),
+            "12e3dc7dc43d2929047bbee9469750f61923667805d10c1d1757d22253788d94"
+        );
+        assert_eq!(
+            std::hint::black_box(PACKED8_DEFLATE_PTX_SHA256),
+            "a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088"
+        );
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_PTX_ISA), "8.2");
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_PTX_TARGET), "sm_70");
         assert_eq!(std::hint::black_box(g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT), 4);
         assert_eq!(std::hint::black_box(PACKED8_DESCRIPTOR_FAILURE_STATUS), 2048);
+        let ptx = include_str!("../native/packed8_kernel.compute_70.ptx");
+        let declared_isa = ptx.lines().find_map(|line| line.trim().strip_prefix(".version "));
+        let declared_target = ptx.lines().find_map(|line| line.trim().strip_prefix(".target "));
+        assert_eq!(declared_isa, Some(PACKED8_DEFLATE_PTX_ISA));
+        assert_eq!(declared_target, Some(PACKED8_DEFLATE_PTX_TARGET));
         assert!(
             include_str!("../native/packed8_kernel.cu").contains("#define STATUS_DESCRIPTOR 2048u"),
             "Rust and CUDA descriptor status values must remain identical"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn successful_native_capability_observations_are_retained() {
+        let native_capability = NativeCapability {
+            nvcomp_version: 50_300,
+            nvcomp_cuda_runtime_version: 12_200,
+            cuda_driver_version: 12_090,
+            device_ordinal: 2,
+            compute_capability_major: 7,
+            compute_capability_minor: 5,
+            nvcomp_input_alignment: 4,
+        };
+
+        let capability = nvcomp_capability_from_native(&native_capability);
+
+        assert_eq!(capability.nvcomp_version(), 50_300);
+        assert_eq!(capability.nvcomp_cuda_runtime_version(), 12_200);
+        assert_eq!(capability.cuda_driver_version(), 12_090);
+        assert_eq!(capability.device_ordinal(), 2);
+        assert_eq!(capability.compute_capability_major(), 7);
+        assert_eq!(capability.compute_capability_minor(), 5);
+        assert_eq!(capability.input_alignment(), 4);
     }
 
     #[cfg(target_os = "linux")]
@@ -466,13 +564,27 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn capability_gates_a_stable_non_null_handler_address() {
-        let capability = NvcompCapability { input_alignment: 4, private: () };
+        let native_capability = NativeCapability {
+            nvcomp_version: 50_300,
+            nvcomp_cuda_runtime_version: 12_200,
+            cuda_driver_version: 12_090,
+            device_ordinal: 2,
+            compute_capability_major: 7,
+            compute_capability_minor: 0,
+            nvcomp_input_alignment: 4,
+        };
+        let capability = nvcomp_capability_from_native(&native_capability);
 
         let first_handler = packed8_deflate_ffi_handler(&capability);
         let second_handler = packed8_deflate_ffi_handler(&capability);
 
         assert_eq!(first_handler, second_handler);
-        assert_eq!(capability, NvcompCapability { input_alignment: 4, private: () });
+        assert_eq!(capability.nvcomp_version(), 50_300);
+        assert_eq!(capability.nvcomp_cuda_runtime_version(), 12_200);
+        assert_eq!(capability.cuda_driver_version(), 12_090);
+        assert_eq!(capability.device_ordinal(), 2);
+        assert_eq!(capability.compute_capability_major(), 7);
+        assert_eq!(capability.compute_capability_minor(), 0);
         assert_eq!(capability.input_alignment(), 4);
         assert!(format!("{capability:?}").contains("NvcompCapability"));
     }

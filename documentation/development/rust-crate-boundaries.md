@@ -20,12 +20,14 @@ Allowed ownership:
   dynamic loading, device/context validation, and module/launch support shared
   by the two independent CUDA crates.
 - `g-input`: sample/phenotype/covariate/prediction alignment.
-- `g-output`: Parquet output sessions, manifests, and resume.
+- `g-output`: Parquet output sessions, manifests, resume, and the
+  output-owned association-implementation compatibility DTO.
 - `g-runtime`: logging, telemetry session/writer lifecycle, timing, shutdown,
   Rayon state, and generic structured-diagnostic transport.
 - `g-engine`: coarse run orchestration across genotype/input/output/runtime,
-  including packed8 negotiation, completed artifacts, and
-  writer-completion events.
+  including packed8 negotiation, typed association implementation state,
+  output-compatibility projection, completed artifacts, and writer-completion
+  events.
 - `g-runner`: CLI dispatch, process-global runtime sequencing, terminal
   rendering, JAX process policy, and the single coordinated engine invocation.
 - root `g` PyO3 crate: Python facade and private owner-type-to-NumPy adaptation
@@ -52,6 +54,11 @@ Rules:
 - `g-runner` invokes `g-engine::execute_coordinated_run` after its host creates
   the Python-backed `AssociationBackend`; the root never sequences domain
   crate calls.
+- `g-engine` owns runtime implementation selection state and maps it once into
+  `g-output::AssociationImplementationCompatibility` before activation.
+  `g-output` owns the persisted schema, exact resume comparison, and
+  prepublication mismatch rejection. Driver/device observations never enter
+  that DTO.
 - Keep hot paths batch-oriented and ownership-visible; avoid per-variant public calls and cross-crate JSON in compute paths.
 - Keep compute CUDA independent from genotype delivery at the Rust crate and
   public API boundaries. Shared vendored OpenXLA FFI headers live once under

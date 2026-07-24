@@ -72,6 +72,7 @@ cache-keys = [
     { file = "crates/**/*.cu" },
     { file = "crates/**/*.h" },
     { file = "native/**/*.h" },
+    { file = "native/**/*.rs" },
     { file = "crates/**/*.ptx" },
     { file = "vendor/openxla/**/*.h" },
     { file = "vendor/openxla/*.md" },

@@ -17,6 +17,7 @@ use crate::run::{
 };
 
 const ASSOCIATION_BACKEND_SELECTED_EVENT_NAME: &str = "association_backend_selected";
+const ASSOCIATION_IMPLEMENTATION_SELECTED_EVENT_NAME: &str = "association_implementation_selected";
 const EXECUTION_PLAN_PREPARED_EVENT_NAME: &str = "execution_plan_prepared";
 const WRITER_FINISHED_EVENT_NAME: &str = "writer_finished";
 
@@ -39,6 +40,45 @@ struct AssociationBackendSelectedTelemetryFields<'fields> {
     phenotype: Option<&'fields str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     phenotype_count: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct AssociationImplementationSelectedTelemetryFields<'fields> {
+    association_mode: &'fields str,
+    jax_version: &'fields str,
+    jaxlib_version: &'fields str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    firth_components_requested: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    firth_components_effective: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    firth_components_fallback_reason: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_ffi_target: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_ffi_api_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_handler_sha256: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_ptx_sha256: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_ptx_isa: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_ptx_target: Option<&'fields str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_minimum_cuda_driver_version: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_minimum_compute_capability_major: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    raw_cuda_minimum_compute_capability_minor: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cuda_driver_version: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cuda_device_ordinal: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cuda_compute_capability_major: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cuda_compute_capability_minor: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -263,10 +303,18 @@ where
     let progress_reporter = telemetry_session.is_enabled().then(|| {
         Arc::new(RunProgressReporter::new(telemetry_session.clone(), thread_name.to_string(), association_mode))
     });
+    let association_implementation_state = backend.association_implementation_state();
+    let association_implementation_fields =
+        association_implementation_selected_fields(association_mode, &association_implementation_state);
+    record_association_implementation_selection(telemetry_session, thread_name, &association_implementation_fields);
 
     record_execution_plan_build_started();
     let preparation_start_time = Instant::now();
-    let RunActivationOutcome { result: activation_result, post_session_cleanup } = claimed_run.run.activate();
+    let activation_outcome = match association_implementation_state.output_compatibility() {
+        Ok(association_implementation) => claimed_run.run.activate(association_implementation),
+        Err(error) => claimed_run.run.reject_activation(error),
+    };
+    let RunActivationOutcome { result: activation_result, post_session_cleanup } = activation_outcome;
     let prepared_run = match activation_result {
         Ok(prepared_run) => prepared_run,
         Err(RunActivationError::Unpublished { source, rollback }) => {
@@ -365,6 +413,71 @@ fn record_execution_plan_dispatch_started(phenotype_count: u64, association_mode
             &ExecutionPlanDispatchDiagnosticFields { phenotype_count, association_mode: association_mode.as_str() },
         )
     });
+}
+
+fn association_implementation_selected_fields(
+    association_mode: g_plan::AssociationMode,
+    state: &crate::AssociationImplementationState,
+) -> AssociationImplementationSelectedTelemetryFields<'_> {
+    let runtime_versions = state.jax_runtime_versions();
+    let firth_components = state.firth_components();
+    let raw_cuda_artifact = firth_components.and_then(crate::FirthComponentsImplementationState::raw_cuda_artifact);
+    let raw_cuda_observation =
+        firth_components.and_then(crate::FirthComponentsImplementationState::raw_cuda_observation);
+    AssociationImplementationSelectedTelemetryFields {
+        association_mode: association_mode.as_str(),
+        jax_version: runtime_versions.jax_version(),
+        jaxlib_version: runtime_versions.jaxlib_version(),
+        firth_components_requested: firth_components.map(|selection| selection.requested().stable_name()),
+        firth_components_effective: firth_components.map(|selection| selection.effective().stable_name()),
+        firth_components_fallback_reason: firth_components
+            .and_then(crate::FirthComponentsImplementationState::fallback_reason)
+            .map(crate::FirthComponentsFallbackReason::stable_name),
+        raw_cuda_ffi_target: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::ffi_target),
+        raw_cuda_ffi_api_version: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::ffi_api_version),
+        raw_cuda_handler_sha256: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::handler_sha256),
+        raw_cuda_ptx_sha256: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::ptx_sha256),
+        raw_cuda_ptx_isa: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::ptx_isa),
+        raw_cuda_ptx_target: raw_cuda_artifact.map(crate::RawCudaFirthArtifactIdentity::ptx_target),
+        raw_cuda_minimum_cuda_driver_version: raw_cuda_artifact
+            .map(crate::RawCudaFirthArtifactIdentity::minimum_cuda_driver_version),
+        raw_cuda_minimum_compute_capability_major: raw_cuda_artifact
+            .map(crate::RawCudaFirthArtifactIdentity::minimum_compute_capability_major),
+        raw_cuda_minimum_compute_capability_minor: raw_cuda_artifact
+            .map(crate::RawCudaFirthArtifactIdentity::minimum_compute_capability_minor),
+        cuda_driver_version: raw_cuda_observation.and_then(crate::RawCudaFirthRuntimeObservation::cuda_driver_version),
+        cuda_device_ordinal: raw_cuda_observation.and_then(crate::RawCudaFirthRuntimeObservation::device_ordinal),
+        cuda_compute_capability_major: raw_cuda_observation
+            .and_then(crate::RawCudaFirthRuntimeObservation::compute_capability_major),
+        cuda_compute_capability_minor: raw_cuda_observation
+            .and_then(crate::RawCudaFirthRuntimeObservation::compute_capability_minor),
+    }
+}
+
+fn record_association_implementation_selection(
+    telemetry_session: &TelemetryRunSession,
+    thread_name: &str,
+    fields: &AssociationImplementationSelectedTelemetryFields<'_>,
+) {
+    if telemetry_session.is_enabled() {
+        record_telemetry_observation(ASSOCIATION_IMPLEMENTATION_SELECTED_EVENT_NAME, || {
+            telemetry_session.emit_current_event(
+                thread_name,
+                ASSOCIATION_IMPLEMENTATION_SELECTED_EVENT_NAME,
+                "info",
+                fields,
+            )
+        });
+    } else {
+        record_diagnostic_observation(ASSOCIATION_IMPLEMENTATION_SELECTED_EVENT_NAME, || {
+            g_runtime::emit_diagnostic_event(
+                "info",
+                ASSOCIATION_IMPLEMENTATION_SELECTED_EVENT_NAME,
+                "Selected association compute implementation.",
+                fields,
+            )
+        });
+    }
 }
 
 fn record_execution_plan_observations(
@@ -683,6 +796,61 @@ mod tests {
                 parquet_dataset_directory: "/tmp/durable-run/parts".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn association_selection_observation_is_stable_and_excludes_free_text() {
+        let capability_requirements = crate::RawCudaFirthCapabilityRequirements::new(12_020, 7, 0)
+            .expect("valid test raw-CUDA capability requirements");
+        let artifact = crate::RawCudaFirthArtifactIdentity::new(
+            "g.firth.components.test.v0",
+            1,
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "8.2",
+            "sm_70",
+            capability_requirements,
+        )
+        .expect("valid test raw-CUDA artifact");
+        let observation = crate::RawCudaFirthRuntimeObservation::cuda_driver_too_old(12_010)
+            .expect("valid test CUDA fallback observation");
+        let firth_components = crate::FirthComponentsImplementationState::raw_cuda_fallback(
+            artifact,
+            observation,
+            crate::FirthComponentsFallbackReason::CudaDriverTooOld,
+            "host-specific driver diagnostic".to_string(),
+        )
+        .expect("reason-matched fallback observations are valid");
+        let state = crate::AssociationImplementationState::jax(
+            crate::JaxRuntimeVersions::new("0.11.0".to_string(), "0.11.0".to_string()).expect("valid JAX versions"),
+            Some(firth_components),
+        );
+
+        let fields = association_implementation_selected_fields(g_plan::AssociationMode::Regenie2Binary, &state);
+        let value = serde_json::to_value(fields).expect("selection fields serialize");
+
+        assert_eq!(value["association_mode"], "regenie2_binary");
+        assert_eq!(value["jax_version"], "0.11.0");
+        assert_eq!(value["firth_components_requested"], "raw_cuda");
+        assert_eq!(value["firth_components_effective"], "jax");
+        assert_eq!(value["firth_components_fallback_reason"], "cuda_driver_too_old");
+        assert_eq!(value["raw_cuda_ffi_target"], "g.firth.components.test.v0");
+        assert_eq!(value["raw_cuda_ffi_api_version"], 1);
+        assert_eq!(
+            value["raw_cuda_handler_sha256"],
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        );
+        assert_eq!(value["raw_cuda_ptx_sha256"], "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        assert_eq!(value["raw_cuda_ptx_isa"], "8.2");
+        assert_eq!(value["raw_cuda_ptx_target"], "sm_70");
+        assert_eq!(value["raw_cuda_minimum_cuda_driver_version"], 12_020);
+        assert_eq!(value["raw_cuda_minimum_compute_capability_major"], 7);
+        assert_eq!(value["raw_cuda_minimum_compute_capability_minor"], 0);
+        assert_eq!(value["cuda_driver_version"], 12_010);
+        assert!(value.get("cuda_device_ordinal").is_none());
+        assert!(value.get("cuda_compute_capability_major").is_none());
+        assert!(value.get("cuda_compute_capability_minor").is_none());
+        assert!(!value.to_string().contains("host-specific driver diagnostic"));
     }
 
     #[test]

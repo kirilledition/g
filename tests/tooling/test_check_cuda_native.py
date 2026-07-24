@@ -231,6 +231,23 @@ def test_build_clang_tidy_commands_cover_host_and_device_parsing(tmp_path: Path)
             assert str(repository_root / "vendor/openxla") in command.arguments
 
 
+def test_generated_include_placeholders_cover_native_build_outputs(tmp_path: Path) -> None:
+    """Native lint supplies every generated PTX and artifact-identity include."""
+    generated_include_directory = tmp_path / "generated"
+
+    check_cuda_native.create_placeholder_includes(generated_include_directory)
+
+    expected_file_names = {placeholder.file_name for placeholder in check_cuda_native.GENERATED_INCLUDE_PLACEHOLDERS}
+    observed_file_names = {path.name for path in generated_include_directory.iterdir()}
+    assert observed_file_names == expected_file_names
+    assert "kMinimumComputeCapabilityMinor" in (
+        generated_include_directory / "firth_components_artifact_identity.inc"
+    ).read_text(encoding="utf-8")
+    assert "kMinimumComputeCapabilityMinor" in (
+        generated_include_directory / "packed8_artifact_identity.inc"
+    ).read_text(encoding="utf-8")
+
+
 def test_run_tool_propagates_clang_tidy_failure(tmp_path: Path) -> None:
     """Any failing translation unit makes the static-analysis command fail."""
     repository_root = tmp_path / "repository"

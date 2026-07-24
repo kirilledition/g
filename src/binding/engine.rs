@@ -10,6 +10,7 @@ use numpy::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::sync::{MutexExt, OnceLockExt};
 #[cfg(target_os = "linux")]
 use pyo3::types::PyCapsule;
 use pyo3::types::{PyDict, PyList, PyModule};
@@ -29,12 +30,16 @@ pub(crate) struct PyJaxBackend {
     validated_runtime: ValidatedJaxRuntime,
 }
 
+#[cfg(target_os = "linux")]
 static NVCOMP_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
-static NVCOMP_DEVICE_QUALIFICATIONS: OnceLock<Mutex<HashMap<JaxExecutionDeviceIdentity, Result<usize, String>>>> =
+type NvcompDeviceQualification = Arc<OnceLock<Result<usize, String>>>;
+static NVCOMP_DEVICE_QUALIFICATIONS: OnceLock<Mutex<HashMap<JaxExecutionDeviceIdentity, NvcompDeviceQualification>>> =
     OnceLock::new();
+#[cfg(target_os = "linux")]
 static FIRTH_COMPONENTS_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
+type FirthComponentsDeviceSelection = Arc<OnceLock<Result<native_engine::FirthComponentsImplementationState, String>>>;
 static FIRTH_COMPONENTS_FFI_SELECTIONS: OnceLock<
-    Mutex<HashMap<JaxExecutionDeviceIdentity, native_engine::FirthComponentsImplementationState>>,
+    Mutex<HashMap<JaxExecutionDeviceIdentity, FirthComponentsDeviceSelection>>,
 > = OnceLock::new();
 static CUDA_EXECUTION_DEVICE_IDENTITY: OnceLock<JaxExecutionDeviceIdentity> = OnceLock::new();
 const SUPPORTED_JAX_VERSION: &str = "0.11.0";
@@ -68,6 +73,15 @@ impl ValidatedJaxRuntime {
 struct FirthComponentsFallback {
     reason: native_engine::FirthComponentsFallbackReason,
     detail: String,
+    observation: native_engine::RawCudaFirthRuntimeObservation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FirthComponentsSelectionPolicy {
+    PureJax,
+    PreferRawCuda,
+    #[cfg(feature = "private-test-support")]
+    RequireRawCuda,
 }
 
 #[derive(Clone, Copy)]
@@ -175,8 +189,12 @@ pub(crate) fn create_jax_backend(
             })
         }
         g_runner::JaxAssociationBackendPlan::BinaryFirth { correction, kernels } => {
+            let selection_policy = match device {
+                g_plan::Device::Cpu => FirthComponentsSelectionPolicy::PureJax,
+                g_plan::Device::Gpu => FirthComponentsSelectionPolicy::PreferRawCuda,
+            };
             let firth_components =
-                select_firth_components_implementation(py, device, &execution_device, &validated_runtime);
+                select_firth_components_implementation(py, selection_policy, &execution_device, &validated_runtime)?;
             let use_cuda_firth_components =
                 firth_components.effective() == native_engine::FirthComponentsImplementation::RawCuda;
             let keyword_arguments = binary_firth_backend_keyword_arguments(
@@ -316,14 +334,18 @@ fn register_nvcomp_ffi_target(
     validated_runtime: &ValidatedJaxRuntime,
 ) -> PyResult<usize> {
     let qualifications = NVCOMP_DEVICE_QUALIFICATIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut qualifications = qualifications.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(cached) = qualifications.get(&execution_device.identity) {
-        return cached.clone().map_err(PyRuntimeError::new_err);
-    }
-    let qualification =
-        qualify_nvcomp_device(py, execution_device, validated_runtime).map_err(|error| error.to_string());
-    qualifications.insert(execution_device.identity.clone(), qualification.clone());
-    qualification.map_err(PyRuntimeError::new_err)
+    let qualification = qualifications
+        .lock_py_attached(py)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(execution_device.identity.clone())
+        .or_insert_with(|| Arc::new(OnceLock::new()))
+        .clone();
+    qualification
+        .get_or_init_py_attached(py, || {
+            qualify_nvcomp_device(py, execution_device, validated_runtime).map_err(|error| error.to_string())
+        })
+        .clone()
+        .map_err(PyRuntimeError::new_err)
 }
 
 #[cfg(target_os = "linux")]
@@ -339,7 +361,7 @@ fn qualify_nvcomp_device(
     let input_alignment = capability.input_alignment();
     let handler = g_genotype_cuda::packed8_deflate_ffi_handler(&capability);
     NVCOMP_FFI_REGISTRATION
-        .get_or_init(|| {
+        .get_or_init_py_attached(py, || {
             register_nvcomp_ffi_target_address(
                 py,
                 g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET,
@@ -381,7 +403,7 @@ fn register_nvcomp_ffi_target_address(
     let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
     let keyword_arguments = PyDict::new(py);
     keyword_arguments.set_item("platform", "CUDA")?;
-    keyword_arguments.set_item("api_version", 1)?;
+    keyword_arguments.set_item("api_version", g_genotype_cuda::PACKED8_DEFLATE_FFI_API_VERSION)?;
     PyModule::import(py, "jax")?
         .getattr("ffi")?
         .call_method("register_ffi_target", (target, capsule), Some(&keyword_arguments))
@@ -400,21 +422,47 @@ fn qualify_nvcomp_device(
 
 fn select_firth_components_implementation(
     py: Python<'_>,
-    device: g_plan::Device,
+    policy: FirthComponentsSelectionPolicy,
     execution_device: &JaxExecutionDevice,
     validated_runtime: &ValidatedJaxRuntime,
-) -> native_engine::FirthComponentsImplementationState {
-    if device == g_plan::Device::Cpu {
-        return native_engine::FirthComponentsImplementationState::jax();
+) -> PyResult<native_engine::FirthComponentsImplementationState> {
+    if policy == FirthComponentsSelectionPolicy::PureJax {
+        return Ok(native_engine::FirthComponentsImplementationState::jax());
     }
     let selections = FIRTH_COMPONENTS_FFI_SELECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut selections = selections.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(selection) = selections.get(&execution_device.identity) {
-        return selection.clone();
+    let selection = selections
+        .lock_py_attached(py)
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .entry(execution_device.identity.clone())
+        .or_insert_with(|| Arc::new(OnceLock::new()))
+        .clone();
+    let selection = selection
+        .get_or_init_py_attached(py, || {
+            select_firth_components_implementation_once(py, execution_device, validated_runtime)
+        })
+        .clone()
+        .map_err(PyRuntimeError::new_err)?;
+    enforce_firth_components_selection_policy(selection, policy)
+}
+
+fn enforce_firth_components_selection_policy(
+    selection: native_engine::FirthComponentsImplementationState,
+    policy: FirthComponentsSelectionPolicy,
+) -> PyResult<native_engine::FirthComponentsImplementationState> {
+    #[cfg(not(feature = "private-test-support"))]
+    let _ = policy;
+    #[cfg(feature = "private-test-support")]
+    if policy == FirthComponentsSelectionPolicy::RequireRawCuda
+        && selection.effective() != native_engine::FirthComponentsImplementation::RawCuda
+    {
+        let reason = selection.fallback_reason().expect("a raw-CUDA fallback retains a typed reason");
+        let detail = selection.fallback_detail().expect("a raw-CUDA fallback retains diagnostic detail");
+        return Err(PyRuntimeError::new_err(format!(
+            "Raw-CUDA Firth components are required but unavailable [{}]: {detail}",
+            reason.stable_name()
+        )));
     }
-    let selection = select_firth_components_implementation_once(py, execution_device, validated_runtime);
-    selections.insert(execution_device.identity.clone(), selection.clone());
-    selection
+    Ok(selection)
 }
 
 #[cfg(target_os = "linux")]
@@ -422,26 +470,27 @@ fn select_firth_components_implementation_once(
     py: Python<'_>,
     execution_device: &JaxExecutionDevice,
     validated_runtime: &ValidatedJaxRuntime,
-) -> native_engine::FirthComponentsImplementationState {
+) -> Result<native_engine::FirthComponentsImplementationState, String> {
     let capability =
         match g_compute_cuda::initialize_firth_components_runtime(execution_device.identity.local_hardware_ordinal) {
             Ok(capability) => capability,
             Err(error) => {
-                return jax_firth_components_fallback(firth_components_initialization_fallback(&error));
+                return match recoverable_firth_components_initialization_fallback(&error) {
+                    Some(fallback) => Ok(jax_firth_components_fallback(fallback)),
+                    None => Err(fatal_firth_components_initialization_message(&error)),
+                };
             }
         };
     let handler = g_compute_cuda::firth_components_ffi_handler(&capability);
-    match FIRTH_COMPONENTS_FFI_REGISTRATION.get_or_init(|| {
+    match FIRTH_COMPONENTS_FFI_REGISTRATION.get_or_init_py_attached(py, || {
         register_firth_components_ffi_target_once(py, handler, validated_runtime).map_err(|error| error.to_string())
     }) {
-        Ok(()) => {
-            native_engine::FirthComponentsImplementationState::raw_cuda(g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET)
-                .expect("the compiled raw-CUDA FFI target is nonempty")
-        }
-        Err(detail) => jax_firth_components_fallback(FirthComponentsFallback {
-            reason: native_engine::FirthComponentsFallbackReason::JaxRegistrationFailure,
-            detail: detail.clone(),
-        }),
+        Ok(()) => Ok(native_engine::FirthComponentsImplementationState::raw_cuda(
+            raw_cuda_firth_artifact_identity(),
+            raw_cuda_firth_runtime_observation(&capability),
+        )
+        .expect("successful native qualification produces complete raw-CUDA observations")),
+        Err(detail) => Err(format!("Raw-CUDA Firth registration failed [jax_ffi_registration_failure]: {detail}")),
     }
 }
 
@@ -456,7 +505,7 @@ fn register_firth_components_ffi_target_once(
     let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
     let keyword_arguments = PyDict::new(py);
     keyword_arguments.set_item("platform", "CUDA")?;
-    keyword_arguments.set_item("api_version", 1)?;
+    keyword_arguments.set_item("api_version", g_compute_cuda::FIRTH_COMPONENTS_FFI_API_VERSION)?;
     PyModule::import(py, "jax")?.getattr("ffi")?.call_method(
         "register_ffi_target",
         (g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET, capsule),
@@ -470,65 +519,135 @@ fn select_firth_components_implementation_once(
     _py: Python<'_>,
     _execution_device: &JaxExecutionDevice,
     _validated_runtime: &ValidatedJaxRuntime,
-) -> native_engine::FirthComponentsImplementationState {
-    jax_firth_components_fallback(FirthComponentsFallback {
+) -> Result<native_engine::FirthComponentsImplementationState, String> {
+    Ok(jax_firth_components_fallback(FirthComponentsFallback {
         reason: native_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
         detail: g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform.to_string(),
-    })
+        observation: native_engine::RawCudaFirthRuntimeObservation::unsupported_platform(),
+    }))
 }
 
 fn jax_firth_components_fallback(
     fallback: FirthComponentsFallback,
 ) -> native_engine::FirthComponentsImplementationState {
-    native_engine::FirthComponentsImplementationState::raw_cuda_fallback(fallback.reason, fallback.detail)
+    native_engine::FirthComponentsImplementationState::raw_cuda_fallback(
+        raw_cuda_firth_artifact_identity(),
+        fallback.observation,
+        fallback.reason,
+        fallback.detail,
+    )
+    .expect("recoverable native fallback evidence matches its typed reason")
 }
 
-fn firth_components_initialization_fallback(
+fn raw_cuda_firth_artifact_identity() -> native_engine::RawCudaFirthArtifactIdentity {
+    let capability_requirements = native_engine::RawCudaFirthCapabilityRequirements::new(
+        g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_CUDA_DRIVER_VERSION,
+        g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MAJOR,
+        g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MINOR,
+    )
+    .expect("the build-verified raw-CUDA Firth capability requirements are valid");
+    native_engine::RawCudaFirthArtifactIdentity::new(
+        g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET,
+        g_compute_cuda::FIRTH_COMPONENTS_FFI_API_VERSION,
+        g_compute_cuda::FIRTH_COMPONENTS_HANDLER_SHA256,
+        g_compute_cuda::FIRTH_COMPONENTS_PTX_SHA256,
+        g_compute_cuda::FIRTH_COMPONENTS_PTX_ISA,
+        g_compute_cuda::FIRTH_COMPONENTS_PTX_TARGET,
+        capability_requirements,
+    )
+    .expect("the build-verified raw-CUDA Firth artifact identity is valid")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn recoverable_firth_components_initialization_fallback(
     error: &g_compute_cuda::FirthComponentsInitializationError,
-) -> FirthComponentsFallback {
-    let reason = match error {
-        g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform => {
-            native_engine::FirthComponentsFallbackReason::UnsupportedPlatform
-        }
-        g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable { .. } => {
-            native_engine::FirthComponentsFallbackReason::CudaDriverUnavailable
-        }
-        g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable { .. } => {
-            native_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable
-        }
-        g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure { .. } => {
-            native_engine::FirthComponentsFallbackReason::CudaDriverFailure
-        }
-        g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld { .. } => {
-            native_engine::FirthComponentsFallbackReason::CudaDriverTooOld
-        }
-        g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable { .. } => {
-            native_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable
-        }
-        g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability { .. } => {
-            native_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability
-        }
-        g_compute_cuda::FirthComponentsInitializationError::Internal { .. } => {
-            native_engine::FirthComponentsFallbackReason::NativeInitializationFailure
-        }
+) -> Option<FirthComponentsFallback> {
+    let (reason, observation) = match error {
+        g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform => (
+            native_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
+            native_engine::RawCudaFirthRuntimeObservation::unsupported_platform(),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable { .. } => (
+            native_engine::FirthComponentsFallbackReason::CudaDriverUnavailable,
+            native_engine::RawCudaFirthRuntimeObservation::cuda_driver_unavailable(),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable { .. } => (
+            native_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable,
+            native_engine::RawCudaFirthRuntimeObservation::required_symbol_unavailable(),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld { version, .. } => (
+            native_engine::FirthComponentsFallbackReason::CudaDriverTooOld,
+            native_engine::RawCudaFirthRuntimeObservation::cuda_driver_too_old(*version)
+                .expect("native CUDA driver versions are positive"),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable {
+            cuda_driver_version,
+            device_ordinal,
+            ..
+        } => (
+            native_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable,
+            native_engine::RawCudaFirthRuntimeObservation::cuda_device_unavailable(
+                *cuda_driver_version,
+                *device_ordinal,
+            )
+            .expect("native CUDA device failures retain a qualified driver and requested ordinal"),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability {
+            cuda_driver_version,
+            device_ordinal,
+            major,
+            minor,
+            ..
+        } => (
+            native_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability,
+            native_engine::RawCudaFirthRuntimeObservation::unsupported_compute_capability(
+                *cuda_driver_version,
+                *device_ordinal,
+                *major,
+                *minor,
+            )
+            .expect("native compute-capability failures retain complete causal observations"),
+        ),
+        g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure { .. }
+        | g_compute_cuda::FirthComponentsInitializationError::Internal { .. } => return None,
     };
-    FirthComponentsFallback { reason, detail: error.to_string() }
+    Some(FirthComponentsFallback { reason, detail: error.to_string(), observation })
+}
+
+#[cfg(target_os = "linux")]
+fn raw_cuda_firth_runtime_observation(
+    capability: &g_compute_cuda::FirthComponentsCapability,
+) -> native_engine::RawCudaFirthRuntimeObservation {
+    native_engine::RawCudaFirthRuntimeObservation::qualified(
+        capability.cuda_driver_version(),
+        capability.device_ordinal(),
+        capability.compute_capability_major(),
+        capability.compute_capability_minor(),
+    )
+    .expect("a qualified raw-CUDA capability contains valid observations")
+}
+
+#[cfg(target_os = "linux")]
+fn fatal_firth_components_initialization_message(error: &g_compute_cuda::FirthComponentsInitializationError) -> String {
+    let stable_code = match error {
+        g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure { .. } => "cuda_driver_operation_failure",
+        g_compute_cuda::FirthComponentsInitializationError::Internal { .. } => "native_internal_failure",
+        _ => "invalid_fatal_error_classification",
+    };
+    format!("Raw-CUDA Firth initialization failed [{stable_code}]: {error}")
 }
 
 #[cfg(feature = "private-test-support")]
 pub(crate) fn require_firth_components_ffi_target(py: Python<'_>) -> PyResult<&'static str> {
     let validated_runtime = validate_jax_runtime_versions(py)?;
     let execution_device = resolve_jax_execution_device(py, g_plan::Device::Gpu, &validated_runtime)?;
-    let selection =
-        select_firth_components_implementation(py, g_plan::Device::Gpu, &execution_device, &validated_runtime);
-    if selection.effective() == native_engine::FirthComponentsImplementation::RawCuda {
-        return Ok(g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET);
-    }
-    let fallback_reason = selection.fallback_reason().expect("a raw-CUDA fallback must retain its reason");
-    let fallback_detail = selection.fallback_detail().expect("a raw-CUDA fallback must retain diagnostic detail");
-    Err(PyRuntimeError::new_err(format!(
-        "Raw-CUDA Firth components are unavailable ({fallback_reason:?}): {fallback_detail}"
-    )))
+    select_firth_components_implementation(
+        py,
+        FirthComponentsSelectionPolicy::RequireRawCuda,
+        &execution_device,
+        &validated_runtime,
+    )?;
+    Ok(g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET)
 }
 
 #[cfg(feature = "private-test-support")]
@@ -1147,8 +1266,9 @@ mod tests {
 
     use super::{
         JaxExecutionDeviceIdentity, Packed8TransferDiagnostics, SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION,
-        firth_components_initialization_fallback, jax_runtime_version_error, lowest_jax_execution_device_index,
-        packed8_descriptor_failure_message, run_with_validated_jax_runtime,
+        jax_runtime_version_error, lowest_jax_execution_device_index, packed8_descriptor_failure_message,
+        raw_cuda_firth_artifact_identity, recoverable_firth_components_initialization_fallback,
+        run_with_validated_jax_runtime,
     };
 
     #[test]
@@ -1237,64 +1357,130 @@ mod tests {
     }
 
     #[test]
-    fn initialization_errors_map_to_typed_fallback_reasons() {
+    fn only_recoverable_initialization_errors_map_to_typed_fallback_reasons() {
+        struct FallbackCase {
+            error: g_compute_cuda::FirthComponentsInitializationError,
+            expected_reason: g_engine::FirthComponentsFallbackReason,
+            expected_driver_version: Option<i32>,
+            expected_device_ordinal: Option<i32>,
+            expected_compute_capability_major: Option<i32>,
+            expected_compute_capability_minor: Option<i32>,
+        }
+
         let cases = [
-            (
-                g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform,
-                g_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable {
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::UnsupportedPlatform,
+                expected_reason: g_engine::FirthComponentsFallbackReason::UnsupportedPlatform,
+                expected_driver_version: None,
+                expected_device_ordinal: None,
+                expected_compute_capability_major: None,
+                expected_compute_capability_minor: None,
+            },
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::CudaDriverUnavailable {
                     detail: "driver".to_string(),
                 },
-                g_engine::FirthComponentsFallbackReason::CudaDriverUnavailable,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable {
+                expected_reason: g_engine::FirthComponentsFallbackReason::CudaDriverUnavailable,
+                expected_driver_version: None,
+                expected_device_ordinal: None,
+                expected_compute_capability_major: None,
+                expected_compute_capability_minor: None,
+            },
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::RequiredSymbolUnavailable {
                     detail: "symbol".to_string(),
                 },
-                g_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure {
-                    detail: "driver failure".to_string(),
-                },
-                g_engine::FirthComponentsFallbackReason::CudaDriverFailure,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld {
+                expected_reason: g_engine::FirthComponentsFallbackReason::RequiredSymbolUnavailable,
+                expected_driver_version: None,
+                expected_device_ordinal: None,
+                expected_compute_capability_major: None,
+                expected_compute_capability_minor: None,
+            },
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::CudaDriverTooOld {
                     version: 12_010,
                     detail: "old".to_string(),
                 },
-                g_engine::FirthComponentsFallbackReason::CudaDriverTooOld,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable {
+                expected_reason: g_engine::FirthComponentsFallbackReason::CudaDriverTooOld,
+                expected_driver_version: Some(12_010),
+                expected_device_ordinal: None,
+                expected_compute_capability_major: None,
+                expected_compute_capability_minor: None,
+            },
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::CudaDeviceUnavailable {
+                    cuda_driver_version: 12_090,
                     device_ordinal: 0,
                     detail: "device".to_string(),
                 },
-                g_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability {
+                expected_reason: g_engine::FirthComponentsFallbackReason::CudaDeviceUnavailable,
+                expected_driver_version: Some(12_090),
+                expected_device_ordinal: Some(0),
+                expected_compute_capability_major: None,
+                expected_compute_capability_minor: None,
+            },
+            FallbackCase {
+                error: g_compute_cuda::FirthComponentsInitializationError::UnsupportedComputeCapability {
+                    cuda_driver_version: 12_090,
                     device_ordinal: 0,
                     major: 6,
                     minor: 1,
                     detail: "capability".to_string(),
                 },
-                g_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability,
-            ),
-            (
-                g_compute_cuda::FirthComponentsInitializationError::Internal { detail: "internal".to_string() },
-                g_engine::FirthComponentsFallbackReason::NativeInitializationFailure,
-            ),
+                expected_reason: g_engine::FirthComponentsFallbackReason::UnsupportedComputeCapability,
+                expected_driver_version: Some(12_090),
+                expected_device_ordinal: Some(0),
+                expected_compute_capability_major: Some(6),
+                expected_compute_capability_minor: Some(1),
+            },
         ];
 
-        for (error, expected_reason) in cases {
-            let fallback = firth_components_initialization_fallback(&error);
-            assert_eq!(fallback.reason, expected_reason);
+        for case in cases {
+            let fallback =
+                recoverable_firth_components_initialization_fallback(&case.error).expect("the case is recoverable");
+            assert_eq!(fallback.reason, case.expected_reason);
             assert!(!fallback.detail.is_empty());
+            assert_eq!(fallback.observation.cuda_driver_version(), case.expected_driver_version);
+            assert_eq!(fallback.observation.device_ordinal(), case.expected_device_ordinal);
+            assert_eq!(fallback.observation.compute_capability_major(), case.expected_compute_capability_major);
+            assert_eq!(fallback.observation.compute_capability_minor(), case.expected_compute_capability_minor);
         }
+    }
+
+    #[test]
+    fn driver_operation_and_internal_failures_are_not_fallbacks() {
+        for error in [
+            g_compute_cuda::FirthComponentsInitializationError::CudaDriverFailure {
+                detail: "driver failure".to_string(),
+            },
+            g_compute_cuda::FirthComponentsInitializationError::Internal { detail: "internal".to_string() },
+        ] {
+            assert!(recoverable_firth_components_initialization_fallback(&error).is_none());
+        }
+    }
+
+    #[test]
+    fn raw_cuda_artifact_projection_uses_build_verified_constants() {
+        let artifact = raw_cuda_firth_artifact_identity();
+
+        assert_eq!(artifact.ffi_target(), g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET);
+        assert_eq!(artifact.ffi_api_version(), g_compute_cuda::FIRTH_COMPONENTS_FFI_API_VERSION);
+        assert_eq!(artifact.handler_sha256(), g_compute_cuda::FIRTH_COMPONENTS_HANDLER_SHA256);
+        assert_eq!(artifact.ptx_sha256(), g_compute_cuda::FIRTH_COMPONENTS_PTX_SHA256);
+        assert_eq!(artifact.ptx_isa(), g_compute_cuda::FIRTH_COMPONENTS_PTX_ISA);
+        assert_eq!(artifact.ptx_target(), g_compute_cuda::FIRTH_COMPONENTS_PTX_TARGET);
+        assert_eq!(
+            artifact.minimum_cuda_driver_version(),
+            g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_CUDA_DRIVER_VERSION
+        );
+        assert_eq!(
+            artifact.minimum_compute_capability_major(),
+            g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MAJOR
+        );
+        assert_eq!(
+            artifact.minimum_compute_capability_minor(),
+            g_compute_cuda::FIRTH_COMPONENTS_MINIMUM_COMPUTE_CAPABILITY_MINOR
+        );
     }
 
     #[test]

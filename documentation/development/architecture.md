@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active production architecture | Production code as of 2026-07-19 | Development maintainers |
+| Active production architecture | Production code as of 2026-07-24 | Development maintainers |
 
 `g` is a Rust host application with a Python/JAX numerical backend. Rust owns
 configuration, planning, input, scheduling, lifecycle, telemetry, shutdown,
@@ -116,21 +116,26 @@ registration required by PyO3/JAX.
 
 Binary approximate-Firth GPU runs independently probe `g-compute-cuda` and
 register its private component-reduction target once. Compatible runs use the
-embedded PTX through typed XLA FFI; an unavailable driver, unsupported device,
-or registration failure selects the mathematically equivalent JAX reduction.
-The process-lifetime selection is typed and immutable, records requested and
-effective implementations plus a typed fallback reason, and cannot switch
-after compilation begins. The same provenance is available to the output
-manifest boundary. This validated state is owned by `g-engine`, not the
-request-planning crate; invalid requested/effective combinations cannot be
-constructed. Every production JAX backend retains the exact observed JAX and
-JAXlib versions, and an effective raw-CUDA state also retains the exact
-registered FFI target. The adapter also retains an opaque successful-version
-validation token required by device resolution, native selection caches, and
-FFI registration. Stable output compatibility includes only those versions, the
-requested and effective implementations, the typed fallback reason, and the FFI
-target when raw CUDA is effective. Diagnostic fallback detail and device identity
-remain outside hashes.
+embedded PTX through typed XLA FFI. Only six typed capability results may use
+the mathematically equivalent JAX reduction: unsupported platform, unavailable
+driver library, unavailable required symbol, old driver, unavailable selected
+device, and unsupported compute capability. Driver-operation failures,
+unexpected native failures, and JAX capsule/import/registration failures are
+fatal before output activation. The process-lifetime selection is typed and
+immutable and cannot switch after compilation begins.
+
+This validated state is owned by `g-engine`, not the request-planning crate.
+Every production JAX backend retains exact JAX/JAXlib versions. Every raw-CUDA
+request, including recoverable fallback, retains the crate-owned FFI target/API,
+framed source/ABI handler SHA-256, PTX SHA-256/ISA/target, and reviewed minimum
+driver and compute-capability thresholds. Successful selection also carries
+diagnostic driver/device/compute-capability observations, which the engine
+validates against the artifact thresholds. After logging and backend
+construction, the coordinator emits one selection observation and projects the
+state into the output-owned resume DTO before activation. Output rereads
+existing manifest agreement under the held owner claim and rejects mismatches
+before attempt authority or writers are published. Free-text fallback detail
+and observed CUDA device state remain outside compatibility.
 Focused native tests opt into the `private-test-support` Cargo feature, which
 adds only `g._core._testing` registration helpers. Normal Maturin builds enable
 only `extension-module`, so the helper namespace is absent from the production
