@@ -4,17 +4,13 @@ use std::sync::OnceLock;
 
 use super::super::BgenError;
 use super::probability::read_exact_bytes;
+use crate::common::SparseCandidateSummary;
 
 pub(in crate::bgen) struct VariantMajorTileStatsMut<'a> {
     pub(in crate::bgen) dosage_sum: &'a mut [f32],
     pub(in crate::bgen) dosage_square_sum: &'a mut [f32],
     pub(in crate::bgen) observation_count: &'a mut [i32],
-    pub(in crate::bgen) sparse_candidate_counts: Option<VariantMajorSparseCandidateCountsMut<'a>>,
-}
-
-pub(in crate::bgen) struct VariantMajorSparseCandidateCountsMut<'a> {
-    pub(in crate::bgen) zero_count: &'a mut [i32],
-    pub(in crate::bgen) homozygous_alternate_count: &'a mut [i32],
+    pub(in crate::bgen) sparse_candidate_statistics: Option<&'a mut [SparseCandidateSummary]>,
 }
 
 pub(in crate::bgen) fn selected_sample_count_to_i32(selected_sample_count: usize) -> Result<i32, BgenError> {

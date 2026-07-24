@@ -1,6 +1,7 @@
 //! Genotype reader and preprocessing contracts.
 
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
@@ -110,11 +111,42 @@ impl Drop for PooledPacked8Buffer {
     }
 }
 
+/// Exact sum of quantized allele-one dosages from one BGEN variant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ExactDosageSum {
+    pub(crate) numerator: u64,
+    pub(crate) probability_denominator: NonZeroU32,
+}
+
+impl ExactDosageSum {
+    pub(crate) fn new(numerator: u64, probability_denominator: u32) -> Self {
+        Self {
+            numerator,
+            probability_denominator: NonZeroU32::new(probability_denominator)
+                .expect("BGEN probability denominator must be nonzero"),
+        }
+    }
+}
+
+impl Default for ExactDosageSum {
+    fn default() -> Self {
+        Self { numerator: 0, probability_denominator: NonZeroU32::MIN }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DosageSummary {
     pub(crate) dosage_sum: f32,
     pub(crate) dosage_square_sum: f32,
     pub(crate) observation_count: i32,
+    pub(crate) zero_count: i32,
+    pub(crate) homozygous_alternate_count: i32,
+    pub(crate) exact_dosage_sum: Option<ExactDosageSum>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SparseCandidateSummary {
+    pub(crate) exact_dosage_sum: ExactDosageSum,
     pub(crate) zero_count: i32,
     pub(crate) homozygous_alternate_count: i32,
 }

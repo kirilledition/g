@@ -10,8 +10,10 @@ stability.
 
 ## Contract
 
-1. Phenotypes, covariates, LOCO predictions, dosages, and genotype summary
-   buffers are stored as `f32` on the Rust host.
+1. Phenotypes, covariates, LOCO predictions, dosages, and output-facing
+   genotype summary buffers are stored as `f32` on the Rust host. Sparse-Firth
+   eligibility additionally retains the exact quantized BGEN dosage numerator
+   and nonzero denominator until its integer comparisons are complete.
 2. JAX score-test arithmetic and public result statistics use `float32`.
 3. Null Firth, approximate-Firth outer components, convergence checks,
    likelihood, information, corrected statistics, and fallback Newton-Raphson

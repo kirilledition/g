@@ -278,6 +278,22 @@ The constants come from BGEN Layout 2 probability storage with 8 bits per stored
 
 Missing genotype dosages are represented as `NaN` during decode. Before the statistical kernel runs, missing dosages are replaced by the variant’s observed mean dosage among aligned samples. Output `N`, `A1FREQ`, and `INFO` use observed genotype calls, not the imputed compute values.
 
+When binary approximate Firth requests sparse-carrier eligibility, native BGEN
+decode also retains the exact quantized dosage sum `A / D` over observed calls.
+`D` is the nonzero probability denominator for that variant. Orientation and
+the strict minor-allele-count threshold are then decided without floating-point
+rounding:
+
+```text
+flip allele orientation when A > N × D
+minor allele count < 50 when min(A, 2 × N × D - A) < 50 × D
+zero density ≥ 1/2 when 2 × orientation-adjusted zero count ≥ N
+```
+
+Missing calls do not contribute to `A` or `N`. This exact classification does
+not change decoded `float32` dosages, means, allele frequencies, or information
+scores.
+
 | Field | Meaning |
 | --- | --- |
 | `N` | Observed genotype count after sample alignment. |
