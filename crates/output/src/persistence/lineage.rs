@@ -199,6 +199,14 @@ pub(crate) struct OutputOwnerClaim {
     release_state: OutputOwnerClaimReleaseState,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct OutputOwnerConditionalRelease {
+    claim_path: PathBuf,
+    owner_transitions_directory: PathBuf,
+    record: OutputOwnerClaimRecord,
+    release_record: OutputOwnerTransitionRecord,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OutputOwnerClaimReleaseState {
     Published,
@@ -347,6 +355,15 @@ impl OutputOwnerClaim {
         &self.claim_path
     }
 
+    pub(crate) fn conditional_release(&self) -> OutputOwnerConditionalRelease {
+        OutputOwnerConditionalRelease {
+            claim_path: self.claim_path.clone(),
+            owner_transitions_directory: self.owner_transitions_directory.clone(),
+            record: self.record.clone(),
+            release_record: self.release_record.clone(),
+        }
+    }
+
     pub(crate) fn release_transition_is_visible(&self) -> bool {
         self.release_state == OutputOwnerClaimReleaseState::TransitionPublished
     }
@@ -423,6 +440,45 @@ impl OutputOwnerClaim {
         }
         self.release_state = OutputOwnerClaimReleaseState::DurablyReleased;
         Ok(())
+    }
+}
+
+impl OutputOwnerConditionalRelease {
+    pub(crate) fn release_if_current(self) -> OutputResult<()> {
+        match resolve_owner_authority(&self.claim_path, &self.owner_transitions_directory)? {
+            OutputOwnerAuthorityState::Active(record) if record == self.record => {
+                let release_path =
+                    owner_transition_path(&self.owner_transitions_directory, self.record.claim_id.as_str());
+                let expected_release = self.release_record.clone();
+                let mut owner_claim = OutputOwnerClaim {
+                    claim_path: self.claim_path,
+                    owner_transitions_directory: self.owner_transitions_directory,
+                    record: self.record,
+                    release_record: self.release_record,
+                    release_state: OutputOwnerClaimReleaseState::Published,
+                };
+                match owner_claim.release() {
+                    Ok(()) => Ok(()),
+                    Err(first_error) => {
+                        if read_optional_json::<OutputOwnerTransitionRecord>(&release_path)?
+                            .is_some_and(|record| record == expected_release)
+                        {
+                            return owner_claim.release();
+                        }
+                        match resolve_owner_authority(
+                            &owner_claim.claim_path,
+                            &owner_claim.owner_transitions_directory,
+                        )? {
+                            OutputOwnerAuthorityState::Active(record) if record == owner_claim.record => {
+                                Err(first_error)
+                            }
+                            OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => Ok(()),
+                        }
+                    }
+                }
+            }
+            OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => Ok(()),
+        }
     }
 }
 

@@ -829,6 +829,115 @@ fn failed_multi_phenotype_preactivation_allows_a_fresh_retry() {
 }
 
 #[test]
+fn preactivation_failure_retains_ownership_until_explicit_rollback() {
+    let directory = TestDirectory::new("preactivation-deferred-rollback");
+    let inputs = test_inputs(&directory);
+    let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+    Arc::get_mut(&mut plan).expect("test plan has one owner").phenotype_runs.push(g_plan::PhenotypeRunPlan {
+        phenotype_name: SECOND_PHENOTYPE_NAME.to_string(),
+        output_directory_name: SECOND_OUTPUT_DIRECTORY_NAME.to_string(),
+    });
+    let manager = OutputManager::open(Arc::clone(&plan), "# deferred rollback\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), true)
+        .expect("manager claims");
+    let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .err()
+        .expect("missing phenotype header rejects activation");
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(diagnostics_directory.is_dir());
+
+    let output_root = directory.path.join("results");
+    let contender_error = claim_error(
+        Arc::clone(&plan),
+        &single_chunk_ranges(2),
+        "preactivation owner must survive until diagnostics close",
+    );
+    assert_surviving_owner_claim(contender_error, &output_root);
+
+    rollback
+        .expect("unpublished activation returns rollback authority")
+        .abort_before_activation()
+        .expect("post-session rollback cleans staging and releases");
+    assert!(!diagnostics_directory.exists());
+    assert_owner_authority_released(&output_root);
+
+    OutputManager::open(plan, "# retry after rollback\n".to_string())
+        .expect("retry manager plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("retry claims after rollback")
+        .abort_before_activation()
+        .expect("retry staging cleans and releases");
+}
+
+#[test]
+fn dropped_deferred_rollback_fails_closed_until_exactly_fenced() {
+    let directory = TestDirectory::new("dropped-deferred-rollback");
+    let inputs = test_inputs(&directory);
+    let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+    Arc::get_mut(&mut plan).expect("test plan has one owner").phenotype_runs.push(g_plan::PhenotypeRunPlan {
+        phenotype_name: SECOND_PHENOTYPE_NAME.to_string(),
+        output_directory_name: SECOND_OUTPUT_DIRECTORY_NAME.to_string(),
+    });
+    let manager = OutputManager::open(Arc::clone(&plan), "# dropped deferred rollback\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), true)
+        .expect("manager claims");
+    let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .err()
+        .expect("missing phenotype header rejects activation");
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    drop(rollback);
+
+    let output_root = directory.path.join("results");
+    let active_claim_id = owner_claim_identifier(&output_root);
+    let contender_error =
+        claim_error(Arc::clone(&plan), &single_chunk_ranges(2), "dropped rollback must leave a surviving claim");
+    assert_surviving_owner_claim(contender_error, &output_root);
+
+    let fenced_plan = authorize_fenced_owner_claim(plan, active_claim_id);
+    let fenced_manager = OutputManager::open(fenced_plan, "# fenced dropped rollback\n".to_string())
+        .expect("fenced manager plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("exact fence takes over the dropped rollback");
+    assert!(!diagnostics_directory.exists());
+    fenced_manager.abort_before_activation().expect("fenced manager staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn postpublication_activation_failure_terminalizes_without_rollback_authority() {
+    let directory = TestDirectory::new("postpublication-activation-failure");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let output_root = directory.path.join("results");
+    let manager = OutputManager::open(plan, "# published activation failure\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("manager claims");
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_attempt_claim");
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .err()
+        .expect("postpublication failure is injected");
+    drop(failure_guard);
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("after_attempt_claim"));
+    assert!(rollback.is_none(), "published attempt failure must not expose preactivation rollback");
+    assert_owner_authority_released(&output_root);
+    let attempt = attempt_identifier(&output_root, None);
+    let manifest =
+        read_json(&output_root.join("attempts").join(attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json"));
+    assert_eq!(manifest["status"], "failed");
+}
+
+#[test]
 fn preactivation_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     let directory = TestDirectory::new("preactivation-cleanup-takeover");
     let inputs = test_inputs(&directory);
@@ -921,6 +1030,83 @@ fn cleanup_pause_disconnects_without_waiting_when_cleanup_returns_early() {
 }
 
 #[test]
+fn completed_noop_cleanup_is_deferred_until_claim_diagnostics_close() {
+    let directory = TestDirectory::new("completed-noop-deferred-cleanup");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    manager.close_completed().expect("initial exact coverage closes").finish().expect("initial output completes");
+
+    let output_root = directory.path.join("results");
+    let before = regular_file_snapshot(&output_root);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed no-op\n".to_string())
+        .expect("resume manager plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed output is claimed");
+    let diagnostics_directory =
+        claimed_manager.diagnostics_directory().expect("completed claim diagnostics exist").to_path_buf();
+    std::fs::write(diagnostics_directory.join("events.jsonl"), b"{\"schema_version\":0}\n")
+        .expect("test telemetry is written");
+    std::fs::write(diagnostics_directory.join("profile.summary.json"), b"{\"schema_version\":0}\n")
+        .expect("test profile is written");
+    let cleanup = claimed_manager.cleanup_handle().expect("completed claim cleanup handle builds");
+    let cleanup_retry = cleanup.clone();
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed output activates read-only");
+    let token =
+        completed_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("read-only token builds");
+    assert!(token.is_read_only());
+    drop(token);
+    completed_manager
+        .close_completed()
+        .expect("completed output reverifies")
+        .finish()
+        .expect("completed output returns artifacts");
+
+    assert!(diagnostics_directory.join("events.jsonl").is_file());
+    let active_claim_id = owner_claim_identifier(&output_root);
+    let staging_path = output_root.join(".g-output/owner-staging").join(format!("{active_claim_id}.json"));
+    let staging_bytes = std::fs::read(&staging_path).expect("completed staging intent reads");
+    std::fs::write(&staging_path, b"{invalid").expect("completed staging intent is corrupted for retry test");
+    let cleanup_error = cleanup
+        .clone()
+        .cleanup_if_unpublished()
+        .expect_err("malformed staging intent blocks cleanup without releasing ownership");
+    assert!(cleanup_error.to_string().contains("invalid JSON"));
+    assert_eq!(owner_claim_identifier(&output_root), active_claim_id);
+    assert!(diagnostics_directory.is_dir());
+    std::fs::write(&staging_path, staging_bytes).expect("completed staging intent is restored");
+
+    let contender_plan = authorize_fenced_owner_claim(resume_plan, active_claim_id);
+    let contender = OutputManager::open(contender_plan, "# fenced contender\n".to_string())
+        .expect("fenced contender plans")
+        .claim(&chunk_ranges, false)
+        .expect("fenced contender takes over");
+    cleanup.cleanup_if_unpublished().expect("old completed diagnostics clean after session close");
+    cleanup_retry.cleanup_if_unpublished().expect("completed diagnostics cleanup remains idempotent after takeover");
+    assert!(!diagnostics_directory.exists());
+    assert!(
+        contender.diagnostics_directory().expect("contender diagnostics path remains").is_dir(),
+        "old cleanup clones must not remove successor staging"
+    );
+    contender.abort_before_activation().expect("contender staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+
+    let after = regular_file_snapshot(&output_root);
+    let new_paths = after.keys().filter(|path| !before.contains_key(*path)).collect::<Vec<_>>();
+    assert!(
+        !new_paths.is_empty() && new_paths.iter().all(|path| path.starts_with(".g-output/owner-transitions")),
+        "completed resume may append only owner-authority transitions, got {new_paths:?}"
+    );
+}
+
+#[test]
 fn existing_lineage_is_preflighted_before_owner_claim_acquisition() {
     let mismatch_directory = TestDirectory::new("preflight-mismatch");
     let mismatch_inputs = test_inputs(&mismatch_directory);
@@ -967,6 +1153,52 @@ fn existing_lineage_is_preflighted_before_owner_claim_acquisition() {
     drop(failure_guard);
     assert!(!corruption_error.to_string().contains("Injected"));
     assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn resume_rejects_noncanonical_attempt_manifest_schema_versions_without_a_successor() {
+    for (label, schema_version) in [
+        ("missing", None),
+        ("one", Some(Value::from(1_u32))),
+        ("floating-zero", Some(Value::from(0.0_f64))),
+        ("boolean", Some(Value::Bool(false))),
+    ] {
+        let directory = TestDirectory::new(&format!("attempt-schema-{label}"));
+        let inputs = test_inputs(&directory);
+        let chunk_ranges = single_chunk_ranges(2);
+        let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        initialize_manager(initial_plan, &inputs, &chunk_ranges)
+            .finish_interrupted("SIGTERM")
+            .expect("initial attempt is interrupted");
+
+        let output_root = directory.path.join("results");
+        let attempt = attempt_identifier(&output_root, None);
+        let manifest_path =
+            output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+        let mut manifest = read_json(&manifest_path);
+        let manifest_object = manifest.as_object_mut().expect("attempt manifest is an object");
+        match schema_version {
+            Some(schema_version) => {
+                manifest_object.insert("attempt_manifest_schema_version".to_string(), schema_version);
+            }
+            None => {
+                manifest_object.remove("attempt_manifest_schema_version");
+            }
+        }
+        std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("manifest serializes"))
+            .expect("manifest schema version is replaced");
+
+        let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+        let error = OutputManager::open(resume_plan, "# invalid schema resume\n".to_string())
+            .expect("resume manager plans")
+            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false)
+            .err()
+            .expect("noncanonical attempt manifest schema is rejected");
+        assert!(error.to_string().contains("unsupported schema version"));
+        assert!(!output_root.join(".g-output/successors").join(format!("{attempt}.json")).exists());
+        assert_eq!(std::fs::read_dir(output_root.join("attempts")).expect("attempt root reads").count(), 1);
+        assert_owner_authority_released(&output_root);
+    }
 }
 
 #[test]

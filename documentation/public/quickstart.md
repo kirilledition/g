@@ -177,6 +177,7 @@ are local and git-ignored.
 
 ## Output
 
-Successful runs print the run directory and its `parts/` Parquet dataset
-directory. See [Output Files](output-files.md) for the layout and schema, and
+Successful runs print one
+`Parquet dataset saved to <absolute-parts-directory>` line per phenotype. See
+[Output Files](output-files.md) for the layout and schema, and
 [Resume and Manifest](resume-and-manifest.md) for restart behavior.

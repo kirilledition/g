@@ -474,6 +474,11 @@ fn validate_manifest_identity(
     let manifest_object = manifest
         .as_object()
         .ok_or_else(|| OutputError::InvalidInput("Output attempt manifest must contain an object.".to_string()))?;
+    if manifest_object.get("attempt_manifest_schema_version") != Some(&Value::from(ATTEMPT_MANIFEST_SCHEMA_VERSION)) {
+        return Err(OutputError::InvalidInput(
+            "Output attempt manifest has an unsupported schema version.".to_string(),
+        ));
+    }
     let expected_header_object = expected_header
         .as_object()
         .ok_or_else(|| OutputError::InvalidInput("Current run manifest header must contain an object.".to_string()))?;

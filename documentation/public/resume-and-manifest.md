@@ -126,7 +126,8 @@ Resume is always strict and depends on the leaf state:
 
 - `completed`: fully reverify lineage, terminal binding, manifests, receipts,
   Parquet footers, raw sizes and hashes, and exact coverage, then return
-  read-only output data while appending only the invocation's owner
+  read-only output data; claim-scoped diagnostics are removed after the runtime
+  session closes, and the output tree appends only the invocation's owner
   acquisition and Released transitions;
 - `interrupted` or `failed`: create one immutable normal successor and reuse
   only verified parts;

@@ -135,7 +135,16 @@ incompatible dual-state artifacts. After owner acquisition, the manager first
 reserves a stable attempt identifier and creates only that claim's private
 diagnostics directory. Genesis or successor publication later makes the same
 attempt identifier authoritative; failed pre-activation claims durably remove
-their unreferenced staging.
+their unreferenced staging. The coordinator uses the deferred activation API:
+failures before authority publication return a typed rollback capability
+instead of releasing ownership immediately. The runner closes claim-scoped
+timing, telemetry, and logging before consuming that capability, so no
+contender can sweep diagnostics while the prior session is still open. Dropping
+the capability fails closed by leaving ownership Active until an exact external
+fence; the ordinary no-session activation API rolls it back immediately.
+Completed read-only resumes use the same deferred boundary: their
+claim-specific diagnostics are removed before their owner release, while the
+completed attempt payload remains unchanged.
 
 The first owner claim is a permanent immutable record at
 `.g-output/session.claim.json`. Its current authority is found by traversing
