@@ -154,6 +154,15 @@ fn run_plan(
     })
 }
 
+fn with_correction_method(
+    run_plan: Arc<g_plan::RunPlan>,
+    method: g_plan::BinaryFallbackMethod,
+) -> Arc<g_plan::RunPlan> {
+    let mut owned_run_plan = Arc::try_unwrap(run_plan).expect("test run plan has one owner");
+    owned_run_plan.correction.method = method;
+    Arc::new(owned_run_plan)
+}
+
 fn planned_run_directories(run_plan: &g_plan::RunPlan) -> Vec<PathBuf> {
     run_plan
         .phenotype_runs
@@ -408,6 +417,86 @@ fn writer_persists_nullable_info_labels_and_pre_release_contract_versions() {
         .expect("status reads as Utf8");
     assert_eq!((0..3).map(|index| methods.value(index)).collect::<Vec<_>>(), ["score", "score", "firth_approximate"]);
     assert_eq!((0..3).map(|index| statuses.value(index)).collect::<Vec<_>>(), ["success", "failed", "success"]);
+}
+
+#[test]
+fn generated_manifest_fingerprints_sparse_pseudo_budget_only_for_approximate_firth() {
+    const POLICY_POINTER: &str = "/execution_plan/binary_correction_plan/approximate_firth_sparse_pseudo_budget_policy";
+
+    let firth_directory = TestDirectory::new("firth-sparse-budget-policy");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let firth_inputs = test_inputs(&firth_directory, &phenotype_names);
+    let firth_plan = run_plan(&firth_directory, &firth_inputs, &phenotype_names, false, 1);
+    let firth_manager = initialize_manager(firth_plan, &firth_inputs, &phenotype_names, &single_chunk_plan(0..1));
+    let firth_run_directory =
+        firth_directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
+    let firth_manifest = read_manifest(&firth_run_directory);
+    assert_eq!(
+        firth_manifest.pointer(POLICY_POINTER).and_then(Value::as_str),
+        Some("half_total_uncapped_by_dense_cap")
+    );
+    assert_eq!(firth_manifest["schema_version"], 0);
+    assert_eq!(firth_manifest["output_schema_version"], 0);
+    firth_manager.abort().expect("approximate-Firth manager aborts");
+
+    let score_directory = TestDirectory::new("score-only-sparse-budget-policy");
+    let score_inputs = test_inputs(&score_directory, &phenotype_names);
+    let score_plan = with_correction_method(
+        run_plan(&score_directory, &score_inputs, &phenotype_names, false, 1),
+        g_plan::BinaryFallbackMethod::ScoreOnly,
+    );
+    let score_manager = initialize_manager(score_plan, &score_inputs, &phenotype_names, &single_chunk_plan(0..1));
+    let score_run_directory =
+        score_directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
+    let score_manifest = read_manifest(&score_run_directory);
+    assert_eq!(score_manifest.pointer(POLICY_POINTER), None);
+    assert_eq!(score_manifest["schema_version"], 0);
+    assert_eq!(score_manifest["output_schema_version"], 0);
+    score_manager.abort().expect("score-only manager aborts");
+}
+
+#[test]
+fn resume_rejects_legacy_sparse_pseudo_budget_policy() {
+    const POLICY_FIELD: &str = "approximate_firth_sparse_pseudo_budget_policy";
+    const POLICY_PATH: &str = "execution_plan.binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy";
+
+    let directory = TestDirectory::new("legacy-firth-sparse-budget-policy");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
+    let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
+    let manifest_path = run_directory.join("run_manifest.json");
+    let current_manifest = read_manifest(&run_directory);
+    initial_manager.abort().expect("initial manager aborts");
+
+    for legacy_policy in [None, Some("dense_cap_applies_to_all_lanes")] {
+        let mut legacy_manifest = current_manifest.clone();
+        let correction_plan = legacy_manifest["execution_plan"]["binary_correction_plan"]
+            .as_object_mut()
+            .expect("binary correction plan is an object");
+        match legacy_policy {
+            Some(policy) => {
+                correction_plan.insert(POLICY_FIELD.to_string(), Value::String(policy.to_string()));
+            }
+            None => {
+                correction_plan.remove(POLICY_FIELD);
+            }
+        }
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&legacy_manifest).expect("legacy manifest serializes"),
+        )
+        .expect("legacy manifest is written");
+
+        let resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+        let mut resume_manager =
+            OutputManager::open(resume_plan, "# legacy resume\n".to_string()).expect("resume manager opens");
+        let error = resume_manager
+            .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
+            .expect_err("legacy sparse pseudo-budget semantics must fail resume");
+        assert!(error.to_string().contains(POLICY_PATH), "unexpected error: {error}");
+    }
 }
 
 #[test]

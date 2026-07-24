@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 resume and manifest behavior | Public user docs |
+| Pre-release draft | main branch as of 2026-07-24 resume and manifest behavior | Public user docs |
 
 This page is the canonical user-facing reference for resumable output runs.
 
@@ -33,7 +33,8 @@ optional TOML file, and explicit CLI overrides.
   fingerprint, and prediction-alignment fingerprint;
 - selected association backend such as `jax_dosage` or `jax_packed8`, with the
   resolved genotype delivery format;
-- binary correction plan and binary kernel settings when applicable;
+- binary correction plan and binary kernel settings when applicable, including
+  the active approximate-Firth sparse pseudo-budget policy;
 - JAX device/precision policy and dtype choices;
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
@@ -133,6 +134,13 @@ Approximate-Firth manifests fingerprint the fixed inner proposal policy as
 `float32_elementwise_float64_reduction`. Older pre-release runs used the prior
 all-`float64` inner policy and have a different execution plan and hash, so
 they cannot be resumed into or mixed with current output parts.
+
+Active approximate-Firth manifests also fingerprint the sparse pseudo-budget
+policy as `half_total_uncapped_by_dense_cap`. Score-only manifests omit this
+field. An approximate-Firth manifest that omits the policy or records different
+sparse iteration semantics has a different execution plan and cannot resume
+into the current output directory. This compatibility change retains
+pre-release manifest and output schema versions `0`.
 
 In particular, runs whose execution plan still contains the removed
 `firth_newton_raphson_zero_start_iterations` field have a different plan schema

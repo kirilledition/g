@@ -10,6 +10,9 @@ use super::{
     build_manifest_value_sha256, manifest_file_fingerprint_to_value,
 };
 
+const APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD: &str = "approximate_firth_sparse_pseudo_budget_policy";
+const APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY: &str = "half_total_uncapped_by_dense_cap";
+
 pub struct CurrentRunManifestHeaderInput {
     pub phenotype_name: String,
     pub bgen_source_identity: Arc<g_genotype_contracts::BgenSourceIdentity>,
@@ -68,11 +71,17 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "prediction_list": prediction_list_fingerprint,
         "loco_files": prediction_loco_files,
     });
-    let binary_correction_plan = json!({
+    let mut binary_correction_plan = json!({
         "method": run_plan.correction.method.as_str(),
         "p_threshold": run_plan.correction.p_threshold.get(),
         "firth_se": run_plan.correction.firth_se,
     });
+    if run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate
+    {
+        binary_correction_plan[APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY_FIELD] =
+            Value::String(APPROXIMATE_FIRTH_SPARSE_PSEUDO_BUDGET_POLICY.to_string());
+    }
     let binary_kernel_config = match run_plan.association_mode {
         g_plan::AssociationMode::Regenie2Binary => {
             serde_json::to_value(&run_plan.compute.kernels).map_err(OutputError::runtime)?
