@@ -104,6 +104,7 @@ fn benchmark_run_plan(
         chunk_size: u32::try_from(BENCHMARK_CHUNK_ROW_COUNT).expect("benchmark row count should fit uint32"),
         input: g_plan::InputPlan {
             bgen_path: bgen_path.display().to_string(),
+            bgen_content_sha256: None,
             sample_path: sample_path.display().to_string(),
             phenotype_path: phenotype_path.display().to_string(),
             prediction_list_path: prediction_list_path.display().to_string(),

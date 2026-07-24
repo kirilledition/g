@@ -1213,6 +1213,7 @@ fn valid_run_plan() -> g_plan::RunPlan {
         chunk_size: 16_384,
         input: g_plan::InputPlan {
             bgen_path: "input.bgen".to_string(),
+            bgen_content_sha256: None,
             sample_path: "input.sample".to_string(),
             phenotype_path: "phenotype.tsv".to_string(),
             prediction_list_path: "predictions.list".to_string(),

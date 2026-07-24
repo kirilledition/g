@@ -41,6 +41,7 @@ impl PartialConfig {
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialInputConfig {
     pub(crate) bgen: Option<String>,
+    pub(crate) bgen_content_sha256: Option<g_genotype_contracts::BgenContentSha256>,
     pub(crate) sample: Option<String>,
     pub(crate) pheno_file: Option<String>,
     pub(crate) pheno_columns: Option<NameList>,
@@ -53,6 +54,7 @@ impl PartialInputConfig {
     fn resolve(self) -> InputConfigData {
         InputConfigData {
             bgen: self.bgen,
+            bgen_content_sha256: self.bgen_content_sha256,
             sample: self.sample,
             pheno_file: self.pheno_file,
             pheno_columns: self.pheno_columns.map(NameList::into_vec).unwrap_or_default(),

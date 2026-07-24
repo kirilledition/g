@@ -82,6 +82,7 @@ pub(crate) fn run_plan(root_path: &Path, association_mode: g_plan::AssociationMo
         chunk_size: 16,
         input: InputPlan {
             bgen_path: path_text(&root_path.join("dataset.bgen")),
+            bgen_content_sha256: None,
             sample_path: path_text(&root_path.join("dataset.sample")),
             phenotype_path: path_text(&root_path.join("phenotypes.tsv")),
             prediction_list_path: path_text(&root_path.join("predictions.list")),

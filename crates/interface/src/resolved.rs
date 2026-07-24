@@ -33,6 +33,8 @@ pub(crate) struct InputConfigData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bgen: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub bgen_content_sha256: Option<g_genotype_contracts::BgenContentSha256>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sample: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pheno_file: Option<String>,
@@ -49,6 +51,7 @@ pub(crate) struct InputConfigData {
 impl InputConfigData {
     pub(crate) fn is_empty(&self) -> bool {
         self.bgen.is_none()
+            && self.bgen_content_sha256.is_none()
             && self.sample.is_none()
             && self.pheno_file.is_none()
             && self.pheno_columns.is_empty()

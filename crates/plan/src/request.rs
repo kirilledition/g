@@ -23,6 +23,7 @@ pub struct RunPlan {
 #[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct InputPlan {
     pub bgen_path: String,
+    pub bgen_content_sha256: Option<g_genotype_contracts::BgenContentSha256>,
     pub sample_path: String,
     pub phenotype_path: String,
     pub prediction_list_path: String,

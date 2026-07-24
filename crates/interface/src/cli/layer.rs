@@ -13,6 +13,7 @@ impl RegenieCli {
         let partial_config = PartialConfig {
             input: PartialInputConfig {
                 bgen: input.bgen,
+                bgen_content_sha256: None,
                 sample: input.sample,
                 pheno_file: input.pheno_file,
                 pheno_columns: canonical_columns("phenoCol", input.pheno_col)?,

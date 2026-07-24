@@ -101,6 +101,7 @@ fn run_plan(
         chunk_size: 2,
         input: g_plan::InputPlan {
             bgen_path: inputs.bgen.display().to_string(),
+            bgen_content_sha256: None,
             sample_path: inputs.sample.display().to_string(),
             phenotype_path: inputs.phenotype.display().to_string(),
             prediction_list_path: inputs.prediction_list.display().to_string(),

@@ -94,6 +94,7 @@ impl PartialConfig {
 impl PartialInputConfig {
     fn overlay(&mut self, override_config: Self) {
         overlay_option!(self, override_config, bgen);
+        overlay_option!(self, override_config, bgen_content_sha256);
         overlay_option!(self, override_config, sample);
         overlay_option!(self, override_config, pheno_file);
         overlay_option!(self, override_config, pheno_columns);

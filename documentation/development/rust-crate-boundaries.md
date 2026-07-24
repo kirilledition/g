@@ -4,11 +4,11 @@ Each Rust crate exposes one facade through crate-root `pub use` items. Implement
 
 Allowed ownership:
 
-- `g-plan`: the canonical immutable `RunPlan`, numeric invariants, and host
-  policy.
+- `g-plan`: the canonical immutable `RunPlan`, including its optional BGEN
+  content selector, numeric invariants, and host policy.
 - `g-interface`: user config, CLI/TOML normalization, and native CLI dispatch.
-- `g-genotype-contracts`: canonical shared variant metadata and output-facing
-  genotype column storage.
+- `g-genotype-contracts`: canonical BGEN content identity, shared variant
+  metadata, and output-facing genotype column storage.
 - `g-genotype`: BGEN/genotype source, immutable read sessions, owned decoded
   batch/buffer types, chunk specs, and preprocessing statistics.
 - `g-genotype-cuda`: optional capability-gated packed8 raw-DEFLATE delivery,
@@ -40,6 +40,9 @@ Rules:
   statistic columns directly from `g-genotype-contracts`. Decode and compute
   payloads remain owned by `g-genotype`. Intermediary crates do not re-export
   or redefine owner-defined types.
+- `g-plan` depends directly on `g-genotype-contracts` for
+  `BgenContentSha256`, embeds that owner-defined type in `InputPlan`, and does
+  not re-export or redefine it.
 - Do not bind low-level Rust helper chains through Python when one Rust owner can call another directly.
 - `g-runner` invokes `g-engine::execute_coordinated_run` after its host creates
   the Python-backed `AssociationBackend`; the root never sequences domain

@@ -44,8 +44,8 @@ concurrent access.
 | Area | Owner |
 | --- | --- |
 | CLI parsing, TOML, defaults, validation | `g-interface` |
-| Immutable run contracts and host policy | `g-plan` |
-| Shared variant metadata and output-facing genotype columns | `g-genotype-contracts` |
+| Immutable run contracts, including the optional BGEN content selector, and host policy | `g-plan` |
+| Canonical BGEN content identity, shared variant metadata, and output-facing genotype columns | `g-genotype-contracts` |
 | BGEN owned-snapshot/positioned source I/O, index, immutable read sessions, delivery planning, decode/preprocessing, and owned decoded or compressed batches/buffers | `g-genotype` |
 | Optional capability-gated packed8 raw-DEFLATE delivery and typed-XLA FFI handlers | `g-genotype-cuda` |
 | Optional capability-gated CUDA association kernels and typed-XLA FFI handlers | `g-compute-cuda` |
@@ -75,6 +75,14 @@ JAX objects, preserve a concrete `PyErr`, or label telemetry with the current
 Python thread. It imports canonical genotype, input, and output payload types
 only to convert the private `AssociationBackend` boundary to and from NumPy;
 all services remain behind `g-engine` and `g-runner`.
+
+`g-interface` parses `[input].bgen_content_sha256` directly into the canonical
+digest type owned by `g-genotype-contracts` and carries it in
+`g-plan::InputPlan`. The selector is TOML-only: the CLI layer can replace the
+BGEN locator with `--bgen` without clearing the TOML selector. Frontend run
+validation still requires the locator to pass `Path::exists`. In the current
+integration stage, `g-engine` does not forward the planned selector to the
+genotype open request, so execution remains an unselected locator-based open.
 
 Engine resolves the prediction list once into an input-owned path catalog.
 Input indexing/alignment and output-manifest fingerprinting borrow that same
@@ -138,6 +146,9 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
 - Planning enums have one definition in `g-plan`. Only domain owners interpret
   them; infrastructure crates such as `g-runtime` receive projected generic
   policy.
+- Canonical BGEN digest parsing and representation live in
+  `g-genotype-contracts`; `g-plan` embeds that owner-defined type directly
+  without re-exporting or redefining it.
 - Resume commit sets and the immutable `RunPlan` use shared ownership rather
   than per-group clones.
 - CLI validation and help complete before importing JAX-heavy modules.

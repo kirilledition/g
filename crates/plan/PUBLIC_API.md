@@ -8,8 +8,15 @@ by Rust domain crates.
 ## Public types
 
 `RunPlan` and its input, compute, correction, output, phenotype-group, enum,
-and validated finite numeric components. Association mode and chunk size live
-directly on `RunPlan`; they are not wrapped in a one-use analysis DTO.
+and validated finite numeric components. `InputPlan` carries the required BGEN
+locator plus an optional `g_genotype_contracts::BgenContentSha256` selector as
+immutable request policy. The digest has one canonical wire representation:
+exactly 64 lowercase hexadecimal characters. Association mode and chunk size
+live directly on `RunPlan`; they are not wrapped in a one-use analysis DTO.
+
+The selector is planning data only in the current integration stage.
+`g-engine` does not yet consume it and continues to open the BGEN locator
+without content selection.
 
 ## Public functions
 
@@ -25,7 +32,7 @@ Keep DTO construction deterministic and allocation-visible. Run plans contain
 request-derived policy, not fixed scheduler capacities, decode tiling, or
 backend-selection implementation state. Fixed input invariants such as
 `(FID, IID)` sample identity do not belong in the plan. Do not add hot-path
-parsing, I/O, or JSON round trips here.
+parsing, file existence checks, I/O, or JSON round trips here.
 
 ## Allowed downstream users
 
