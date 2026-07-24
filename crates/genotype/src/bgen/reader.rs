@@ -1047,7 +1047,14 @@ mod tests {
             .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
             .expect_err("truncated positioned source should fail");
         match error {
-            BgenError::Io(source) => assert_eq!(source.kind(), std::io::ErrorKind::UnexpectedEof),
+            BgenError::Io(source) => {
+                assert_eq!(source.kind(), std::io::ErrorKind::UnexpectedEof);
+                let message = source.to_string();
+                assert!(message.starts_with("Unexpected end of file while reading BGEN bytes:"));
+                assert!(message.contains("positioned read at offset"));
+                assert!(message.contains("requested"));
+                assert!(message.ends_with("observed 0."));
+            }
             other => panic!("expected a positioned-read EOF, observed {other:?}"),
         }
 
