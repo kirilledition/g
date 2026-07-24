@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    import pytest
 
 PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
@@ -51,7 +48,6 @@ class NullFirthLineSearchReference:
     deviance: float
     attempt_count: int
     accepted: bool
-    valid: bool
 
 
 @dataclass(frozen=True)
@@ -194,7 +190,6 @@ def run_null_firth_line_search_reference(
         deviance=accepted_deviance,
         attempt_count=attempt_count,
         accepted=accepted,
-        valid=current_components.valid,
     )
 
 
@@ -443,7 +438,6 @@ def test_null_firth_line_search_accepts_a_deviance_decreasing_newton_step() -> N
     )
 
     assert bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
     assert float(np.asarray(observed.deviance)) < float(np.asarray(current_components.deviance))
 
 
@@ -477,7 +471,6 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
 
     assert line_search_reference.attempt_count == 0
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
-    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         line_search_reference.coefficients,
@@ -530,7 +523,6 @@ def test_null_firth_line_search_rejects_valid_worse_and_equal_proposals(
     for candidate_deviance in (11.0, 10.0):
         observed = run_candidate(candidate_deviance)
         assert not bool(np.asarray(observed.accepted))
-        assert bool(np.asarray(observed.valid))
         tests.numerical.assert_absolute_difference_less_than(
             observed.coefficients,
             np.asarray([0.0]),
@@ -590,9 +582,7 @@ def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step(
     assert half_step_reference.deviance < current_reference.deviance
     assert line_search_reference.attempt_count == 2
     assert line_search_reference.accepted
-    assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
-    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         line_search_reference.coefficients,
@@ -647,9 +637,7 @@ def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() ->
     assert current_reference.valid
     assert line_search_reference.attempt_count == 3
     assert not line_search_reference.accepted
-    assert line_search_reference.valid
     assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
-    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
     tests.numerical.assert_absolute_difference_less_than(
         observed.coefficients,
         line_search_reference.coefficients,
@@ -659,6 +647,135 @@ def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() ->
         observed.deviance,
         line_search_reference.deviance,
         1.0e-12,
+    )
+
+
+def test_null_firth_invalid_current_components_fail_without_moving_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use current-component validity as the canonical numerical guard."""
+    component_call_count = 0
+
+    def compute_current_validity_probe_components(
+        *,
+        covariate_matrix: jax.Array,
+        phenotype_vector: jax.Array,
+        loco_offset: jax.Array,
+        coefficients: jax.Array,
+    ) -> regenie2_binary_firth_types.NullFirthComponents:
+        nonlocal component_call_count
+        del covariate_matrix, phenotype_vector, loco_offset
+        component_call_count += 1
+        coefficient_count = coefficients.shape[0]
+        initial_component_call = component_call_count == 1
+        line_search_candidate_call = component_call_count >= 3
+        return regenie2_binary_firth_types.NullFirthComponents(
+            information_cholesky_factor=jnp.eye(coefficient_count, dtype=coefficients.dtype),
+            deviance=jnp.asarray(
+                6.0 if line_search_candidate_call else 7.0,
+                dtype=coefficients.dtype,
+            ),
+            modified_score=jnp.ones((coefficient_count,), dtype=coefficients.dtype),
+            valid=jnp.asarray(initial_component_call or line_search_candidate_call, dtype=jnp.bool_),
+        )
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_null,
+        "compute_null_firth_components",
+        compute_current_validity_probe_components,
+    )
+    initial_coefficients = jnp.asarray([0.25, -0.5], dtype=jnp.float64)
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model_once(
+        covariate_matrix=jnp.ones((4, 2), dtype=jnp.float64),
+        phenotype_vector=jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jnp.float64),
+        loco_offset=jnp.zeros((4,), dtype=jnp.float64),
+        initial_coefficients=initial_coefficients,
+        maximum_iterations=4,
+        maximum_step_size=2.0,
+        tolerance=1.0e-8,
+        line_search_maximum_attempts=3,
+        line_search_step_halving_scale=0.5,
+        check_score_increase=True,
+    )
+
+    assert not bool(np.asarray(observed.converged))
+    assert bool(np.isnan(np.asarray(observed.penalized_log_likelihood)))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        initial_coefficients,
+        1.0e-15,
+    )
+
+
+@pytest.mark.parametrize(
+    "nonfinite_step_value",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_null_firth_nonfinite_coefficient_step_fails_without_moving_start(
+    monkeypatch: pytest.MonkeyPatch,
+    nonfinite_step_value: float,
+) -> None:
+    """Reject a nonfinite Newton step independently of line-search state."""
+
+    def compute_guard_probe_components(
+        *,
+        covariate_matrix: jax.Array,
+        phenotype_vector: jax.Array,
+        loco_offset: jax.Array,
+        coefficients: jax.Array,
+    ) -> regenie2_binary_firth_types.NullFirthComponents:
+        del covariate_matrix, phenotype_vector, loco_offset
+        coefficient_count = coefficients.shape[0]
+        return regenie2_binary_firth_types.NullFirthComponents(
+            information_cholesky_factor=jnp.eye(coefficient_count, dtype=coefficients.dtype),
+            deviance=jnp.where(
+                jnp.all(jnp.isfinite(coefficients)),
+                jnp.asarray(7.0, dtype=coefficients.dtype),
+                jnp.asarray(6.0, dtype=coefficients.dtype),
+            ),
+            modified_score=jnp.ones((coefficient_count,), dtype=coefficients.dtype),
+            valid=jnp.asarray(1, dtype=jnp.bool_),
+        )
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_null,
+        "compute_null_firth_components",
+        compute_guard_probe_components,
+    )
+    initial_coefficients = jnp.asarray([0.25, -0.5], dtype=jnp.float64)
+
+    def solve_with_nonfinite_step(
+        cholesky_factor: jax.Array,
+        right_hand_side: jax.Array,
+    ) -> jax.Array:
+        del cholesky_factor
+        return jnp.full_like(right_hand_side, nonfinite_step_value)
+
+    monkeypatch.setattr(
+        regenie2_binary_firth_null.linalg,
+        "solve_positive_definite_system",
+        solve_with_nonfinite_step,
+    )
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model_once(
+        covariate_matrix=jnp.ones((4, 2), dtype=jnp.float64),
+        phenotype_vector=jnp.asarray([0.0, 1.0, 0.0, 1.0], dtype=jnp.float64),
+        loco_offset=jnp.zeros((4,), dtype=jnp.float64),
+        initial_coefficients=initial_coefficients,
+        maximum_iterations=4,
+        maximum_step_size=2.0,
+        tolerance=1.0e-8,
+        line_search_maximum_attempts=3,
+        line_search_step_halving_scale=0.5,
+        check_score_increase=True,
+    )
+
+    assert not bool(np.asarray(observed.converged))
+    assert bool(np.isnan(np.asarray(observed.penalized_log_likelihood)))
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        initial_coefficients,
+        1.0e-15,
     )
 
 
