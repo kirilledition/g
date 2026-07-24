@@ -280,10 +280,77 @@ pub(crate) fn increment_sparse_candidate_counts(
 mod tests {
     use crate::common::{ChunkStatisticsPolicy, Packed8RawStatistics};
 
-    use super::build_chunk_stats_from_summaries;
+    use super::{build_chunk_stats_from_summaries, increment_sparse_candidate_counts};
 
     const COMPLETE_STATISTICS_POLICY: ChunkStatisticsPolicy =
         ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: true };
+
+    fn sparse_candidate_from_raw_dosages(dosage_values: &[f32]) -> bool {
+        let mut zero_count = 0_i32;
+        let mut homozygous_alternate_count = 0_i32;
+        for dosage_value in dosage_values {
+            increment_sparse_candidate_counts(*dosage_value, &mut zero_count, &mut homozygous_alternate_count);
+        }
+        let dosage_sum = dosage_values.iter().sum::<f32>();
+        let dosage_square_sum = dosage_values.iter().map(|value| value * value).sum::<f32>();
+        let observation_count = i32::try_from(dosage_values.len()).expect("test dosage count fits int32");
+        let statistics = build_chunk_stats_from_summaries(
+            vec![dosage_sum],
+            vec![dosage_square_sum],
+            vec![observation_count],
+            Some(vec![zero_count]),
+            Some(vec![homozygous_alternate_count]),
+            dosage_values.len(),
+            COMPLETE_STATISTICS_POLICY,
+        )
+        .expect("raw dosage summaries should classify");
+        statistics.compute.sparse_candidate_mask.expect("sparse mask was requested")[0]
+    }
+
+    #[test]
+    fn sparse_candidate_boundaries_match_upstream_raw_dosage_classification() {
+        let mut minor_allele_count_49 = vec![0.0_f32; 151];
+        minor_allele_count_49.extend(vec![1.0_f32; 49]);
+        let mut minor_allele_count_50 = vec![0.0_f32; 150];
+        minor_allele_count_50.extend(vec![1.0_f32; 50]);
+        let mut exact_sparse_density = vec![0.0_f32; 40];
+        exact_sparse_density.extend(vec![1.0_f32; 40]);
+        let mut below_sparse_density = vec![0.0_f32; 39];
+        below_sparse_density.extend(vec![1.0_f32; 41]);
+        let mut flipped_minor_allele_count_49 = vec![2.0_f32; 151];
+        flipped_minor_allele_count_49.extend(vec![1.0_f32; 49]);
+        let zero_threshold = 1.0e-4_f32;
+        let above_zero_threshold = f32::from_bits(zero_threshold.to_bits() + 1);
+        let mut exact_zero_threshold = vec![zero_threshold; 50];
+        exact_zero_threshold.extend(vec![0.75_f32; 50]);
+        let mut above_zero_threshold_breaks_density = exact_zero_threshold.clone();
+        above_zero_threshold_breaks_density[0] = above_zero_threshold;
+
+        assert!(sparse_candidate_from_raw_dosages(&minor_allele_count_49));
+        assert!(!sparse_candidate_from_raw_dosages(&minor_allele_count_50));
+        assert!(sparse_candidate_from_raw_dosages(&exact_sparse_density));
+        assert!(!sparse_candidate_from_raw_dosages(&below_sparse_density));
+        assert!(sparse_candidate_from_raw_dosages(&flipped_minor_allele_count_49));
+        assert!(sparse_candidate_from_raw_dosages(&exact_zero_threshold));
+        assert!(!sparse_candidate_from_raw_dosages(&above_zero_threshold_breaks_density));
+    }
+
+    #[test]
+    fn sparse_candidate_density_uses_observed_nonmissing_denominator() {
+        let statistics = build_chunk_stats_from_summaries(
+            vec![49.0],
+            vec![49.0],
+            vec![99],
+            Some(vec![50]),
+            Some(vec![0]),
+            200,
+            COMPLETE_STATISTICS_POLICY,
+        )
+        .expect("partly observed dosage summaries should classify");
+
+        assert_eq!(statistics.output.observation_count, vec![99]);
+        assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![true]));
+    }
 
     #[test]
     fn chunk_stats_compute_means_info_and_sparse_candidates() {

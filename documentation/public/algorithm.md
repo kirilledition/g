@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; public algorithm and result-interpretation reference | main branch as of 2026-07-01 BGEN-backed Step 2 modes | Public interface and compute maintainers |
+| Pre-release draft; public algorithm and result-interpretation reference | main branch as of 2026-07-24 BGEN-backed Step 2 modes | Public interface and compute maintainers |
 
 `g` runs REGENIE-compatible Step 2 single-variant association tests on BGEN input. It does **not** run REGENIE Step 1. Step 2 needs the chromosome-specific leave-one-chromosome-out prediction file produced by Step 1; pass that file with `--pred`.[^regenie-step2]
 
@@ -229,6 +229,21 @@ inner pseudo-logistic proposal evaluates its sigmoid, score products, and
 information products in `float32`, widens products before `float64`
 reductions, and only proposes coefficients for subsequent `float64`
 validation.
+
+The solver assigns `floor([compute].firth_maximum_iterations / 2)` iterations
+to Newton-Raphson. Dense pseudo-Firth uses the smaller of that half-budget and
+`[compute].firth_pseudo_maximum_iterations`, whose packaged default is `50`.
+Sparse pseudo-Firth uses the uncapped half-budget.
+
+A variant is sparse-eligible only when, after REGENIE minor-allele orientation,
+its minor-allele count is strictly less than `50` and its oriented zero-dosage
+class contains at least half of the observed, nonmissing samples. Sparse
+correction keeps samples whose oriented, mean-imputed dosage before
+residualization is greater than
+`[compute].firth_sparse_carrier_dosage_threshold`, whose packaged default is
+`1e-4`. Up to and including `64` carriers use compact storage; `65` or more use
+full-width masked storage. Both routes remain carrier-only sparse fits and use
+the same uncapped pseudo-Firth half-budget.
 
 For corrected rows:
 
