@@ -95,12 +95,20 @@ pub(super) struct PredictionLocoFileFingerprintSchemaZero {
     pub(super) content_sha256: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BinaryCorrectionPlanSchemaZero {
     pub(super) method: g_plan::BinaryFallbackMethod,
     pub(super) p_threshold: g_plan::Probability,
     pub(super) firth_se: bool,
+    pub(super) approximate_firth_sparse_pseudo_budget_policy:
+        RequiredNullableSchemaZero<ApproximateFirthSparsePseudoBudgetPolicySchemaZero>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) enum ApproximateFirthSparsePseudoBudgetPolicySchemaZero {
+    #[serde(rename = "half_total_uncapped_by_dense_cap")]
+    HalfTotalUncappedByDenseCap,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -403,6 +411,8 @@ impl ExecutionPlanSchemaZero {
     fn validate_mode_dependent_policy(&self) -> OutputResult<()> {
         let binary_kernel_config = self.binary_kernel_config.as_ref();
         let approximate_firth_policy = self.jax_policy.approximate_firth_pseudo_inner_policy.as_ref();
+        let sparse_pseudo_budget_policy =
+            self.binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy.as_ref();
         match self.association_mode {
             g_plan::AssociationMode::Regenie2Linear => {
                 if binary_kernel_config.is_some() {
@@ -420,6 +430,11 @@ impl ExecutionPlanSchemaZero {
                 if approximate_firth_policy.is_some() {
                     return Err(invalid_execution_plan(
                         "approximate-Firth JAX policy must be null for linear association",
+                    ));
+                }
+                if sparse_pseudo_budget_policy.is_some() {
+                    return Err(invalid_execution_plan(
+                        "field 'binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy' must be null for linear association",
                     ));
                 }
             }
@@ -441,6 +456,11 @@ impl ExecutionPlanSchemaZero {
                                 "approximate-Firth JAX policy must be null for score-only binary correction",
                             ));
                         }
+                        if sparse_pseudo_budget_policy.is_some() {
+                            return Err(invalid_execution_plan(
+                                "field 'binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy' must be null for score-only binary correction",
+                            ));
+                        }
                     }
                     g_plan::BinaryFallbackMethod::FirthApproximate => {
                         if approximate_firth_policy
@@ -448,6 +468,13 @@ impl ExecutionPlanSchemaZero {
                         {
                             return Err(invalid_execution_plan(
                                 "approximate-Firth binary correction requires its fixed JAX reduction policy",
+                            ));
+                        }
+                        if sparse_pseudo_budget_policy
+                            != Some(&ApproximateFirthSparsePseudoBudgetPolicySchemaZero::HalfTotalUncappedByDenseCap)
+                        {
+                            return Err(invalid_execution_plan(
+                                "field 'binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy' must equal 'half_total_uncapped_by_dense_cap' for approximate-Firth binary correction",
                             ));
                         }
                     }
@@ -776,6 +803,7 @@ pub(crate) fn canonical_execution_plan_schema_zero_test_value() -> Value {
             "method": "firth_approximate",
             "p_threshold": 0.05,
             "firth_se": false,
+            "approximate_firth_sparse_pseudo_budget_policy": "half_total_uncapped_by_dense_cap",
         },
         "binary_kernel_config": canonical_binary_kernel_config_schema_zero_test_value(),
         "jax_policy": {
@@ -820,6 +848,7 @@ mod tests {
             &["covariate_file"][..],
             &["binary_kernel_config"][..],
             &["jax_policy", "approximate_firth_pseudo_inner_policy"][..],
+            &["binary_correction_plan", "approximate_firth_sparse_pseudo_budget_policy"][..],
             &["bgen", "content_sha256"][..],
             &["bgen", "byte_count"][..],
         ] {
@@ -885,5 +914,55 @@ mod tests {
         let mut unknown_kernel_field = canonical_execution_plan_schema_zero_test_value();
         unknown_kernel_field["binary_kernel_config"]["firth"]["unknown"] = serde_json::Value::Null;
         assert!(ExecutionPlanSchemaZero::from_value(unknown_kernel_field).is_err());
+    }
+
+    #[test]
+    fn schema_zero_sparse_pseudo_budget_policy_is_exact_and_mode_dependent() {
+        const POLICY_FIELD: &str = "approximate_firth_sparse_pseudo_budget_policy";
+
+        let canonical = canonical_execution_plan_schema_zero_test_value();
+        assert_eq!(
+            canonical["binary_correction_plan"][POLICY_FIELD],
+            serde_json::Value::String("half_total_uncapped_by_dense_cap".to_string())
+        );
+
+        for invalid_policy in [
+            serde_json::Value::String("dense_cap_applies_to_all_lanes".to_string()),
+            serde_json::Value::String("unknown_policy".to_string()),
+            serde_json::Value::Bool(false),
+            serde_json::json!({"policy": "half_total_uncapped_by_dense_cap"}),
+            serde_json::Value::Null,
+        ] {
+            let mut fixture = canonical.clone();
+            fixture["binary_correction_plan"][POLICY_FIELD] = invalid_policy;
+            assert!(
+                ExecutionPlanSchemaZero::from_value(fixture).is_err(),
+                "approximate Firth rejects a null, unknown, or wrongly typed sparse-budget policy"
+            );
+        }
+        let mut unknown_field = canonical.clone();
+        unknown_field["binary_correction_plan"]["sparse_pseudo_budget_policy"] = serde_json::Value::Null;
+        assert!(ExecutionPlanSchemaZero::from_value(unknown_field).is_err());
+
+        let mut score_only = canonical.clone();
+        score_only["binary_correction_plan"]["method"] = serde_json::Value::String("score_only".to_string());
+        score_only["binary_correction_plan"][POLICY_FIELD] = serde_json::Value::Null;
+        score_only["jax_policy"]["approximate_firth_pseudo_inner_policy"] = serde_json::Value::Null;
+        ExecutionPlanSchemaZero::from_value(score_only.clone())
+            .expect("score-only binary correction requires an explicit null sparse-budget policy");
+        score_only["binary_correction_plan"][POLICY_FIELD] =
+            serde_json::Value::String("half_total_uncapped_by_dense_cap".to_string());
+        assert!(ExecutionPlanSchemaZero::from_value(score_only).is_err());
+
+        let mut linear = canonical;
+        linear["association_mode"] = serde_json::Value::String("regenie2_linear".to_string());
+        linear["association_backend"]["kind"] = serde_json::Value::String("jax_dosage".to_string());
+        linear["association_backend"]["genotype_format"] = serde_json::Value::String("dosage".to_string());
+        linear["binary_correction_plan"]["method"] = serde_json::Value::String("score_only".to_string());
+        linear["binary_correction_plan"][POLICY_FIELD] = serde_json::Value::Null;
+        linear["binary_kernel_config"] = serde_json::Value::Null;
+        linear["jax_policy"]["approximate_firth_pseudo_inner_policy"] = serde_json::Value::Null;
+        ExecutionPlanSchemaZero::from_value(linear)
+            .expect("linear association requires an explicit null sparse-budget policy");
     }
 }

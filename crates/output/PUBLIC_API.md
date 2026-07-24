@@ -115,6 +115,12 @@ content fingerprint. A positioned unattested source records `null` plus its
 byte count; this is legal for a fresh nonresumable output, but
 `ExistingOutputUnattestedBgenContent` prevents that manifest from authorizing
 resume.
+The schema-zero binary correction plan also requires
+`approximate_firth_sparse_pseudo_budget_policy`: approximate-Firth records
+`half_total_uncapped_by_dense_cap`, while score-only and linear plans record
+explicit `null`. Missing, legacy, unsupported, or mode-inconsistent values are
+rejected. This policy and the BGEN authority are fields of the same canonical
+execution plan and therefore share one `execution_plan_hash`.
 
 Existing-output agreement is accepted only from manifest bytes bound to the
 freshly resolved genesis contract, current leaf attempt, canonical chunk plan,

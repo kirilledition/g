@@ -6,10 +6,11 @@ use serde_json::{Value, json};
 use crate::error::{OutputError, OutputResult};
 
 use super::schema_zero::{
-    ApproximateFirthPseudoInnerPolicySchemaZero, AssociationBackendKindSchemaZero, AssociationBackendSchemaZero,
-    BgenFingerprintSchemaZero, BinaryCorrectionPlanSchemaZero, ExecutionPlanSchemaZero,
-    FileContentHashAlgorithmSchemaZero, FileFingerprintSchemaZero, FloatingPointDtypeSchemaZero, JaxPolicySchemaZero,
-    KernelPlanSchemaZero, MatmulPrecisionSchemaZero, OutputWriterSchemaZero, ParquetCompressionSchemaZero,
+    ApproximateFirthPseudoInnerPolicySchemaZero, ApproximateFirthSparsePseudoBudgetPolicySchemaZero,
+    AssociationBackendKindSchemaZero, AssociationBackendSchemaZero, BgenFingerprintSchemaZero,
+    BinaryCorrectionPlanSchemaZero, ExecutionPlanSchemaZero, FileContentHashAlgorithmSchemaZero,
+    FileFingerprintSchemaZero, FloatingPointDtypeSchemaZero, JaxPolicySchemaZero, KernelPlanSchemaZero,
+    MatmulPrecisionSchemaZero, OutputWriterSchemaZero, ParquetCompressionSchemaZero,
     ParquetFloatColumnEncodingSchemaZero, PredictionInputsSchemaZero, PredictionLocoFileFingerprintSchemaZero,
     RequiredNullableSchemaZero, ResumePolicySchemaZero,
 };
@@ -90,11 +91,7 @@ pub(crate) fn build_execution_plan_schema_zero_with_cache(
         sample_count,
         variant_count,
         chunk_size: run_plan.chunk_size,
-        binary_correction_plan: BinaryCorrectionPlanSchemaZero {
-            method: run_plan.correction.method,
-            p_threshold: run_plan.correction.p_threshold,
-            firth_se: run_plan.correction.firth_se,
-        },
+        binary_correction_plan: build_binary_correction_plan(run_plan),
         binary_kernel_config: build_binary_kernel_config(run_plan),
         jax_policy: build_jax_policy(run_plan),
         score_dtype: FloatingPointDtypeSchemaZero::Float32,
@@ -156,6 +153,18 @@ fn build_binary_kernel_config(run_plan: &g_plan::RunPlan) -> RequiredNullableSch
         (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary)
             .then(|| KernelPlanSchemaZero::from(&run_plan.compute.kernels)),
     )
+}
+
+fn build_binary_correction_plan(run_plan: &g_plan::RunPlan) -> BinaryCorrectionPlanSchemaZero {
+    let sparse_pseudo_budget_policy = (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate)
+        .then_some(ApproximateFirthSparsePseudoBudgetPolicySchemaZero::HalfTotalUncappedByDenseCap);
+    BinaryCorrectionPlanSchemaZero {
+        method: run_plan.correction.method,
+        p_threshold: run_plan.correction.p_threshold,
+        firth_se: run_plan.correction.firth_se,
+        approximate_firth_sparse_pseudo_budget_policy: RequiredNullableSchemaZero::new(sparse_pseudo_budget_policy),
+    }
 }
 
 fn build_jax_policy(run_plan: &g_plan::RunPlan) -> JaxPolicySchemaZero {

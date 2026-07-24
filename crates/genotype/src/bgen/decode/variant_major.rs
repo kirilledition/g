@@ -321,8 +321,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
     let mut exact_dosage_numerator = collect_sparse_candidate_statistics.then_some(0_u64);
     let mut zero_count = 0_i32;
     let mut homozygous_alternate_count = 0_i32;
-    let probability_pairs =
-        exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
+    let probability_pairs = exact_eight_bit_probability_pairs(packed_probability_bytes);
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
         sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
@@ -366,14 +365,33 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
     }
 
     impute_variant_major_row_if_needed(output_row, dosage_sum, observation_count, has_missing_values);
-    Ok(DosageSummary {
+    Ok(build_unphased_eight_bit_dosage_summary(
+        dosage_sum,
+        dosage_square_sum,
+        observation_count,
+        zero_count,
+        homozygous_alternate_count,
+        exact_dosage_numerator,
+    ))
+}
+
+#[inline]
+fn build_unphased_eight_bit_dosage_summary(
+    dosage_sum: f32,
+    dosage_square_sum: f32,
+    observation_count: i32,
+    zero_count: i32,
+    homozygous_alternate_count: i32,
+    exact_dosage_numerator: Option<u64>,
+) -> DosageSummary {
+    DosageSummary {
         dosage_sum,
         dosage_square_sum,
         observation_count,
         zero_count,
         homozygous_alternate_count,
         exact_dosage_sum: exact_dosage_numerator.map(|numerator| ExactDosageSum::new(numerator, u32::from(u8::MAX))),
-    })
+    }
 }
 
 fn decode_all_present_unphased_eight_bit_subset(
@@ -441,14 +459,14 @@ fn decode_all_present_unphased_eight_bit_subset(
             );
         }
     }
-    Ok(DosageSummary {
+    Ok(build_unphased_eight_bit_dosage_summary(
         dosage_sum,
         dosage_square_sum,
         observation_count,
         zero_count,
         homozygous_alternate_count,
-        exact_dosage_sum: exact_dosage_numerator.map(|numerator| ExactDosageSum::new(numerator, u32::from(u8::MAX))),
-    })
+        exact_dosage_numerator,
+    ))
 }
 
 fn quantized_dosage_numerator(

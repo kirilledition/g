@@ -36,7 +36,8 @@ optional TOML file, and explicit CLI overrides.
   fingerprint, and prediction-alignment fingerprint;
 - selected association backend such as `jax_dosage` or `jax_packed8`, with the
   resolved genotype delivery format;
-- binary correction plan and binary kernel settings when applicable;
+- binary correction plan and binary kernel settings when applicable, including
+  the active approximate-Firth sparse pseudo-budget policy;
 - JAX device/precision policy and dtype choices;
 - output writer settings;
 - committed chunk identifiers and complete immutable Parquet receipts.
@@ -320,6 +321,15 @@ Approximate-Firth manifests fingerprint the fixed inner proposal policy as
 `float32_elementwise_float64_reduction`. Older pre-release runs used the prior
 all-`float64` inner policy and have a different execution plan and hash, so
 they cannot be resumed into or mixed with current output parts.
+
+The required-nullable
+`binary_correction_plan.approximate_firth_sparse_pseudo_budget_policy` field
+records `half_total_uncapped_by_dense_cap` for approximate-Firth manifests and
+explicit `null` for score-only and linear manifests. Missing, legacy, and
+unsupported values fail closed even if an altered manifest recomputes its
+execution-plan hash. BGEN content authority and this policy participate in the
+same canonical execution-plan hash. This compatibility change retains
+pre-release manifest and output schema versions `0`.
 
 In particular, runs whose execution plan still contains the removed
 `firth_newton_raphson_zero_start_iterations` field have a different plan schema

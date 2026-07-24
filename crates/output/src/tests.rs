@@ -137,6 +137,17 @@ fn run_plan(
     })
 }
 
+fn with_association_and_correction(
+    mut run_plan: Arc<g_plan::RunPlan>,
+    association_mode: g_plan::AssociationMode,
+    correction_method: g_plan::BinaryFallbackMethod,
+) -> Arc<g_plan::RunPlan> {
+    let owned_run_plan = Arc::get_mut(&mut run_plan).expect("test run plan has one owner");
+    owned_run_plan.association_mode = association_mode;
+    owned_run_plan.correction.method = correction_method;
+    run_plan
+}
+
 fn two_phenotype_run_plan(
     directory: &TestDirectory,
     inputs: &TestInputs,
@@ -831,6 +842,61 @@ fn identical_bgen_content_at_different_locators_has_one_execution_plan_identity(
         Some(&Value::String(bgen_content_fingerprint(&inputs.bgen).content_sha256.to_string()))
     );
     assert_eq!(bgen.get("byte_count"), Some(&Value::from(inputs.bgen.metadata().expect("BGEN metadata reads").len())));
+}
+
+#[test]
+fn generated_manifest_uses_typed_sparse_pseudo_budget_policy_for_each_association_mode() {
+    const POLICY_POINTER: &str = "/execution_plan/binary_correction_plan/approximate_firth_sparse_pseudo_budget_policy";
+
+    let directory = TestDirectory::new("sparse-pseudo-budget-policy");
+    let inputs = test_inputs(&directory);
+    let header_input = header(&inputs, 2);
+    let plans_and_expected_policies = [
+        (
+            run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+            Value::String("half_total_uncapped_by_dense_cap".to_string()),
+        ),
+        (
+            with_association_and_correction(
+                run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+                g_plan::AssociationMode::Regenie2Binary,
+                g_plan::BinaryFallbackMethod::ScoreOnly,
+            ),
+            Value::Null,
+        ),
+        (
+            with_association_and_correction(
+                run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+                g_plan::AssociationMode::Regenie2Linear,
+                g_plan::BinaryFallbackMethod::ScoreOnly,
+            ),
+            Value::Null,
+        ),
+    ];
+
+    for (run_plan, expected_policy) in plans_and_expected_policies {
+        let mut fingerprint_cache = crate::manifest::ManifestFileFingerprintCache::default();
+        let manifest = crate::manifest::build_current_run_manifest_header_value_with_cache(
+            &run_plan,
+            &header_input,
+            &mut fingerprint_cache,
+        )
+        .expect("typed schema-zero manifest header builds");
+        assert_eq!(manifest["schema_version"], 0);
+        assert_eq!(manifest["output_schema_version"], 0);
+        assert_eq!(manifest.pointer(POLICY_POINTER), Some(&expected_policy));
+        assert_eq!(
+            manifest["execution_plan_hash"],
+            Value::String(
+                crate::manifest::build_manifest_value_sha256(&manifest["execution_plan"])
+                    .expect("canonical execution plan hashes")
+            )
+        );
+        let bgen = manifest["execution_plan"]["bgen"].as_object().expect("BGEN execution-plan authority is an object");
+        assert_eq!(bgen.len(), 2);
+        assert!(bgen.contains_key("content_sha256"));
+        assert!(bgen.contains_key("byte_count"));
+    }
 }
 
 #[test]

@@ -527,12 +527,8 @@ where
         ) -> Result<(), VariantDecodeFailure>
         + Sync,
 {
-    let VariantMajorStatsBuffers {
-        dosage_sum,
-        dosage_square_sum,
-        observation_count,
-        sparse_candidate_statistics,
-    } = stats_buffers;
+    let VariantMajorStatsBuffers { dosage_sum, dosage_square_sum, observation_count, sparse_candidate_statistics } =
+        stats_buffers;
     let stats_variant_stop =
         stats_variant_start.checked_add(selected_variant_records.len()).ok_or_else(|| VariantDecodeFailure {
             relative_variant_index: None,
@@ -544,7 +540,7 @@ where
     let observation_count = &mut observation_count[stats_variant_range.clone()];
     let sparse_candidate_statistics =
         sparse_candidate_statistics.as_mut().map(|values| &mut values[stats_variant_range]);
-    match sparse_candidate_statistics.as_mut() {
+    match sparse_candidate_statistics {
         Some(sparse_candidate_statistics) => selected_variant_records
             .par_chunks(BGEN_DECODE_TILE_VARIANT_COUNT)
             .zip(output_values.par_chunks_mut(output_tile_value_count))

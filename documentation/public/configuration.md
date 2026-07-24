@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; current Rust frontend TOML reference | main branch as of 2026-06-30 `--config` and effective configs | Public user docs |
+| Pre-release draft; current Rust frontend TOML reference | main branch as of 2026-07-24 `--config` and effective configs | Public user docs |
 
 `g` accepts TOML configuration files grouped by section. The Rust frontend owns
 TOML decoding, default overlay, validation, and effective config serialization.
@@ -262,6 +262,13 @@ caps that value by the static compute chunk width and multiplies it by the
 trait count. Larger values enlarge the compiled approximate-Firth executable.
 If a batch exceeds the aggregate capacity, the run fails after normal batch
 synchronization instead of truncating candidates; increase the value and rerun.
+
+For approximate Firth, `[compute].firth_maximum_iterations` supplies a
+floor-divided half-budget to each solver phase.
+`[compute].firth_pseudo_maximum_iterations` caps only dense pseudo-Firth; with
+the packaged defaults, dense lanes use `min(floor(250 / 2), 50) = 50`
+iterations. Sparse carrier-only lanes use the full half-budget, `125` with the
+packaged defaults, whether they use compact or full-width masked storage.
 
 Decode tiling, scheduler queue depths, Parquet grouping/compression, packed8
 BGEN compatibility validation, and packed8-versus-dosage delivery are internal

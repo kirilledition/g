@@ -256,6 +256,11 @@ class ScalarApproximateFirthSolverParameters:
     line_search_maximum_attempts: jax.Array
     use_cuda_components: bool
 
+    @property
+    def sparse_pseudo_maximum_iterations(self) -> jax.Array:
+        """Return the uncapped half-budget shared with Newton-Raphson."""
+        return self.newton_raphson_maximum_iterations
+
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
