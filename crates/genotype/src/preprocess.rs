@@ -336,6 +336,80 @@ mod tests {
     const COMPLETE_STATISTICS_POLICY: ChunkStatisticsPolicy =
         ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: true };
 
+    fn sparse_candidate_from_exact_summary(
+        dosage_sum: f32,
+        dosage_square_sum: f32,
+        observation_count: i32,
+        sparse_candidate_summary: SparseCandidateSummary,
+        selected_sample_count: usize,
+    ) -> bool {
+        let statistics = build_chunk_stats_from_summaries(
+            vec![dosage_sum],
+            vec![dosage_square_sum],
+            vec![observation_count],
+            Some(vec![sparse_candidate_summary]),
+            selected_sample_count,
+            COMPLETE_STATISTICS_POLICY,
+        )
+        .expect("exact sparse candidate summary should classify");
+        statistics.compute.sparse_candidate_mask.expect("sparse mask was requested")[0]
+    }
+
+    #[test]
+    fn exact_sparse_candidate_boundaries_match_upstream_classification() {
+        let minor_allele_count_49 = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(49, 1),
+            zero_count: 151,
+            homozygous_alternate_count: 0,
+        };
+        let minor_allele_count_50 = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(50, 1),
+            zero_count: 150,
+            homozygous_alternate_count: 0,
+        };
+        let exact_sparse_density = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(40, 1),
+            zero_count: 40,
+            homozygous_alternate_count: 0,
+        };
+        let below_sparse_density = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(41, 1),
+            zero_count: 39,
+            homozygous_alternate_count: 0,
+        };
+        let flipped_minor_allele_count_49 = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(351, 1),
+            zero_count: 0,
+            homozygous_alternate_count: 151,
+        };
+
+        assert!(sparse_candidate_from_exact_summary(49.0, 49.0, 200, minor_allele_count_49, 200));
+        assert!(!sparse_candidate_from_exact_summary(50.0, 50.0, 200, minor_allele_count_50, 200));
+        assert!(sparse_candidate_from_exact_summary(40.0, 40.0, 80, exact_sparse_density, 80));
+        assert!(!sparse_candidate_from_exact_summary(41.0, 41.0, 80, below_sparse_density, 80));
+        assert!(sparse_candidate_from_exact_summary(351.0, 653.0, 200, flipped_minor_allele_count_49, 200,));
+    }
+
+    #[test]
+    fn exact_sparse_candidate_density_uses_observed_nonmissing_denominator() {
+        let statistics = build_chunk_stats_from_summaries(
+            vec![49.0],
+            vec![49.0],
+            vec![99],
+            Some(vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(49, 1),
+                zero_count: 50,
+                homozygous_alternate_count: 0,
+            }]),
+            200,
+            COMPLETE_STATISTICS_POLICY,
+        )
+        .expect("partly observed exact dosage summary should classify");
+
+        assert_eq!(statistics.output.observation_count, vec![99]);
+        assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![true]));
+    }
+
     #[test]
     fn chunk_stats_compute_means_info_and_sparse_candidates() {
         let statistics = build_chunk_stats_from_summaries(
