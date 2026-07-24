@@ -33,6 +33,49 @@ enum BgenSnapshotState {
 
 pub(super) type BgenSnapshotCache = Mutex<Option<Arc<BgenSnapshotPayload>>>;
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_SNAPSHOT_CAPTURE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[must_use]
+struct TestSnapshotCaptureHookGuard;
+
+#[cfg(test)]
+impl Drop for TestSnapshotCaptureHookGuard {
+    fn drop(&mut self) {
+        TEST_SNAPSHOT_CAPTURE_HOOK.with(|hook_slot| {
+            drop(hook_slot.borrow_mut().take());
+        });
+    }
+}
+
+#[cfg(test)]
+fn install_test_snapshot_capture_hook<SnapshotCaptureHook>(
+    snapshot_capture_hook: SnapshotCaptureHook,
+) -> TestSnapshotCaptureHookGuard
+where
+    SnapshotCaptureHook: FnOnce() + 'static,
+{
+    TEST_SNAPSHOT_CAPTURE_HOOK.with(|hook_slot| {
+        assert!(
+            hook_slot.replace(Some(Box::new(snapshot_capture_hook))).is_none(),
+            "a snapshot capture hook is already installed on this test thread",
+        );
+    });
+    TestSnapshotCaptureHookGuard
+}
+
+#[cfg(test)]
+fn run_test_snapshot_capture_hook() {
+    let snapshot_capture_hook = TEST_SNAPSHOT_CAPTURE_HOOK.with(|hook_slot| hook_slot.borrow_mut().take());
+    if let Some(snapshot_capture_hook) = snapshot_capture_hook {
+        snapshot_capture_hook();
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct BgenSnapshotPayload {
     pub(super) identity: BgenSourceIdentity,
@@ -337,6 +380,8 @@ impl BgenSource {
         let mut snapshot_file = self.file.try_clone()?;
         snapshot_file.seek(SeekFrom::Start(0))?;
         snapshot_file.take(self.length).read_to_end(&mut snapshot)?;
+        #[cfg(test)]
+        run_test_snapshot_capture_hook();
         if snapshot.len() != snapshot_length {
             return Err(BgenError::Io(std::io::Error::new(
                 ErrorKind::UnexpectedEof,
@@ -822,14 +867,62 @@ mod tests {
     use std::fs;
     use std::fs::OpenOptions;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    const TEST_COORDINATION_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn temporary_source_path(label: &str) -> PathBuf {
         let timestamp =
             SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after unix epoch").as_nanos();
         std::env::temp_dir().join(format!("g-bgen-source-{label}-{}-{timestamp}.bgen", std::process::id()))
+    }
+
+    #[test]
+    fn snapshot_capture_rejects_concurrent_truncation_with_isolated_cache() {
+        let path = temporary_source_path("concurrent-snapshot-truncation");
+        fs::write(&path, vec![7_u8; 4096]).expect("snapshot source should be written");
+        let snapshot_cache = new_test_snapshot_cache();
+        let (snapshot_read_sender, snapshot_read_receiver) = mpsc::sync_channel(1);
+        let (truncation_complete_sender, truncation_complete_receiver) = mpsc::sync_channel(1);
+        let truncation_path = path.clone();
+        let truncation_handle = thread::spawn(move || {
+            snapshot_read_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("snapshot capture should reach its post-read hook");
+            let source_file =
+                OpenOptions::new().write(true).open(&truncation_path).expect("snapshot source should reopen");
+            source_file.set_len(0).expect("snapshot source should truncate");
+            source_file.sync_all().expect("snapshot truncation should reach the filesystem");
+            truncation_complete_sender.send(()).expect("snapshot truncation completion should be observed");
+        });
+
+        let snapshot_capture_hook_guard = install_test_snapshot_capture_hook(move || {
+            snapshot_read_sender.send(()).expect("snapshot post-read hook should release the mutation thread");
+            truncation_complete_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("snapshot truncation should complete before identity validation");
+        });
+        let open_result = BgenSource::open_with_test_snapshot_cache(&path, snapshot_cache);
+        drop(snapshot_capture_hook_guard);
+        truncation_handle.join().expect("snapshot truncation thread should finish");
+        let error = open_result.expect_err("snapshot capture must reject concurrent truncation");
+
+        match error {
+            BgenError::InvalidFormat(message) => {
+                assert_eq!(message, "BGEN source changed while its immutable snapshot was being captured.");
+            }
+            other => panic!("expected a snapshot source-identity error, observed {other:?}"),
+        }
+        assert!(
+            lock_snapshot_cache(snapshot_cache).is_none(),
+            "failed snapshot capture must not publish a cache entry"
+        );
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

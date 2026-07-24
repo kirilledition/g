@@ -46,6 +46,49 @@ pub struct BgenReadSession<'reader> {
     pub(super) compressed_packed8_state: OnceLock<super::raw_deflate::CompressedPacked8SessionState>,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_DELIVERY_SOURCE_VALIDATION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[must_use]
+struct TestDeliverySourceValidationHookGuard;
+
+#[cfg(test)]
+impl Drop for TestDeliverySourceValidationHookGuard {
+    fn drop(&mut self) {
+        TEST_DELIVERY_SOURCE_VALIDATION_HOOK.with(|hook_slot| {
+            drop(hook_slot.borrow_mut().take());
+        });
+    }
+}
+
+#[cfg(test)]
+fn install_test_delivery_source_validation_hook<ValidationHook>(
+    validation_hook: ValidationHook,
+) -> TestDeliverySourceValidationHookGuard
+where
+    ValidationHook: FnOnce() + 'static,
+{
+    TEST_DELIVERY_SOURCE_VALIDATION_HOOK.with(|hook_slot| {
+        assert!(
+            hook_slot.replace(Some(Box::new(validation_hook))).is_none(),
+            "a delivery source validation hook is already installed on this test thread",
+        );
+    });
+    TestDeliverySourceValidationHookGuard
+}
+
+#[cfg(test)]
+fn run_test_delivery_source_validation_hook() {
+    let validation_hook = TEST_DELIVERY_SOURCE_VALIDATION_HOOK.with(|hook_slot| hook_slot.borrow_mut().take());
+    if let Some(validation_hook) = validation_hook {
+        validation_hook();
+    }
+}
+
 impl BgenReaderCore {
     /// Open and index a Layout 2 BGEN source.
     ///
@@ -385,6 +428,8 @@ impl BgenReaderCore {
     }
 
     pub(super) fn ensure_delivery_source_unchanged(&self, message: &'static str) -> Result<(), BgenError> {
+        #[cfg(test)]
+        run_test_delivery_source_validation_hook();
         if self.source.snapshot_bytes().is_some() {
             return Ok(());
         }
@@ -517,13 +562,16 @@ mod tests {
     use std::fs::{self, File, FileTimes, OpenOptions};
     use std::io::{Seek, SeekFrom, Write};
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::{Arc, mpsc};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::*;
     use crate::common::{ChunkStatisticsPolicy, GenotypeBatchPayload, OwnedGenotypeBuffer};
 
     const COMPLETE_STATISTICS_POLICY: ChunkStatisticsPolicy =
         ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: true };
+    const TEST_COORDINATION_TIMEOUT: Duration = Duration::from_secs(10);
 
     fn temporary_bgen_path(label: &str) -> PathBuf {
         let timestamp =
@@ -1090,29 +1138,49 @@ mod tests {
     }
 
     #[test]
-    fn positioned_batch_rejects_same_length_in_place_open_descriptor_mutation() {
+    fn positioned_batch_rejects_concurrent_same_length_mutation_after_read() {
         let path = temporary_bgen_path("positioned-post-read-in-place-mutation");
         write_positioned_single_variant_bgen(&path);
         let source_length = fs::metadata(&path).expect("positioned source metadata should resolve").len();
         let reader = BgenReaderCore::open(&path).expect("positioned BGEN reader should open");
+        assert!(reader.source.snapshot_bytes().is_none(), "positioned mutation test must bypass the snapshot cache");
         let session = reader.read_session(&[0, 1, 2]).expect("positioned read session should build");
+        let (post_read_sender, post_read_receiver) = mpsc::sync_channel(1);
+        let (mutation_complete_sender, mutation_complete_receiver) = mpsc::sync_channel(1);
+        let mutation_path = path.clone();
+        let mutation_handle = thread::spawn(move || {
+            post_read_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("positioned decode should reach post-read validation");
+            let mut source_file =
+                OpenOptions::new().write(true).open(&mutation_path).expect("positioned source should reopen");
+            source_file.seek(SeekFrom::End(-1)).expect("final probability byte should be seekable");
+            source_file.write_all(&[0_u8]).expect("final probability byte should be overwritten");
+            source_file
+                .set_times(FileTimes::new().set_modified(UNIX_EPOCH))
+                .expect("in-place mutation should force a distinct modification timestamp");
+            source_file.sync_all().expect("in-place positioned mutation should reach the filesystem");
+            let mutated_source_length =
+                fs::metadata(&mutation_path).expect("mutated positioned metadata should resolve").len();
+            mutation_complete_sender.send(()).expect("positioned mutation completion should be observed");
+            mutated_source_length
+        });
+        let validation_hook_guard = install_test_delivery_source_validation_hook(move || {
+            post_read_sender.send(()).expect("post-read hook should release the mutation thread");
+            mutation_complete_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("positioned mutation should complete before identity validation");
+        });
 
-        let mut source_file = OpenOptions::new().write(true).open(&path).expect("positioned source should reopen");
-        source_file.seek(SeekFrom::End(-1)).expect("final probability byte should be seekable");
-        source_file.write_all(&[0_u8]).expect("final probability byte should be overwritten");
-        source_file
-            .set_times(FileTimes::new().set_modified(UNIX_EPOCH))
-            .expect("in-place mutation should force a distinct modification timestamp");
-        source_file.sync_all().expect("in-place positioned mutation should reach the filesystem");
-        assert_eq!(fs::metadata(&path).expect("mutated positioned metadata should resolve").len(), source_length,);
+        let decode_result = session.decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY);
+        drop(validation_hook_guard);
+        let mutated_source_length = mutation_handle.join().expect("positioned mutation thread should finish");
+        let error = decode_result.expect_err("post-read identity validation must reject opened-descriptor mutation");
+        assert_eq!(mutated_source_length, source_length);
         assert!(
             !reader.source.is_open_file_unchanged().expect("opened positioned descriptor should remain statable"),
             "same-length in-place mutation must change opened-descriptor identity metadata",
         );
-
-        let error = session
-            .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
-            .expect_err("post-read identity validation must reject opened-descriptor mutation");
         match error {
             BgenError::InvalidFormat(message) => {
                 assert_eq!(message, "BGEN source changed while a genotype batch was being read.");
@@ -1124,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn positioned_session_finish_rejects_replacement_after_final_successful_batch() {
+    fn positioned_session_finish_rejects_concurrent_replacement_after_final_batch() {
         let path = temporary_bgen_path("positioned-finish-replacement");
         let replacement_path = temporary_bgen_path("positioned-finish-replacement-new");
         write_positioned_single_variant_bgen(&path);
@@ -1134,14 +1202,34 @@ mod tests {
             fs::metadata(&replacement_path).expect("replacement positioned metadata should resolve").len(),
         );
         let reader = BgenReaderCore::open(&path).expect("positioned BGEN reader should open");
+        assert!(reader.source.snapshot_bytes().is_none(), "positioned finish test must bypass the snapshot cache");
         let session = reader.read_session(&[0, 1, 2]).expect("positioned read session should build");
         session
             .decode_variant_major_batch(0, 1, 1, false, COMPLETE_STATISTICS_POLICY)
             .expect("final positioned batch should succeed before replacement");
-        fs::rename(&replacement_path, &path)
-            .expect("same-length positioned replacement should atomically replace the configured path");
+        let (finish_sender, finish_receiver) = mpsc::sync_channel(1);
+        let (replacement_complete_sender, replacement_complete_receiver) = mpsc::sync_channel(1);
+        let replaced_path = path.clone();
+        let replacement_source_path = replacement_path.clone();
+        let replacement_handle = thread::spawn(move || {
+            finish_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("positioned session should reach finish validation");
+            fs::rename(&replacement_source_path, &replaced_path)
+                .expect("same-length positioned replacement should atomically replace the configured path");
+            replacement_complete_sender.send(()).expect("positioned replacement completion should be observed");
+        });
+        let validation_hook_guard = install_test_delivery_source_validation_hook(move || {
+            finish_sender.send(()).expect("finish hook should release the replacement thread");
+            replacement_complete_receiver
+                .recv_timeout(TEST_COORDINATION_TIMEOUT)
+                .expect("positioned replacement should complete before finish validation");
+        });
 
-        let error = session.finish().expect_err("session finish must reject configured-path replacement");
+        let finish_result = session.finish();
+        drop(validation_hook_guard);
+        replacement_handle.join().expect("positioned replacement thread should finish");
+        let error = finish_result.expect_err("session finish must reject configured-path replacement");
         match error {
             BgenError::InvalidFormat(message) => {
                 assert_eq!(message, "BGEN source changed while genotype delivery was in progress.");
