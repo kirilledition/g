@@ -33,6 +33,8 @@ immutable lineage authority and `attempts/` holds attempt data:
     terminal-finalizations/
   attempts/
     <attempt-id>/
+      diagnostics/
+        <owner-claim-id>/
       <phenotype-output-name>/
 ```
 
@@ -239,23 +241,25 @@ uses wider precision.
 
 ## Telemetry And Logs
 
-When telemetry is enabled, run-level logs default under:
+When telemetry is enabled, claim-scoped telemetry is written under:
 
 ```text
-<out>.g/logs/
+<out>.g/attempts/<attempt-id>/diagnostics/<owner-claim-id>/
 ```
 
 Common files:
 
 | File | Written when | Meaning |
 | --- | --- | --- |
-| `events.jsonl` | Progress or profile telemetry is enabled | Lifecycle and profile events. |
-| `profile.summary.json` | Profile telemetry is enabled | Aggregate native stage summary. |
+| `attempts/<attempt>/diagnostics/<owner-claim>/events.jsonl` | Progress or profile telemetry is enabled | Lifecycle and profile events. |
+| `attempts/<attempt>/diagnostics/<owner-claim>/profile.summary.json` | Profile telemetry is enabled | Aggregate native stage summary. |
 | `attempts/<attempt>/<phenotype>/output_stage_timings.json` | Profile telemetry is enabled | Per-phenotype output writer timings persisted before terminal authority. |
 
-Run-level diagnostics use `logs/`; attempt-bound output timings live beside
-their phenotype manifest. The production frontend currently exposes only
-`[diagnostics].telemetry`.
+Diagnostics remain with an attempt only when activation makes that attempt
+authoritative. Failed pre-activation claims and read-only completed resumes
+remove their claim-specific diagnostics after the runtime session closes.
+Attempt-bound output timings live beside their phenotype manifest. The
+production frontend currently exposes only `[diagnostics].telemetry`.
 
-Successful CLI runs print each phenotype run directory and its `parts/`
-Parquet dataset directory.
+Successful CLI runs print one
+`Parquet dataset saved to <absolute-parts-directory>` line per phenotype.

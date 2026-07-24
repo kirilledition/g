@@ -36,13 +36,16 @@ synchronize intentionally and can perturb performance.
 
 ## Paths
 
-When telemetry is enabled, the frontend derives:
+After output ownership is claimed, the frontend derives:
 
 ```text
-<out>.g/logs/events.jsonl
+<out>.g/attempts/<attempt-id>/diagnostics/<owner-claim-id>/events.jsonl
 ```
 
-Profile mode also writes `profile.summary.json` under that directory. Output
+Profile mode also writes `profile.summary.json` in that claim-specific
+diagnostics directory. Failed pre-activation claims and completed read-only
+resumes remove the directory only after timing, telemetry, and logging close;
+an activated writable attempt retains it as attempt-bound diagnostics. Output
 writers write `output_stage_timings.json` under
 `attempts/<attempt>/<phenotype-output-name>/` before terminal authority is
 published. The same native run ID is used by the telemetry stream and profile

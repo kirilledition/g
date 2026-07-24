@@ -2,6 +2,7 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
@@ -24,8 +25,8 @@ use crate::persistence::identifier::{AttemptIdentifier, validate_safe_path_compo
 use crate::persistence::io::{create_directories_durable, sync_nearest_existing_directory};
 use crate::persistence::lineage::{
     AttemptTerminalStatus, LineageGenesisRecord, LineageRecoveryKind, LineageSnapshot, LineageSuccessorRecord,
-    LineageTerminalRecord, OutputLineagePaths, OutputOwnerClaim, PhenotypeLineageContract, TerminalPhenotypeRecord,
-    terminal_record_sha256,
+    LineageTerminalRecord, OutputLineagePaths, OutputOwnerClaim, OutputOwnerConditionalRelease,
+    PhenotypeLineageContract, TerminalPhenotypeRecord, terminal_record_sha256,
 };
 use crate::persistence::model::CanonicalChunkPlan;
 use crate::persistence::receipt::OutputPartReceipt;
@@ -41,15 +42,76 @@ pub struct CompletedOutputRun {
     pub parts_directory: std::path::PathBuf,
 }
 
-/// Idempotent cleanup for claim-owned diagnostics that never became authoritative.
+/// Idempotent post-session cleanup for non-authoritative claim diagnostics.
 #[derive(Clone)]
 pub struct OutputClaimCleanup {
     lineage_paths: OutputLineagePaths,
+    owner_release: OutputOwnerConditionalRelease,
     claim_id: String,
     attempt_id: AttemptIdentifier,
     attempt_was_referenced: bool,
     #[cfg(test)]
     cleanup_pause: Option<Arc<OutputClaimCleanupTestPause>>,
+}
+
+/// Exclusive unpublished-output ownership retained across session teardown.
+#[must_use = "dropping rollback authority leaves the output claim active and requires explicit fencing"]
+pub struct OutputClaimRollback(OutputManager<Claimed>);
+
+impl fmt::Debug for OutputClaimRollback {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("OutputClaimRollback").finish_non_exhaustive()
+    }
+}
+
+impl OutputClaimRollback {
+    /// Remove unpublished claim staging and release output ownership.
+    ///
+    /// Run-scoped diagnostics must be closed before calling this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when staging cleanup or owner release fails.
+    pub fn abort_before_activation(self) -> OutputResult<()> {
+        self.0.abort_before_activation()
+    }
+}
+
+/// Failure while converting an unpublished output claim into active authority.
+#[derive(Debug, thiserror::Error)]
+#[must_use = "deferred activation failures must be inspected and any rollback consumed after diagnostics close"]
+pub enum OutputActivationError {
+    /// Attempt authority was not published and ownership must be rolled back
+    /// after the claim-scoped diagnostics session closes.
+    #[error("{source}")]
+    Unpublished {
+        #[source]
+        source: OutputError,
+        rollback: OutputClaimRollback,
+    },
+    /// Attempt authority was published and failure recovery already ran.
+    #[error(transparent)]
+    Published(#[from] OutputError),
+}
+
+/// Primary activation failure plus optional deferred rollback authority.
+#[must_use = "activation failure parts can carry rollback authority that must be consumed after diagnostics close"]
+pub struct OutputActivationFailureParts {
+    /// Primary activation failure.
+    pub source: OutputError,
+    /// Ownership rollback required after claim-scoped diagnostics close.
+    pub rollback: Option<OutputClaimRollback>,
+}
+
+impl OutputActivationError {
+    /// Separate the primary failure from any deferred ownership rollback.
+    #[must_use]
+    pub fn into_parts(self) -> OutputActivationFailureParts {
+        match self {
+            Self::Unpublished { source, rollback } => OutputActivationFailureParts { source, rollback: Some(rollback) },
+            Self::Published(source) => OutputActivationFailureParts { source, rollback: None },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +174,7 @@ struct OutputManagerCore {
 struct OutputManagerLifecycleState {
     claimed_attempt_was_referenced: bool,
     attempt_authority_published: bool,
+    defer_completed_noop_cleanup: bool,
     terminal: bool,
 }
 
@@ -229,6 +292,7 @@ impl OutputManager<Planned> {
                 lifecycle_state: OutputManagerLifecycleState {
                     claimed_attempt_was_referenced: false,
                     attempt_authority_published: false,
+                    defer_completed_noop_cleanup: false,
                     terminal: false,
                 },
             }),
@@ -362,28 +426,7 @@ impl OutputManager<Planned> {
         collect_stage_timings: bool,
     ) -> OutputResult<OutputManager<Active>> {
         let claimed_manager = self.claim(planned_chunk_ranges, collect_stage_timings)?;
-        let cleanup = match claimed_manager.cleanup_handle() {
-            Ok(cleanup) => cleanup,
-            Err(error) => {
-                return match claimed_manager.abort_before_activation() {
-                    Ok(()) => Err(error),
-                    Err(cleanup_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
-                        primary: Box::new(error),
-                        release: Box::new(cleanup_error),
-                    }),
-                };
-            }
-        };
-        match claimed_manager.activate(current_header_inputs) {
-            Ok(active_manager) => Ok(active_manager),
-            Err(error) => match cleanup.cleanup_if_unpublished() {
-                Ok(()) => Err(error),
-                Err(cleanup_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
-                    primary: Box::new(error),
-                    release: Box::new(cleanup_error),
-                }),
-            },
-        }
+        claimed_manager.activate(current_header_inputs)
     }
 }
 
@@ -418,6 +461,7 @@ impl OutputManager<Claimed> {
             .ok_or_else(|| OutputError::Runtime("Claimed output has no owner claim.".to_string()))?;
         Ok(OutputClaimCleanup {
             lineage_paths: core.lineage_paths.clone(),
+            owner_release: owner_claim.conditional_release(),
             claim_id: owner_claim.claim_id().to_string(),
             attempt_id: core.claimed_attempt_id()?,
             attempt_was_referenced: core.lifecycle_state.claimed_attempt_was_referenced,
@@ -433,14 +477,45 @@ impl OutputManager<Claimed> {
     /// Returns an error when header coverage, lineage compatibility, durable
     /// recovery, attempt publication, or writer creation fails.
     pub fn activate(
-        mut self,
+        self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
     ) -> OutputResult<OutputManager<Active>> {
+        self.activate_with_cleanup_policy(current_header_inputs, false).map_err(resolve_activation_error)
+    }
+
+    /// Publish attempt authority while deferring completed-noop cleanup until
+    /// the caller closes claim-scoped diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when header coverage, lineage compatibility, durable
+    /// recovery, attempt publication, or writer creation fails. The caller must
+    /// retain any unpublished rollback and consume it only after claim-scoped
+    /// diagnostics close. Dropping it deliberately leaves ownership active so
+    /// recovery fails closed until an exact external fence is supplied.
+    pub fn activate_with_deferred_completed_noop_cleanup(
+        self,
+        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
+    ) -> Result<OutputManager<Active>, OutputActivationError> {
+        self.activate_with_cleanup_policy(current_header_inputs, true)
+    }
+
+    fn activate_with_cleanup_policy(
+        mut self,
+        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
+        defer_completed_noop_cleanup: bool,
+    ) -> Result<OutputManager<Active>, OutputActivationError> {
         let mut core = self.take_core()?;
-        let canonical_chunk_plan = core
-            .canonical_chunk_plan
-            .clone()
-            .ok_or_else(|| OutputError::Runtime("Claimed output has no canonical chunk plan.".to_string()))?;
+        core.lifecycle_state.defer_completed_noop_cleanup = defer_completed_noop_cleanup;
+        let canonical_chunk_plan = match core.canonical_chunk_plan.clone() {
+            Some(canonical_chunk_plan) => canonical_chunk_plan,
+            None => {
+                return Err(unpublished_activation_error(
+                    core,
+                    OutputError::Runtime("Claimed output has no canonical chunk plan.".to_string()),
+                ));
+            }
+        };
         let collect_stage_timings = core.collect_stage_timings;
         let phenotype_contracts = match (|| {
             let headers = build_headers(&core, current_header_inputs)?;
@@ -452,7 +527,7 @@ impl OutputManager<Claimed> {
             Ok(phenotype_contracts)
         })() {
             Ok(phenotype_contracts) => phenotype_contracts,
-            Err(error) => return Err(core.release_after_unmutated_error(error)),
+            Err(error) => return Err(unpublished_activation_error(core, error)),
         };
         #[cfg(test)]
         match core
@@ -462,11 +537,11 @@ impl OutputManager<Claimed> {
             .and_then(inject_owner_claim_release_conflict_at_test_point)
         {
             Ok(None) => {}
-            Ok(Some(error)) | Err(error) => return Err(core.release_after_unmutated_error(error)),
+            Ok(Some(error)) | Err(error) => return Err(unpublished_activation_error(core, error)),
         }
         #[cfg(test)]
         if let Err(error) = fail_initialization_at_test_point("after_owner_claim") {
-            return Err(core.release_after_unmutated_error(error));
+            return Err(unpublished_activation_error(core, error));
         }
         let initialization_result = match core.lineage_snapshot.clone() {
             None => {
@@ -481,12 +556,17 @@ impl OutputManager<Claimed> {
             ),
         };
         if let Err(error) = initialization_result {
+            if !core.lifecycle_state.attempt_authority_published {
+                return Err(unpublished_activation_error(core, error));
+            }
             return match core.resolve_initialization_error(&error) {
-                Ok(()) => Err(error),
-                Err(recovery_error) => Err(OutputError::OutputOperationAndOwnerClaimRelease {
-                    primary: Box::new(error),
-                    release: Box::new(recovery_error),
-                }),
+                Ok(()) => Err(OutputActivationError::Published(error)),
+                Err(recovery_error) => {
+                    Err(OutputActivationError::Published(OutputError::OutputOperationAndOwnerClaimRelease {
+                        primary: Box::new(error),
+                        release: Box::new(recovery_error),
+                    }))
+                }
             };
         }
         Ok(OutputManager { core: Some(core), state: PhantomData })
@@ -504,6 +584,25 @@ impl OutputManager<Claimed> {
         let cleanup_result = core.cleanup_claim_staging();
         let release_result = core.release_owner_claim();
         combine_terminal_cleanup_result(cleanup_result, release_result, "Pre-activation output staging cleanup failed")
+    }
+}
+
+fn unpublished_activation_error(core: OutputManagerCore, source: OutputError) -> OutputActivationError {
+    let manager = OutputManager { core: Some(core), state: PhantomData };
+    OutputActivationError::Unpublished { source, rollback: OutputClaimRollback(manager) }
+}
+
+fn resolve_activation_error(error: OutputActivationError) -> OutputError {
+    let OutputActivationFailureParts { source, rollback } = error.into_parts();
+    let Some(rollback) = rollback else {
+        return source;
+    };
+    match rollback.abort_before_activation() {
+        Ok(()) => source,
+        Err(rollback_error) => OutputError::OutputOperationAndOwnerClaimRelease {
+            primary: Box::new(source),
+            release: Box::new(rollback_error),
+        },
     }
 }
 
@@ -530,10 +629,8 @@ impl OutputClaimCleanup {
     ///
     /// Returns an error for mismatched staging metadata or failed durable cleanup.
     pub fn cleanup_if_unpublished(self) -> OutputResult<()> {
-        let Some(staged_attempt_id) = self.lineage_paths.owner_staging_attempt(&self.claim_id)? else {
-            return self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id);
-        };
-        if staged_attempt_id != self.attempt_id {
+        let staged_attempt_id = self.lineage_paths.owner_staging_attempt(&self.claim_id)?;
+        if staged_attempt_id.as_ref().is_some_and(|attempt_id| attempt_id != &self.attempt_id) {
             return Err(OutputError::ConcurrentLineageUpdate {
                 record_path: self
                     .lineage_paths
@@ -541,6 +638,9 @@ impl OutputClaimCleanup {
                     .join("owner-staging")
                     .join(format!("{}.json", self.claim_id)),
             });
+        }
+        if staged_attempt_id.is_none() && !self.attempt_was_referenced {
+            return self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id);
         }
         #[cfg(test)]
         if let Some(cleanup_pause) = self.cleanup_pause.as_ref() {
@@ -582,6 +682,9 @@ impl OutputClaimCleanup {
                 &self.lineage_paths.attempts_directory
             };
             sync_nearest_existing_directory(synchronization_directory)?;
+        }
+        if self.attempt_was_referenced {
+            self.owner_release.release_if_current()?;
         }
         self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id)
     }
@@ -660,8 +763,7 @@ impl OutputManager<Active> {
         }));
         if let Err(error) = close_result {
             let recovery_result = if completed_noop {
-                core.lifecycle_state.terminal = true;
-                core.release_owner_claim()
+                core.finalize_completed_noop_claim()
             } else {
                 let reason = format!("output completion failed: {error}");
                 core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason))
@@ -692,13 +794,11 @@ impl OutputManager<Active> {
             );
         }
         if core.active_attempt()?.completed_noop {
-            core.lifecycle_state.terminal = true;
             let error =
                 OutputError::InvalidInput("A verified completed output lineage cannot be interrupted.".to_string());
-            let release_result = core.release_owner_claim();
             return return_primary_after_recovery(
                 error,
-                release_result,
+                core.finalize_completed_noop_claim(),
                 "Completed no-op interruption rejection could not release ownership",
             );
         }
@@ -735,12 +835,10 @@ impl OutputManager<Active> {
             );
         }
         if core.active_attempt()?.completed_noop {
-            core.lifecycle_state.terminal = true;
             let error = OutputError::InvalidInput("A verified completed output lineage cannot be aborted.".to_string());
-            let release_result = core.release_owner_claim();
             return return_primary_after_recovery(
                 error,
-                release_result,
+                core.finalize_completed_noop_claim(),
                 "Completed no-op abort rejection could not release ownership",
             );
         }
@@ -769,11 +867,9 @@ impl OutputManager<Covered> {
         let completed_noop = core.active_attempt()?.completed_noop;
         if completed_noop {
             let completion_result = core.reverify_completed_noop().and_then(|()| core.completed_outputs());
-            core.lifecycle_state.terminal = true;
-            let release_result = core.release_owner_claim();
             return combine_terminal_cleanup_result(
                 completion_result,
-                release_result,
+                core.finalize_completed_noop_claim(),
                 "Completed output verification failed",
             );
         }
@@ -1109,8 +1205,7 @@ impl OutputManagerCore {
 
     fn resolve_rejected_terminal_request(&mut self, rejection_reason: &str) -> OutputResult<()> {
         if self.active_attempt()?.completed_noop {
-            self.lifecycle_state.terminal = true;
-            return self.release_owner_claim();
+            return self.finalize_completed_noop_claim();
         }
         let abort_result = self.abort_writers();
         let failure_reason = abort_result.as_ref().err().map_or_else(
@@ -1134,6 +1229,15 @@ impl OutputManagerCore {
             write_effective_config(paths, &self.effective_config_toml)?;
         }
         Ok(())
+    }
+
+    fn finalize_completed_noop_claim(&mut self) -> OutputResult<()> {
+        self.lifecycle_state.terminal = true;
+        if self.lifecycle_state.defer_completed_noop_cleanup {
+            return Ok(());
+        }
+        self.cleanup_claim_staging()?;
+        self.release_owner_claim()
     }
 
     fn start_writers(&mut self) -> OutputResult<()> {
@@ -1705,7 +1809,6 @@ fn initialize_existing_lineage(
             verified_runs,
         )?;
         core.install_prepared_attempt(prepared_attempt, canonical_chunk_plan.clone(), true, collect_stage_timings)?;
-        core.retire_claim_staging_intent()?;
         core.lineage_snapshot = Some(snapshot);
         return Ok(());
     }
