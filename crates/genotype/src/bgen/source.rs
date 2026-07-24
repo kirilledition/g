@@ -1,47 +1,239 @@
 use std::fmt;
 use std::fs::File;
-use std::io::{ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
+use std::io::{ErrorKind, Read, Result as IoResult};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use g_genotype_contracts::{BgenSourceIdentity, VariantMetadataStore};
+use g_genotype_contracts::{
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, BgenSnapshotResolution, BgenSourceIdentity,
+    BgenSourceProvenance, VariantMetadataStore,
+};
+use sha2::{Digest, Sha256};
 
 use super::BgenError;
 use super::format::CompressionType;
 use super::metadata::VariantRecord;
+use super::request::{BgenContentSelector, BgenOpenRequest};
 
 const INDEX_METADATA_BUFFER_BYTE_COUNT: usize = 64;
 const SMALL_PAYLOAD_MAXIMUM_BYTE_COUNT: usize = 4 * 1024;
 pub(super) const MAXIMUM_SOURCE_WINDOW_BYTE_COUNT: usize = 8 * 1024 * 1024;
 pub(crate) const MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT: u64 = 256 * 1024 * 1024;
+const SNAPSHOT_CACHE_DOMAIN_REVISION: i64 = 0;
 
 pub(super) struct BgenSource {
-    file: File,
-    identity: BgenSourceIdentity,
+    backing: BgenSourceBacking,
     length: u64,
     snapshot: BgenSnapshotState,
-    snapshot_cache_hit: bool,
-    snapshot_cache: &'static BgenSnapshotCache,
+    content_evidence: BgenContentEvidence,
+    provenance: BgenSourceProvenance,
+}
+
+enum BgenSourceBacking {
+    OwnedSnapshot,
+    Positioned(File),
 }
 
 enum BgenSnapshotState {
     None,
-    Pending(Vec<u8>),
+    Pending(BgenPendingSnapshot),
     Parsed(Arc<BgenSnapshotPayload>),
 }
 
 pub(super) type BgenSnapshotCache = Mutex<Option<Arc<BgenSnapshotPayload>>>;
 
+struct BgenPendingSnapshot {
+    bytes: Vec<u8>,
+    content_fingerprint: BgenContentFingerprint,
+    publication: BgenSnapshotPublication,
+}
+
+struct CapturedBgenSnapshot {
+    bytes: Vec<u8>,
+    content_fingerprint: BgenContentFingerprint,
+}
+
+struct CapturedBgenSourceDescriptor {
+    source_identity: BgenSourceIdentity,
+    link_count: u64,
+}
+
+enum BgenSnapshotPublication {
+    Unselected,
+    Selected(&'static BgenSnapshotCache),
+}
+
+#[derive(Clone, Copy)]
+enum BgenContentSelection {
+    Unselected,
+    Selected { content_selector: BgenContentSelector, snapshot_cache: &'static BgenSnapshotCache },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BgenSnapshotCacheKey {
+    domain_revision: i64,
+    content_fingerprint: BgenContentFingerprint,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BgenSnapshotCacheLookup {
+    domain_revision: i64,
+    content_sha256: BgenContentSha256,
+    expected_byte_count: Option<u64>,
+}
+
 #[cfg(test)]
 std::thread_local! {
+    static TEST_LOCATOR_ACQUISITION_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
     static TEST_SNAPSHOT_CAPTURE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_SNAPSHOT_CACHE_OPERATION_COUNTS:
+        std::cell::RefCell<Option<Arc<TestSnapshotCacheOperationCounts>>> =
+            const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum TestSnapshotCacheOperation {
+    Resolve,
+    Initialize,
+    Consult,
+    Lock,
+    Publish,
+    Evict,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct TestSnapshotCacheOperationCounts {
+    resolution: std::sync::atomic::AtomicUsize,
+    initialization: std::sync::atomic::AtomicUsize,
+    consultation: std::sync::atomic::AtomicUsize,
+    locks: std::sync::atomic::AtomicUsize,
+    publications: std::sync::atomic::AtomicUsize,
+    evictions: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default, Eq, PartialEq)]
+pub(super) struct TestSnapshotCacheOperationCountSnapshot {
+    pub(super) resolutions: usize,
+    pub(super) initializations: usize,
+    pub(super) consultations: usize,
+    pub(super) locks: usize,
+    pub(super) publications: usize,
+    pub(super) evictions: usize,
+}
+
+#[cfg(test)]
+impl TestSnapshotCacheOperationCounts {
+    pub(super) fn observed_counts(&self) -> TestSnapshotCacheOperationCountSnapshot {
+        TestSnapshotCacheOperationCountSnapshot {
+            resolutions: self.resolution.load(std::sync::atomic::Ordering::Relaxed),
+            initializations: self.initialization.load(std::sync::atomic::Ordering::Relaxed),
+            consultations: self.consultation.load(std::sync::atomic::Ordering::Relaxed),
+            locks: self.locks.load(std::sync::atomic::Ordering::Relaxed),
+            publications: self.publications.load(std::sync::atomic::Ordering::Relaxed),
+            evictions: self.evictions.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
 }
 
 #[cfg(test)]
 #[must_use]
-struct TestSnapshotCaptureHookGuard;
+pub(super) struct TestSnapshotCacheOperationObservation {
+    operation_counts: Arc<TestSnapshotCacheOperationCounts>,
+}
+
+#[cfg(test)]
+impl TestSnapshotCacheOperationObservation {
+    pub(super) fn operation_counts(&self) -> &TestSnapshotCacheOperationCounts {
+        &self.operation_counts
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestSnapshotCacheOperationObservation {
+    fn drop(&mut self) {
+        TEST_SNAPSHOT_CACHE_OPERATION_COUNTS.with(|counts_slot| {
+            drop(counts_slot.borrow_mut().take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_test_snapshot_cache_operations() -> TestSnapshotCacheOperationObservation {
+    let operation_counts = Arc::new(TestSnapshotCacheOperationCounts::default());
+    TEST_SNAPSHOT_CACHE_OPERATION_COUNTS.with(|counts_slot| {
+        assert!(
+            counts_slot.replace(Some(Arc::clone(&operation_counts))).is_none(),
+            "snapshot-cache operation counts are already installed on this test thread",
+        );
+    });
+    TestSnapshotCacheOperationObservation { operation_counts }
+}
+
+#[cfg(test)]
+fn record_test_snapshot_cache_operation(operation: TestSnapshotCacheOperation) {
+    TEST_SNAPSHOT_CACHE_OPERATION_COUNTS.with(|counts_slot| {
+        let counts_slot = counts_slot.borrow();
+        let Some(operation_counts) = counts_slot.as_ref() else {
+            return;
+        };
+        let counter = match operation {
+            TestSnapshotCacheOperation::Resolve => &operation_counts.resolution,
+            TestSnapshotCacheOperation::Initialize => &operation_counts.initialization,
+            TestSnapshotCacheOperation::Consult => &operation_counts.consultation,
+            TestSnapshotCacheOperation::Lock => &operation_counts.locks,
+            TestSnapshotCacheOperation::Publish => &operation_counts.publications,
+            TestSnapshotCacheOperation::Evict => &operation_counts.evictions,
+        };
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    });
+}
+
+#[cfg(test)]
+#[must_use]
+pub(super) struct TestLocatorAcquisitionHookGuard;
+
+#[cfg(test)]
+impl Drop for TestLocatorAcquisitionHookGuard {
+    fn drop(&mut self) {
+        TEST_LOCATOR_ACQUISITION_HOOK.with(|hook_slot| {
+            drop(hook_slot.borrow_mut().take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn install_test_locator_acquisition_hook<LocatorAcquisitionHook>(
+    locator_acquisition_hook: LocatorAcquisitionHook,
+) -> TestLocatorAcquisitionHookGuard
+where
+    LocatorAcquisitionHook: FnOnce() + 'static,
+{
+    TEST_LOCATOR_ACQUISITION_HOOK.with(|hook_slot| {
+        assert!(
+            hook_slot.replace(Some(Box::new(locator_acquisition_hook))).is_none(),
+            "a locator-acquisition hook is already installed on this test thread",
+        );
+    });
+    TestLocatorAcquisitionHookGuard
+}
+
+#[cfg(test)]
+fn run_test_locator_acquisition_hook() {
+    let locator_acquisition_hook = TEST_LOCATOR_ACQUISITION_HOOK.with(|hook_slot| hook_slot.borrow_mut().take());
+    if let Some(locator_acquisition_hook) = locator_acquisition_hook {
+        locator_acquisition_hook();
+    }
+}
+
+#[cfg(test)]
+#[must_use]
+pub(super) struct TestSnapshotCaptureHookGuard;
 
 #[cfg(test)]
 impl Drop for TestSnapshotCaptureHookGuard {
@@ -53,7 +245,7 @@ impl Drop for TestSnapshotCaptureHookGuard {
 }
 
 #[cfg(test)]
-fn install_test_snapshot_capture_hook<SnapshotCaptureHook>(
+pub(super) fn install_test_snapshot_capture_hook<SnapshotCaptureHook>(
     snapshot_capture_hook: SnapshotCaptureHook,
 ) -> TestSnapshotCaptureHookGuard
 where
@@ -78,7 +270,9 @@ fn run_test_snapshot_capture_hook() {
 
 #[derive(Debug)]
 pub(super) struct BgenSnapshotPayload {
-    pub(super) identity: BgenSourceIdentity,
+    pub(super) captured_source_identity: BgenSourceIdentity,
+    pub(super) content_fingerprint: BgenContentFingerprint,
+    snapshot_cache_key: BgenSnapshotCacheKey,
     pub(super) bytes: Vec<u8>,
     pub(super) sample_count: usize,
     pub(super) compression_type: CompressionType,
@@ -119,11 +313,12 @@ impl fmt::Debug for BgenSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BgenSource")
-            .field("identity", &self.identity)
+            .field("content_evidence", &self.content_evidence)
+            .field("provenance", &self.provenance)
             .field("length", &self.length)
+            .field("positioned", &matches!(&self.backing, BgenSourceBacking::Positioned(_)))
             .field("snapshot_byte_count", &self.snapshot_bytes().map(<[u8]>::len))
             .field("snapshot_is_parsed", &matches!(&self.snapshot, BgenSnapshotState::Parsed(_)))
-            .field("snapshot_cache_hit", &self.snapshot_cache_hit)
             .finish_non_exhaustive()
     }
 }
@@ -139,51 +334,147 @@ impl fmt::Debug for BgenByteWindow<'_> {
 }
 
 impl BgenSource {
+    #[cfg(test)]
     pub(super) fn open(bgen_path: &Path) -> Result<Self, BgenError> {
-        Self::open_with_snapshot_limit(bgen_path, MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT)
+        Self::open_request(BgenOpenRequest { locator: bgen_path, content_selector: None })
     }
 
+    pub(super) fn open_request(request: BgenOpenRequest<'_>) -> Result<Self, BgenError> {
+        let content_selection = match request.content_selector {
+            None => BgenContentSelection::Unselected,
+            Some(content_selector) => {
+                BgenContentSelection::Selected { content_selector, snapshot_cache: bgen_snapshot_cache() }
+            }
+        };
+        Self::open_locator(request.locator, MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT, content_selection)
+    }
+
+    #[cfg(feature = "benchmark-positioned-source")]
     pub(super) fn open_with_snapshot_limit(
         bgen_path: &Path,
         maximum_snapshot_byte_count: u64,
     ) -> Result<Self, BgenError> {
-        Self::open_with_snapshot_limit_and_cache(bgen_path, maximum_snapshot_byte_count, bgen_snapshot_cache())
+        Self::open_locator(bgen_path, maximum_snapshot_byte_count, BgenContentSelection::Unselected)
     }
 
-    fn open_with_snapshot_limit_and_cache(
-        bgen_path: &Path,
+    fn open_locator(
+        locator: &Path,
         maximum_snapshot_byte_count: u64,
-        snapshot_cache: &'static BgenSnapshotCache,
+        content_selection: BgenContentSelection,
     ) -> Result<Self, BgenError> {
+        if let BgenContentSelection::Selected { content_selector, snapshot_cache } = content_selection
+            && let Some(cached_payload) = selected_cached_payload(content_selector, snapshot_cache)?
+        {
+            let content_fingerprint = cached_payload.content_fingerprint;
+            let captured_source_identity = cached_payload.captured_source_identity.clone();
+            return Ok(Self {
+                backing: BgenSourceBacking::OwnedSnapshot,
+                length: content_fingerprint.byte_count,
+                snapshot: BgenSnapshotState::Parsed(cached_payload),
+                content_evidence: BgenContentEvidence::OwnedSnapshot(content_fingerprint),
+                provenance: BgenSourceProvenance {
+                    requested_path: locator.to_path_buf(),
+                    captured_source_identity,
+                    resolution: BgenSnapshotResolution::ProcessSnapshotCache,
+                },
+            });
+        }
+
+        #[cfg(test)]
+        run_test_locator_acquisition_hook();
         let configured_path =
-            if bgen_path.is_absolute() { bgen_path.to_path_buf() } else { std::env::current_dir()?.join(bgen_path) };
+            if locator.is_absolute() { locator.to_path_buf() } else { std::env::current_dir()?.join(locator) };
         let file = File::open(&configured_path)?;
-        let identity = capture_bgen_source_identity(&configured_path, &file)?;
-        let length = identity.file_size;
-        let mut source = Self {
-            file,
-            identity,
+        let captured_descriptor = capture_bgen_source_descriptor(&configured_path, &file)?;
+        let length = captured_descriptor.source_identity.file_size;
+        if let BgenContentSelection::Selected { content_selector, .. } = content_selection {
+            validate_selected_byte_count(content_selector, length)?;
+            if maximum_snapshot_byte_count == 0 || length > maximum_snapshot_byte_count {
+                return Err(BgenError::ContentSelectionRequiresOwnedSnapshot {
+                    source_byte_count: length,
+                    maximum_snapshot_byte_count,
+                });
+            }
+        }
+
+        let requested_path = locator.to_path_buf();
+        if maximum_snapshot_byte_count != 0 && length <= maximum_snapshot_byte_count {
+            let selected_content_sha256 = match content_selection {
+                BgenContentSelection::Unselected => None,
+                BgenContentSelection::Selected { content_selector, .. } => Some(content_selector.content_sha256),
+            };
+            let captured_snapshot = capture_owned_snapshot(file, &captured_descriptor, selected_content_sha256)?;
+            let content_fingerprint = captured_snapshot.content_fingerprint;
+            if let BgenContentSelection::Selected { content_selector, .. } = content_selection
+                && content_fingerprint.content_sha256 != content_selector.content_sha256
+            {
+                return Err(BgenError::ContentSha256Mismatch {
+                    expected: content_selector.content_sha256,
+                    observed: content_fingerprint.content_sha256,
+                });
+            }
+            return Ok(Self {
+                backing: BgenSourceBacking::OwnedSnapshot,
+                length,
+                snapshot: BgenSnapshotState::Pending(BgenPendingSnapshot {
+                    bytes: captured_snapshot.bytes,
+                    content_fingerprint,
+                    publication: match content_selection {
+                        BgenContentSelection::Unselected => BgenSnapshotPublication::Unselected,
+                        BgenContentSelection::Selected { snapshot_cache, .. } => {
+                            BgenSnapshotPublication::Selected(snapshot_cache)
+                        }
+                    },
+                }),
+                content_evidence: BgenContentEvidence::OwnedSnapshot(content_fingerprint),
+                provenance: BgenSourceProvenance {
+                    requested_path,
+                    captured_source_identity: captured_descriptor.source_identity,
+                    resolution: BgenSnapshotResolution::CapturedFromLocator,
+                },
+            });
+        }
+
+        let identity = captured_descriptor.source_identity;
+        Ok(Self {
+            backing: BgenSourceBacking::Positioned(file),
             length,
             snapshot: BgenSnapshotState::None,
-            snapshot_cache_hit: false,
-            snapshot_cache,
-        };
-        let snapshot = source.capture_or_reuse_snapshot(maximum_snapshot_byte_count)?;
-        source.snapshot_cache_hit = matches!(&snapshot, BgenSnapshotState::Parsed(_));
-        source.snapshot = snapshot;
-        Ok(source)
+            content_evidence: BgenContentEvidence::PositionedUnattested(identity.clone()),
+            provenance: BgenSourceProvenance {
+                requested_path,
+                captured_source_identity: identity,
+                resolution: BgenSnapshotResolution::CapturedFromLocator,
+            },
+        })
     }
 
     #[cfg(test)]
-    pub(super) fn open_with_test_snapshot_cache(
-        bgen_path: &Path,
+    pub(super) fn open_unselected_for_test(bgen_path: &Path) -> Result<Self, BgenError> {
+        Self::open_locator(bgen_path, MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT, BgenContentSelection::Unselected)
+    }
+
+    #[cfg(test)]
+    pub(super) fn open_request_with_test_snapshot_cache(
+        request: BgenOpenRequest<'_>,
         snapshot_cache: &'static BgenSnapshotCache,
     ) -> Result<Self, BgenError> {
-        Self::open_with_snapshot_limit_and_cache(bgen_path, MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT, snapshot_cache)
+        let content_selection = request.content_selector.map_or(BgenContentSelection::Unselected, |content_selector| {
+            BgenContentSelection::Selected { content_selector, snapshot_cache }
+        });
+        Self::open_locator(request.locator, MAXIMUM_OWNED_SNAPSHOT_BYTE_COUNT, content_selection)
     }
 
     pub(super) fn identity(&self) -> &BgenSourceIdentity {
-        &self.identity
+        &self.provenance.captured_source_identity
+    }
+
+    pub(super) fn content_evidence(&self) -> &BgenContentEvidence {
+        &self.content_evidence
+    }
+
+    pub(super) fn provenance(&self) -> &BgenSourceProvenance {
+        &self.provenance
     }
 
     pub(super) fn length(&self) -> u64 {
@@ -193,7 +484,7 @@ impl BgenSource {
     pub(super) fn snapshot_bytes(&self) -> Option<&[u8]> {
         match &self.snapshot {
             BgenSnapshotState::None => None,
-            BgenSnapshotState::Pending(bytes) => Some(bytes),
+            BgenSnapshotState::Pending(snapshot) => Some(&snapshot.bytes),
             BgenSnapshotState::Parsed(payload) => Some(&payload.bytes),
         }
     }
@@ -207,7 +498,7 @@ impl BgenSource {
 
     #[cfg(any(test, feature = "benchmark-internals"))]
     pub(super) fn snapshot_cache_hit(&self) -> bool {
-        self.snapshot_cache_hit
+        self.provenance.resolution == BgenSnapshotResolution::ProcessSnapshotCache
     }
 
     #[cfg(test)]
@@ -227,32 +518,46 @@ impl BgenSource {
         chromosome_boundary_indices: Vec<usize>,
     ) -> Result<(), BgenError> {
         let snapshot = std::mem::replace(&mut self.snapshot, BgenSnapshotState::None);
-        let BgenSnapshotState::Pending(bytes) = snapshot else {
+        let BgenSnapshotState::Pending(pending_snapshot) = snapshot else {
             self.snapshot = snapshot;
             return Err(BgenError::InvalidFormat(
                 "A parsed BGEN snapshot can only be published from newly captured immutable bytes.".to_string(),
             ));
         };
         let parsed_payload = Arc::new(BgenSnapshotPayload {
-            identity: self.identity.clone(),
-            bytes,
+            captured_source_identity: self.provenance.captured_source_identity.clone(),
+            content_fingerprint: pending_snapshot.content_fingerprint,
+            snapshot_cache_key: snapshot_cache_key(pending_snapshot.content_fingerprint),
+            bytes: pending_snapshot.bytes,
             sample_count,
             compression_type,
             variant_records,
             variant_metadata,
             chromosome_boundary_indices,
         });
+        let BgenSnapshotPublication::Selected(snapshot_cache) = pending_snapshot.publication else {
+            self.snapshot = BgenSnapshotState::Parsed(parsed_payload);
+            return Ok(());
+        };
+        #[cfg(test)]
+        record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Publish);
         let canonical_payload;
         let displaced_payload;
         {
-            let mut cache = lock_snapshot_cache(self.snapshot_cache);
-            if let Some(payload) = cache.as_ref().filter(|payload| payload.identity == self.identity) {
+            let mut cache = lock_snapshot_cache(snapshot_cache);
+            if let Some(payload) =
+                cache.as_ref().filter(|payload| payload.snapshot_cache_key == parsed_payload.snapshot_cache_key)
+            {
                 canonical_payload = Arc::clone(payload);
                 displaced_payload = None;
             } else {
                 displaced_payload = cache.replace(Arc::clone(&parsed_payload));
                 canonical_payload = parsed_payload;
             }
+        }
+        #[cfg(test)]
+        if displaced_payload.is_some() {
+            record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Evict);
         }
         drop(displaced_payload);
         self.snapshot = BgenSnapshotState::Parsed(canonical_payload);
@@ -264,19 +569,26 @@ impl BgenSource {
     }
 
     pub(super) fn is_unchanged(&self) -> IoResult<bool> {
-        if !self.is_open_file_unchanged()? {
+        let BgenSourceBacking::Positioned(file) = &self.backing else {
+            return Ok(true);
+        };
+        if !bgen_source_metadata_matches(self.identity(), &file.metadata()?)? {
             return Ok(false);
         }
-        let configured_metadata = match std::fs::metadata(&self.identity.configured_path) {
+        let configured_metadata = match std::fs::metadata(&self.identity().configured_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
         };
-        bgen_source_metadata_matches(&self.identity, &configured_metadata)
+        bgen_source_metadata_matches(self.identity(), &configured_metadata)
     }
 
+    #[cfg(test)]
     pub(super) fn is_open_file_unchanged(&self) -> IoResult<bool> {
-        bgen_source_metadata_matches(&self.identity, &self.file.metadata()?)
+        match &self.backing {
+            BgenSourceBacking::OwnedSnapshot => Ok(true),
+            BgenSourceBacking::Positioned(file) => bgen_source_metadata_matches(self.identity(), &file.metadata()?),
+        }
     }
 
     pub(super) fn read_u32_at(&self, offset: u64) -> Result<u32, BgenError> {
@@ -314,7 +626,12 @@ impl BgenSource {
             return Ok(());
         }
 
-        read_file_exact_at(&self.file, offset, output)
+        let BgenSourceBacking::Positioned(file) = &self.backing else {
+            return Err(BgenError::InvalidFormat(
+                "An owned BGEN snapshot is missing the requested immutable bytes.".to_string(),
+            ));
+        };
+        read_file_exact_at(file, offset, output)
     }
 
     pub(super) fn read_window<'window>(
@@ -360,54 +677,122 @@ impl BgenSource {
             .map_err(|_| BgenError::Range("BGEN source-window length does not fit usize.".to_string()))?;
         self.read_window(absolute_start, byte_count, buffer)
     }
+}
 
-    fn capture_or_reuse_snapshot(&self, maximum_snapshot_byte_count: u64) -> Result<BgenSnapshotState, BgenError> {
-        if maximum_snapshot_byte_count == 0 || self.length > maximum_snapshot_byte_count {
-            return Ok(BgenSnapshotState::None);
-        }
-        if let Some(payload) = lock_snapshot_cache(self.snapshot_cache).as_ref()
-            && payload.identity == self.identity
-        {
-            return Ok(BgenSnapshotState::Parsed(Arc::clone(payload)));
-        }
-
-        let snapshot_length = usize::try_from(self.length)
-            .map_err(|_| BgenError::Range("BGEN snapshot length does not fit usize.".to_string()))?;
-        let mut snapshot = Vec::new();
-        snapshot.try_reserve_exact(snapshot_length).map_err(|source| {
-            BgenError::Range(format!("Could not reserve {snapshot_length} bytes for a BGEN snapshot: {source}."))
-        })?;
-        let mut snapshot_file = self.file.try_clone()?;
-        snapshot_file.seek(SeekFrom::Start(0))?;
-        snapshot_file.take(self.length).read_to_end(&mut snapshot)?;
-        #[cfg(test)]
-        run_test_snapshot_capture_hook();
-        if snapshot.len() != snapshot_length {
-            return Err(BgenError::Io(std::io::Error::new(
-                ErrorKind::UnexpectedEof,
-                format!(
-                    "BGEN source ended while its owned snapshot was captured: expected {snapshot_length} bytes, observed {}.",
-                    snapshot.len(),
-                ),
-            )));
-        }
-        self.ensure_unchanged_after_snapshot_capture()?;
-        Ok(BgenSnapshotState::Pending(snapshot))
+fn selected_cached_payload(
+    content_selector: BgenContentSelector,
+    snapshot_cache: &BgenSnapshotCache,
+) -> Result<Option<Arc<BgenSnapshotPayload>>, BgenError> {
+    #[cfg(test)]
+    record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Consult);
+    let lookup = BgenSnapshotCacheLookup {
+        domain_revision: SNAPSHOT_CACHE_DOMAIN_REVISION,
+        content_sha256: content_selector.content_sha256,
+        expected_byte_count: content_selector.expected_byte_count,
+    };
+    let cached_payload = {
+        let cache = lock_snapshot_cache(snapshot_cache);
+        cache
+            .as_ref()
+            .filter(|payload| {
+                payload.snapshot_cache_key.domain_revision == lookup.domain_revision
+                    && payload.snapshot_cache_key.content_fingerprint.content_sha256 == lookup.content_sha256
+            })
+            .map(Arc::clone)
+    };
+    let Some(cached_payload) = cached_payload else {
+        return Ok(None);
+    };
+    if let Some(expected_byte_count) = lookup.expected_byte_count
+        && expected_byte_count != cached_payload.snapshot_cache_key.content_fingerprint.byte_count
+    {
+        return Err(BgenError::ContentByteCountMismatch {
+            expected_byte_count,
+            observed_byte_count: cached_payload.snapshot_cache_key.content_fingerprint.byte_count,
+        });
     }
+    Ok(Some(cached_payload))
+}
 
-    fn ensure_unchanged_after_snapshot_capture(&self) -> Result<(), BgenError> {
-        if self.is_unchanged()? {
-            return Ok(());
-        }
-        Err(BgenError::InvalidFormat(
+fn snapshot_cache_key(content_fingerprint: BgenContentFingerprint) -> BgenSnapshotCacheKey {
+    BgenSnapshotCacheKey { domain_revision: SNAPSHOT_CACHE_DOMAIN_REVISION, content_fingerprint }
+}
+
+fn validate_selected_byte_count(
+    content_selector: BgenContentSelector,
+    observed_byte_count: u64,
+) -> Result<(), BgenError> {
+    if let Some(expected_byte_count) = content_selector.expected_byte_count
+        && expected_byte_count != observed_byte_count
+    {
+        return Err(BgenError::ContentByteCountMismatch { expected_byte_count, observed_byte_count });
+    }
+    Ok(())
+}
+
+fn capture_owned_snapshot(
+    file: File,
+    captured_descriptor: &CapturedBgenSourceDescriptor,
+    selected_content_sha256: Option<BgenContentSha256>,
+) -> Result<CapturedBgenSnapshot, BgenError> {
+    let source_identity = &captured_descriptor.source_identity;
+    let snapshot_length = usize::try_from(source_identity.file_size)
+        .map_err(|_| BgenError::Range("BGEN snapshot length does not fit usize.".to_string()))?;
+    let mut snapshot = Vec::new();
+    snapshot.try_reserve_exact(snapshot_length).map_err(|source| {
+        BgenError::Range(format!("Could not reserve {snapshot_length} bytes for a BGEN snapshot: {source}."))
+    })?;
+    let mut bounded_file = file.take(source_identity.file_size);
+    bounded_file.read_to_end(&mut snapshot)?;
+    let file = bounded_file.into_inner();
+    #[cfg(test)]
+    run_test_snapshot_capture_hook();
+    if snapshot.len() != snapshot_length {
+        return Err(BgenError::Io(std::io::Error::new(
+            ErrorKind::UnexpectedEof,
+            format!(
+                "BGEN source ended while its owned snapshot was captured: expected {snapshot_length} bytes, observed {}.",
+                snapshot.len(),
+            ),
+        )));
+    }
+    let content_sha256 = BgenContentSha256::from_bytes(Sha256::digest(&snapshot).into());
+    let content_matches_selector = selected_content_sha256 == Some(content_sha256);
+    if !captured_descriptor_is_unchanged(captured_descriptor, &file, content_matches_selector)? {
+        return Err(BgenError::InvalidFormat(
             "BGEN source changed while its immutable snapshot was being captured.".to_string(),
-        ))
+        ));
     }
+    Ok(CapturedBgenSnapshot {
+        bytes: snapshot,
+        content_fingerprint: BgenContentFingerprint { content_sha256, byte_count: source_identity.file_size },
+    })
+}
+
+fn captured_descriptor_is_unchanged(
+    captured_descriptor: &CapturedBgenSourceDescriptor,
+    file: &File,
+    content_matches_selector: bool,
+) -> IoResult<bool> {
+    let metadata = file.metadata()?;
+    if content_matches_selector {
+        return Ok(bgen_source_metadata_matches(&captured_descriptor.source_identity, &metadata)?
+            || (captured_descriptor.link_count != metadata.nlink()
+                && bgen_source_content_metadata_matches(&captured_descriptor.source_identity, &metadata)?));
+    }
+    Ok(captured_descriptor.link_count == metadata.nlink()
+        && bgen_source_metadata_matches(&captured_descriptor.source_identity, &metadata)?)
 }
 
 fn bgen_snapshot_cache() -> &'static BgenSnapshotCache {
     static CACHE: OnceLock<BgenSnapshotCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
+    #[cfg(test)]
+    record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Resolve);
+    CACHE.get_or_init(|| {
+        #[cfg(test)]
+        record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Initialize);
+        Mutex::new(None)
+    })
 }
 
 #[cfg(test)]
@@ -418,6 +803,8 @@ pub(super) fn new_test_snapshot_cache() -> &'static BgenSnapshotCache {
 fn lock_snapshot_cache(
     snapshot_cache: &BgenSnapshotCache,
 ) -> std::sync::MutexGuard<'_, Option<Arc<BgenSnapshotPayload>>> {
+    #[cfg(test)]
+    record_test_snapshot_cache_operation(TestSnapshotCacheOperation::Lock);
     snapshot_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -505,7 +892,8 @@ impl<'snapshot> BgenSnapshotCursor<'snapshot> {
 
 impl AsRef<[u8]> for BgenCursorBytes<'_, '_> {
     // The separate arms preserve the enum's independent snapshot and buffer
-    // lifetimes; one or-pattern incorrectly requires them to be unified.
+    // lifetimes; Clippy's suggested or-pattern does not compile because it
+    // incorrectly requires those lifetimes to be unified.
     #[allow(clippy::match_same_arms)]
     fn as_ref(&self) -> &[u8] {
         match self {
@@ -813,25 +1201,54 @@ fn unexpected_end_of_file(offset: u64, requested_length: usize, available_length
     ))
 }
 
-fn capture_bgen_source_identity(configured_path: &Path, file: &File) -> IoResult<BgenSourceIdentity> {
+fn capture_bgen_source_descriptor(configured_path: &Path, file: &File) -> IoResult<CapturedBgenSourceDescriptor> {
     let metadata = file.metadata()?;
-    Ok(BgenSourceIdentity {
-        configured_path: configured_path.to_path_buf(),
-        canonical_path: configured_path.canonicalize().ok(),
-        device_identifier: metadata.dev(),
-        inode_identifier: metadata.ino(),
-        change_time_nanoseconds: checked_timestamp_nanoseconds(
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-            "BGEN change timestamp does not fit signed nanoseconds.",
-        )?,
-        modification_time_nanoseconds: checked_timestamp_nanoseconds(
-            metadata.mtime(),
-            metadata.mtime_nsec(),
-            "BGEN modification timestamp does not fit signed nanoseconds.",
-        )?,
-        file_size: metadata.size(),
+    Ok(CapturedBgenSourceDescriptor {
+        source_identity: BgenSourceIdentity {
+            configured_path: configured_path.to_path_buf(),
+            canonical_path: canonical_path_for_open_descriptor(configured_path, &metadata),
+            device_identifier: metadata.dev(),
+            inode_identifier: metadata.ino(),
+            change_time_nanoseconds: checked_timestamp_nanoseconds(
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+                "BGEN change timestamp does not fit signed nanoseconds.",
+            )?,
+            modification_time_nanoseconds: checked_timestamp_nanoseconds(
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+                "BGEN modification timestamp does not fit signed nanoseconds.",
+            )?,
+            file_size: metadata.size(),
+        },
+        link_count: metadata.nlink(),
     })
+}
+
+fn canonical_path_for_open_descriptor(
+    configured_path: &Path,
+    descriptor_metadata: &std::fs::Metadata,
+) -> Option<std::path::PathBuf> {
+    let canonical_path = configured_path.canonicalize().ok()?;
+    let canonical_target_metadata = std::fs::metadata(&canonical_path).ok()?;
+    (descriptor_metadata.dev() == canonical_target_metadata.dev()
+        && descriptor_metadata.ino() == canonical_target_metadata.ino())
+    .then_some(canonical_path)
+}
+
+fn bgen_source_content_metadata_matches(
+    expected_identity: &BgenSourceIdentity,
+    metadata: &std::fs::Metadata,
+) -> IoResult<bool> {
+    Ok(expected_identity.device_identifier == metadata.dev()
+        && expected_identity.inode_identifier == metadata.ino()
+        && expected_identity.modification_time_nanoseconds
+            == checked_timestamp_nanoseconds(
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+                "BGEN modification timestamp does not fit signed nanoseconds.",
+            )?
+        && expected_identity.file_size == metadata.size())
 }
 
 fn bgen_source_metadata_matches(
@@ -906,7 +1323,7 @@ mod tests {
                 .recv_timeout(TEST_COORDINATION_TIMEOUT)
                 .expect("snapshot truncation should complete before identity validation");
         });
-        let open_result = BgenSource::open_with_test_snapshot_cache(&path, snapshot_cache);
+        let open_result = BgenSource::open_unselected_for_test(&path);
         drop(snapshot_capture_hook_guard);
         truncation_handle.join().expect("snapshot truncation thread should finish");
         let error = open_result.expect_err("snapshot capture must reject concurrent truncation");
@@ -923,6 +1340,135 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn selected_snapshot_capture_accepts_link_only_descriptor_change() {
+        let path = temporary_source_path("selected-link-change");
+        let hard_link_path = temporary_source_path("selected-link-change-hard-link");
+        let source_bytes = vec![7_u8; 4096];
+        fs::write(&path, &source_bytes).expect("selected snapshot source should be written");
+        let file = File::open(&path).expect("selected snapshot source should open");
+        let captured_descriptor =
+            capture_bgen_source_descriptor(&path, &file).expect("selected snapshot identity should capture");
+        let selected_content_sha256 = BgenContentSha256::from_bytes(Sha256::digest(&source_bytes).into());
+        let hook_source_path = path.clone();
+        let hook_hard_link_path = hard_link_path.clone();
+        let snapshot_capture_hook_guard = install_test_snapshot_capture_hook(move || {
+            fs::hard_link(hook_source_path, hook_hard_link_path).expect("snapshot hook should add a source hard link");
+        });
+
+        let captured_snapshot = capture_owned_snapshot(file, &captured_descriptor, Some(selected_content_sha256))
+            .expect("matching selected content should tolerate a link-only descriptor change");
+        drop(snapshot_capture_hook_guard);
+
+        assert_eq!(captured_snapshot.bytes, source_bytes);
+        assert_eq!(captured_snapshot.content_fingerprint.content_sha256, selected_content_sha256);
+        assert_ne!(
+            fs::metadata(&path).expect("linked source metadata should remain available").nlink(),
+            captured_descriptor.link_count,
+            "the hard-link operation must change the descriptor link count",
+        );
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(hard_link_path);
+    }
+
+    #[test]
+    fn selected_snapshot_capture_rejects_same_link_count_ctime_change() {
+        let path = temporary_source_path("selected-ctime-change");
+        let source_bytes = vec![9_u8; 4096];
+        fs::write(&path, &source_bytes).expect("selected ctime source should be written");
+        let file = File::open(&path).expect("selected ctime source should open");
+        let mut captured_descriptor =
+            capture_bgen_source_descriptor(&path, &file).expect("selected ctime identity should capture");
+        // Model only the ctime mismatch directly because shared filesystems do
+        // not consistently expose a distinct timestamp after a metadata race.
+        let original_change_time_nanoseconds = captured_descriptor.source_identity.change_time_nanoseconds;
+        captured_descriptor.source_identity.change_time_nanoseconds = original_change_time_nanoseconds
+            .checked_add(1)
+            .unwrap_or_else(|| original_change_time_nanoseconds.saturating_sub(1));
+        let selected_content_sha256 = BgenContentSha256::from_bytes(Sha256::digest(&source_bytes).into());
+
+        let error = capture_owned_snapshot(file, &captured_descriptor, Some(selected_content_sha256))
+            .err()
+            .expect("matching content must not excuse a same-link-count ctime change");
+        let changed_metadata = fs::metadata(&path).expect("changed selected ctime metadata should be readable");
+
+        assert!(matches!(
+            error,
+            BgenError::InvalidFormat(message)
+                if message == "BGEN source changed while its immutable snapshot was being captured."
+        ));
+        assert_eq!(changed_metadata.nlink(), captured_descriptor.link_count);
+        assert!(
+            bgen_source_content_metadata_matches(&captured_descriptor.source_identity, &changed_metadata)
+                .expect("selected ctime content metadata should be comparable"),
+            "a ctime-only mismatch must preserve every content metadata field",
+        );
+        assert!(
+            !bgen_source_metadata_matches(&captured_descriptor.source_identity, &changed_metadata)
+                .expect("selected ctime metadata should be comparable"),
+            "the ctime-only mismatch must invalidate the strict descriptor identity",
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unselected_snapshot_capture_rejects_link_only_descriptor_change() {
+        let path = temporary_source_path("unselected-link-change");
+        let hard_link_path = temporary_source_path("unselected-link-change-hard-link");
+        fs::write(&path, vec![11_u8; 4096]).expect("unselected snapshot source should be written");
+        let file = File::open(&path).expect("unselected snapshot source should open");
+        let captured_descriptor =
+            capture_bgen_source_descriptor(&path, &file).expect("unselected snapshot identity should capture");
+        let hook_source_path = path.clone();
+        let hook_hard_link_path = hard_link_path.clone();
+        let snapshot_capture_hook_guard = install_test_snapshot_capture_hook(move || {
+            fs::hard_link(hook_source_path, hook_hard_link_path).expect("snapshot hook should add a source hard link");
+        });
+
+        let error = capture_owned_snapshot(file, &captured_descriptor, None)
+            .err()
+            .expect("an unselected snapshot must reject a link-only descriptor change");
+        drop(snapshot_capture_hook_guard);
+
+        assert!(matches!(
+            error,
+            BgenError::InvalidFormat(message)
+                if message == "BGEN source changed while its immutable snapshot was being captured."
+        ));
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(hard_link_path);
+    }
+
+    #[test]
+    fn source_identity_omits_canonical_path_after_post_open_retarget() {
+        let configured_path = temporary_source_path("canonical-race-configured");
+        let replacement_path = temporary_source_path("canonical-race-replacement");
+        fs::write(&configured_path, [1_u8; 64]).expect("original canonical-race source should be written");
+        fs::write(&replacement_path, [2_u8; 64]).expect("replacement canonical-race source should be written");
+        let file = File::open(&configured_path).expect("original canonical-race source should open");
+        let opened_metadata = file.metadata().expect("opened source metadata should be readable");
+        fs::rename(&replacement_path, &configured_path).expect("configured path should retarget after open");
+
+        let captured_descriptor =
+            capture_bgen_source_descriptor(&configured_path, &file).expect("retargeted source identity should capture");
+        let source_identity = captured_descriptor.source_identity;
+        let configured_metadata =
+            fs::metadata(&configured_path).expect("retargeted configured-path metadata should be readable");
+
+        assert_eq!(source_identity.canonical_path, None);
+        assert_eq!(source_identity.device_identifier, opened_metadata.dev());
+        assert_eq!(source_identity.inode_identifier, opened_metadata.ino());
+        assert!(
+            opened_metadata.dev() != configured_metadata.dev() || opened_metadata.ino() != configured_metadata.ino(),
+            "the configured path must identify the replacement rather than the opened descriptor",
+        );
+
+        let _ = fs::remove_file(configured_path);
     }
 
     #[test]

@@ -48,27 +48,40 @@ raw-DEFLATE packing borrow directly from the snapshot when present; no safe API
 is backed by a mutable file mapping. Snapshot indexing uses a concrete
 bounds-checked slice cursor; positioned indexing streams bounded 8 MiB windows
 instead of issuing one metadata read per variant. The opened descriptor and
-configured path
-are identified by device, inode, size, modification time, and change time and
-rechecked around indexing and before a captured snapshot is published. A
-published immutable payload isolates its readers from later in-place mutation
-or configured-path replacement, so snapshot delivery and session finish do not
-restat the source. Positioned batches recheck both the descriptor and
-configured path after every delivered batch and at session finish. Concurrent
-truncation, mutation, or path replacement of a positioned source therefore
-returns an error without exposing mapped memory.
+configured path are initially identified by device, inode, size, modification
+time, and change time. After an owned capture, only the opened descriptor
+identity is rechecked: deleting or retargeting the configured locator is
+provenance-only because parsing proceeds from bytes that are already immutable.
+A published snapshot isolates its readers from later in-place mutation or
+configured-path replacement, so snapshot delivery and session finish do not
+restat the source. Positioned batches recheck both the descriptor and configured
+path after every delivered batch and at session finish. Concurrent truncation,
+mutation, or path replacement of a positioned source therefore returns an error
+without exposing mapped memory.
+
+`BgenReaderCore::open` remains an unselected compatibility call: every call
+acquires, captures or positions, hashes owned bytes, and parses its locator
+independently. It never consults or publishes the process snapshot registry.
+Callers with an authoritative SHA-256 use `BgenReaderCore::open_request` and
+`BgenContentSelector`; the optional expected byte count adds a second assertion.
 
 One private process-wide registry entry strongly owns the latest completely
-parsed small-file payload by that full identity. The payload contains the
-snapshot bytes, header properties, variant records, validated metadata, and
-chromosome boundaries. An unchanged reopen shares this canonical payload even
-after every previous reader closes. A different identity replaces the entry
-atomically only after capture, open-time header/index validation, and final
-identity verification; a candidate rejected before publication does not evict
-the valid entry. Probability-semantic corruption discovered later during
-compatibility validation or decode still fails safely, but its published
-identity may already have replaced the earlier entry. Live readers may keep a
-replaced payload alive.
+parsed content-selected small-file payload under a revision-0 key containing
+its full SHA-256 and byte count. A selected cache hit performs no operation on
+its supplied locator—not even current-directory resolution, metadata lookup,
+canonicalization, or open—and records the new locator separately from the
+original capture identity in its provenance. Digest-only lookup inherits the
+stored byte count. A mismatched explicit byte count is rejected without locator
+access. Selected misses capture and hash exact bytes, parse outside the registry
+lock, and publish only after content and open-time validation succeed.
+Concurrent matching misses canonicalize at publication. A different selected
+fingerprint replaces the entry atomically; failed candidates and unselected
+opens never evict it. Live readers may keep a replaced payload alive.
+
+Content selection is supported only for owned snapshots. A selected locator
+above the 256 MiB ceiling is rejected as typed
+`ContentSelectionRequiresOwnedSnapshot`; larger unselected inputs remain
+positioned and explicitly unattested.
 
 The registry therefore retains up to 256 MiB of source bytes plus parsed index
 and metadata allocations until a replacement passes open/index validation or
@@ -190,8 +203,9 @@ chunk plan and rejects duplicate or missing coverage. Parts without current
 metadata are rejected rather than reconstructed from result columns. A
 verifiable final part that exists before its receipt because of a process crash
 can be reconciled only for a nonterminal attempt or pending terminal claim.
-BGEN compatibility is bound to the exact opened file's device, inode, size,
-modification time, and change time.
+Downstream integration
+must bind BGEN compatibility to authoritative content evidence rather than
+reconstructing identity from a request locator.
 
 Compatibility validation must fail loudly on mismatched result-affecting inputs
 or output schema assumptions.
@@ -329,15 +343,18 @@ GWAS_ENGINE_BGEN_BENCHMARK_PATH=/path/to/input.bgen \
   --bench bgen_lifecycle_once
 ```
 
-`bgen_open_once` starts with an empty process registry and reports first-open
-capture/index time, same-process reopen/index time, a second reopen after both
-readers have dropped, strong canonical hit status, retained source bytes, and
-process resident memory before open and after reader drop. The retained byte
-counter covers source bytes; the accompanying flag records that the canonical
-payload also retains its parsed index and metadata. The Criterion group keeps
-one priming reader alive and measures process-registry-primed reopen/index work.
-For inputs at or below the owned-snapshot ceiling this is an unchanged
-canonical-payload reopen; larger inputs use positioned I/O.
+`bgen_open_once` starts with an empty process registry and reports the selected
+content digest, first-open capture/hash/index time, same-process reopen/index
+time, a second reopen after both readers have dropped, structural operation
+counts, strong canonical hit status, retained source bytes, and process
+resident memory before open and after reader drop. Both cache-hit requests
+deliberately use a missing locator, proving that resolution is content-only.
+The retained byte counter covers source bytes; the accompanying flag records
+that the canonical payload also retains its parsed index and metadata. The
+normal Criterion group computes its selector outside measurement, keeps one
+selected priming reader alive, and measures process-registry-primed reopen/index
+work. The selected benchmark requires an input at or below the owned-snapshot
+ceiling; the explicit positioned benchmark remains unselected.
 `bgen_lifecycle_once` reports open/index, preparation, aggregate time for all
 full 16,384-variant packed8 batches, the final logical tail using the same fixed
 production compute shape, policy-specific session finish, and their end-to-end
@@ -351,13 +368,17 @@ measurement.
 
 The lifecycle input must be packed8-compatible: biallelic, diploid, unphased,
 eight-bit, and without missing samples. The benchmark asserts that contract
-instead of switching to dosage delivery. A paired compatibility-cache-primed
-comparison must set `XDG_CACHE_HOME` to one fresh campaign-local directory, run
-one unmeasured prewarm lifecycle, verify that it wrote a `compatible` marker,
-and reuse that same marker state for every baseline and candidate process. An
-empty compatibility-cache comparison must instead give every measured process
-its own empty cache directory. Never let the first measured design create a
-compatibility marker that only later positioned runs consume.
+instead of switching to dosage delivery. Persistent packed8 markers exist only
+for authoritative owned content. Their revision-0 fingerprint binds SHA-256,
+content byte count, sample count, and variant count and contains no path or
+filesystem metadata. Positioned unattested readers neither read nor publish a
+marker. A paired selected-snapshot comparison may set `XDG_CACHE_HOME` to one
+fresh campaign-local directory, run one unmeasured prewarm lifecycle, verify
+that it wrote a `compatible` marker, and reuse that state for every measured
+process. A selected-versus-positioned source-policy campaign must instead give
+every process an empty cache directory so both policies perform compatibility
+validation. Never let one measured design create a marker consumed only by
+later selected runs.
 
 These process-registry and compatibility-cache labels say nothing about the
 kernel filesystem page cache. A same-input source-policy campaign must give

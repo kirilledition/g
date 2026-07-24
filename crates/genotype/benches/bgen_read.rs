@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use g_genotype::{BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8Compatibility};
+use g_genotype::{BgenContentSelector, BgenReadSession, BgenReaderCore, ChunkStatisticsPolicy, Packed8Compatibility};
+use g_genotype_contracts::BgenContentSha256;
+use sha2::{Digest, Sha256};
+
+#[cfg(not(feature = "benchmark-positioned-source"))]
+use g_genotype::BgenOpenRequest;
 
 const CHUNK_SIZES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
 const GPU_HOST_DELIVERY_CHUNK_SIZES: [usize; 2] = [8192, 16384];
@@ -32,14 +37,24 @@ fn benchmark_bgen_path() -> PathBuf {
 }
 
 #[cfg(not(feature = "benchmark-positioned-source"))]
-fn open_benchmark_reader(bgen_path: &Path) -> BgenReaderCore {
-    BgenReaderCore::open(bgen_path).expect("native Rust BGEN reader should open benchmark input")
+fn open_benchmark_reader(bgen_path: &Path, content_selector: BgenContentSelector) -> BgenReaderCore {
+    BgenReaderCore::open_request(BgenOpenRequest { locator: bgen_path, content_selector: Some(content_selector) })
+        .expect("content-selected native Rust BGEN reader should open benchmark input")
 }
 
 #[cfg(feature = "benchmark-positioned-source")]
-fn open_benchmark_reader(bgen_path: &Path) -> BgenReaderCore {
+fn open_benchmark_reader(bgen_path: &Path, content_selector: BgenContentSelector) -> BgenReaderCore {
+    let _ = content_selector;
     BgenReaderCore::open_positioned_for_benchmark(bgen_path)
         .expect("native Rust positioned BGEN reader should open benchmark input")
+}
+
+fn benchmark_content_selector(bgen_path: &Path) -> BgenContentSelector {
+    let source_bytes = std::fs::read(bgen_path).expect("benchmark BGEN should be readable for content selection");
+    BgenContentSelector {
+        content_sha256: BgenContentSha256::from_bytes(Sha256::digest(&source_bytes).into()),
+        expected_byte_count: Some(u64::try_from(source_bytes.len()).expect("BGEN byte count should fit uint64")),
+    }
 }
 
 fn full_sample_indices(reader: &BgenReaderCore) -> Vec<usize> {
@@ -93,8 +108,9 @@ fn benchmark_variant_major_read(
 
 fn benchmark_bgen_open(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
+    let content_selector = benchmark_content_selector(&bgen_path);
     let source_byte_count = std::fs::metadata(&bgen_path).expect("benchmark BGEN metadata should be available").len();
-    let warm_reader = open_benchmark_reader(&bgen_path);
+    let warm_reader = open_benchmark_reader(&bgen_path, content_selector);
     let group_name = if cfg!(feature = "benchmark-positioned-source") {
         "bgen_positioned_open_and_index"
     } else {
@@ -105,7 +121,10 @@ fn benchmark_bgen_open(criterion: &mut Criterion) {
     open_group.bench_function("sequential_index", |benchmark| {
         benchmark.iter(|| {
             std::hint::black_box(&warm_reader);
-            std::hint::black_box(open_benchmark_reader(std::hint::black_box(&bgen_path)));
+            std::hint::black_box(open_benchmark_reader(
+                std::hint::black_box(&bgen_path),
+                std::hint::black_box(content_selector),
+            ));
         });
     });
     open_group.finish();
@@ -316,7 +335,8 @@ fn benchmark_gpu_host_delivery(
 
 fn benchmark_native_bgen_read(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
-    let reader = open_benchmark_reader(&bgen_path);
+    let content_selector = benchmark_content_selector(&bgen_path);
+    let reader = open_benchmark_reader(&bgen_path, content_selector);
 
     let full_sample_indices = full_sample_indices(&reader);
     let full_sample_session =

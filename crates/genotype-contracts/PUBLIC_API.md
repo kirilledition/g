@@ -7,9 +7,20 @@ genotype producers, the engine, and output consumers.
 
 ## Public contracts
 
-The exact opened BGEN source identity, compact shared variant metadata storage
-and slices, output-facing chunk statistics, packed nullable `f32` columns, and
-the canonical raw-DEFLATE member alignment used by slab producers and consumers.
+The exact opened BGEN source identity, authoritative owned-snapshot content
+fingerprint, per-request source provenance, compact shared variant metadata
+storage and slices, output-facing chunk statistics, packed nullable `f32`
+columns, and the canonical raw-DEFLATE member alignment used by slab producers
+and consumers.
+`BgenContentSha256` stores exactly 32 private digest bytes and accepts only the
+canonical 64-character lowercase hexadecimal representation through parsing
+and Serde. `BgenContentFingerprint` binds that digest to the exact source byte
+count. `BgenContentEvidence` distinguishes an authenticated owned snapshot from
+a positioned source whose content is unattested. `BgenSourceProvenance`
+separates the request locator from descriptor metadata recorded when the source
+was opened and records whether the request acquired its locator or reused a
+process snapshot. That descriptor metadata is provenance rather than content
+authority; positioned sources remain mutable and unattested.
 `VariantMetadataInvariantError` is the dependency-free typed construction error
 for malformed parallel columns, identifier offsets, dictionary codes, and slice
 ranges. `VariantMetadataStore::from_parts` and `VariantMetadataColumns::new`

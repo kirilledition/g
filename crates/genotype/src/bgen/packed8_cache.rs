@@ -2,17 +2,16 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use g_genotype_contracts::BgenSourceIdentity;
+use g_genotype_contracts::BgenContentEvidence;
 
 const CACHE_APPLICATION_DIRECTORY: &str = "g";
 const CACHE_DIRECTORY_NAME: &str = "packed8_validation";
-const CACHE_SCHEMA_VERSION: i64 = 5;
+const CACHE_SCHEMA_VERSION: i64 = 0;
 const COMPATIBLE_MARKER: &[u8] = b"compatible\n";
 const REQUIRES_DOSAGE_MARKER: &[u8] = b"requires_dosage\n";
 static TEMPORARY_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -24,36 +23,36 @@ pub(super) struct ValidationCacheEntry {
 
 impl ValidationCacheEntry {
     pub(super) fn build(
-        source_identity: &BgenSourceIdentity,
+        content_evidence: &BgenContentEvidence,
         sample_count: usize,
         variant_count: usize,
     ) -> std::io::Result<Option<Self>> {
         let Some(cache_directory) = default_cache_directory() else {
             return Ok(None);
         };
-        let Some(canonical_bgen_path) = source_identity.canonical_path.as_ref() else {
+        Self::build_in_directory(content_evidence, sample_count, variant_count, &cache_directory)
+    }
+
+    fn build_in_directory(
+        content_evidence: &BgenContentEvidence,
+        sample_count: usize,
+        variant_count: usize,
+        cache_directory: &Path,
+    ) -> std::io::Result<Option<Self>> {
+        let BgenContentEvidence::OwnedSnapshot(content_fingerprint) = content_evidence else {
             return Ok(None);
         };
-        let sample_count = i64::try_from(sample_count).map_err(|_| {
+        let sample_count = u64::try_from(sample_count).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "BGEN sample count exceeds the cache range.")
         })?;
-        let variant_count = i64::try_from(variant_count).map_err(|_| {
+        let variant_count = u64::try_from(variant_count).map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "BGEN variant count exceeds the cache range.")
-        })?;
-        let canonical_path_bytes = canonical_bgen_path.as_os_str().as_bytes();
-        let canonical_path_byte_count = u64::try_from(canonical_path_bytes.len()).map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "BGEN canonical path exceeds the cache range.")
         })?;
         let mut fingerprint_hash = Sha256::new();
         fingerprint_hash.update(CACHE_SCHEMA_VERSION.to_le_bytes());
-        fingerprint_hash.update(canonical_path_byte_count.to_le_bytes());
-        fingerprint_hash.update(canonical_path_bytes);
-        fingerprint_hash.update(source_identity.change_time_nanoseconds.to_le_bytes());
-        fingerprint_hash.update(source_identity.device_identifier.to_le_bytes());
-        fingerprint_hash.update(source_identity.inode_identifier.to_le_bytes());
-        fingerprint_hash.update(source_identity.modification_time_nanoseconds.to_le_bytes());
+        fingerprint_hash.update(content_fingerprint.content_sha256.as_bytes());
+        fingerprint_hash.update(content_fingerprint.byte_count.to_le_bytes());
         fingerprint_hash.update(sample_count.to_le_bytes());
-        fingerprint_hash.update(source_identity.file_size.to_le_bytes());
         fingerprint_hash.update(variant_count.to_le_bytes());
         let fingerprint = hex::encode(fingerprint_hash.finalize());
         Ok(Some(Self { cache_path: cache_directory.join(format!("{fingerprint}.marker")), fingerprint }))
@@ -122,4 +121,81 @@ fn default_cache_directory() -> Option<PathBuf> {
 
 fn non_empty_environment_path(variable_name: &str) -> Option<PathBuf> {
     std::env::var_os(variable_name).filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use g_genotype_contracts::{BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, BgenSourceIdentity};
+
+    use super::*;
+
+    fn owned_evidence(digest_byte: u8, byte_count: u64) -> BgenContentEvidence {
+        BgenContentEvidence::OwnedSnapshot(BgenContentFingerprint {
+            content_sha256: BgenContentSha256::from_bytes([digest_byte; 32]),
+            byte_count,
+        })
+    }
+
+    fn positioned_evidence(path: &str) -> BgenContentEvidence {
+        BgenContentEvidence::PositionedUnattested(BgenSourceIdentity {
+            configured_path: PathBuf::from(path),
+            canonical_path: Some(PathBuf::from(format!("/canonical/{path}"))),
+            device_identifier: 2,
+            inode_identifier: 3,
+            change_time_nanoseconds: 5,
+            modification_time_nanoseconds: 7,
+            file_size: 11,
+        })
+    }
+
+    fn cache_entry(
+        content_evidence: &BgenContentEvidence,
+        sample_count: usize,
+        variant_count: usize,
+    ) -> ValidationCacheEntry {
+        ValidationCacheEntry::build_in_directory(content_evidence, sample_count, variant_count, Path::new("/cache"))
+            .expect("cache fingerprint should build")
+            .expect("owned content should produce a cache entry")
+    }
+
+    #[test]
+    fn packed8_cache_fingerprint_binds_content_length_revision_and_geometry() {
+        let baseline = cache_entry(&owned_evidence(13, 101), 103, 107);
+        let same_content = cache_entry(&owned_evidence(13, 101), 103, 107);
+        let different_digest = cache_entry(&owned_evidence(17, 101), 103, 107);
+        let different_length = cache_entry(&owned_evidence(13, 109), 103, 107);
+        let different_sample_count = cache_entry(&owned_evidence(13, 101), 127, 107);
+        let different_variant_count = cache_entry(&owned_evidence(13, 101), 103, 131);
+
+        assert_eq!(CACHE_SCHEMA_VERSION, 0);
+        assert_eq!(baseline.fingerprint, same_content.fingerprint);
+        assert_eq!(baseline.cache_path, same_content.cache_path);
+        assert_ne!(baseline.fingerprint, different_digest.fingerprint);
+        assert_ne!(baseline.fingerprint, different_length.fingerprint);
+        assert_ne!(baseline.fingerprint, different_sample_count.fingerprint);
+        assert_ne!(baseline.fingerprint, different_variant_count.fingerprint);
+    }
+
+    #[test]
+    fn packed8_cache_requires_authoritative_content_and_has_no_path_component() {
+        let first_path = positioned_evidence("first/input.bgen");
+        let second_path = positioned_evidence("second/input.bgen");
+
+        assert!(
+            ValidationCacheEntry::build_in_directory(&first_path, 3, 5, Path::new("/cache"))
+                .expect("unattested cache decision should succeed")
+                .is_none(),
+        );
+        assert!(
+            ValidationCacheEntry::build_in_directory(&second_path, 3, 5, Path::new("/cache"))
+                .expect("unattested cache decision should succeed")
+                .is_none(),
+        );
+
+        let first_content = cache_entry(&owned_evidence(19, 23), 3, 5);
+        let same_content_for_another_locator = cache_entry(&owned_evidence(19, 23), 3, 5);
+        assert_eq!(first_content.fingerprint, same_content_for_another_locator.fingerprint);
+    }
 }

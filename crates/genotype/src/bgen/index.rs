@@ -177,7 +177,8 @@ pub(super) fn parse_variant_index(
 
 // The owned-snapshot path deliberately keeps a concrete direct-slice cursor.
 // The positioned parser needs buffer-polymorphic bytes, whose generic wrapper
-// measurably slows the index loop over hundreds of thousands of variants.
+// measurably slows the index loop over hundreds of thousands of variants. A
+// 2026-07-24 helper extraction also failed the strict paired-positive gate.
 #[allow(clippy::too_many_lines)]
 fn parse_snapshot_variant_index(
     source: &BgenSource,
@@ -352,7 +353,8 @@ fn parse_snapshot_variant_index(
 }
 
 // Parsing remains sequential so every bounds check advances the same audited
-// BGEN cursor; splitting it would obscure the byte-order and offset invariant.
+// BGEN cursor; a 2026-07-24 helper extraction failed the strict paired-positive
+// performance gate and splitting further would obscure byte-order invariants.
 #[allow(clippy::too_many_lines)]
 fn parse_variant_index_with_cursor(
     source: &BgenSource,
