@@ -444,17 +444,17 @@ impl OutputOwnerClaim {
 }
 
 impl OutputOwnerConditionalRelease {
-    pub(crate) fn release_if_current(self) -> OutputResult<()> {
+    pub(crate) fn release_if_current(&self) -> OutputResult<()> {
         match resolve_owner_authority(&self.claim_path, &self.owner_transitions_directory)? {
             OutputOwnerAuthorityState::Active(record) if record == self.record => {
                 let release_path =
                     owner_transition_path(&self.owner_transitions_directory, self.record.claim_id.as_str());
                 let expected_release = self.release_record.clone();
                 let mut owner_claim = OutputOwnerClaim {
-                    claim_path: self.claim_path,
-                    owner_transitions_directory: self.owner_transitions_directory,
-                    record: self.record,
-                    release_record: self.release_record,
+                    claim_path: self.claim_path.clone(),
+                    owner_transitions_directory: self.owner_transitions_directory.clone(),
+                    record: self.record.clone(),
+                    release_record: self.release_record.clone(),
                     release_state: OutputOwnerClaimReleaseState::Published,
                 };
                 match owner_claim.release() {
@@ -472,10 +472,29 @@ impl OutputOwnerConditionalRelease {
                             OutputOwnerAuthorityState::Active(record) if record == owner_claim.record => {
                                 Err(first_error)
                             }
-                            OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => Ok(()),
+                            OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => {
+                                self.reconcile_release_slot()
+                            }
                         }
                     }
                 }
+            }
+            OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => {
+                self.reconcile_release_slot()
+            }
+        }
+    }
+
+    fn reconcile_release_slot(&self) -> OutputResult<()> {
+        let release_path = owner_transition_path(&self.owner_transitions_directory, self.record.claim_id.as_str());
+        let Some(release_record) = read_optional_json::<OutputOwnerTransitionRecord>(&release_path)? else {
+            return Ok(());
+        };
+        release_record.validate()?;
+        sync_immutable_publication_directory(&release_path, &self.owner_transitions_directory)?;
+        match resolve_owner_authority(&self.claim_path, &self.owner_transitions_directory)? {
+            OutputOwnerAuthorityState::Active(record) if record == self.record => {
+                Err(OutputError::ConcurrentLineageUpdate { record_path: release_path })
             }
             OutputOwnerAuthorityState::Active(_) | OutputOwnerAuthorityState::Released { .. } => Ok(()),
         }
@@ -1815,7 +1834,7 @@ fn validate_phenotype_contracts(phenotypes: &[PhenotypeLineageContract]) -> Outp
 }
 
 fn validate_sha256(digest: &str, role: &str) -> OutputResult<()> {
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
+    if !crate::digest::is_canonical_sha256(digest) {
         return Err(OutputError::InvalidInput(format!(
             "Output {role} SHA-256 must contain exactly 64 hexadecimal characters."
         )));

@@ -280,7 +280,7 @@ fn validate_path_identifier(identifier: &str, role: &str) -> OutputResult<()> {
 }
 
 fn validate_sha256(digest: &str, role: &str) -> OutputResult<()> {
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) {
+    if !crate::digest::is_canonical_sha256(digest) {
         return Err(OutputError::InvalidInput(format!(
             "Output {role} SHA-256 must contain exactly 64 hexadecimal characters."
         )));

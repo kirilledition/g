@@ -5,7 +5,9 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::error::OutputError;
@@ -91,6 +93,7 @@ fn build_manifest_file_fingerprint(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn manifest_file_fingerprint_to_value(file_fingerprint: &ManifestFileFingerprint) -> Value {
     json!({
         "path": &file_fingerprint.path,

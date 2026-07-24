@@ -47,6 +47,27 @@ fields are limited to manifest/output schema versions and mutable lifecycle
 metadata such as status, committed chunks, command, runtime, and interruption
 state. The pre-release Parquet output schema is version `0`; it makes `INFO` nullable when
 its expected-variance denominator is undefined.
+Attempt-manifest schema version `0` rejects duplicate, unknown, missing, and
+wrong-typed fields. Its exact base field set is `schema_version`,
+`output_schema_version`, `execution_plan`, `execution_plan_hash`,
+`attempt_manifest_schema_version`, `run_set_id`, `attempt_id`,
+`phenotype_name`, `output_directory_name`, `chunk_plan_hash`, `status`,
+`committed_parts`, `committed_chunks`, `command`, and `runtime`. Running and
+completed manifests contain only that base set. Interrupted manifests add one
+non-empty string `interrupted_signal`; failed manifests add one non-empty string
+`failure_reason`. Inapplicable terminal-detail fields must be absent rather than
+`null`. Command and runtime objects also use their exact typed schema. Runtime
+device and writer-thread values must agree with the corresponding immutable
+execution-plan fields, and the execution-plan phenotype must equal the
+attempt/genesis phenotype; CPU-thread count remains runtime diagnostics.
+Schema zero intentionally preserves this flat, status-dependent JSON layout
+because its canonical bytes participate in terminal hashes. A tagged or nested
+status layout requires a future schema revision.
+Every object in the nested `execution_plan` graph uses the same closed,
+strongly typed schema for construction and parsing. Unknown or missing nested
+fields, unsupported enum values, and inconsistent backend/device,
+association-mode, or correction-policy combinations are rejected even when
+the JSON has a self-consistent replacement hash.
 The execution plan records
 `resume_policy = "lineage_receipts_exact_coverage"`. This value is hashed and
 intentionally rejects older pre-release manifests that used the removed
@@ -58,6 +79,27 @@ plan hashes, and canonical chunk-plan hash. Immutable attempt outcomes select
 exactly one terminal claim or exact nonterminal recovery claim. Terminal
 finalization binds the terminal claim only after every named manifest has been
 materialized and rehashed. There is no mutable `HEAD`.
+When startup asks an existing manifest for its GPU genotype-format hint, the
+reader first resolves fresh lineage authority and validates the whole typed
+manifest against the genesis run set, phenotype execution-plan digest,
+canonical chunk-plan digest, and current leaf attempt. A terminal or pending
+terminal still requires that full genesis/leaf binding. A finalized terminal
+additionally requires the exact raw manifest SHA-256 recorded for that
+phenotype. A pending terminal intentionally reads its bound running manifest:
+recovery has not materialized the claimed terminal bytes yet. The reader
+resolves lineage again before returning, so a concurrent successor or terminal
+publication cannot turn an unbound manifest read into an accepted hint.
+
+Recovery opens each `run_manifest.json` as a non-symlink regular file and
+accepts at most 1 GiB. The reader consumes one additional detection byte so
+an oversized or concurrently growing file is rejected rather than allocated
+without a bound. Manifest construction enforces the same ceiling before
+publication, and terminal materialization reopens and hashes the exact bytes
+through that bounded reader. This measured schema-zero limit covers the known
+chromosome-22 scale even with one variant per chunk and one receipt per
+repeated interrupted flush, maximum-length accepted lineage identifiers, a
+255-byte phenotype name, and variable-header reserve; larger datasets must use
+larger chunks or a future control-plane schema.
 
 Completing or interrupting a run first closes each output writer to new chunks,
 flushes every admitted batch, and waits for all part writers before publishing
@@ -110,10 +152,20 @@ planned run.
 Planning a new or resumed run only inspects the selected output paths. It does
 not create the output root. Claiming then publishes the permanent root or one
 immutable owner transition, repeats lineage and policy validation under that
-authority, reserves a stable attempt identifier, and creates only
+authority, reserves a fresh staging-attempt identifier, and creates only
 ownership-private diagnostics. Activation publishes genesis or a successor for
-that same attempt identity before writers start. Missing paths are treated as
-absent; other directory or lineage inspection errors stop planning.
+that same attempt identity before writers start. Completed read-only activation
+instead leaves the fresh staging attempt and its owner-staging intent
+unreferenced through final verification. After the runtime session closes, a
+non-cloneable, idempotent cleanup capability removes that staging and releases
+the exact owner, retiring the owner-staging intent between those operations.
+The same capability is retryable after a durability error and tolerates an
+already-retired intent. Every consuming terminal method returns its primary
+failure through `OutputTerminalError`; only completed read-only failures can
+also carry this cleanup capability. Callers must separate the error parts and
+run cleanup after closing claim-scoped sessions.
+Missing paths are treated as absent; other directory or lineage inspection
+errors stop planning.
 
 ## Enabling Resume
 

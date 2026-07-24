@@ -3,11 +3,19 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use crate::error::OutputError;
+use crate::error::{OutputError, OutputResult};
 
+use super::schema_zero::{
+    ApproximateFirthPseudoInnerPolicySchemaZero, AssociationBackendKindSchemaZero, AssociationBackendSchemaZero,
+    BgenContentHashAlgorithmSchemaZero, BgenFingerprintSchemaZero, BinaryCorrectionPlanSchemaZero,
+    ExecutionPlanSchemaZero, FileContentHashAlgorithmSchemaZero, FileFingerprintSchemaZero,
+    FloatingPointDtypeSchemaZero, JaxPolicySchemaZero, KernelPlanSchemaZero, MatmulPrecisionSchemaZero,
+    OutputWriterSchemaZero, ParquetCompressionSchemaZero, ParquetFloatColumnEncodingSchemaZero,
+    PredictionInputsSchemaZero, PredictionLocoFileFingerprintSchemaZero, RequiredNullSchemaZero,
+    RequiredNullableSchemaZero, ResumePolicySchemaZero,
+};
 use super::{
-    ManifestFileFingerprintCache, OUTPUT_SCHEMA_VERSION, RESUME_POLICY, RUN_MANIFEST_SCHEMA_VERSION,
-    build_manifest_value_sha256, manifest_file_fingerprint_to_value,
+    ManifestFileFingerprintCache, OUTPUT_SCHEMA_VERSION, RUN_MANIFEST_SCHEMA_VERSION, build_manifest_value_sha256,
 };
 
 pub struct CurrentRunManifestHeaderInput {
@@ -32,177 +40,239 @@ pub struct PredictionLocoFileFingerprint {
     pub(crate) file_fingerprint: Arc<super::ManifestFileFingerprint>,
 }
 
-// Keeping the canonical manifest value in one function makes the exact hashed
-// field set and its serialization order reviewable as one compatibility unit.
-#[allow(clippy::too_many_lines)]
+struct ExecutionPlanFileFingerprints {
+    bgen: BgenFingerprintSchemaZero,
+    sample: FileFingerprintSchemaZero,
+    phenotype_file: FileFingerprintSchemaZero,
+    covariate_file: Option<FileFingerprintSchemaZero>,
+    prediction_list: FileFingerprintSchemaZero,
+    prediction_loco_files: Vec<PredictionLocoFileFingerprintSchemaZero>,
+}
+
 pub(crate) fn build_current_run_manifest_header_value_with_cache(
     run_plan: &g_plan::RunPlan,
     input: &CurrentRunManifestHeaderInput,
     fingerprint_cache: &mut ManifestFileFingerprintCache,
 ) -> Result<Value, OutputError> {
-    let bgen_fingerprint = bgen_source_identity_to_value(&input.bgen_source_identity);
-    let sample_fingerprint = build_optional_file_fingerprint_with_cache(
-        fingerprint_cache,
-        Some(Path::new(&run_plan.input.sample_path)),
-        true,
-    )?;
-    let phenotype_file_fingerprint = build_required_file_fingerprint_with_cache(
-        fingerprint_cache,
-        Path::new(&run_plan.input.phenotype_path),
-        true,
-        "phenotype file",
-    )?;
-    let covariate_file_fingerprint = build_optional_file_fingerprint_with_cache(
-        fingerprint_cache,
-        run_plan.input.covariate_path.as_deref().map(Path::new),
-        true,
-    )?;
-    let prediction_list_fingerprint = build_required_file_fingerprint_with_cache(
-        fingerprint_cache,
-        Path::new(&run_plan.input.prediction_list_path),
-        true,
-        "prediction list",
-    )?;
-    let prediction_loco_files = prediction_loco_file_fingerprints_to_value(&input.prediction_loco_files)?;
-    let prediction_inputs = json!({
-        "prediction_list": prediction_list_fingerprint,
-        "loco_files": prediction_loco_files,
-    });
-    let binary_correction_plan = json!({
-        "method": run_plan.correction.method.as_str(),
-        "p_threshold": run_plan.correction.p_threshold.get(),
-        "firth_se": run_plan.correction.firth_se,
-    });
-    let binary_kernel_config = match run_plan.association_mode {
-        g_plan::AssociationMode::Regenie2Binary => {
-            serde_json::to_value(&run_plan.compute.kernels).map_err(OutputError::runtime)?
-        }
-        g_plan::AssociationMode::Regenie2Linear => Value::Null,
-    };
-    let association_backend_kind = match input.resolved_gpu_genotype_format {
-        g_plan::GpuGenotypeFormat::Dosage => "jax_dosage",
-        g_plan::GpuGenotypeFormat::Packed8 => "jax_packed8",
-    };
-    let association_backend = json!({
-        "kind": association_backend_kind,
-        "genotype_format": input.resolved_gpu_genotype_format.as_str(),
-    });
-    let approximate_firth_pseudo_inner_policy = (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
-        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate)
-        .then_some("float32_elementwise_float64_reduction");
-    let jax_policy = json!({
-        "device": run_plan.compute.device.as_str(),
-        "enable_x64": true,
-        "matmul_precision": "float32",
-        "approximate_firth_pseudo_inner_policy": approximate_firth_pseudo_inner_policy,
-    });
-    let output_writer = json!({
-        "writer_thread_count": run_plan.output.writer_thread_count,
-        "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
-        "chunks_per_parquet_file": crate::CHUNKS_PER_PARQUET_FILE,
-        "parquet_compression": "zstd",
-        "parquet_writer_version": crate::writer::REGENIE_STEP2_PARQUET_WRITER_VERSION.as_num(),
-        "parquet_write_batch_size": crate::writer::REGENIE_STEP2_PARQUET_WRITE_BATCH_SIZE,
-        "parquet_max_row_group_size": crate::writer::REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE,
-        "parquet_float_column_encoding": crate::writer::REGENIE_STEP2_PARQUET_FLOAT_ENCODING.to_string(),
-        "result_statistic_dtype": "float32",
-    });
+    let execution_plan = build_execution_plan_schema_zero_with_cache(run_plan, input, fingerprint_cache)?;
+    let execution_plan_value = execution_plan.to_value()?;
+    let execution_plan_hash = build_manifest_value_sha256(&execution_plan_value)?;
+    Ok(json!({
+        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "execution_plan": execution_plan_value,
+        "execution_plan_hash": execution_plan_hash,
+    }))
+}
+
+pub(crate) fn build_execution_plan_schema_zero_with_cache(
+    run_plan: &g_plan::RunPlan,
+    input: &CurrentRunManifestHeaderInput,
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
+) -> OutputResult<ExecutionPlanSchemaZero> {
+    let fingerprints = build_execution_plan_file_fingerprints_with_cache(run_plan, input, fingerprint_cache)?;
     let sample_count = i64::try_from(input.sample_count)
         .map_err(|_| OutputError::InvalidInput("Sample count does not fit manifest int64.".to_string()))?;
     let variant_count = i64::try_from(input.variant_count)
         .map_err(|_| OutputError::InvalidInput("Variant count does not fit manifest int64.".to_string()))?;
-    let execution_plan = json!({
-        "association_mode": run_plan.association_mode.as_str(),
-        "association_backend": association_backend,
-        "bgen": bgen_fingerprint,
-        "sample": sample_fingerprint,
-        "phenotype_file": phenotype_file_fingerprint,
-        "phenotype_name": input.phenotype_name,
-        "covariate_file": covariate_file_fingerprint,
-        "covariate_names": input.covariate_names.as_ref(),
-        "prediction_inputs": prediction_inputs,
-        "sample_count": sample_count,
-        "variant_count": variant_count,
-        "chunk_size": run_plan.chunk_size,
-        "binary_correction_plan": binary_correction_plan,
-        "binary_kernel_config": binary_kernel_config,
-        "jax_policy": jax_policy,
-        "score_dtype": "float32",
-        "multi_phenotype_sample_mode": input.sample_mode.as_str(),
-        "phenotype_compute_group_id": input.phenotype_compute_group_id.as_ref(),
-        "sample_set_fingerprint": input.sample_set_fingerprint.as_ref(),
-        "covariate_design_fingerprint": input.covariate_design_fingerprint.as_ref(),
-        "phenotype_design_fingerprint": input.phenotype_design_fingerprint.as_ref(),
-        "prediction_alignment_fingerprint": input.prediction_alignment_fingerprint.as_ref(),
-        "output_writer": output_writer,
-        "resume_policy": RESUME_POLICY,
-    });
-    let execution_plan_hash = build_manifest_value_sha256(&execution_plan)?;
-    let current_header = json!({
-        "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-        "output_schema_version": OUTPUT_SCHEMA_VERSION,
-        "execution_plan": execution_plan,
-        "execution_plan_hash": execution_plan_hash,
-    });
-    Ok(current_header)
+    let execution_plan = ExecutionPlanSchemaZero {
+        association_mode: run_plan.association_mode,
+        association_backend: build_association_backend(input.resolved_gpu_genotype_format),
+        bgen: fingerprints.bgen,
+        sample: fingerprints.sample,
+        phenotype_file: fingerprints.phenotype_file,
+        phenotype_name: input.phenotype_name.clone(),
+        covariate_file: RequiredNullableSchemaZero::new(fingerprints.covariate_file),
+        covariate_names: input.covariate_names.to_vec(),
+        prediction_inputs: PredictionInputsSchemaZero {
+            prediction_list: fingerprints.prediction_list,
+            loco_files: fingerprints.prediction_loco_files,
+        },
+        sample_count,
+        variant_count,
+        chunk_size: run_plan.chunk_size,
+        binary_correction_plan: BinaryCorrectionPlanSchemaZero {
+            method: run_plan.correction.method,
+            p_threshold: run_plan.correction.p_threshold,
+            firth_se: run_plan.correction.firth_se,
+        },
+        binary_kernel_config: build_binary_kernel_config(run_plan),
+        jax_policy: build_jax_policy(run_plan),
+        score_dtype: FloatingPointDtypeSchemaZero::Float32,
+        multi_phenotype_sample_mode: input.sample_mode,
+        phenotype_compute_group_id: input.phenotype_compute_group_id.to_string(),
+        sample_set_fingerprint: input.sample_set_fingerprint.to_string(),
+        covariate_design_fingerprint: input.covariate_design_fingerprint.to_string(),
+        phenotype_design_fingerprint: input.phenotype_design_fingerprint.to_string(),
+        prediction_alignment_fingerprint: input.prediction_alignment_fingerprint.to_string(),
+        output_writer: build_output_writer(run_plan)?,
+        resume_policy: ResumePolicySchemaZero::LineageReceiptsExactCoverage,
+    };
+    execution_plan.validate()?;
+    Ok(execution_plan)
 }
 
-fn bgen_source_identity_to_value(identity: &g_genotype_contracts::BgenSourceIdentity) -> Value {
-    let resolved_path = identity.canonical_path.as_ref().unwrap_or(&identity.configured_path);
-    json!({
-        "path": resolved_path.display().to_string(),
-        "configured_path": identity.configured_path.display().to_string(),
-        "size": identity.file_size,
-        "mtime_ns": identity.modification_time_nanoseconds,
-        "ctime_ns": identity.change_time_nanoseconds,
-        "device": identity.device_identifier,
-        "inode": identity.inode_identifier,
-        "content_hash_algorithm": "opened-file-identity",
-        "content_sha256": Value::Null,
+fn build_execution_plan_file_fingerprints_with_cache(
+    run_plan: &g_plan::RunPlan,
+    input: &CurrentRunManifestHeaderInput,
+    fingerprint_cache: &mut ManifestFileFingerprintCache,
+) -> OutputResult<ExecutionPlanFileFingerprints> {
+    Ok(ExecutionPlanFileFingerprints {
+        bgen: bgen_source_identity_to_schema_zero(&input.bgen_source_identity),
+        sample: build_required_file_fingerprint_with_cache(
+            fingerprint_cache,
+            Path::new(&run_plan.input.sample_path),
+            "sample file",
+        )?,
+        phenotype_file: build_required_file_fingerprint_with_cache(
+            fingerprint_cache,
+            Path::new(&run_plan.input.phenotype_path),
+            "phenotype file",
+        )?,
+        covariate_file: build_optional_file_fingerprint_with_cache(
+            fingerprint_cache,
+            run_plan.input.covariate_path.as_deref().map(Path::new),
+        )?,
+        prediction_list: build_required_file_fingerprint_with_cache(
+            fingerprint_cache,
+            Path::new(&run_plan.input.prediction_list_path),
+            "prediction list",
+        )?,
+        prediction_loco_files: prediction_loco_file_fingerprints_to_schema_zero(&input.prediction_loco_files)?,
     })
 }
 
-fn prediction_loco_file_fingerprints_to_value(
+fn build_association_backend(genotype_format: g_plan::GpuGenotypeFormat) -> AssociationBackendSchemaZero {
+    AssociationBackendSchemaZero {
+        kind: match genotype_format {
+            g_plan::GpuGenotypeFormat::Dosage => AssociationBackendKindSchemaZero::JaxDosage,
+            g_plan::GpuGenotypeFormat::Packed8 => AssociationBackendKindSchemaZero::JaxPacked8,
+        },
+        genotype_format,
+    }
+}
+
+fn build_binary_kernel_config(run_plan: &g_plan::RunPlan) -> RequiredNullableSchemaZero<KernelPlanSchemaZero> {
+    RequiredNullableSchemaZero::new(
+        (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary)
+            .then(|| KernelPlanSchemaZero::from(&run_plan.compute.kernels)),
+    )
+}
+
+fn build_jax_policy(run_plan: &g_plan::RunPlan) -> JaxPolicySchemaZero {
+    let approximate_firth_policy = (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
+        && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate)
+        .then_some(ApproximateFirthPseudoInnerPolicySchemaZero::Float32ElementwiseFloat64Reduction);
+    JaxPolicySchemaZero {
+        device: run_plan.compute.device,
+        enable_x64: true,
+        matmul_precision: MatmulPrecisionSchemaZero::Float32,
+        approximate_firth_pseudo_inner_policy: RequiredNullableSchemaZero::new(approximate_firth_policy),
+    }
+}
+
+fn build_output_writer(run_plan: &g_plan::RunPlan) -> OutputResult<OutputWriterSchemaZero> {
+    Ok(OutputWriterSchemaZero {
+        writer_thread_count: run_plan.output.writer_thread_count,
+        writer_queue_depth: usize_to_manifest_u64(crate::WRITER_QUEUE_DEPTH, "Writer queue depth")?,
+        chunks_per_parquet_file: usize_to_manifest_u64(crate::CHUNKS_PER_PARQUET_FILE, "Chunks per Parquet file")?,
+        parquet_compression: ParquetCompressionSchemaZero::Zstd,
+        parquet_writer_version: crate::writer::REGENIE_STEP2_PARQUET_WRITER_VERSION.as_num(),
+        parquet_write_batch_size: usize_to_manifest_u64(
+            crate::writer::REGENIE_STEP2_PARQUET_WRITE_BATCH_SIZE,
+            "Parquet write batch size",
+        )?,
+        parquet_max_row_group_size: usize_to_manifest_u64(
+            crate::writer::REGENIE_STEP2_PARQUET_MAX_ROW_GROUP_SIZE,
+            "Parquet maximum row-group size",
+        )?,
+        parquet_float_column_encoding: ParquetFloatColumnEncodingSchemaZero::ByteStreamSplit,
+        result_statistic_dtype: FloatingPointDtypeSchemaZero::Float32,
+    })
+}
+
+fn usize_to_manifest_u64(value: usize, field_name: &str) -> OutputResult<u64> {
+    u64::try_from(value)
+        .map_err(|error| OutputError::Runtime(format!("{field_name} does not fit manifest uint64: {error}")))
+}
+
+fn bgen_source_identity_to_schema_zero(
+    identity: &g_genotype_contracts::BgenSourceIdentity,
+) -> BgenFingerprintSchemaZero {
+    let resolved_path = identity.canonical_path.as_ref().unwrap_or(&identity.configured_path);
+    BgenFingerprintSchemaZero {
+        path: resolved_path.display().to_string(),
+        configured_path: identity.configured_path.display().to_string(),
+        size: identity.file_size,
+        mtime_ns: identity.modification_time_nanoseconds,
+        ctime_ns: identity.change_time_nanoseconds,
+        device: identity.device_identifier,
+        inode: identity.inode_identifier,
+        content_hash_algorithm: BgenContentHashAlgorithmSchemaZero::OpenedFileIdentity,
+        content_sha256: RequiredNullSchemaZero(()),
+    }
+}
+
+fn prediction_loco_file_fingerprints_to_schema_zero(
     fingerprints: &[PredictionLocoFileFingerprint],
-) -> Result<Value, OutputError> {
-    let values = fingerprints
+) -> OutputResult<Vec<PredictionLocoFileFingerprintSchemaZero>> {
+    fingerprints
         .iter()
         .map(|fingerprint| {
-            let content_sha256 = fingerprint.file_fingerprint.content_sha256.as_deref().ok_or_else(|| {
+            let content_sha256 = fingerprint.file_fingerprint.content_sha256.clone().ok_or_else(|| {
                 OutputError::Runtime("LOCO prediction file fingerprint must include a content hash.".to_string())
             })?;
-            Ok(json!({
-                "phenotype": fingerprint.phenotype_name.as_ref(),
-                "path": &fingerprint.file_fingerprint.path,
-                "size": fingerprint.file_fingerprint.size,
-                "mtime_ns": fingerprint.file_fingerprint.mtime_ns,
-                "content_hash_algorithm": &fingerprint.file_fingerprint.content_hash_algorithm,
-                "content_sha256": content_sha256,
-            }))
+            validate_constructed_file_hash_algorithm(
+                &fingerprint.file_fingerprint.content_hash_algorithm,
+                "LOCO prediction file",
+            )?;
+            Ok(PredictionLocoFileFingerprintSchemaZero {
+                phenotype: fingerprint.phenotype_name.to_string(),
+                path: fingerprint.file_fingerprint.path.clone(),
+                size: fingerprint.file_fingerprint.size,
+                mtime_ns: fingerprint.file_fingerprint.mtime_ns,
+                content_hash_algorithm: FileContentHashAlgorithmSchemaZero::Sha256,
+                content_sha256,
+            })
         })
-        .collect::<Result<Vec<_>, OutputError>>()?;
-    Ok(Value::Array(values))
+        .collect()
 }
 
 fn build_required_file_fingerprint_with_cache(
     fingerprint_cache: &mut ManifestFileFingerprintCache,
     path: &Path,
-    include_content_hash: bool,
     role_name: &str,
-) -> Result<Value, OutputError> {
-    build_optional_file_fingerprint_with_cache(fingerprint_cache, Some(path), include_content_hash)?
+) -> OutputResult<FileFingerprintSchemaZero> {
+    build_optional_file_fingerprint_with_cache(fingerprint_cache, Some(path))?
         .ok_or_else(|| OutputError::InvalidInput(format!("{role_name} fingerprint is required.")))
 }
 
 fn build_optional_file_fingerprint_with_cache(
     fingerprint_cache: &mut ManifestFileFingerprintCache,
     path: Option<&Path>,
-    include_content_hash: bool,
-) -> Result<Option<Value>, OutputError> {
+) -> OutputResult<Option<FileFingerprintSchemaZero>> {
     let Some(file_path) = path else {
         return Ok(None);
     };
-    fingerprint_cache
-        .build_file_fingerprint(file_path, include_content_hash)
-        .map(|fingerprint| Some(manifest_file_fingerprint_to_value(fingerprint.as_ref())))
+    let fingerprint = fingerprint_cache.build_file_fingerprint(file_path, true)?;
+    validate_constructed_file_hash_algorithm(&fingerprint.content_hash_algorithm, "input file")?;
+    let content_sha256 = fingerprint.content_sha256.clone().ok_or_else(|| {
+        OutputError::Runtime("Hashed input file fingerprint must include a content hash.".to_string())
+    })?;
+    Ok(Some(FileFingerprintSchemaZero {
+        path: fingerprint.path.clone(),
+        size: fingerprint.size,
+        mtime_ns: fingerprint.mtime_ns,
+        content_hash_algorithm: FileContentHashAlgorithmSchemaZero::Sha256,
+        content_sha256,
+    }))
+}
+
+fn validate_constructed_file_hash_algorithm(content_hash_algorithm: &str, role_name: &str) -> OutputResult<()> {
+    if content_hash_algorithm != "sha256" {
+        return Err(OutputError::Runtime(format!(
+            "{role_name} fingerprint must use the SHA-256 content hash algorithm."
+        )));
+    }
+    Ok(())
 }

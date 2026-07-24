@@ -134,6 +134,21 @@ fn run_plan(
     })
 }
 
+fn two_phenotype_run_plan(
+    directory: &TestDirectory,
+    inputs: &TestInputs,
+    resume: bool,
+    recover_attempt: Option<String>,
+    telemetry: g_plan::TelemetryMode,
+) -> Arc<g_plan::RunPlan> {
+    let mut plan = run_plan(directory, inputs, resume, recover_attempt, telemetry);
+    Arc::get_mut(&mut plan).expect("test run plan has one owner").phenotype_runs.push(g_plan::PhenotypeRunPlan {
+        phenotype_name: SECOND_PHENOTYPE_NAME.to_string(),
+        output_directory_name: SECOND_OUTPUT_DIRECTORY_NAME.to_string(),
+    });
+    plan
+}
+
 fn kernel_plan() -> g_plan::KernelPlan {
     g_plan::KernelPlan {
         linear: g_plan::LinearKernelPlan {
@@ -207,6 +222,10 @@ fn header_for_phenotype(
     }
 }
 
+fn two_phenotype_headers(inputs: &TestInputs, variant_count: usize) -> Vec<CurrentRunManifestHeaderInput> {
+    vec![header(inputs, variant_count), header_for_phenotype(inputs, variant_count, SECOND_PHENOTYPE_NAME)]
+}
+
 fn timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i64 {
     seconds
         .checked_mul(1_000_000_000)
@@ -224,6 +243,66 @@ fn initialize_manager(
         .expect("manager opens")
         .initialize(vec![header(inputs, variant_count)], chunk_ranges, true)
         .expect("manager initializes")
+}
+
+fn assert_no_post_session_cleanup(completion: crate::OutputCompletion) {
+    let crate::OutputCompletion { completed_outputs: _, post_session_cleanup } = completion;
+    assert!(post_session_cleanup.is_none(), "ordinary output lifecycle must complete cleanup internally");
+}
+
+struct CompletedNoopCleanupFixture {
+    _directory: TestDirectory,
+    output_root: PathBuf,
+    lineage_paths: crate::persistence::lineage::OutputLineagePaths,
+    claim_id: String,
+    staging_attempt_id: crate::persistence::identifier::AttemptIdentifier,
+    cleanup: crate::OutputPostSessionCleanup,
+}
+
+fn completed_noop_cleanup_fixture(label: &str) -> CompletedNoopCleanupFixture {
+    let directory = TestDirectory::new(label);
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let delivery_token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&delivery_token, &metadata_store(2), 0..2);
+    drop(delivery_token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let claimed_manager = OutputManager::open(resume_plan, "# completed no-op cleanup fixture\n".to_string())
+        .expect("completed resume plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed resume claims");
+    let claim_id = owner_claim_identifier(&output_root);
+    let staging_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
+    let completion = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed resume activates")
+        .close_completed()
+        .expect("completed resume reverifies")
+        .finish()
+        .expect("completed resume returns cleanup");
+    let cleanup = completion.post_session_cleanup.expect("completed resume defers cleanup");
+    CompletedNoopCleanupFixture {
+        _directory: directory,
+        output_root,
+        lineage_paths,
+        claim_id,
+        staging_attempt_id,
+        cleanup,
+    }
 }
 
 fn metadata_store(variant_count: usize) -> Arc<VariantMetadataStore> {
@@ -290,6 +369,71 @@ fn write_chunk(token: &crate::OutputDeliveryToken, store: &Arc<VariantMetadataSt
 
 fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("JSON file reads")).expect("JSON file is valid")
+}
+
+fn rehash_manifest_execution_plan(manifest: &mut Value) {
+    manifest["execution_plan_hash"] =
+        Value::String(crate::manifest::build_manifest_value_sha256(&manifest["execution_plan"]).expect("plan hashes"));
+}
+
+#[derive(Clone, Copy)]
+enum ManifestAuthorityTamper {
+    RunSet,
+    Attempt,
+    Phenotype,
+    OutputDirectory,
+    ChunkPlan,
+    ExecutionPlan,
+}
+
+impl ManifestAuthorityTamper {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RunSet => "run set",
+            Self::Attempt => "attempt",
+            Self::Phenotype => "phenotype",
+            Self::OutputDirectory => "output directory",
+            Self::ChunkPlan => "chunk plan",
+            Self::ExecutionPlan => "execution plan",
+        }
+    }
+
+    fn expected_error(self) -> &'static str {
+        match self {
+            Self::RunSet => "run set does not match its immutable lineage binding",
+            Self::Attempt => "attempt does not match its immutable lineage attempt",
+            Self::Phenotype | Self::OutputDirectory => "phenotype does not match its immutable lineage binding",
+            Self::ChunkPlan => "immutable lineage chunk plan",
+            Self::ExecutionPlan => "immutable lineage execution plan",
+        }
+    }
+
+    fn apply(self, manifest: &mut Value) {
+        match self {
+            Self::RunSet => manifest["run_set_id"] = Value::String("run-set-tampered".to_string()),
+            Self::Attempt => {
+                manifest["attempt_id"] =
+                    Value::String(crate::persistence::identifier::AttemptIdentifier::generate().as_str().to_string());
+            }
+            Self::Phenotype => {
+                let phenotype_name = Value::String("trait_unbound".to_string());
+                manifest["phenotype_name"] = phenotype_name.clone();
+                manifest["command"]["phenotype"] = phenotype_name.clone();
+                manifest["execution_plan"]["phenotype_name"] = phenotype_name;
+                rehash_manifest_execution_plan(manifest);
+            }
+            Self::OutputDirectory => {
+                manifest["output_directory_name"] = Value::String(SECOND_OUTPUT_DIRECTORY_NAME.to_string());
+            }
+            Self::ChunkPlan => manifest["chunk_plan_hash"] = Value::String("f".repeat(64)),
+            Self::ExecutionPlan => {
+                manifest["execution_plan"]["association_backend"]["kind"] = Value::String("jax_dosage".to_string());
+                manifest["execution_plan"]["association_backend"]["genotype_format"] =
+                    Value::String("dosage".to_string());
+                rehash_manifest_execution_plan(manifest);
+            }
+        }
+    }
 }
 
 fn attempt_identifier(output_root: &Path, parent_attempt: Option<&str>) -> String {
@@ -451,8 +595,9 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
 
     let completed =
         manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes");
-    assert_eq!(completed.len(), 1);
-    let run_directory = &completed[0].run_directory;
+    assert!(completed.post_session_cleanup.is_none());
+    assert_eq!(completed.completed_outputs.len(), 1);
+    let run_directory = &completed.completed_outputs[0].run_directory;
     assert_eq!(run_directory.file_name().and_then(|name| name.to_str()), Some(OUTPUT_DIRECTORY_NAME));
     let output_root = directory.path.join("results");
     assert_owner_authority_released(&output_root);
@@ -503,6 +648,142 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
 }
 
 #[test]
+fn existing_gpu_format_hint_requires_exact_immutable_lineage_bindings() {
+    let directory = TestDirectory::new("gpu-format-authority-binding");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    assert_no_post_session_cleanup(
+        manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(&attempt_id).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let original_manifest_bytes = std::fs::read(&manifest_path).expect("completed manifest reads");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let planned_manager =
+        OutputManager::open(resume_plan, "# authority-bound GPU hint\n".to_string()).expect("resume plans");
+    assert_eq!(
+        planned_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("authority-bound hint reads"),
+        Some(g_plan::GpuGenotypeFormat::Packed8)
+    );
+
+    for tamper in [
+        ManifestAuthorityTamper::RunSet,
+        ManifestAuthorityTamper::Attempt,
+        ManifestAuthorityTamper::Phenotype,
+        ManifestAuthorityTamper::OutputDirectory,
+        ManifestAuthorityTamper::ChunkPlan,
+        ManifestAuthorityTamper::ExecutionPlan,
+    ] {
+        let mut changed_manifest =
+            serde_json::from_slice(&original_manifest_bytes).expect("original manifest JSON parses");
+        tamper.apply(&mut changed_manifest);
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&changed_manifest).expect("changed manifest serializes"),
+        )
+        .expect("changed manifest writes");
+        let error = match planned_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME) {
+            Ok(format) => panic!("{} tamper must be rejected, observed {format:?}", tamper.label()),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(tamper.expected_error()),
+            "{} tamper returned unexpected error: {error}",
+            tamper.label()
+        );
+    }
+
+    let mut changed_terminal_bytes = original_manifest_bytes.clone();
+    changed_terminal_bytes.push(b'\n');
+    std::fs::write(&manifest_path, changed_terminal_bytes).expect("raw terminal manifest tamper writes");
+    let changed_terminal_error = planned_manager
+        .existing_manifest_gpu_genotype_format(PHENOTYPE_NAME)
+        .expect_err("semantically identical bytes outside the immutable terminal binding are rejected");
+    assert!(changed_terminal_error.to_string().contains("immutable terminal manifest"));
+}
+
+#[test]
+fn finalized_noncompleted_terminals_provide_authority_bound_gpu_format_hints() {
+    for (status, interruption_signal) in [("interrupted", Some("SIGTERM")), ("failed", None)] {
+        let directory = TestDirectory::new(&format!("gpu-format-finalized-{status}"));
+        let inputs = test_inputs(&directory);
+        let manager = initialize_manager(
+            run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+            &inputs,
+            &single_chunk_ranges(2),
+        );
+        match interruption_signal {
+            Some(signal_name) => {
+                manager.finish_interrupted(signal_name).expect("interrupted terminal publishes");
+            }
+            None => {
+                manager.abort("injected failure").expect("failed terminal publishes");
+            }
+        }
+
+        let hint_manager = OutputManager::open(
+            run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+            format!("# finalized {status} GPU hint\n"),
+        )
+        .expect("terminal resume plans");
+        assert_eq!(
+            hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("terminal hint validates"),
+            Some(g_plan::GpuGenotypeFormat::Packed8),
+            "{status} terminal"
+        );
+    }
+}
+
+#[test]
+fn swapped_two_phenotype_execution_plans_fail_before_gpu_format_hint() {
+    let directory = TestDirectory::new("gpu-format-swapped-phenotype-plans");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let manager = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# two phenotype terminal\n".to_string(),
+    )
+    .expect("two phenotype manager plans")
+    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+    .expect("two phenotype manager initializes");
+    manager.finish_interrupted("SIGTERM").expect("two phenotype terminal publishes");
+
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let attempt_directory = output_root.join("attempts").join(attempt_id);
+    let first_manifest_path = attempt_directory.join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let second_manifest_path = attempt_directory.join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let mut first_manifest = read_json(&first_manifest_path);
+    let mut second_manifest = read_json(&second_manifest_path);
+    std::mem::swap(&mut first_manifest["execution_plan"], &mut second_manifest["execution_plan"]);
+    std::mem::swap(&mut first_manifest["execution_plan_hash"], &mut second_manifest["execution_plan_hash"]);
+    std::fs::write(&first_manifest_path, serde_json::to_vec(&first_manifest).expect("first manifest serializes"))
+        .expect("first manifest writes");
+    std::fs::write(&second_manifest_path, serde_json::to_vec(&second_manifest).expect("second manifest serializes"))
+        .expect("second manifest writes");
+
+    let hint_manager = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+        "# swapped phenotype GPU hint\n".to_string(),
+    )
+    .expect("swapped phenotype resume plans");
+    for phenotype_name in [PHENOTYPE_NAME, SECOND_PHENOTYPE_NAME] {
+        let error = hint_manager
+            .existing_manifest_gpu_genotype_format(phenotype_name)
+            .expect_err("swapped execution plan is rejected before providing a hint");
+        assert!(error.to_string().contains("execution plan phenotype does not match its manifest phenotype"));
+    }
+}
+
+#[test]
 fn interrupted_attempt_resumes_into_successor_with_verified_hardlink_reuse() {
     let directory = TestDirectory::new("terminal-resume");
     let inputs = test_inputs(&directory);
@@ -539,16 +820,18 @@ fn interrupted_attempt_resumes_into_successor_with_verified_hardlink_reuse() {
         .expect("resumed exact coverage closes")
         .finish()
         .expect("resumed completion publishes");
+    assert!(completed.post_session_cleanup.is_none());
 
     let second_attempt = attempt_identifier(&output_root, Some(&first_attempt));
-    let reused_part = completed[0].parts_directory.join(first_part.file_name().expect("part file name exists"));
+    let reused_part =
+        completed.completed_outputs[0].parts_directory.join(first_part.file_name().expect("part file name exists"));
     assert_eq!(
         first_part.metadata().expect("source metadata reads").ino(),
         reused_part.metadata().expect("reused metadata reads").ino()
     );
     assert_ne!(first_attempt, second_attempt);
     assert_eq!(
-        std::fs::read_dir(&completed[0].parts_directory)
+        std::fs::read_dir(&completed.completed_outputs[0].parts_directory)
             .expect("completed parts read")
             .filter_map(Result::ok)
             .filter(|entry| { entry.path().extension().is_some_and(|extension| extension == "parquet") })
@@ -567,7 +850,13 @@ fn completed_resume_reverifies_payload_without_mutating_data() {
     let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
-    manager.close_completed().expect("initial exact coverage closes").finish().expect("initial completion publishes");
+    assert_no_post_session_cleanup(
+        manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial completion publishes"),
+    );
 
     let output_root = directory.path.join("results");
     let before = regular_file_snapshot(&output_root);
@@ -577,7 +866,13 @@ fn completed_resume_reverifies_payload_without_mutating_data() {
         resume_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("completed token builds");
     assert!(token.is_read_only());
     drop(token);
-    resume_manager.close_completed().expect("completed attempt reverifies").finish().expect("completed no-op finishes");
+    assert_no_post_session_cleanup(
+        resume_manager
+            .close_completed()
+            .expect("completed attempt reverifies")
+            .finish()
+            .expect("completed no-op finishes"),
+    );
     let after = regular_file_snapshot(&output_root);
     for (path, expected) in &before {
         assert_eq!(after.get(path), Some(expected), "completed payload changed at '{}'", path.display());
@@ -645,11 +940,15 @@ fn relative_output_root_returns_absolute_completed_paths() {
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
     let completed = manager.close_completed().expect("relative output closes").finish().expect("output completes");
-    assert_eq!(completed.len(), 1);
-    assert!(completed[0].run_directory.is_absolute());
-    assert!(completed[0].parts_directory.is_absolute());
-    assert!(completed[0].run_directory.starts_with(&expected_output_root));
-    assert_eq!(completed[0].parts_directory, completed[0].run_directory.join("parts"));
+    assert!(completed.post_session_cleanup.is_none());
+    assert_eq!(completed.completed_outputs.len(), 1);
+    assert!(completed.completed_outputs[0].run_directory.is_absolute());
+    assert!(completed.completed_outputs[0].parts_directory.is_absolute());
+    assert!(completed.completed_outputs[0].run_directory.starts_with(&expected_output_root));
+    assert_eq!(
+        completed.completed_outputs[0].parts_directory,
+        completed.completed_outputs[0].run_directory.join("parts")
+    );
 }
 
 #[test]
@@ -874,6 +1173,53 @@ fn preactivation_failure_retains_ownership_until_explicit_rollback() {
 }
 
 #[test]
+fn preactivation_rollback_retries_after_transient_staging_cleanup_failure() {
+    let directory = TestDirectory::new("preactivation-rollback-cleanup-retry");
+    let inputs = test_inputs(&directory);
+    let mut plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+    Arc::get_mut(&mut plan).expect("test plan has one owner").phenotype_runs.push(g_plan::PhenotypeRunPlan {
+        phenotype_name: SECOND_PHENOTYPE_NAME.to_string(),
+        output_directory_name: SECOND_OUTPUT_DIRECTORY_NAME.to_string(),
+    });
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let manager = OutputManager::open(Arc::clone(&plan), "# retryable deferred rollback\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), true)
+        .expect("manager claims");
+    let claim_id = owner_claim_identifier(&output_root);
+    let staging_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent reads").expect("staging intent exists");
+    let Err(activation_error) = manager.activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)]) else {
+        panic!("missing phenotype header must reject activation");
+    };
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    let mut rollback = rollback.expect("unpublished activation returns rollback authority");
+
+    let failure_guard = crate::manager::install_initialization_cleanup_failure_for_test("after_claim_staging_removal");
+    let cleanup_error =
+        rollback.abort_before_activation().expect_err("transient staging cleanup failure retains rollback authority");
+    drop(failure_guard);
+    assert!(cleanup_error.to_string().contains("after_claim_staging_removal"));
+    assert!(cleanup_error.to_string().contains(&claim_id));
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent remains readable"),
+        Some(staging_attempt_id)
+    );
+    assert_surviving_owner_claim(
+        claim_error(plan, &single_chunk_ranges(2), "failed rollback retains exact authority"),
+        &output_root,
+    );
+
+    rollback.abort_before_activation().expect("same rollback authority retries cleanup and release");
+    rollback.abort_before_activation().expect("completed rollback is idempotent");
+    assert_eq!(lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent absence reads"), None);
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
 fn dropped_deferred_rollback_fails_closed_until_exactly_fenced() {
     let directory = TestDirectory::new("dropped-deferred-rollback");
     let inputs = test_inputs(&directory);
@@ -938,35 +1284,596 @@ fn postpublication_activation_failure_terminalizes_without_rollback_authority() 
 }
 
 #[test]
-fn preactivation_cleanup_racing_fenced_takeover_preserves_successor_staging() {
-    let directory = TestDirectory::new("preactivation-cleanup-takeover");
+fn prelink_genesis_failure_returns_rollback_and_rechecks_before_deletion() {
+    for authority_appears_before_rollback in [false, true] {
+        let directory = TestDirectory::new(if authority_appears_before_rollback {
+            "genesis-prelink-rollback-race"
+        } else {
+            "genesis-prelink-rollback"
+        });
+        let inputs = test_inputs(&directory);
+        let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+        let output_root = directory.path.join("results");
+        let genesis_path = output_root.join(".g-output/genesis.json");
+        let manager = OutputManager::open(plan, "# prelink failure\n".to_string())
+            .expect("manager plans")
+            .claim(&single_chunk_ranges(2), true)
+            .expect("manager claims");
+        let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+        let failure_guard =
+            crate::persistence::io::install_immutable_publication_file_sync_failure_for_test(genesis_path.clone());
+        let activation_error = manager
+            .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+            .err()
+            .expect("prelink synchronization failure rejects activation");
+        drop(failure_guard);
+        let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+        assert!(source.to_string().contains("file synchronization failure"));
+        let mut rollback = rollback.expect("definitely absent authority returns rollback");
+        assert!(!genesis_path.exists());
+
+        if authority_appears_before_rollback {
+            std::fs::write(&genesis_path, b"{}\n").expect("racing authority target appears");
+            let rollback_error = rollback
+                .abort_before_activation()
+                .expect_err("rollback refuses to remove staging after authority appears");
+            assert!(rollback_error.to_string().contains("immutable authority appeared"));
+            assert!(diagnostics_directory.is_dir());
+            assert!(output_root.join(".g-output/session.claim.json").is_file());
+        } else {
+            rollback.abort_before_activation().expect("absent authority rollback cleans and releases");
+            assert!(!diagnostics_directory.exists());
+            assert_owner_authority_released(&output_root);
+        }
+    }
+}
+
+#[test]
+fn visible_genesis_after_durability_error_never_exposes_rollback() {
+    let directory = TestDirectory::new("genesis-visible-durability-error");
     let inputs = test_inputs(&directory);
-    let predecessor_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
-    let predecessor_manager = OutputManager::open(predecessor_plan, "# predecessor\n".to_string())
-        .expect("predecessor manager plans")
-        .claim(&single_chunk_ranges(2), false)
-        .expect("predecessor manager claims");
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
     let output_root = directory.path.join("results");
     let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let manager = OutputManager::open(Arc::clone(&plan), "# visible genesis failure\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), true)
+        .expect("manager claims");
+    let claim_id = owner_claim_identifier(&output_root);
+    let staged_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
+    let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let failure_guard = crate::persistence::io::install_immutable_publication_directory_sync_failure_for_test(
+        lineage_paths.genesis_path.clone(),
+        3,
+    );
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .err()
+        .expect("postlink durability failure rejects activation");
+    drop(failure_guard);
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("directory durability"));
+    assert!(rollback.is_none(), "visible genesis must never expose destructive rollback");
+    assert!(lineage_paths.genesis_path.is_file());
+    assert!(diagnostics_directory.is_dir());
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging remains readable"),
+        Some(staged_attempt_id.clone())
+    );
+    let blocked_plan =
+        run_plan(&directory, &inputs, true, Some(staged_attempt_id.as_str().to_string()), g_plan::TelemetryMode::Off);
+    assert_surviving_owner_claim(
+        claim_error(blocked_plan, &single_chunk_ranges(2), "visible genesis retains its exact owner"),
+        &output_root,
+    );
+
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(staged_attempt_id.as_str().to_string()), g_plan::TelemetryMode::Off),
+        claim_id,
+    );
+    let recovery_manager = OutputManager::open(recovery_plan, "# fenced visible genesis\n".to_string())
+        .expect("fenced recovery plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("fenced recovery claims");
+    assert!(diagnostics_directory.is_dir(), "referenced genesis diagnostics survive fencing");
+    recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn visible_successor_after_durability_error_never_loses_staging() {
+    let directory = TestDirectory::new("successor-visible-durability-error");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    initialize_manager(initial_plan, &inputs, &chunk_ranges)
+        .finish_interrupted("SIGTERM")
+        .expect("predecessor interrupts");
+
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let parent_attempt_id = attempt_identifier(&output_root, None);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let manager = OutputManager::open(Arc::clone(&resume_plan), "# visible successor failure\n".to_string())
+        .expect("resume plans")
+        .claim(&chunk_ranges, true)
+        .expect("resume claims");
+    let claim_id = owner_claim_identifier(&output_root);
+    let staged_attempt_id =
+        lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
+    let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let successor_path = lineage_paths.normal_successor_path(
+        &crate::persistence::identifier::AttemptIdentifier::parse(&parent_attempt_id)
+            .expect("parent attempt identifier parses"),
+    );
+    let failure_guard = crate::persistence::io::install_immutable_publication_directory_sync_failure_for_test(
+        successor_path.clone(),
+        3,
+    );
+    let activation_error = manager
+        .activate(vec![header(&inputs, 2)])
+        .err()
+        .expect("postlink successor durability failure rejects activation");
+    drop(failure_guard);
+    assert!(activation_error.to_string().contains("directory durability"));
+    assert!(successor_path.is_file());
+    assert!(diagnostics_directory.is_dir());
+    assert_eq!(
+        attempt_identifier(&output_root, Some(&parent_attempt_id)),
+        staged_attempt_id.as_str(),
+        "visible successor references the reserved attempt"
+    );
+
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(staged_attempt_id.as_str().to_string()), g_plan::TelemetryMode::Off),
+        claim_id,
+    );
+    let recovery_manager = OutputManager::open(recovery_plan, "# fenced visible successor\n".to_string())
+        .expect("fenced successor recovery plans")
+        .claim(&chunk_ranges, false)
+        .expect("fenced successor recovery claims");
+    assert!(diagnostics_directory.is_dir(), "referenced successor diagnostics survive fencing");
+    recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn conflicting_genesis_target_fails_closed_without_rollback() {
+    let directory = TestDirectory::new("genesis-conflicting-target");
+    let inputs = test_inputs(&directory);
+    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Profile);
+    let output_root = directory.path.join("results");
+    let manager = OutputManager::open(plan, "# conflicting genesis\n".to_string())
+        .expect("manager plans")
+        .claim(&single_chunk_ranges(2), true)
+        .expect("manager claims");
+    let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let genesis_path = output_root.join(".g-output/genesis.json");
+    std::fs::write(&genesis_path, b"{}\n").expect("conflicting target publishes");
+    let activation_error = manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .err()
+        .expect("conflicting genesis rejects activation");
+    let crate::OutputActivationFailureParts { rollback, .. } = activation_error.into_parts();
+    assert!(rollback.is_none(), "present conflicting authority must fail closed");
+    assert!(diagnostics_directory.is_dir());
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+}
+
+#[test]
+fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
+    let directory = TestDirectory::new("completed-noop-finalization-gate");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let completed_attempt_id = attempt_identifier(&output_root, None);
+    let before = regular_file_snapshot(&output_root);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed no-op\n".to_string())
+        .expect("resume manager plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed output is claimed");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let active_claim_id = owner_claim_identifier(&output_root);
+    let staging_attempt_id = lineage_paths
+        .owner_staging_attempt(&active_claim_id)
+        .expect("completed staging reads")
+        .expect("completed staging exists");
+    assert_ne!(staging_attempt_id.as_str(), completed_attempt_id);
+    let diagnostics_directory =
+        claimed_manager.diagnostics_directory().expect("completed diagnostics path exists").to_path_buf();
+    std::fs::write(diagnostics_directory.join("events.jsonl"), b"{\"schema_version\":0}\n")
+        .expect("test telemetry is written");
+
+    let contender_error =
+        claim_error(Arc::clone(&resume_plan), &chunk_ranges, "unfinalized completed claim remains exclusive");
+    assert_surviving_owner_claim(contender_error, &output_root);
+
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed output activates read-only");
+    let token =
+        completed_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("read-only token builds");
+    assert!(token.is_read_only());
+    drop(token);
+    let completion = completed_manager
+        .close_completed()
+        .expect("completed output reverifies")
+        .finish()
+        .expect("completed output returns cleanup authority");
+    assert_eq!(owner_claim_identifier(&output_root), active_claim_id);
+    assert!(diagnostics_directory.is_dir());
+    let mut cleanup = completion.post_session_cleanup.expect("deferred completed no-op returns cleanup");
+    cleanup.cleanup().expect("post-session cleanup releases the current claim");
+    cleanup.cleanup().expect("completed cleanup is idempotent after exact release");
+
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_eq!(lineage_paths.owner_staging_attempt(&active_claim_id).expect("staging absence reads"), None);
+    assert_owner_authority_released(&output_root);
+    OutputManager::open(resume_plan, "# reacquired after cleanup\n".to_string())
+        .expect("post-cleanup manager plans")
+        .claim(&chunk_ranges, false)
+        .expect("ordinary reacquisition succeeds after current-owner cleanup")
+        .abort_before_activation()
+        .expect("reacquired staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+    let after = regular_file_snapshot(&output_root);
+    let new_paths = after.keys().filter(|path| !before.contains_key(*path)).collect::<Vec<_>>();
+    assert!(
+        !new_paths.is_empty() && new_paths.iter().all(|path| path.starts_with(".g-output/owner-transitions")),
+        "completed resume may append only owner-authority transitions, got {new_paths:?}"
+    );
+}
+
+#[test]
+fn completed_noop_cleanup_retries_the_same_authority_after_each_durable_boundary() {
+    for failure_point in [
+        "after_post_session_staging_removal",
+        "after_post_session_intent_retirement",
+        "after_post_session_owner_release",
+    ] {
+        let CompletedNoopCleanupFixture {
+            _directory,
+            output_root,
+            lineage_paths,
+            claim_id,
+            staging_attempt_id,
+            mut cleanup,
+        } = completed_noop_cleanup_fixture(failure_point);
+        let failure_guard = crate::manager::install_terminal_cleanup_failure_for_test(failure_point);
+        let cleanup_error = cleanup.cleanup().expect_err("configured cleanup boundary fails");
+        drop(failure_guard);
+        assert!(cleanup_error.to_string().contains(failure_point));
+        assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+        if failure_point == "after_post_session_staging_removal" {
+            assert_eq!(
+                lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads"),
+                Some(staging_attempt_id.clone())
+            );
+            assert!(output_root.join(".g-output/session.claim.json").is_file());
+        } else {
+            assert_eq!(lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads"), None);
+        }
+        if failure_point == "after_post_session_owner_release" {
+            assert_owner_authority_released(&output_root);
+        } else {
+            assert!(output_root.join(".g-output/session.claim.json").is_file());
+        }
+
+        cleanup.cleanup().expect("the same cleanup authority retries successfully");
+        cleanup.cleanup().expect("completed cleanup remains idempotent");
+        assert_eq!(lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads"), None);
+        assert_owner_authority_released(&output_root);
+    }
+}
+
+#[test]
+fn completed_noop_cleanup_reconfirms_visible_release_durability_on_retry() {
+    let CompletedNoopCleanupFixture { _directory, output_root, mut cleanup, .. } =
+        completed_noop_cleanup_fixture("completed-noop-release-durability-retry");
+    crate::persistence::io::fail_owner_publication_syncs_for_test(5);
+
+    let first_error = cleanup.cleanup().expect_err("release publication exhausts its internal durability retries");
+    assert!(first_error.to_string().contains("directory synchronization failure"));
+    let second_error =
+        cleanup.cleanup().expect_err("the same token must consume and report the remaining release sync failure");
+    assert!(second_error.to_string().contains("directory synchronization failure"));
+    cleanup.cleanup().expect("the same token finally reconfirms the visible release");
+    cleanup.cleanup().expect("durably released cleanup is idempotent");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn completed_noop_cleanup_durably_confirms_a_visible_competing_takeover() {
+    let CompletedNoopCleanupFixture {
+        _directory: directory,
+        output_root,
+        lineage_paths,
+        claim_id,
+        staging_attempt_id,
+        mut cleanup,
+    } = completed_noop_cleanup_fixture("completed-noop-visible-takeover-durability");
+    let inputs = test_inputs(&directory);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let transition_path = output_root.join(".g-output/owner-transitions").join(format!("{claim_id}.json"));
+    let failure_guard =
+        crate::persistence::io::install_immutable_publication_directory_sync_failure_for_test(transition_path, 4);
+    let successor_plan = authorize_fenced_owner_claim(resume_plan, claim_id.clone());
+    let takeover_result = OutputManager::open(successor_plan, "# visible competing takeover\n".to_string())
+        .expect("successor plans")
+        .claim(&single_chunk_ranges(2), false);
+    let Err(takeover_error) = takeover_result else {
+        panic!("four synchronization failures must leave takeover durability unresolved");
+    };
+    let visible_takeover_id = match takeover_error {
+        crate::OutputError::PublishedOutputOwnerClaimDurability { claim_id, .. } => claim_id,
+        unexpected => panic!("expected visible takeover durability authority, got: {unexpected}"),
+    };
+
+    let cleanup_error =
+        cleanup.cleanup().expect_err("predecessor cleanup must report the remaining competing-transition sync failure");
+    assert!(cleanup_error.to_string().contains("directory synchronization failure"));
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_eq!(lineage_paths.owner_staging_attempt(&claim_id).expect("retired intent reads"), None);
+    drop(failure_guard);
+
+    cleanup.cleanup().expect("same cleanup token durably reconfirms the competing takeover");
+    cleanup.cleanup().expect("superseded cleanup remains idempotent");
+    assert_eq!(
+        lineage_paths.current_owner_claim_identifier_for_test().expect("current owner resolves"),
+        Some(visible_takeover_id.clone())
+    );
+    let mut final_claim = lineage_paths
+        .take_over_fenced_owner_claim(&visible_takeover_id)
+        .expect("visible takeover supports exact final recovery");
+    final_claim.release().expect("final recovery releases");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn completed_noop_cleanup_continues_when_its_staging_intent_is_already_absent() {
+    let CompletedNoopCleanupFixture {
+        _directory,
+        output_root,
+        lineage_paths,
+        claim_id,
+        staging_attempt_id,
+        mut cleanup,
+    } = completed_noop_cleanup_fixture("completed-noop-missing-intent");
+    lineage_paths
+        .retire_owner_staging_intent(&claim_id, &staging_attempt_id)
+        .expect("test retires owner staging intent first");
+    assert!(lineage_paths.attempt_directory(&staging_attempt_id).is_dir());
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+
+    cleanup.cleanup().expect("cleanup continues from an already-retired intent");
+    cleanup.cleanup().expect("cleanup is idempotent after missing-intent recovery");
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
+    let directory = TestDirectory::new("completed-noop-cleanup-after-successor-release");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let delivery_token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&delivery_token, &metadata_store(2), 0..2);
+    drop(delivery_token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let completion = OutputManager::open(Arc::clone(&resume_plan), "# predecessor cleanup\n".to_string())
+        .expect("completed resume plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed resume claims")
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed resume activates")
+        .close_completed()
+        .expect("completed resume reverifies")
+        .finish()
+        .expect("completed resume returns cleanup");
+    let mut cleanup = completion.post_session_cleanup.expect("predecessor cleanup exists");
     let predecessor_claim_id = owner_claim_identifier(&output_root);
-    let predecessor_attempt_id = lineage_paths
-        .owner_staging_attempt(&predecessor_claim_id)
-        .expect("predecessor staging reads")
-        .expect("predecessor staging exists");
-    let predecessor_attempt_directory = lineage_paths.attempt_directory(&predecessor_attempt_id);
-    let mut predecessor_cleanup = predecessor_manager.cleanup_handle().expect("predecessor cleanup handle builds");
-    let predecessor_cleanup_retry = predecessor_cleanup.clone();
+
+    let successor = OutputManager::open(
+        authorize_fenced_owner_claim(resume_plan, predecessor_claim_id),
+        "# fenced successor\n".to_string(),
+    )
+    .expect("fenced successor plans")
+    .claim(&chunk_ranges, false)
+    .expect("fenced successor claims");
+    successor.abort_before_activation().expect("fenced successor releases");
+    assert_owner_authority_released(&output_root);
+
+    cleanup.cleanup().expect("superseded predecessor cleanup is harmless after successor release");
+    cleanup.cleanup().expect("superseded cleanup remains idempotent");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
+    let directory = TestDirectory::new("completed-noop-terminal-failures");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let delivery_token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&delivery_token, &metadata_store(2), 0..2);
+    drop(delivery_token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+    let output_root = directory.path.join("results");
+
+    for (operation, expected_error) in [
+        ("close", "close_completed_noop"),
+        ("interrupt-empty", "signal name"),
+        ("interrupt", "cannot be interrupted"),
+        ("abort-empty", "failure reason"),
+        ("abort", "cannot be aborted"),
+    ] {
+        let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+        let manager = OutputManager::open(resume_plan, format!("# completed no-op {operation}\n"))
+            .expect("completed resume plans")
+            .claim(&chunk_ranges, true)
+            .expect("completed resume claims")
+            .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+            .expect("completed resume activates");
+        let lifecycle_guard =
+            (operation == "close").then(|| crate::manager::install_lifecycle_failure_for_test("close_completed_noop"));
+        let terminal_error = match operation {
+            "close" => manager.close_completed().err().expect("configured close failure fires"),
+            "interrupt-empty" => manager.finish_interrupted("").expect_err("empty signal is rejected"),
+            "interrupt" => manager.finish_interrupted("SIGTERM").expect_err("completed output cannot interrupt"),
+            "abort-empty" => manager.abort("").expect_err("empty failure reason is rejected"),
+            "abort" => manager.abort("requested").expect_err("completed output cannot abort"),
+            _ => unreachable!("completed no-op failure operations are exhaustive"),
+        };
+        drop(lifecycle_guard);
+        let crate::OutputTerminalFailureParts { source, post_session_cleanup } = terminal_error.into_parts();
+        assert!(source.to_string().contains(expected_error), "unexpected {operation} error: {source}");
+        let mut cleanup = post_session_cleanup.expect("terminal failure returns cleanup authority");
+        assert!(output_root.join(".g-output/session.claim.json").is_file());
+        cleanup.cleanup().expect("terminal failure cleanup releases after diagnostics close");
+        cleanup.cleanup().expect("terminal failure cleanup is idempotent");
+        assert_owner_authority_released(&output_root);
+    }
+
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let covered = OutputManager::open(resume_plan, "# completed no-op finish failure\n".to_string())
+        .expect("completed resume plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed resume claims")
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed resume activates")
+        .close_completed()
+        .expect("completed resume first verification succeeds");
+    let completed_attempt_id = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(completed_attempt_id).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let mut manifest = read_json(&manifest_path);
+    manifest["runtime"]["device"] = Value::String("invalid".to_string());
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("corrupt manifest serializes"))
+        .expect("completed manifest is corrupted after close");
+    let finish_error = covered.finish().expect_err("final completed revalidation fails");
+    let crate::OutputTerminalFailureParts { source, post_session_cleanup } = finish_error.into_parts();
+    assert!(source.to_string().contains("runtime field 'device'"));
+    let mut cleanup = post_session_cleanup.expect("finish failure returns cleanup authority");
+    cleanup.cleanup().expect("finish failure cleanup releases after diagnostics close");
+    cleanup.cleanup().expect("finish failure cleanup is idempotent");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn immediate_completed_noop_finish_preserves_cleanup_authority_on_failure() {
+    let directory = TestDirectory::new("completed-noop-immediate-cleanup-failure");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let delivery_token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&delivery_token, &metadata_store(2), 0..2);
+    drop(delivery_token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let covered =
+        initialize_manager(resume_plan, &inputs, &chunk_ranges).close_completed().expect("completed no-op reverifies");
+    let failure_guard = crate::manager::install_terminal_cleanup_failure_for_test("before_post_session_owner_release");
+    let finish_error = covered.finish().expect_err("immediate post-session cleanup failure is returned");
+    drop(failure_guard);
+    let crate::OutputTerminalFailureParts { source, post_session_cleanup } = finish_error.into_parts();
+    assert!(source.to_string().contains("before_post_session_owner_release"));
+    let mut cleanup = post_session_cleanup.expect("immediate cleanup failure preserves retry authority");
+    assert!(output_root.join(".g-output/session.claim.json").is_file());
+    cleanup.cleanup().expect("preserved immediate cleanup retries successfully");
+    cleanup.cleanup().expect("preserved immediate cleanup is idempotent");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
+    let directory = TestDirectory::new("completed-noop-cleanup-takeover");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
+
+    let output_root = directory.path.join("results");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed predecessor\n".to_string())
+        .expect("completed predecessor plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed predecessor claims");
+    let predecessor_diagnostics =
+        claimed_manager.diagnostics_directory().expect("predecessor diagnostics exist").to_path_buf();
+    let predecessor_claim_id = owner_claim_identifier(&output_root);
+    let completed_manager = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .expect("completed predecessor activates");
+    let completion = completed_manager
+        .close_completed()
+        .expect("completed predecessor reverifies")
+        .finish()
+        .expect("completed predecessor finalizes read-only");
+    let mut predecessor_cleanup = completion.post_session_cleanup.expect("post-session cleanup exists");
     let cleanup_control = predecessor_cleanup.install_cleanup_pause_for_test();
 
-    let successor_plan = authorize_fenced_owner_claim(
-        run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
-        predecessor_claim_id.clone(),
-    );
-    let successor_manager = OutputManager::open(successor_plan, "# successor\n".to_string())
-        .expect("successor manager preflights the predecessor");
-    drop(predecessor_manager);
+    let successor_plan = authorize_fenced_owner_claim(resume_plan, predecessor_claim_id.clone());
+    let successor_manager =
+        OutputManager::open(successor_plan, "# successor\n".to_string()).expect("successor manager plans");
     let successor_manager = std::thread::scope(|scope| {
-        let cleanup_thread = scope.spawn(move || predecessor_cleanup.cleanup_if_unpublished());
+        let cleanup_thread = scope.spawn(move || predecessor_cleanup.cleanup());
         cleanup_control.wait_until_reached().expect("predecessor cleanup reaches its bounded test pause");
         let successor_result = successor_manager.claim(&single_chunk_ranges(2), false);
         cleanup_control.resume();
@@ -976,134 +1883,115 @@ fn preactivation_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     });
     let successor_claim_id = owner_claim_identifier(&output_root);
     assert_ne!(successor_claim_id, predecessor_claim_id);
-    let successor_attempt_id = lineage_paths
-        .owner_staging_attempt(&successor_claim_id)
-        .expect("successor staging reads")
-        .expect("successor staging exists");
     let successor_diagnostics_directory =
         successor_manager.diagnostics_directory().expect("successor diagnostics path exists").to_path_buf();
-
-    predecessor_cleanup_retry.cleanup_if_unpublished().expect("predecessor cleanup remains idempotent after takeover");
-    assert!(!predecessor_attempt_directory.exists());
-    assert_eq!(
-        lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("predecessor staging absence reads"),
-        None
-    );
-    assert_eq!(
-        lineage_paths.owner_staging_attempt(&successor_claim_id).expect("successor staging remains readable"),
-        Some(successor_attempt_id)
-    );
+    assert!(!predecessor_diagnostics.exists());
     assert!(successor_diagnostics_directory.is_dir());
-
     successor_manager.abort_before_activation().expect("successor staging cleans and releases");
     assert_owner_authority_released(&output_root);
 }
 
 #[test]
-fn cleanup_pause_disconnects_without_waiting_when_cleanup_returns_early() {
-    let directory = TestDirectory::new("preactivation-cleanup-early-return");
-    let inputs = test_inputs(&directory);
-    let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
-    let manager = OutputManager::open(plan, "# cleanup early return\n".to_string())
-        .expect("manager plans")
-        .claim(&single_chunk_ranges(2), false)
-        .expect("manager claims");
-    let output_root = directory.path.join("results");
-    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
-    let claim_id = owner_claim_identifier(&output_root);
-    let attempt_id = lineage_paths.owner_staging_attempt(&claim_id).expect("staging reads").expect("staging exists");
-    let mut cleanup = manager.cleanup_handle().expect("cleanup handle builds");
-    let cleanup_control = cleanup.install_cleanup_pause_for_test();
-    lineage_paths.retire_owner_staging_intent(&claim_id, &attempt_id).expect("staging intent retires before cleanup");
-
-    std::thread::scope(|scope| {
-        let cleanup_thread = scope.spawn(move || cleanup.cleanup_if_unpublished());
-        assert!(matches!(cleanup_control.wait_until_reached(), Err(std::sync::mpsc::RecvTimeoutError::Disconnected)));
-        cleanup_thread
-            .join()
-            .expect("early cleanup thread joins")
-            .expect("missing staging is an idempotent cleanup success");
-    });
-
-    manager.abort_before_activation().expect("manager releases after the cleanup rendezvous test");
-    assert_owner_authority_released(&output_root);
-}
-
-#[test]
-fn completed_noop_cleanup_is_deferred_until_claim_diagnostics_close() {
-    let directory = TestDirectory::new("completed-noop-deferred-cleanup");
+fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
+    let directory = TestDirectory::new("completed-noop-dropped-cleanup");
     let inputs = test_inputs(&directory);
     let chunk_ranges = single_chunk_ranges(2);
     let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
-    let manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
-    let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
-    manager.close_completed().expect("initial exact coverage closes").finish().expect("initial output completes");
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
+    );
 
     let output_root = directory.path.join("results");
-    let before = regular_file_snapshot(&output_root);
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
-    let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed no-op\n".to_string())
-        .expect("resume manager plans")
+    let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# dropped cleanup\n".to_string())
+        .expect("completed resume plans")
         .claim(&chunk_ranges, true)
-        .expect("completed output is claimed");
+        .expect("completed resume claims");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
     let diagnostics_directory =
         claimed_manager.diagnostics_directory().expect("completed claim diagnostics exist").to_path_buf();
     std::fs::write(diagnostics_directory.join("events.jsonl"), b"{\"schema_version\":0}\n")
         .expect("test telemetry is written");
-    std::fs::write(diagnostics_directory.join("profile.summary.json"), b"{\"schema_version\":0}\n")
-        .expect("test profile is written");
-    let cleanup = claimed_manager.cleanup_handle().expect("completed claim cleanup handle builds");
-    let cleanup_retry = cleanup.clone();
+    let predecessor_claim_id = owner_claim_identifier(&output_root);
+    let staging_attempt_id = lineage_paths
+        .owner_staging_attempt(&predecessor_claim_id)
+        .expect("predecessor staging reads")
+        .expect("predecessor staging exists");
     let completed_manager = claimed_manager
         .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
         .expect("completed output activates read-only");
-    let token =
-        completed_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("read-only token builds");
-    assert!(token.is_read_only());
-    drop(token);
-    completed_manager
+    let completion = completed_manager
         .close_completed()
         .expect("completed output reverifies")
         .finish()
-        .expect("completed output returns artifacts");
+        .expect("completed output returns cleanup authority");
+    drop(completion.post_session_cleanup.expect("completed no-op cleanup exists"));
 
-    assert!(diagnostics_directory.join("events.jsonl").is_file());
-    let active_claim_id = owner_claim_identifier(&output_root);
-    let staging_path = output_root.join(".g-output/owner-staging").join(format!("{active_claim_id}.json"));
-    let staging_bytes = std::fs::read(&staging_path).expect("completed staging intent reads");
-    std::fs::write(&staging_path, b"{invalid").expect("completed staging intent is corrupted for retry test");
-    let cleanup_error = cleanup
-        .clone()
-        .cleanup_if_unpublished()
-        .expect_err("malformed staging intent blocks cleanup without releasing ownership");
-    assert!(cleanup_error.to_string().contains("invalid JSON"));
-    assert_eq!(owner_claim_identifier(&output_root), active_claim_id);
-    assert!(diagnostics_directory.is_dir());
-    std::fs::write(&staging_path, staging_bytes).expect("completed staging intent is restored");
-
-    let contender_plan = authorize_fenced_owner_claim(resume_plan, active_claim_id);
+    let contender_plan = authorize_fenced_owner_claim(resume_plan, predecessor_claim_id.clone());
     let contender = OutputManager::open(contender_plan, "# fenced contender\n".to_string())
         .expect("fenced contender plans")
         .claim(&chunk_ranges, false)
         .expect("fenced contender takes over");
-    cleanup.cleanup_if_unpublished().expect("old completed diagnostics clean after session close");
-    cleanup_retry.cleanup_if_unpublished().expect("completed diagnostics cleanup remains idempotent after takeover");
     assert!(!diagnostics_directory.exists());
+    assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
+    assert_eq!(lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("staging absence reads"), None);
     assert!(
         contender.diagnostics_directory().expect("contender diagnostics path remains").is_dir(),
-        "old cleanup clones must not remove successor staging"
+        "the successor sweep must preserve its own staging"
     );
     contender.abort_before_activation().expect("contender staging cleans and releases");
     assert_owner_authority_released(&output_root);
+}
 
-    let after = regular_file_snapshot(&output_root);
-    let new_paths = after.keys().filter(|path| !before.contains_key(*path)).collect::<Vec<_>>();
-    assert!(
-        !new_paths.is_empty() && new_paths.iter().all(|path| path.starts_with(".g-output/owner-transitions")),
-        "completed resume may append only owner-authority transitions, got {new_paths:?}"
+#[test]
+fn completed_preactivation_failure_returns_only_rollback_authority() {
+    let directory = TestDirectory::new("completed-preactivation-rollback");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let initial_manager = initialize_manager(initial_plan, &inputs, &chunk_ranges);
+    let token =
+        initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
+    write_chunk(&token, &metadata_store(2), 0..2);
+    drop(token);
+    assert_no_post_session_cleanup(
+        initial_manager
+            .close_completed()
+            .expect("initial exact coverage closes")
+            .finish()
+            .expect("initial output completes"),
     );
+
+    let output_root = directory.path.join("results");
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let claimed_manager = OutputManager::open(resume_plan, "# completed rollback\n".to_string())
+        .expect("completed resume plans")
+        .claim(&chunk_ranges, true)
+        .expect("completed resume claims");
+    let diagnostics_directory =
+        claimed_manager.diagnostics_directory().expect("completed claim diagnostics exist").to_path_buf();
+    let activation_error = claimed_manager
+        .activate_with_deferred_completed_noop_cleanup(Vec::new())
+        .err()
+        .expect("missing header rejects activation");
+    let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
+    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(diagnostics_directory.is_dir());
+    rollback
+        .expect("unpublished activation returns rollback authority")
+        .abort_before_activation()
+        .expect("rollback cleans after diagnostics close");
+    assert!(!diagnostics_directory.exists());
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
@@ -1201,6 +2089,148 @@ fn resume_rejects_noncanonical_attempt_manifest_schema_versions_without_a_succes
     }
 }
 
+struct InvalidAttemptManifestCase {
+    label: &'static str,
+    manifest_bytes: Vec<u8>,
+    expected_error: &'static str,
+}
+
+fn invalid_attempt_manifest_case(
+    label: &'static str,
+    manifest: &Value,
+    expected_error: &'static str,
+) -> InvalidAttemptManifestCase {
+    InvalidAttemptManifestCase {
+        label,
+        manifest_bytes: serde_json::to_vec_pretty(manifest).expect("invalid manifest serializes"),
+        expected_error,
+    }
+}
+
+fn nonexact_attempt_manifest_cases(baseline_manifest: &Value) -> Vec<InvalidAttemptManifestCase> {
+    let mut invalid_manifests = Vec::new();
+    let mut unknown_top_level = baseline_manifest.clone();
+    unknown_top_level["unknown"] = Value::Null;
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "unknown-top-level",
+        &unknown_top_level,
+        "contains unknown field 'unknown'",
+    ));
+
+    let mut missing_command = baseline_manifest.clone();
+    missing_command.as_object_mut().expect("manifest is an object").remove("command");
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "missing-command",
+        &missing_command,
+        "field 'command' is missing",
+    ));
+
+    let mut wrong_command = baseline_manifest.clone();
+    wrong_command["command"] = Value::Bool(false);
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "wrong-command-type",
+        &wrong_command,
+        "command must contain an object",
+    ));
+
+    let mut missing_runtime = baseline_manifest.clone();
+    missing_runtime.as_object_mut().expect("manifest is an object").remove("runtime");
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "missing-runtime",
+        &missing_runtime,
+        "field 'runtime' is missing",
+    ));
+
+    let mut wrong_runtime = baseline_manifest.clone();
+    wrong_runtime["runtime"] = Value::Bool(false);
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "wrong-runtime-type",
+        &wrong_runtime,
+        "runtime must contain an object",
+    ));
+
+    let mut wrong_interrupted_signal = baseline_manifest.clone();
+    wrong_interrupted_signal["interrupted_signal"] = Value::Bool(false);
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "wrong-interrupted-signal-type",
+        &wrong_interrupted_signal,
+        "expected a string",
+    ));
+
+    let mut missing_interrupted_signal = baseline_manifest.clone();
+    missing_interrupted_signal.as_object_mut().expect("manifest is an object").remove("interrupted_signal");
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "missing-interrupted-signal",
+        &missing_interrupted_signal,
+        "field 'interrupted_signal' is missing",
+    ));
+
+    for status in ["running", "completed"] {
+        let mut inapplicable_detail = baseline_manifest.clone();
+        inapplicable_detail["status"] = Value::String(status.to_string());
+        invalid_manifests.push(invalid_attempt_manifest_case(
+            status,
+            &inapplicable_detail,
+            "contains unknown field 'interrupted_signal'",
+        ));
+    }
+
+    let mut failed_with_wrong_detail = baseline_manifest.clone();
+    failed_with_wrong_detail["status"] = Value::String("failed".to_string());
+    failed_with_wrong_detail.as_object_mut().expect("manifest is an object").remove("interrupted_signal");
+    failed_with_wrong_detail["failure_reason"] = Value::Bool(false);
+    invalid_manifests.push(invalid_attempt_manifest_case(
+        "wrong-failure-reason-type",
+        &failed_with_wrong_detail,
+        "expected a string",
+    ));
+
+    let compact_manifest = serde_json::to_string(&baseline_manifest).expect("baseline manifest serializes");
+    let duplicate_status = compact_manifest.replacen(
+        "\"status\":\"interrupted\"",
+        "\"status\":\"interrupted\",\"status\":\"interrupted\"",
+        1,
+    );
+    assert_ne!(duplicate_status, compact_manifest);
+    invalid_manifests.push(InvalidAttemptManifestCase {
+        label: "duplicate-status",
+        manifest_bytes: duplicate_status.into_bytes(),
+        expected_error: "duplicate object key 'status'",
+    });
+    invalid_manifests
+}
+
+#[test]
+fn resume_rejects_nonexact_attempt_manifest_schema_without_a_successor() {
+    let directory = TestDirectory::new("attempt-schema-exact");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    initialize_manager(initial_plan, &inputs, &chunk_ranges)
+        .finish_interrupted("SIGTERM")
+        .expect("initial attempt is interrupted");
+
+    let output_root = directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let baseline_manifest = read_json(&manifest_path);
+    for invalid_manifest in nonexact_attempt_manifest_cases(&baseline_manifest) {
+        let InvalidAttemptManifestCase { label, manifest_bytes, expected_error } = invalid_manifest;
+        std::fs::write(&manifest_path, manifest_bytes).expect("invalid manifest is installed");
+        let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+        let error = OutputManager::open(resume_plan, format!("# invalid schema {label}\n"))
+            .expect("resume manager plans")
+            .initialize(vec![header(&inputs, 2)], &chunk_ranges, false)
+            .err()
+            .expect("nonexact attempt manifest schema is rejected");
+        assert!(error.to_string().contains(expected_error), "{label} returned unexpected error: {error}");
+        assert!(!output_root.join(".g-output/successors").join(format!("{attempt}.json")).exists());
+        assert_eq!(std::fs::read_dir(output_root.join("attempts")).expect("attempt root reads").count(), 1);
+        assert_owner_authority_released(&output_root);
+    }
+}
+
 #[test]
 fn invalid_terminal_arguments_publish_failed_and_release_the_claim() {
     for (operation, expected_error) in [("interrupt", "interruption signal name"), ("abort", "failure reason")] {
@@ -1274,19 +2304,27 @@ fn consuming_terminal_failures_report_primary_and_cleanup_outcomes() {
         initial_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
     write_chunk(&token, &metadata_store(2), 0..2);
     drop(token);
-    initial_manager.close_completed().expect("exact coverage closes").finish().expect("initial output completes");
+    assert_no_post_session_cleanup(
+        initial_manager.close_completed().expect("exact coverage closes").finish().expect("initial output completes"),
+    );
     let resume_plan = run_plan(&noop_directory, &noop_inputs, true, None, g_plan::TelemetryMode::Off);
     let noop_manager = initialize_manager(resume_plan, &noop_inputs, &single_chunk_ranges(2));
     let lifecycle_guard = crate::manager::install_lifecycle_failure_for_test("close_completed_noop");
-    let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("owner_claim_release_conflict");
+    let cleanup_guard = crate::manager::install_terminal_cleanup_failure_for_test("before_post_session_owner_release");
     let noop_error = noop_manager.close_completed().err().expect("completed no-op cleanup failure is reported");
     drop(cleanup_guard);
     drop(lifecycle_guard);
-    let noop_error_text = noop_error.to_string();
+    let crate::OutputTerminalFailureParts { source, post_session_cleanup } = noop_error.into_parts();
+    let noop_error_text = source.to_string();
     assert!(noop_error_text.contains("close_completed_noop"));
-    assert!(noop_error_text.contains("survives from process"));
+    assert!(noop_error_text.contains("before_post_session_owner_release"));
     let noop_root = noop_directory.path.join("results");
     assert!(noop_root.join(".g-output/session.claim.json").is_file());
+    let mut post_session_cleanup =
+        post_session_cleanup.expect("failed immediate cleanup preserves the same retry authority");
+    post_session_cleanup.cleanup().expect("preserved cleanup authority retries after diagnostics close");
+    post_session_cleanup.cleanup().expect("retried cleanup is idempotent");
+    assert_owner_authority_released(&noop_root);
 }
 
 #[test]
@@ -1307,8 +2345,10 @@ fn consuming_terminal_release_retries_or_reports_transition_durability() {
     let error = unresolved_manager
         .abort("release durability test")
         .expect_err("four directory-sync failures report unresolved durability");
-    assert!(matches!(error, crate::OutputError::PublishedOutputOwnerClaimReleaseDurability { .. }));
-    let error_text = error.to_string();
+    let crate::OutputTerminalFailureParts { source, post_session_cleanup } = error.into_parts();
+    assert!(post_session_cleanup.is_none());
+    assert!(matches!(source, crate::OutputError::PublishedOutputOwnerClaimReleaseDurability { .. }));
+    let error_text = source.to_string();
     assert!(error_text.contains("visible graceful-release transition"));
     assert!(!error_text.contains("remains authoritative"));
     let unresolved_root = unresolved_directory.path.join("results");
@@ -1336,7 +2376,7 @@ fn completion_faults_do_not_strand_a_claim_across_terminal_publication() {
         let covered = manager.close_completed().expect("exact coverage closes");
 
         let failure_guard = crate::manager::install_completion_failure_for_test(failure_point);
-        let error = covered.finish().err().expect("configured completion stage fails");
+        let error = covered.finish().expect_err("configured completion stage fails");
         drop(failure_guard);
         assert!(error.to_string().contains("Injected output completion failure"));
 
@@ -1353,11 +2393,13 @@ fn completion_faults_do_not_strand_a_claim_across_terminal_publication() {
         let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
         let resumed = initialize_manager(resume_plan, &inputs, &chunk_ranges);
         if expected_status == "completed" {
-            resumed
-                .close_completed()
-                .expect("completed terminal reverifies")
-                .finish()
-                .expect("completed terminal returns read-only outputs");
+            assert_no_post_session_cleanup(
+                resumed
+                    .close_completed()
+                    .expect("completed terminal reverifies")
+                    .finish()
+                    .expect("completed terminal returns read-only outputs"),
+            );
         } else {
             resumed.abort("completion fault recovery test").expect("failed terminal resumes safely");
         }
@@ -1400,7 +2442,21 @@ fn output_transaction_subprocess_helper() {
                 manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("delivery token builds");
             write_chunk(&token, &metadata_store(2), 0..2);
             drop(token);
-            manager.close_completed().expect("exact coverage closes").finish().expect("completed terminal publishes");
+            assert_no_post_session_cleanup(
+                manager
+                    .close_completed()
+                    .expect("exact coverage closes")
+                    .finish()
+                    .expect("completed terminal publishes"),
+            );
+        }
+        "two_phenotype_interrupted_terminal" => {
+            let plan = two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+            let manager = OutputManager::open(plan, "# partial two phenotype terminal\n".to_string())
+                .expect("two phenotype transaction helper plans")
+                .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+                .expect("two phenotype transaction helper initializes");
+            manager.finish_interrupted("SIGTERM").expect("two phenotype interrupted terminal publishes");
         }
         "panic_active" => {
             let plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
@@ -1442,6 +2498,96 @@ fn genesis_claim_crash_recovers_from_its_authorized_attempt_directory() {
     assert!(output_root.join("attempts").join(&recovery_attempt).is_dir());
     assert!(output_root.join("attempts").join(&claimed_attempt).is_dir());
     manager.abort("genesis claim crash recovery test").expect("recovery attempt terminates");
+}
+
+#[test]
+fn fenced_successor_preserves_referenced_diagnostics_after_publication_crash() {
+    let directory = TestDirectory::new("genesis-publication-staging-crash");
+    let inputs = test_inputs(&directory);
+    let crash = run_crashing_transaction_helper(
+        &directory,
+        "genesis_claim",
+        "after_genesis_publication_before_staging_retirement",
+    );
+    assert_expected_crash(&crash);
+
+    let output_root = directory.path.join("results");
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let published_attempt_id = attempt_identifier(&output_root, None);
+    let predecessor_claim_id = owner_claim_identifier(&output_root);
+    let staged_attempt_id = lineage_paths
+        .owner_staging_attempt(&predecessor_claim_id)
+        .expect("published predecessor staging reads")
+        .expect("published predecessor staging remains");
+    assert_eq!(staged_attempt_id.as_str(), published_attempt_id);
+    let predecessor_diagnostics =
+        lineage_paths.attempt_directory(&staged_attempt_id).join("diagnostics").join(&predecessor_claim_id);
+    assert!(predecessor_diagnostics.is_dir());
+
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(published_attempt_id), g_plan::TelemetryMode::Off),
+        predecessor_claim_id.clone(),
+    );
+    let recovery_manager = OutputManager::open(recovery_plan, "# exact recovery\n".to_string())
+        .expect("exact recovery plans")
+        .claim(&single_chunk_ranges(2), false)
+        .expect("exact fence claims a recovery attempt");
+    assert!(predecessor_diagnostics.is_dir(), "referenced writable diagnostics must survive fencing");
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("retired predecessor staging reads"),
+        None
+    );
+    assert!(recovery_manager.diagnostics_directory().expect("recovery diagnostics exist").is_dir());
+    recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn fenced_recovery_preserves_successor_diagnostics_before_staging_retirement() {
+    let directory = TestDirectory::new("successor-publication-staging-crash");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let initial_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    initialize_manager(initial_plan, &inputs, &chunk_ranges)
+        .finish_interrupted("SIGTERM")
+        .expect("predecessor interrupts");
+    let output_root = directory.path.join("results");
+    let parent_attempt_id = attempt_identifier(&output_root, None);
+
+    let crash = run_crashing_transaction_helper(
+        &directory,
+        "successor_claim",
+        "after_successor_publication_before_staging_retirement",
+    );
+    assert_expected_crash(&crash);
+
+    let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
+    let successor_attempt_id = attempt_identifier(&output_root, Some(&parent_attempt_id));
+    let predecessor_claim_id = owner_claim_identifier(&output_root);
+    let staged_attempt_id = lineage_paths
+        .owner_staging_attempt(&predecessor_claim_id)
+        .expect("published successor staging reads")
+        .expect("published successor staging remains");
+    assert_eq!(staged_attempt_id.as_str(), successor_attempt_id);
+    let predecessor_diagnostics =
+        lineage_paths.attempt_directory(&staged_attempt_id).join("diagnostics").join(&predecessor_claim_id);
+    assert!(predecessor_diagnostics.is_dir());
+
+    let recovery_plan = authorize_fenced_owner_claim(
+        run_plan(&directory, &inputs, true, Some(successor_attempt_id), g_plan::TelemetryMode::Off),
+        predecessor_claim_id.clone(),
+    );
+    let recovery_manager = OutputManager::open(recovery_plan, "# exact successor recovery\n".to_string())
+        .expect("exact successor recovery plans")
+        .claim(&chunk_ranges, false)
+        .expect("exact fence claims another recovery attempt");
+    assert!(predecessor_diagnostics.is_dir(), "referenced successor diagnostics must survive fencing");
+    assert_eq!(
+        lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("retired predecessor staging reads"),
+        None
+    );
+    recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
@@ -1501,6 +2647,32 @@ fn panic_unwind_leaves_a_fail_closed_owner_claim() {
     let recovery_plan = authorize_fenced_owner_claim(recovery_plan, owner_claim_identifier(&output_root));
     let manager = initialize_manager(recovery_plan, &inputs, &single_chunk_ranges(2));
     manager.abort("panic recovery test").expect("externally fenced panic recovery terminates");
+}
+
+#[test]
+fn nonterminal_recovery_rejects_a_dangling_manifest_symlink_as_present_but_invalid() {
+    let directory = TestDirectory::new("nonterminal-dangling-manifest");
+    let inputs = test_inputs(&directory);
+    let output = run_crashing_transaction_helper(&directory, "panic_active", "unused");
+    assert!(!output.status.success());
+    assert_ne!(output.status.code(), Some(86));
+
+    let output_root = directory.path.join("results");
+    let attempt = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(&attempt).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    std::fs::remove_file(&manifest_path).expect("running manifest removes");
+    std::os::unix::fs::symlink("missing-manifest-target", &manifest_path).expect("dangling manifest symlink installs");
+
+    let recovery_plan = run_plan(&directory, &inputs, true, Some(attempt), g_plan::TelemetryMode::Off);
+    let recovery_plan = authorize_fenced_owner_claim(recovery_plan, owner_claim_identifier(&output_root));
+    let error = OutputManager::open(recovery_plan, "# dangling manifest recovery\n".to_string())
+        .expect("recovery manager plans")
+        .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
+        .err()
+        .expect("dangling nonterminal manifest symlink is rejected");
+    assert!(error.to_string().contains("must not be a symbolic link"));
+    assert_owner_authority_released(&output_root);
 }
 
 #[test]
@@ -1621,6 +2793,79 @@ fn path_aliases_to_one_output_root_contend_on_the_same_owner_claim() {
 }
 
 #[test]
+fn partially_materialized_interrupted_terminal_hints_and_recovers_both_phenotypes() {
+    let directory = TestDirectory::new("partial-two-phenotype-terminal");
+    let inputs = test_inputs(&directory);
+    let crash = run_crashing_transaction_helper(
+        &directory,
+        "two_phenotype_interrupted_terminal",
+        "after_terminal_run_materialization",
+    );
+    assert_expected_crash(&crash);
+
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let attempt_directory = output_root.join("attempts").join(&attempt_id);
+    let first_manifest_path = attempt_directory.join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let second_manifest_path = attempt_directory.join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    assert_eq!(read_json(&first_manifest_path)["status"], "interrupted");
+    assert_eq!(read_json(&second_manifest_path)["status"], "running");
+
+    let resume_plan = two_phenotype_run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let hint_manager = OutputManager::open(Arc::clone(&resume_plan), "# partial terminal GPU hints\n".to_string())
+        .expect("partial terminal resume plans");
+    for phenotype_name in [PHENOTYPE_NAME, SECOND_PHENOTYPE_NAME] {
+        assert_eq!(
+            hint_manager
+                .existing_manifest_gpu_genotype_format(phenotype_name)
+                .expect("partially materialized manifest validates"),
+            Some(g_plan::GpuGenotypeFormat::Packed8)
+        );
+    }
+    drop(hint_manager);
+
+    let recovery_plan = authorize_fenced_owner_claim(resume_plan, owner_claim_identifier(&output_root));
+    let recovery_manager = OutputManager::open(recovery_plan, "# fenced partial terminal recovery\n".to_string())
+        .expect("fenced recovery plans")
+        .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+        .expect("fenced recovery initializes a successor");
+    assert_eq!(read_json(&first_manifest_path)["status"], "interrupted");
+    assert_eq!(read_json(&second_manifest_path)["status"], "interrupted");
+    assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt_id}.json")).is_file());
+    recovery_manager.abort("partial terminal recovery test").expect("recovery successor terminates");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn gpu_format_hint_rejects_lineage_change_between_manifest_read_and_reinspection() {
+    let directory = TestDirectory::new("gpu-format-lineage-race");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    initialize_manager(run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off), &inputs, &chunk_ranges)
+        .finish_interrupted("SIGTERM")
+        .expect("interrupted terminal publishes");
+
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let mut hint_manager =
+        OutputManager::open(Arc::clone(&resume_plan), "# paused GPU hint\n".to_string()).expect("hint manager plans");
+    let hint_control = hint_manager.install_manifest_hint_pause_for_test().expect("hint pause installs");
+    std::thread::scope(|scope| {
+        let hint_thread = scope.spawn(move || hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME));
+        hint_control.wait_until_reached().expect("hint pauses before lineage reinspection");
+        let successor = initialize_manager(resume_plan, &inputs, &chunk_ranges);
+        hint_control.resume();
+
+        let hint_error = hint_thread
+            .join()
+            .expect("hint thread does not panic")
+            .expect_err("lineage successor invalidates the prior hint read");
+        assert!(matches!(hint_error, crate::OutputError::ConcurrentLineageUpdate { .. }));
+        successor.abort("manifest hint race cleanup").expect("successor terminates");
+    });
+    assert_owner_authority_released(&directory.path.join("results"));
+}
+
+#[test]
 fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     let directory = TestDirectory::new("terminal-claim-crash");
     let inputs = test_inputs(&directory);
@@ -1636,6 +2881,13 @@ fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).exists());
 
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
+    let hint_manager =
+        OutputManager::open(Arc::clone(&resume_plan), "# pending-terminal GPU hint\n".to_string()).expect("hint plans");
+    assert_eq!(
+        hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("bound running manifest gives hint"),
+        Some(g_plan::GpuGenotypeFormat::Packed8)
+    );
+    drop(hint_manager);
     let blocked_error = claim_error(
         Arc::clone(&resume_plan),
         &single_chunk_ranges(2),
@@ -1647,7 +2899,13 @@ fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     let token = manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("completed token builds");
     assert!(token.is_read_only());
     drop(token);
-    manager.close_completed().expect("recovered completion reverifies").finish().expect("recovered terminal finishes");
+    assert_no_post_session_cleanup(
+        manager
+            .close_completed()
+            .expect("recovered completion reverifies")
+            .finish()
+            .expect("recovered terminal finishes"),
+    );
 
     assert_eq!(read_json(&run_directory.join("run_manifest.json"))["status"], "completed");
     assert!(output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).is_file());

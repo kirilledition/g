@@ -44,7 +44,12 @@ path-safe attempt identifier. There is no mutable `HEAD`; readers traverse the
 immutable lineage from `genesis.json`. They also traverse the permanent owner
 root and its reachable transitions to a Released leaf. A normally completed
 tree has no record in `owner-staging/`; that directory contains only temporary
-pre-activation intent while an owner is preparing diagnostics.
+intent for a claim's private diagnostics. Writable activation retires that
+intent after genesis or successor authority is published. A completed
+read-only invocation keeps its fresh, unreferenced intent through final
+verification until post-session cleanup removes the staging attempt and
+retires the intent before releasing the exact owner. A retry after an owner
+release durability failure tolerates the already-absent intent.
 
 `[output].output_run_directory` overrides the default `<out>.g` run root.
 
@@ -94,6 +99,17 @@ output timing collection is enabled. It reports temporary-file sync, raw
 SHA-256 reread, no-replace part publication/reconciliation, `parts/` directory
 sync, and immutable receipt publication as separate stages as well as in the
 writer total.
+
+Pre-release attempt-manifest schema zero limits `run_manifest.json` to 1 GiB.
+Writers reject a larger encoded manifest before publication, and recovery
+rejects symbolic links, special files, oversized regular files, and files that
+grow beyond the limit while being read. Terminal materialization verifies its
+published hash from bytes returned by the same bounded reader. The measured
+bound covers the known chromosome-22 scale even when one variant is assigned
+to each chunk and repeated interrupted flushes produce one receipt per chunk,
+including maximum-length accepted lineage identifiers, a 255-byte phenotype
+name, and variable-header reserve; larger analyses must use larger chunks or a
+future control-plane schema.
 
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns
@@ -257,7 +273,10 @@ Common files:
 
 Diagnostics remain with an attempt only when activation makes that attempt
 authoritative. Failed pre-activation claims and read-only completed resumes
-remove their claim-specific diagnostics after the runtime session closes.
+use a fresh unreferenced staging attempt and remove it after the runtime session
+closes. If completed-noop cleanup is lost, an exactly fenced successor sweeps
+that unreferenced staging; fencing preserves diagnostics for an attempt already
+made authoritative.
 Attempt-bound output timings live beside their phenotype manifest. The
 production frontend currently exposes only `[diagnostics].telemetry`.
 

@@ -15,6 +15,16 @@ std::thread_local! {
     static OWNER_PUBLICATION_FILE_SYNC_FAILURES: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static IMMUTABLE_PUBLICATION_DIRECTORY_SYNC_FAILURE: std::cell::RefCell<
+        Option<ImmutablePublicationDirectorySyncFailure>,
+    > = const {
+        std::cell::RefCell::new(None)
+    };
+    static IMMUTABLE_PUBLICATION_FILE_SYNC_FAILURE: std::cell::RefCell<
+        Option<ImmutablePublicationFileSyncFailure>,
+    > = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
 #[cfg(test)]
@@ -25,6 +35,68 @@ pub(crate) fn fail_owner_publication_syncs_for_test(failure_count: usize) {
 #[cfg(test)]
 pub(crate) fn fail_owner_publication_file_syncs_for_test(failure_count: usize) {
     OWNER_PUBLICATION_FILE_SYNC_FAILURES.with(|remaining_failures| remaining_failures.set(failure_count));
+}
+
+#[cfg(test)]
+struct ImmutablePublicationDirectorySyncFailure {
+    destination_path: PathBuf,
+    remaining_failures: usize,
+}
+
+#[cfg(test)]
+pub(crate) struct ImmutablePublicationDirectorySyncFailureGuard;
+
+#[cfg(test)]
+impl Drop for ImmutablePublicationDirectorySyncFailureGuard {
+    fn drop(&mut self) {
+        IMMUTABLE_PUBLICATION_DIRECTORY_SYNC_FAILURE.with(|installed_failure| {
+            *installed_failure.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_immutable_publication_directory_sync_failure_for_test(
+    destination_path: PathBuf,
+    failure_count: usize,
+) -> ImmutablePublicationDirectorySyncFailureGuard {
+    assert!(failure_count > 0, "an immutable-publication sync failure count must be positive");
+    IMMUTABLE_PUBLICATION_DIRECTORY_SYNC_FAILURE.with(|installed_failure| {
+        let mut installed_failure = installed_failure.borrow_mut();
+        assert!(installed_failure.is_none(), "an immutable-publication sync failure is already installed");
+        *installed_failure =
+            Some(ImmutablePublicationDirectorySyncFailure { destination_path, remaining_failures: failure_count });
+    });
+    ImmutablePublicationDirectorySyncFailureGuard
+}
+
+#[cfg(test)]
+struct ImmutablePublicationFileSyncFailure {
+    destination_path: PathBuf,
+}
+
+#[cfg(test)]
+pub(crate) struct ImmutablePublicationFileSyncFailureGuard;
+
+#[cfg(test)]
+impl Drop for ImmutablePublicationFileSyncFailureGuard {
+    fn drop(&mut self) {
+        IMMUTABLE_PUBLICATION_FILE_SYNC_FAILURE.with(|installed_failure| {
+            *installed_failure.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_immutable_publication_file_sync_failure_for_test(
+    destination_path: PathBuf,
+) -> ImmutablePublicationFileSyncFailureGuard {
+    IMMUTABLE_PUBLICATION_FILE_SYNC_FAILURE.with(|installed_failure| {
+        let mut installed_failure = installed_failure.borrow_mut();
+        assert!(installed_failure.is_none(), "an immutable-publication file sync failure is already installed");
+        *installed_failure = Some(ImmutablePublicationFileSyncFailure { destination_path });
+    });
+    ImmutablePublicationFileSyncFailureGuard
 }
 
 pub(crate) fn path_operation_error(operation: &str, path: &Path, error: &impl std::fmt::Display) -> OutputError {
@@ -411,9 +483,24 @@ fn sync_immutable_publication_file(
             ));
         }
     }
+    #[cfg(test)]
+    if fail_immutable_publication_file_sync_for_test(destination_path) {
+        return Err(OutputError::Runtime(format!(
+            "Injected immutable-publication file synchronization failure for '{}'.",
+            destination_path.display()
+        )));
+    }
     temporary_file
         .sync_all()
         .map_err(|error| path_operation_error("synchronize immutable-record temporary file", temporary_path, &error))
+}
+
+#[cfg(test)]
+fn fail_immutable_publication_file_sync_for_test(destination_path: &Path) -> bool {
+    IMMUTABLE_PUBLICATION_FILE_SYNC_FAILURE.with(|installed_failure| {
+        let installed_failure = installed_failure.borrow();
+        installed_failure.as_ref().is_some_and(|failure| failure.destination_path == destination_path)
+    })
 }
 
 pub(crate) fn sync_immutable_publication_directory(
@@ -439,7 +526,29 @@ pub(crate) fn sync_immutable_publication_directory(
             ));
         }
     }
+    #[cfg(test)]
+    if fail_immutable_publication_directory_sync_for_test(destination_path) {
+        return Err(OutputError::Runtime(format!(
+            "Injected immutable-publication directory synchronization failure for '{}'.",
+            destination_path.display()
+        )));
+    }
     sync_directory(parent_directory)
+}
+
+#[cfg(test)]
+fn fail_immutable_publication_directory_sync_for_test(destination_path: &Path) -> bool {
+    IMMUTABLE_PUBLICATION_DIRECTORY_SYNC_FAILURE.with(|installed_failure| {
+        let mut installed_failure = installed_failure.borrow_mut();
+        let Some(installed_failure) = installed_failure.as_mut() else {
+            return false;
+        };
+        if installed_failure.destination_path != destination_path || installed_failure.remaining_failures == 0 {
+            return false;
+        }
+        installed_failure.remaining_failures -= 1;
+        true
+    })
 }
 
 #[cfg(test)]
@@ -518,7 +627,9 @@ mod durable_tests {
 
     use super::{
         NoReplacePublication, clone_file_no_replace_verified, copy_file_no_replace_verified,
-        create_directories_durable, file_size_and_sha256, publish_json_no_replace, write_json_atomic,
+        create_directories_durable, file_size_and_sha256,
+        install_immutable_publication_directory_sync_failure_for_test, publish_json_no_replace,
+        sync_immutable_publication_directory, write_json_atomic,
     };
     use crate::persistence::identifier::AttemptIdentifier;
 
@@ -616,6 +727,30 @@ mod durable_tests {
             create_directories_durable(&loop_ancestor.join("child")).expect_err("symlink-loop I/O error is preserved");
         assert!(matches!(loop_error, crate::OutputError::Runtime(_)));
         assert!(loop_error.to_string().contains("inspect output directory ancestor"));
+    }
+
+    #[test]
+    fn immutable_publication_sync_failure_matches_exact_destination_and_count() {
+        let directory = tempfile_directory("path-targeted-sync-failure");
+        let destination = directory.join("genesis.json");
+        let other_destination = directory.join("successor.json");
+        let guard = install_immutable_publication_directory_sync_failure_for_test(destination.clone(), 3);
+
+        sync_immutable_publication_directory(&other_destination, &directory)
+            .expect("a different destination does not consume the failure");
+        assert!(sync_immutable_publication_directory(&destination, &directory).is_err());
+        sync_immutable_publication_directory(&other_destination, &directory)
+            .expect("a different destination still does not consume the failure");
+        assert!(sync_immutable_publication_directory(&destination, &directory).is_err());
+        assert!(sync_immutable_publication_directory(&destination, &directory).is_err());
+        sync_immutable_publication_directory(&destination, &directory)
+            .expect("the configured destination succeeds after the exact failure count");
+        drop(guard);
+
+        let reset_guard = install_immutable_publication_directory_sync_failure_for_test(destination.clone(), 1);
+        drop(reset_guard);
+        sync_immutable_publication_directory(&destination, &directory)
+            .expect("dropping the guard resets an unconsumed failure");
     }
 
     fn tempfile_directory(label: &str) -> PathBuf {
