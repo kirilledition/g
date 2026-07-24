@@ -8,10 +8,13 @@ writing.
 ## Public types
 
 `OutputManager<Planned>`, `OutputManager<Claimed>`, `OutputManager<Active>`,
-`OutputManager<Covered>`, `OutputDeliveryToken`, `CompletedOutputRun`, native
-chunk handles, typed manifest inputs/fingerprints, trait-major statistic
-batches, and `OutputError`. Writer sessions are private implementation details.
-Strict on-disk reconciliation is fixed policy owned by this crate.
+`OutputManager<Covered>`, `OutputDeliveryToken`, `OutputCompletion`,
+`CompletedOutputRun`, `OutputPostSessionCleanup`, `OutputClaimRollback`,
+`OutputActivationError`, `OutputActivationFailureParts`, native chunk handles,
+`OutputTerminalError`, `OutputTerminalFailureParts`, typed manifest
+inputs/fingerprints, trait-major statistic batches, and `OutputError`. Writer
+sessions are private implementation details. Strict on-disk reconciliation is
+fixed policy owned by this crate.
 
 ## Public functions
 
@@ -20,14 +23,33 @@ transitions, select an opaque delivery token, write validated trait-major
 chunks, and complete, interrupt, or abort the owned attempt.
 `OutputManager::open` only inspects paths and immutable lineage hints. `claim`
 acquires durable owner authority, repeats validation under that authority,
-reserves the stable attempt identity, and creates ownership-private diagnostic
-staging without publishing attempt authority. `activate` validates the final
-headers, publishes genesis or a successor for that same attempt identity, and
-starts writers. `initialize` is the convenience composition of `claim` and
-`activate`.
+reserves a fresh attempt identity, and creates ownership-private diagnostic
+staging without publishing attempt authority. Writable `activate` validates the
+final headers, publishes genesis or a successor for that same attempt identity,
+and starts writers. Completed read-only activation leaves the fresh staging
+attempt unreferenced. `initialize` is the convenience composition of `claim`
+and `activate`.
 `close_completed` drains writers and returns `Covered` only after exact
 canonical chunk coverage is proven. Individual writer-session lifecycle
 methods remain crate-private.
+
+Ordinary `activate` resolves unpublished failures and completed-no-op cleanup
+within the output lifecycle. External diagnostics owners use
+`activate_with_deferred_completed_noop_cleanup`: an unpublished failure returns
+an idempotent, retryable `OutputClaimRollback` that must be consumed only after
+diagnostics close. A transient cleanup or durability error retains that same
+rollback authority. Dropping it deliberately leaves the claim active for exact
+external fencing. A successful deferred completed-noop `finish` returns an
+`OutputCompletion` containing a non-cloneable, idempotent, retryable
+`OutputPostSessionCleanup`. Every consuming terminal method reports failures as
+`OutputTerminalError`; callers use `into_parts` to retain the primary
+`OutputError`. Only completed-noop terminal failures can additionally carry a
+cleanup token. Callers close timing, telemetry, and logging sessions before
+calling `OutputPostSessionCleanup::cleanup`, and retry the same token if cleanup
+reports a durability error. No cleanup or terminal-release authority is
+available from `Claimed`, so a live claim cannot be released while its manager
+can still activate. Writable terminal failures carry no post-session cleanup
+token.
 
 The output root contains an immutable `.g-output` lineage and attempt
 directories under `attempts/<attempt>/<phenotype-output-name>`. Genesis,
@@ -38,6 +60,15 @@ or receipt data; the completed invocation still appends its owner acquisition
 and release transitions. Interrupted and failed leaves may create a hash-bound
 successor. A nonterminal leaf requires both resume and its exact
 `recover_attempt` identifier.
+Completed-noop diagnostics use a fresh unreferenced staging attempt. Successful
+post-session cleanup removes that attempt and releases only its exact current
+owner. Its owner-staging intent remains present through completed read-only
+finalization, then cleanup retires it after staging removal and before the
+potentially failing owner release. Cleanup retries tolerate an already-absent
+intent. If the process dies or drops the token, an exactly fenced successor
+removes the obsolete unreferenced staging attempt. Once writable genesis or
+successor authority references a staging attempt, takeover preserves its
+diagnostics and retires only obsolete staging metadata.
 The first owner claim is a permanent immutable record at
 `.g-output/session.claim.json`. Release, reacquisition, and fenced takeover use
 one hard-link no-replace transition slot per predecessor under
@@ -56,6 +87,33 @@ receipt repeats that footer and adds the raw byte size and SHA-256. Resume
 accepts a part only after schema, footer, receipt, raw bytes, chunk geometry,
 producer ancestry, execution plan, and chunk plan all verify. Verified reuse
 prefers a hard link and falls back to a synchronized copy plus rehash.
+Attempt-manifest schema version `0` is exact: unknown, missing, duplicate, or
+wrong-typed fields are rejected. Running and completed manifests omit terminal
+detail fields; interrupted manifests contain only a non-empty
+`interrupted_signal`; failed manifests contain only a non-empty
+`failure_reason`. Command and runtime metadata use their exact typed schema.
+Runtime device and writer-thread metadata must agree with the corresponding
+typed execution-plan fields, and the execution-plan phenotype must equal the
+attempt phenotype. Schema zero intentionally retains this flat,
+status-dependent object because its canonical JSON bytes participate in
+terminal hashes; a tagged or nested status representation requires a future
+schema revision.
+The complete nested `execution_plan` graph is typed and closed as well:
+unknown or missing nested fields, unsupported enum values, and inconsistent
+backend/device/mode policy combinations are rejected. Existing-manifest GPU
+format hints are accepted only from manifest bytes bound to the freshly
+resolved genesis contract, current leaf attempt, canonical chunk plan, and,
+when finalized, immutable terminal manifest digest. A pending terminal can
+still expose its bound running manifest so recovery can materialize the claimed
+terminal bytes. The lineage is resolved again before returning the hint.
+All recovery reads open `run_manifest.json` as a non-symlink regular file and
+consume at most 1 GiB plus one detection byte. Writes larger than the same
+1 GiB schema-zero ceiling are rejected before publication, and terminal
+materialization reopens and hashes the exact bytes through that bounded reader.
+The ceiling covers the measured known chromosome-22 scale even with one variant
+per chunk and one receipt per interrupted flush, maximum-length accepted
+lineage identifiers, a 255-byte phenotype name, and variable-header reserve;
+larger analyses must use larger chunks or a future control-plane schema.
 
 Writer-session close is linearized with chunk admission. A full or tail batch
 reserves its completion ticket before it leaves the session state lock;

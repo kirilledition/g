@@ -9,17 +9,18 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::error::{OutputError, OutputResult};
 use crate::manifest::{
     CurrentRunManifestHeaderInput, ManifestFileFingerprintCache, build_current_run_manifest_header_value_with_cache,
-    read_run_manifest_gpu_genotype_format_from_text,
 };
 use crate::persistence::attempt::{
     AttemptManifestBinding, AttemptManifestStatus, AttemptManifestWrite, AttemptRunPaths, OrphanPartPolicy,
     VerifiedAttemptRun, attempt_manifest_value_sha256, build_attempt_manifest_value,
-    inspect_unmaterialized_attempt_run, materialize_attempt_manifest, reuse_verified_receipts, verify_attempt_run,
-    write_attempt_manifest, write_effective_config,
+    inspect_unmaterialized_attempt_run, materialize_attempt_manifest, parse_attempt_manifest_json,
+    read_optional_attempt_manifest_bytes, reuse_verified_receipts, validate_attempt_manifest_schema_zero,
+    verify_attempt_run, write_attempt_manifest, write_effective_config,
 };
 use crate::persistence::identifier::{AttemptIdentifier, validate_safe_path_component};
 use crate::persistence::io::{create_directories_durable, sync_nearest_existing_directory};
@@ -37,26 +38,80 @@ use crate::session::{
 };
 
 /// Output paths returned after a verified completed terminal.
+#[derive(Debug, Eq, PartialEq)]
 pub struct CompletedOutputRun {
     pub run_directory: std::path::PathBuf,
     pub parts_directory: std::path::PathBuf,
 }
 
-/// Idempotent post-session cleanup for non-authoritative claim diagnostics.
-#[derive(Clone)]
-pub struct OutputClaimCleanup {
+/// Completed output artifacts plus optional post-session ownership cleanup.
+#[derive(Debug)]
+#[must_use = "completed output cleanup must run after claim-scoped diagnostics close"]
+pub struct OutputCompletion {
+    pub completed_outputs: Vec<CompletedOutputRun>,
+    pub post_session_cleanup: Option<OutputPostSessionCleanup>,
+}
+
+/// Non-cloneable, retryable cleanup for a verified completed no-op claim.
+#[must_use = "completed output cleanup must run after claim-scoped diagnostics close"]
+pub struct OutputPostSessionCleanup {
     lineage_paths: OutputLineagePaths,
     owner_release: OutputOwnerConditionalRelease,
     claim_id: String,
     attempt_id: AttemptIdentifier,
-    attempt_was_referenced: bool,
+    completed: bool,
     #[cfg(test)]
-    cleanup_pause: Option<Arc<OutputClaimCleanupTestPause>>,
+    cleanup_pause: Option<Arc<OutputPostSessionCleanupTestPause>>,
+}
+
+impl fmt::Debug for OutputPostSessionCleanup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("OutputPostSessionCleanup").finish_non_exhaustive()
+    }
+}
+
+/// Terminal output failure plus optional post-session ownership cleanup.
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+#[must_use = "terminal failures can carry completed output cleanup that must run after diagnostics close"]
+pub struct OutputTerminalError {
+    #[source]
+    source: OutputError,
+    post_session_cleanup: Option<Box<OutputPostSessionCleanup>>,
+}
+
+/// Primary terminal failure plus optional completed-noop cleanup authority.
+#[must_use = "terminal failure parts can carry cleanup authority that must run after diagnostics close"]
+pub struct OutputTerminalFailureParts {
+    /// Primary terminal failure.
+    pub source: OutputError,
+    /// Cleanup required after claim-scoped diagnostics close.
+    pub post_session_cleanup: Option<OutputPostSessionCleanup>,
+}
+
+impl OutputTerminalError {
+    /// Separate the primary failure from any completed-noop cleanup authority.
+    pub fn into_parts(self) -> OutputTerminalFailureParts {
+        OutputTerminalFailureParts {
+            source: self.source,
+            post_session_cleanup: self.post_session_cleanup.map(|cleanup| *cleanup),
+        }
+    }
+
+    fn with_cleanup(source: OutputError, post_session_cleanup: Option<OutputPostSessionCleanup>) -> Self {
+        Self { source, post_session_cleanup: post_session_cleanup.map(Box::new) }
+    }
+}
+
+impl From<OutputError> for OutputTerminalError {
+    fn from(source: OutputError) -> Self {
+        Self::with_cleanup(source, None)
+    }
 }
 
 /// Exclusive unpublished-output ownership retained across session teardown.
 #[must_use = "dropping rollback authority leaves the output claim active and requires explicit fencing"]
-pub struct OutputClaimRollback(OutputManager<Claimed>);
+pub struct OutputClaimRollback(Option<OutputManager<Claimed>>);
 
 impl fmt::Debug for OutputClaimRollback {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,9 +126,15 @@ impl OutputClaimRollback {
     ///
     /// # Errors
     ///
-    /// Returns an error when staging cleanup or owner release fails.
-    pub fn abort_before_activation(self) -> OutputResult<()> {
-        self.0.abort_before_activation()
+    /// Returns an error when staging cleanup or owner release fails. Retry this
+    /// same value after a transient cleanup or durability failure.
+    pub fn abort_before_activation(&mut self) -> OutputResult<()> {
+        let Some(manager) = self.0.as_mut() else {
+            return Ok(());
+        };
+        manager.abort_before_activation_in_place()?;
+        self.0 = None;
+        Ok(())
     }
 }
 
@@ -87,7 +148,7 @@ pub enum OutputActivationError {
     Unpublished {
         #[source]
         source: OutputError,
-        rollback: OutputClaimRollback,
+        rollback: Box<OutputClaimRollback>,
     },
     /// Attempt authority was published and failure recovery already ran.
     #[error(transparent)]
@@ -105,30 +166,47 @@ pub struct OutputActivationFailureParts {
 
 impl OutputActivationError {
     /// Separate the primary failure from any deferred ownership rollback.
-    #[must_use]
     pub fn into_parts(self) -> OutputActivationFailureParts {
         match self {
-            Self::Unpublished { source, rollback } => OutputActivationFailureParts { source, rollback: Some(rollback) },
+            Self::Unpublished { source, rollback } => {
+                OutputActivationFailureParts { source, rollback: Some(*rollback) }
+            }
             Self::Published(source) => OutputActivationFailureParts { source, rollback: None },
         }
     }
 }
 
 #[cfg(test)]
-struct OutputClaimCleanupTestPause {
+struct OutputPostSessionCleanupTestPause {
     reached_sender: std::sync::mpsc::Sender<()>,
     resume_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 #[cfg(test)]
-pub(crate) struct OutputClaimCleanupTestControl {
+struct OutputManifestHintTestPause {
+    reached_sender: std::sync::mpsc::Sender<()>,
+    resume_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+#[cfg(test)]
+pub(crate) struct OutputManifestHintTestControl {
     reached_receiver: std::sync::mpsc::Receiver<()>,
     resume_sender: std::sync::mpsc::Sender<()>,
     resumed: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(test)]
-const OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) struct OutputPostSessionCleanupTestControl {
+    reached_receiver: std::sync::mpsc::Receiver<()>,
+    resume_sender: std::sync::mpsc::Sender<()>,
+    resumed: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+const OUTPUT_POST_SESSION_CLEANUP_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(test)]
+const OUTPUT_MANIFEST_HINT_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Marker for a read-only output plan.
 pub struct Planned;
@@ -166,16 +244,61 @@ struct OutputManagerCore {
     owner_claim: Option<OutputOwnerClaim>,
     claim_staging_directory: Option<PathBuf>,
     claimed_attempt_id: Option<AttemptIdentifier>,
+    completed_noop_cleanup: Option<OutputPostSessionCleanup>,
     canonical_chunk_plan: Option<CanonicalChunkPlan>,
     collect_stage_timings: bool,
     lifecycle_state: OutputManagerLifecycleState,
+    #[cfg(test)]
+    manifest_hint_pause: Option<Arc<OutputManifestHintTestPause>>,
 }
 
 struct OutputManagerLifecycleState {
-    claimed_attempt_was_referenced: bool,
-    attempt_authority_published: bool,
-    defer_completed_noop_cleanup: bool,
+    attempt_authority_publication: AttemptAuthorityPublication,
+    completed_noop_cleanup_policy: CompletedNoopCleanupPolicy,
     terminal: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AttemptAuthorityPublication {
+    NotAttempted,
+    DefinitelyUnpublished { record_path: PathBuf },
+    VisibleOrUnknown { record_path: PathBuf },
+}
+
+impl AttemptAuthorityPublication {
+    fn rollback_is_safe(&self) -> bool {
+        matches!(self, Self::NotAttempted | Self::DefinitelyUnpublished { .. })
+    }
+
+    fn ensure_rollback_target_absent(&self) -> OutputResult<()> {
+        let Self::DefinitelyUnpublished { record_path } = self else {
+            return if matches!(self, Self::NotAttempted) {
+                Ok(())
+            } else {
+                Err(OutputError::InvalidInput(
+                    "Output attempt staging cannot be removed after its immutable authority may be visible."
+                        .to_string(),
+                ))
+            };
+        };
+        match std::fs::symlink_metadata(record_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(_) => Err(OutputError::InvalidInput(format!(
+                "Output attempt staging cannot be removed because immutable authority appeared at '{}'.",
+                record_path.display()
+            ))),
+            Err(error) => Err(OutputError::Runtime(format!(
+                "Output attempt staging cannot be removed because immutable authority at '{}' could not be disproved: {error}",
+                record_path.display()
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletedNoopCleanupPolicy {
+    Immediate,
+    Deferred,
 }
 
 struct ManagedOutputRun {
@@ -287,14 +410,16 @@ impl OutputManager<Planned> {
                 owner_claim: None,
                 claim_staging_directory: None,
                 claimed_attempt_id: None,
+                completed_noop_cleanup: None,
                 canonical_chunk_plan: None,
                 collect_stage_timings: false,
                 lifecycle_state: OutputManagerLifecycleState {
-                    claimed_attempt_was_referenced: false,
-                    attempt_authority_published: false,
-                    defer_completed_noop_cleanup: false,
+                    attempt_authority_publication: AttemptAuthorityPublication::NotAttempted,
+                    completed_noop_cleanup_policy: CompletedNoopCleanupPolicy::Immediate,
                     terminal: false,
                 },
+                #[cfg(test)]
+                manifest_hint_pause: None,
             }),
             state: PhantomData,
         })
@@ -311,28 +436,89 @@ impl OutputManager<Planned> {
         phenotype_name: &str,
     ) -> OutputResult<Option<g_plan::GpuGenotypeFormat>> {
         let core = self.core()?;
-        let Some(snapshot) = core.lineage_snapshot.as_ref() else {
+        let Some(snapshot) = core.lineage_paths.inspect()? else {
             return Ok(None);
         };
         let run = core.run(phenotype_name)?;
+        let contract = snapshot
+            .genesis
+            .phenotypes
+            .iter()
+            .find(|contract| contract.phenotype_name == phenotype_name)
+            .ok_or_else(|| {
+                OutputError::InvalidInput(format!("Output immutable lineage is missing phenotype '{phenotype_name}'."))
+            })?;
+        if contract.output_directory_name != run.output_directory_name {
+            return Err(OutputError::InvalidInput(format!(
+                "Output immutable lineage directory for phenotype '{phenotype_name}' does not match the current plan."
+            )));
+        }
         let paths = AttemptRunPaths::new(
             &core.lineage_paths.attempts_directory,
             &snapshot.leaf_attempt_id,
-            &run.output_directory_name,
+            &contract.output_directory_name,
         )?;
-        let manifest_text = match std::fs::read_to_string(&paths.manifest_path) {
-            Ok(manifest_text) => manifest_text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && snapshot.leaf_terminal.is_none() => {
-                return Ok(None);
-            }
-            Err(error) => {
-                return Err(OutputError::Runtime(format!(
-                    "Failed to read existing output manifest '{}': {error}",
+        let terminal_authority_exists = snapshot.leaf_terminal.is_some() || snapshot.pending_terminal.is_some();
+        let manifest_bytes = match read_optional_attempt_manifest_bytes(&paths.manifest_path)? {
+            Some(manifest_bytes) => manifest_bytes,
+            None if !terminal_authority_exists => return Ok(None),
+            None => {
+                return Err(OutputError::InvalidInput(format!(
+                    "Terminal output attempt is missing manifest '{}'.",
                     paths.manifest_path.display()
                 )));
             }
         };
-        read_run_manifest_gpu_genotype_format_from_text(&manifest_text).map(Some)
+        let manifest_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
+        let manifest = parse_attempt_manifest_json(&manifest_bytes, &paths.manifest_path)?;
+        let binding = AttemptManifestBinding {
+            run_set_id: snapshot.genesis.run_set_id.clone(),
+            attempt_id: snapshot.leaf_attempt_id.clone(),
+            phenotype_name: contract.phenotype_name.clone(),
+            output_directory_name: contract.output_directory_name.clone(),
+            execution_plan_sha256: contract.execution_plan_sha256.clone(),
+            chunk_plan_sha256: snapshot.genesis.chunk_plan_sha256.clone(),
+        };
+        let validated = validate_attempt_manifest_schema_zero(manifest, &paths, &binding)?;
+        #[cfg(test)]
+        if let Some(pause) = core.manifest_hint_pause.as_ref() {
+            pause.wait()?;
+        }
+        if core.lineage_paths.inspect()?.as_ref() != Some(&snapshot) {
+            return Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() });
+        }
+        if let Some(terminal) = snapshot.leaf_terminal.as_ref() {
+            validate_manifest_terminal_status(&validated.status, terminal.status)?;
+            let terminal_phenotype =
+                terminal.phenotypes.iter().find(|record| record.phenotype_name == phenotype_name).ok_or_else(|| {
+                    OutputError::InvalidInput(format!(
+                        "Output immutable terminal is missing phenotype '{phenotype_name}'."
+                    ))
+                })?;
+            if terminal_phenotype.output_directory_name != contract.output_directory_name
+                || terminal_phenotype.run_manifest_sha256 != manifest_sha256
+            {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output immutable terminal manifest binding for phenotype '{phenotype_name}' does not match its bytes."
+                )));
+            }
+        }
+        Ok(Some(validated.gpu_genotype_format()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_manifest_hint_pause_for_test(&mut self) -> OutputResult<OutputManifestHintTestControl> {
+        let (reached_sender, reached_receiver) = std::sync::mpsc::channel();
+        let (resume_sender, resume_receiver) = std::sync::mpsc::channel();
+        self.core_mut()?.manifest_hint_pause = Some(Arc::new(OutputManifestHintTestPause {
+            reached_sender,
+            resume_receiver: std::sync::Mutex::new(resume_receiver),
+        }));
+        Ok(OutputManifestHintTestControl {
+            reached_receiver,
+            resume_sender,
+            resumed: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 
     /// Acquire exclusive output ownership without publishing attempt authority.
@@ -445,31 +631,6 @@ impl OutputManager<Claimed> {
             .ok_or_else(|| OutputError::Runtime("Claimed output has no diagnostics staging directory.".to_string()))
     }
 
-    /// Return an idempotent post-session cleanup handle.
-    ///
-    /// The handle becomes a no-op after successful activation retires the
-    /// staging intent.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the claimed staging identity is inconsistent.
-    pub fn cleanup_handle(&self) -> OutputResult<OutputClaimCleanup> {
-        let core = self.core()?;
-        let owner_claim = core
-            .owner_claim
-            .as_ref()
-            .ok_or_else(|| OutputError::Runtime("Claimed output has no owner claim.".to_string()))?;
-        Ok(OutputClaimCleanup {
-            lineage_paths: core.lineage_paths.clone(),
-            owner_release: owner_claim.conditional_release(),
-            claim_id: owner_claim.claim_id().to_string(),
-            attempt_id: core.claimed_attempt_id()?,
-            attempt_was_referenced: core.lifecycle_state.claimed_attempt_was_referenced,
-            #[cfg(test)]
-            cleanup_pause: None,
-        })
-    }
-
     /// Publish immutable attempt authority and start the output writers.
     ///
     /// # Errors
@@ -480,7 +641,8 @@ impl OutputManager<Claimed> {
         self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
     ) -> OutputResult<OutputManager<Active>> {
-        self.activate_with_cleanup_policy(current_header_inputs, false).map_err(resolve_activation_error)
+        self.activate_with_cleanup_policy(current_header_inputs, CompletedNoopCleanupPolicy::Immediate)
+            .map_err(resolve_activation_error)
     }
 
     /// Publish attempt authority while deferring completed-noop cleanup until
@@ -497,24 +659,21 @@ impl OutputManager<Claimed> {
         self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
     ) -> Result<OutputManager<Active>, OutputActivationError> {
-        self.activate_with_cleanup_policy(current_header_inputs, true)
+        self.activate_with_cleanup_policy(current_header_inputs, CompletedNoopCleanupPolicy::Deferred)
     }
 
     fn activate_with_cleanup_policy(
         mut self,
         current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
-        defer_completed_noop_cleanup: bool,
+        completed_noop_cleanup_policy: CompletedNoopCleanupPolicy,
     ) -> Result<OutputManager<Active>, OutputActivationError> {
         let mut core = self.take_core()?;
-        core.lifecycle_state.defer_completed_noop_cleanup = defer_completed_noop_cleanup;
-        let canonical_chunk_plan = match core.canonical_chunk_plan.clone() {
-            Some(canonical_chunk_plan) => canonical_chunk_plan,
-            None => {
-                return Err(unpublished_activation_error(
-                    core,
-                    OutputError::Runtime("Claimed output has no canonical chunk plan.".to_string()),
-                ));
-            }
+        core.lifecycle_state.completed_noop_cleanup_policy = completed_noop_cleanup_policy;
+        let Some(canonical_chunk_plan) = core.canonical_chunk_plan.clone() else {
+            return Err(unpublished_activation_error(
+                core,
+                OutputError::Runtime("Claimed output has no canonical chunk plan.".to_string()),
+            ));
         };
         let collect_stage_timings = core.collect_stage_timings;
         let phenotype_contracts = match (|| {
@@ -556,7 +715,7 @@ impl OutputManager<Claimed> {
             ),
         };
         if let Err(error) = initialization_result {
-            if !core.lifecycle_state.attempt_authority_published {
+            if core.lifecycle_state.attempt_authority_publication.rollback_is_safe() {
                 return Err(unpublished_activation_error(core, error));
             }
             return match core.resolve_initialization_error(&error) {
@@ -580,21 +739,26 @@ impl OutputManager<Claimed> {
     ///
     /// Returns an error when staging cleanup or owner release fails.
     pub fn abort_before_activation(mut self) -> OutputResult<()> {
-        let mut core = self.take_core()?;
-        let cleanup_result = core.cleanup_claim_staging();
-        let release_result = core.release_owner_claim();
-        combine_terminal_cleanup_result(cleanup_result, release_result, "Pre-activation output staging cleanup failed")
+        self.abort_before_activation_in_place()
+    }
+
+    fn abort_before_activation_in_place(&mut self) -> OutputResult<()> {
+        let core = self.core_mut()?;
+        if let Err(error) = core.cleanup_claim_staging() {
+            return Err(core.retained_owner_claim_error(&error));
+        }
+        core.release_owner_claim()
     }
 }
 
 fn unpublished_activation_error(core: OutputManagerCore, source: OutputError) -> OutputActivationError {
     let manager = OutputManager { core: Some(core), state: PhantomData };
-    OutputActivationError::Unpublished { source, rollback: OutputClaimRollback(manager) }
+    OutputActivationError::Unpublished { source, rollback: Box::new(OutputClaimRollback(Some(manager))) }
 }
 
 fn resolve_activation_error(error: OutputActivationError) -> OutputError {
     let OutputActivationFailureParts { source, rollback } = error.into_parts();
-    let Some(rollback) = rollback else {
+    let Some(mut rollback) = rollback else {
         return source;
     };
     match rollback.abort_before_activation() {
@@ -606,31 +770,38 @@ fn resolve_activation_error(error: OutputActivationError) -> OutputError {
     }
 }
 
-impl OutputClaimCleanup {
+impl OutputPostSessionCleanup {
     #[cfg(test)]
-    pub(crate) fn install_cleanup_pause_for_test(&mut self) -> OutputClaimCleanupTestControl {
+    pub(crate) fn install_cleanup_pause_for_test(&mut self) -> OutputPostSessionCleanupTestControl {
         let (reached_sender, reached_receiver) = std::sync::mpsc::channel();
         let (resume_sender, resume_receiver) = std::sync::mpsc::channel();
-        let pause = Arc::new(OutputClaimCleanupTestPause {
+        let pause = Arc::new(OutputPostSessionCleanupTestPause {
             reached_sender,
             resume_receiver: std::sync::Mutex::new(resume_receiver),
         });
         self.cleanup_pause = Some(Arc::clone(&pause));
-        OutputClaimCleanupTestControl {
+        OutputPostSessionCleanupTestControl {
             reached_receiver,
             resume_sender,
             resumed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    /// Remove diagnostics for an unpublished claim and retire its staging intent.
+    /// Remove completed-noop diagnostics and release its exact owner claim.
     ///
     /// # Errors
     ///
-    /// Returns an error for mismatched staging metadata or failed durable cleanup.
-    pub fn cleanup_if_unpublished(self) -> OutputResult<()> {
-        let staged_attempt_id = self.lineage_paths.owner_staging_attempt(&self.claim_id)?;
-        if staged_attempt_id.as_ref().is_some_and(|attempt_id| attempt_id != &self.attempt_id) {
+    /// Returns an error for mismatched staging metadata or failed durable
+    /// cleanup. Retry this same value after a durability error.
+    pub fn cleanup(&mut self) -> OutputResult<()> {
+        if self.completed {
+            return Ok(());
+        }
+        if self
+            .lineage_paths
+            .owner_staging_attempt(&self.claim_id)?
+            .is_some_and(|staged_attempt_id| staged_attempt_id != self.attempt_id)
+        {
             return Err(OutputError::ConcurrentLineageUpdate {
                 record_path: self
                     .lineage_paths
@@ -638,9 +809,6 @@ impl OutputClaimCleanup {
                     .join("owner-staging")
                     .join(format!("{}.json", self.claim_id)),
             });
-        }
-        if staged_attempt_id.is_none() && !self.attempt_was_referenced {
-            return self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id);
         }
         #[cfg(test)]
         if let Some(cleanup_pause) = self.cleanup_pause.as_ref() {
@@ -651,49 +819,47 @@ impl OutputClaimCleanup {
                 .resume_receiver
                 .lock()
                 .map_err(|error| OutputError::Runtime(format!("Output cleanup test pause lock is poisoned: {error}")))?
-                .recv_timeout(OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT)
+                .recv_timeout(OUTPUT_POST_SESSION_CLEANUP_TEST_TIMEOUT)
                 .map_err(|error| OutputError::Runtime(format!("Output cleanup test pause timed out: {error}")))?;
         }
         let referenced_attempts =
             self.lineage_paths.inspect()?.as_ref().map_or_else(BTreeSet::new, lineage_attempt_identifiers);
-        let removal_path = if self.attempt_was_referenced {
-            Some(self.lineage_paths.attempt_directory(&self.attempt_id).join("diagnostics").join(&self.claim_id))
-        } else if referenced_attempts.contains(&self.attempt_id) {
-            None
-        } else {
-            Some(self.lineage_paths.attempt_directory(&self.attempt_id))
-        };
-        if let Some(removal_path) = removal_path {
-            match std::fs::remove_dir_all(&removal_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(OutputError::Runtime(format!(
-                        "Failed to remove unpublished output staging '{}': {error}",
-                        removal_path.display()
-                    )));
-                }
+        if referenced_attempts.contains(&self.attempt_id) {
+            return Err(OutputError::InvalidInput(
+                "Completed no-op diagnostics staging unexpectedly became authoritative.".to_string(),
+            ));
+        }
+        let removal_path = self.lineage_paths.attempt_directory(&self.attempt_id);
+        match std::fs::remove_dir_all(&removal_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(OutputError::Runtime(format!(
+                    "Failed to remove completed no-op diagnostics staging '{}': {error}",
+                    removal_path.display()
+                )));
             }
-            let synchronization_directory = if self.attempt_was_referenced {
-                removal_path.parent().ok_or_else(|| {
-                    OutputError::Runtime(format!("Output staging '{}' has no parent.", removal_path.display()))
-                })?
-            } else {
-                &self.lineage_paths.attempts_directory
-            };
-            sync_nearest_existing_directory(synchronization_directory)?;
         }
-        if self.attempt_was_referenced {
-            self.owner_release.release_if_current()?;
-        }
-        self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id)
+        sync_nearest_existing_directory(&self.lineage_paths.attempts_directory)?;
+        #[cfg(test)]
+        fail_terminal_cleanup_at_test_point("after_post_session_staging_removal")?;
+        self.lineage_paths.retire_owner_staging_intent(&self.claim_id, &self.attempt_id)?;
+        #[cfg(test)]
+        fail_terminal_cleanup_at_test_point("after_post_session_intent_retirement")?;
+        #[cfg(test)]
+        fail_terminal_cleanup_at_test_point("before_post_session_owner_release")?;
+        self.owner_release.release_if_current()?;
+        #[cfg(test)]
+        fail_terminal_cleanup_at_test_point("after_post_session_owner_release")?;
+        self.completed = true;
+        Ok(())
     }
 }
 
 #[cfg(test)]
-impl OutputClaimCleanupTestControl {
+impl OutputPostSessionCleanupTestControl {
     pub(crate) fn wait_until_reached(&self) -> Result<(), std::sync::mpsc::RecvTimeoutError> {
-        self.reached_receiver.recv_timeout(OUTPUT_CLAIM_CLEANUP_TEST_TIMEOUT)
+        self.reached_receiver.recv_timeout(OUTPUT_POST_SESSION_CLEANUP_TEST_TIMEOUT)
     }
 
     pub(crate) fn resume(&self) {
@@ -708,7 +874,47 @@ impl OutputClaimCleanupTestControl {
 }
 
 #[cfg(test)]
-impl Drop for OutputClaimCleanupTestControl {
+impl OutputManifestHintTestPause {
+    fn wait(&self) -> OutputResult<()> {
+        self.reached_sender.send(()).map_err(|error| {
+            OutputError::Runtime(format!("Failed to report the output manifest hint test pause: {error}"))
+        })?;
+        self.resume_receiver
+            .lock()
+            .map_err(|error| {
+                OutputError::Runtime(format!("Output manifest hint test pause lock is poisoned: {error}"))
+            })?
+            .recv_timeout(OUTPUT_MANIFEST_HINT_TEST_TIMEOUT)
+            .map_err(|error| OutputError::Runtime(format!("Output manifest hint test pause timed out: {error}")))
+    }
+}
+
+#[cfg(test)]
+impl OutputManifestHintTestControl {
+    pub(crate) fn wait_until_reached(&self) -> Result<(), std::sync::mpsc::RecvTimeoutError> {
+        self.reached_receiver.recv_timeout(OUTPUT_MANIFEST_HINT_TEST_TIMEOUT)
+    }
+
+    pub(crate) fn resume(&self) {
+        self.resume_hint();
+    }
+
+    fn resume_hint(&self) {
+        if !self.resumed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.resume_sender.send(());
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for OutputManifestHintTestControl {
+    fn drop(&mut self) {
+        self.resume_hint();
+    }
+}
+
+#[cfg(test)]
+impl Drop for OutputPostSessionCleanupTestControl {
     fn drop(&mut self) {
         self.resume_cleanup();
     }
@@ -751,7 +957,7 @@ impl OutputManager<Active> {
     ///
     /// Returns an error when a writer, timing snapshot, or exact-coverage check
     /// fails. A best-effort failed terminal is published before returning.
-    pub fn close_completed(mut self) -> OutputResult<OutputManager<Covered>> {
+    pub fn close_completed(mut self) -> Result<OutputManager<Covered>, OutputTerminalError> {
         let mut core = self.take_core()?;
         let completed_noop = core.active_attempt()?.completed_noop;
         let close_result = if completed_noop { core.reverify_completed_noop() } else { core.close_writers_completed() };
@@ -762,17 +968,21 @@ impl OutputManager<Active> {
             "close_completed"
         }));
         if let Err(error) = close_result {
-            let recovery_result = if completed_noop {
-                core.finalize_completed_noop_claim()
-            } else {
-                let reason = format!("output completion failed: {error}");
-                core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason))
-            };
+            if completed_noop {
+                return Err(core.completed_noop_terminal_error(
+                    error,
+                    "Completed output verification failure recovery also failed",
+                ));
+            }
+            let reason = format!("output completion failed: {error}");
+            let recovery_result =
+                core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&reason));
             return return_primary_after_recovery(
                 error,
                 recovery_result,
                 "Output completion failure recovery also failed",
-            );
+            )
+            .map_err(OutputTerminalError::from);
         }
         Ok(OutputManager { core: Some(core), state: PhantomData })
     }
@@ -783,23 +993,28 @@ impl OutputManager<Active> {
     ///
     /// Returns an error when draining, timing, manifest, or terminal publication
     /// fails.
-    pub fn finish_interrupted(mut self, signal_name: &str) -> OutputResult<()> {
+    pub fn finish_interrupted(mut self, signal_name: &str) -> Result<(), OutputTerminalError> {
         let mut core = self.take_core()?;
+        let completed_noop = core.active_attempt()?.completed_noop;
         if signal_name.trim().is_empty() {
             let error = OutputError::InvalidInput("Output interruption signal name must not be empty.".to_string());
+            if completed_noop {
+                return Err(
+                    core.completed_noop_terminal_error(error, "Completed no-op interruption rejection cleanup failed")
+                );
+            }
             return return_primary_after_recovery(
                 error,
                 core.resolve_rejected_terminal_request("empty interruption signal"),
                 "Rejected output interruption recovery failed",
-            );
+            )
+            .map_err(OutputTerminalError::from);
         }
-        if core.active_attempt()?.completed_noop {
+        if completed_noop {
             let error =
                 OutputError::InvalidInput("A verified completed output lineage cannot be interrupted.".to_string());
-            return return_primary_after_recovery(
-                error,
-                core.finalize_completed_noop_claim(),
-                "Completed no-op interruption rejection could not release ownership",
+            return Err(
+                core.completed_noop_terminal_error(error, "Completed no-op interruption rejection cleanup failed")
             );
         }
         let close_result = core.close_writers_interrupted(signal_name);
@@ -813,9 +1028,11 @@ impl OutputManager<Active> {
                 error,
                 recovery_result,
                 "Interrupted output flush failure recovery also failed",
-            );
+            )
+            .map_err(OutputTerminalError::from);
         }
         core.publish_terminal_and_release(&AttemptManifestStatus::Interrupted, Some(signal_name), None)
+            .map_err(OutputTerminalError::from)
     }
 
     /// Discard unsubmitted tails and publish a failed terminal.
@@ -824,23 +1041,24 @@ impl OutputManager<Active> {
     ///
     /// Returns an error when writer drain, timing, manifest, or terminal
     /// publication fails.
-    pub fn abort(mut self, failure_reason: &str) -> OutputResult<()> {
+    pub fn abort(mut self, failure_reason: &str) -> Result<(), OutputTerminalError> {
         let mut core = self.take_core()?;
+        let completed_noop = core.active_attempt()?.completed_noop;
         if failure_reason.trim().is_empty() {
             let error = OutputError::InvalidInput("Output failure reason must not be empty.".to_string());
+            if completed_noop {
+                return Err(core.completed_noop_terminal_error(error, "Completed no-op abort rejection cleanup failed"));
+            }
             return return_primary_after_recovery(
                 error,
                 core.resolve_rejected_terminal_request("empty failure reason"),
                 "Rejected output abort recovery failed",
-            );
+            )
+            .map_err(OutputTerminalError::from);
         }
-        if core.active_attempt()?.completed_noop {
+        if completed_noop {
             let error = OutputError::InvalidInput("A verified completed output lineage cannot be aborted.".to_string());
-            return return_primary_after_recovery(
-                error,
-                core.finalize_completed_noop_claim(),
-                "Completed no-op abort rejection could not release ownership",
-            );
+            return Err(core.completed_noop_terminal_error(error, "Completed no-op abort rejection cleanup failed"));
         }
         let abort_result = core.abort_writers();
         let terminal_reason = abort_result.as_ref().err().map_or_else(
@@ -850,6 +1068,7 @@ impl OutputManager<Active> {
         let recovery_result =
             core.publish_terminal_and_release(&AttemptManifestStatus::Failed, None, Some(&terminal_reason));
         combine_terminal_cleanup_result(abort_result, recovery_result, "Output abort recovery also failed")
+            .map_err(OutputTerminalError::from)
     }
 }
 
@@ -862,16 +1081,18 @@ impl OutputManager<Covered> {
     ///
     /// Returns an error when final verification, manifest publication, or
     /// terminal publication fails.
-    pub fn finish(mut self) -> OutputResult<Vec<CompletedOutputRun>> {
+    pub fn finish(mut self) -> Result<OutputCompletion, OutputTerminalError> {
         let mut core = self.take_core()?;
         let completed_noop = core.active_attempt()?.completed_noop;
         if completed_noop {
-            let completion_result = core.reverify_completed_noop().and_then(|()| core.completed_outputs());
-            return combine_terminal_cleanup_result(
-                completion_result,
-                core.finalize_completed_noop_claim(),
-                "Completed output verification failed",
-            );
+            let completed_outputs = match core.reverify_completed_noop().and_then(|()| core.completed_outputs()) {
+                Ok(completed_outputs) => completed_outputs,
+                Err(error) => {
+                    return Err(core.completed_noop_terminal_error(error, "Completed output verification failed"));
+                }
+            };
+            let post_session_cleanup = core.finalize_completed_noop_claim()?;
+            return Ok(OutputCompletion { completed_outputs, post_session_cleanup });
         }
 
         let completed_outputs_result = core.completed_outputs();
@@ -889,12 +1110,13 @@ impl OutputManager<Covered> {
                     error,
                     recovery_result,
                     "Completed output failure recovery also failed",
-                );
+                )
+                .map_err(OutputTerminalError::from);
             }
         };
 
         if let Err(error) = core.publish_terminal(&AttemptManifestStatus::Completed, None, None) {
-            return Err(core.retained_owner_claim_error(&error));
+            return Err(OutputTerminalError::from(core.retained_owner_claim_error(&error)));
         }
         core.lifecycle_state.terminal = true;
         let release_result = core.release_owner_claim();
@@ -903,10 +1125,11 @@ impl OutputManager<Covered> {
             fail_completion_at_test_point("after_completed_terminal_finalization"),
             release_result,
             "Completed output terminal-boundary operation failed",
-        )?;
+        )
+        .map_err(OutputTerminalError::from)?;
         #[cfg(not(test))]
-        release_result?;
-        Ok(completed_outputs)
+        release_result.map_err(OutputTerminalError::from)?;
+        Ok(OutputCompletion { completed_outputs, post_session_cleanup: None })
     }
 }
 
@@ -944,6 +1167,10 @@ impl<State> OutputManager<State> {
         self.core.as_ref().ok_or_else(|| OutputError::Runtime("Output manager core was already consumed.".to_string()))
     }
 
+    fn core_mut(&mut self) -> OutputResult<&mut OutputManagerCore> {
+        self.core.as_mut().ok_or_else(|| OutputError::Runtime("Output manager core was already consumed.".to_string()))
+    }
+
     fn take_core(&mut self) -> OutputResult<OutputManagerCore> {
         self.core.take().ok_or_else(|| OutputError::Runtime("Output manager core was already consumed.".to_string()))
     }
@@ -966,6 +1193,29 @@ impl<State> Drop for OutputManager<State> {
 }
 
 impl OutputManagerCore {
+    fn classify_attempt_authority_publication<ValueType>(
+        &mut self,
+        record_path: PathBuf,
+        publication_result: OutputResult<ValueType>,
+    ) -> OutputResult<ValueType> {
+        match publication_result {
+            Ok(publication) => {
+                self.lifecycle_state.attempt_authority_publication =
+                    AttemptAuthorityPublication::VisibleOrUnknown { record_path };
+                Ok(publication)
+            }
+            Err(error) => {
+                self.lifecycle_state.attempt_authority_publication = match std::fs::symlink_metadata(&record_path) {
+                    Err(metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound => {
+                        AttemptAuthorityPublication::DefinitelyUnpublished { record_path }
+                    }
+                    Ok(_) | Err(_) => AttemptAuthorityPublication::VisibleOrUnknown { record_path },
+                };
+                Err(error)
+            }
+        }
+    }
+
     fn reestablish_observed_durability(&self, snapshot: Option<&LineageSnapshot>) -> OutputResult<()> {
         if let Some(snapshot) = snapshot {
             for attempt_id in lineage_attempt_identifiers(snapshot) {
@@ -1005,19 +1255,14 @@ impl OutputManagerCore {
     }
 
     fn cleanup_claim_staging(&mut self) -> OutputResult<()> {
+        self.lifecycle_state.attempt_authority_publication.ensure_rollback_target_absent()?;
         let claimed_attempt_id = self.claimed_attempt_id()?;
         let owner_claim = self
             .owner_claim
             .as_ref()
             .ok_or_else(|| OutputError::Runtime("Output staging cleanup requires an owner claim.".to_string()))?;
         let claim_identifier = owner_claim.claim_id().to_string();
-        let removal_path = if self.lifecycle_state.claimed_attempt_was_referenced {
-            self.claim_staging_directory.clone().ok_or_else(|| {
-                OutputError::Runtime("Output staging cleanup requires a diagnostics directory.".to_string())
-            })?
-        } else {
-            self.lineage_paths.attempt_directory(&claimed_attempt_id)
-        };
+        let removal_path = self.lineage_paths.attempt_directory(&claimed_attempt_id);
         match std::fs::remove_dir_all(&removal_path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1028,26 +1273,22 @@ impl OutputManagerCore {
                 )));
             }
         }
-        let synchronization_directory = if self.lifecycle_state.claimed_attempt_was_referenced {
-            removal_path.parent().ok_or_else(|| {
-                OutputError::Runtime(format!("Output diagnostics staging '{}' has no parent.", removal_path.display()))
-            })?
-        } else {
-            &self.lineage_paths.attempts_directory
-        };
-        sync_nearest_existing_directory(synchronization_directory)?;
+        sync_nearest_existing_directory(&self.lineage_paths.attempts_directory)?;
+        #[cfg(test)]
+        fail_initialization_cleanup_at_test_point("after_claim_staging_removal")?;
         self.lineage_paths.retire_owner_staging_intent(&claim_identifier, &claimed_attempt_id)?;
         self.claim_staging_directory = None;
+        self.completed_noop_cleanup = None;
         Ok(())
     }
 
     fn initialize_claim_staging_directory(&mut self) -> OutputResult<()> {
-        let completed_attempt = self.lineage_snapshot.as_ref().and_then(|snapshot| {
-            let terminal = snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref())?;
-            (terminal.status == AttemptTerminalStatus::Completed).then(|| snapshot.leaf_attempt_id.clone())
-        });
-        let claimed_attempt_was_referenced = completed_attempt.is_some();
-        let claimed_attempt_id = completed_attempt.unwrap_or_else(AttemptIdentifier::generate);
+        let completed_output_claim = self
+            .lineage_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref()))
+            .is_some_and(|terminal| terminal.status == AttemptTerminalStatus::Completed);
+        let claimed_attempt_id = AttemptIdentifier::generate();
         let owner_claim = self
             .owner_claim
             .as_ref()
@@ -1055,8 +1296,17 @@ impl OutputManagerCore {
         let claim_identifier = owner_claim.claim_id().to_string();
         let claim_staging_directory =
             self.lineage_paths.attempt_directory(&claimed_attempt_id).join("diagnostics").join(&claim_identifier);
+        let completed_noop_cleanup = completed_output_claim.then(|| OutputPostSessionCleanup {
+            lineage_paths: self.lineage_paths.clone(),
+            owner_release: owner_claim.conditional_release(),
+            claim_id: claim_identifier.clone(),
+            attempt_id: claimed_attempt_id.clone(),
+            completed: false,
+            #[cfg(test)]
+            cleanup_pause: None,
+        });
         self.claimed_attempt_id = Some(claimed_attempt_id.clone());
-        self.lifecycle_state.claimed_attempt_was_referenced = claimed_attempt_was_referenced;
+        self.completed_noop_cleanup = completed_noop_cleanup;
         self.claim_staging_directory = Some(claim_staging_directory.clone());
         self.lineage_paths.publish_owner_staging_intent(&claim_identifier, &claimed_attempt_id)?;
         #[cfg(test)]
@@ -1169,12 +1419,11 @@ impl OutputManagerCore {
             completed_noop: false,
             collect_stage_timings,
         });
-        self.lifecycle_state.attempt_authority_published = true;
         Ok(())
     }
 
     fn resolve_initialization_error(&mut self, initialization_error: &OutputError) -> OutputResult<()> {
-        if !self.lifecycle_state.attempt_authority_published {
+        if self.lifecycle_state.attempt_authority_publication.rollback_is_safe() {
             return self.release_owner_claim();
         }
         let abort_result = if self.runs.iter().any(|run| run.writer_session.is_some()) {
@@ -1204,9 +1453,6 @@ impl OutputManagerCore {
     }
 
     fn resolve_rejected_terminal_request(&mut self, rejection_reason: &str) -> OutputResult<()> {
-        if self.active_attempt()?.completed_noop {
-            return self.finalize_completed_noop_claim();
-        }
         let abort_result = self.abort_writers();
         let failure_reason = abort_result.as_ref().err().map_or_else(
             || format!("output lifecycle request rejected: {rejection_reason}"),
@@ -1231,13 +1477,39 @@ impl OutputManagerCore {
         Ok(())
     }
 
-    fn finalize_completed_noop_claim(&mut self) -> OutputResult<()> {
+    fn finalize_completed_noop_claim(&mut self) -> Result<Option<OutputPostSessionCleanup>, OutputTerminalError> {
         self.lifecycle_state.terminal = true;
-        if self.lifecycle_state.defer_completed_noop_cleanup {
-            return Ok(());
+        let cleanup = self.completed_noop_cleanup.take().ok_or_else(|| {
+            OutputTerminalError::from(OutputError::Runtime(
+                "Completed no-op claim has no post-session cleanup authority.".to_string(),
+            ))
+        })?;
+        if self.lifecycle_state.completed_noop_cleanup_policy == CompletedNoopCleanupPolicy::Deferred {
+            Ok(Some(cleanup))
+        } else {
+            let mut cleanup = cleanup;
+            match cleanup.cleanup() {
+                Ok(()) => Ok(None),
+                Err(error) => Err(OutputTerminalError::with_cleanup(error, Some(cleanup))),
+            }
         }
-        self.cleanup_claim_staging()?;
-        self.release_owner_claim()
+    }
+
+    fn completed_noop_terminal_error(&mut self, source: OutputError, context: &str) -> OutputTerminalError {
+        match self.finalize_completed_noop_claim() {
+            Ok(post_session_cleanup) => OutputTerminalError::with_cleanup(source, post_session_cleanup),
+            Err(recovery_error) => {
+                let OutputTerminalFailureParts { source: recovery_source, post_session_cleanup } =
+                    recovery_error.into_parts();
+                OutputTerminalError::with_cleanup(
+                    OutputError::OutputOperationAndOwnerClaimRelease {
+                        primary: Box::new(source),
+                        release: Box::new(OutputError::Runtime(format!("{context}: {recovery_source}"))),
+                    },
+                    post_session_cleanup,
+                )
+            }
+        }
     }
 
     fn start_writers(&mut self) -> OutputResult<()> {
@@ -1718,8 +1990,11 @@ fn initialize_genesis_attempt(
     let genesis =
         LineageGenesisRecord::new(attempt_id.clone(), canonical_chunk_plan.sha256().to_string(), phenotype_contracts);
     core.lineage_paths.initialize_directories()?;
-    core.lineage_paths.publish_genesis(&genesis)?;
-    core.lifecycle_state.attempt_authority_published = true;
+    let genesis_path = core.lineage_paths.genesis_path.clone();
+    let publication_result = core.lineage_paths.publish_genesis(&genesis);
+    core.classify_attempt_authority_publication(genesis_path, publication_result)?;
+    #[cfg(test)]
+    crash_at_test_failpoint("after_genesis_publication_before_staging_retirement");
     core.retire_claim_staging_intent()?;
     #[cfg(test)]
     crash_at_test_failpoint("after_genesis_claim");
@@ -1849,8 +2124,14 @@ fn initialize_existing_lineage(
             "Output successor parent changed while re-establishing durability.".to_string(),
         ));
     }
-    core.lineage_paths.publish_successor(&successor)?;
-    core.lifecycle_state.attempt_authority_published = true;
+    let successor_path = match successor.recovery_kind {
+        LineageRecoveryKind::TerminalResume => core.lineage_paths.normal_successor_path(&source_attempt_id),
+        LineageRecoveryKind::ExactNonterminalRecovery => core.lineage_paths.outcome_path(&source_attempt_id),
+    };
+    let publication_result = core.lineage_paths.publish_successor(&successor);
+    core.classify_attempt_authority_publication(successor_path, publication_result)?;
+    #[cfg(test)]
+    crash_at_test_failpoint("after_successor_publication_before_staging_retirement");
     core.retire_claim_staging_intent()?;
     #[cfg(test)]
     crash_at_test_failpoint("after_successor_claim");
@@ -2103,15 +2384,11 @@ fn verify_runs_against_snapshot(
             &snapshot.leaf_attempt_id,
             &run.output_directory_name,
         )?;
-        let manifest_exists = paths.manifest_path.try_exists().map_err(|error| {
-            OutputError::Runtime(format!(
-                "Failed to inspect output attempt manifest '{}': {error}",
-                paths.manifest_path.display()
-            ))
-        })?;
-        let verified = if manifest_exists {
+        let manifest_bytes = read_optional_attempt_manifest_bytes(&paths.manifest_path)?;
+        let verified = if let Some(manifest_bytes) = manifest_bytes {
             verify_attempt_run(
                 &paths,
+                &manifest_bytes,
                 &binding,
                 header,
                 canonical_chunk_plan,
@@ -2262,6 +2539,8 @@ fn materialize_staged_terminal_runs(runs: &[ManagedOutputRun], staged_runs: &[St
             .as_ref()
             .ok_or_else(|| OutputError::Runtime("Output run paths are not initialized.".to_string()))?;
         materialize_attempt_manifest(paths, &staged_run.manifest, &staged_run.manifest_sha256)?;
+        #[cfg(test)]
+        crash_at_test_failpoint("after_terminal_run_materialization");
     }
     Ok(())
 }

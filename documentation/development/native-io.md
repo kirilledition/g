@@ -102,6 +102,37 @@ input loading and manifest preparation.
 Manifest construction records `association_backend.kind` from the
 engine-resolved delivery format so resume and review tooling can distinguish
 `jax_dosage` and `jax_packed8`; it is not a `RunPlan` field.
+Construction and parsing share one exact typed schema for the complete nested
+execution-plan graph. Unknown or missing nested fields and inconsistent
+backend, device, association-mode, or correction-policy combinations are
+rejected. Attempt runtime device and writer-thread metadata must also agree
+with the corresponding execution-plan fields, and the nested execution-plan
+phenotype must equal the attempt and genesis phenotype. Schema zero preserves
+its flat, status-dependent top-level wire layout because canonical manifest
+bytes are terminal authority; a tagged or nested status model requires a
+schema revision.
+
+Every recovery path reads `run_manifest.json` through one descriptor-backed
+reader. It rejects symbolic links and other non-regular files, checks the
+opened descriptor, and reads at most 1 GiB plus one byte used only to detect
+growth or oversize input. Manifest construction enforces the same 1 GiB
+schema-zero ceiling before publication. Terminal materialization verifies its
+published SHA-256 from the exact bytes returned by that bounded reader rather
+than reopening the path through a generic hash helper. The measured bound
+includes the known chromosome-22 worst case with one variant per chunk and
+every legal receipt grouping, including one receipt per repeated interrupted
+flush. It also uses maximum-length accepted lineage identifiers, a 255-byte
+phenotype name, and 32 MiB of variable-header reserve, with at least 20% of the
+ceiling retained. Larger datasets must increase chunk size or move to a future
+control-plane schema rather than increasing recovery memory without review.
+
+Startup GPU-format hints
+additionally require a fresh lineage
+binding to the genesis phenotype and chunk-plan contracts, current leaf
+attempt, and any finalized terminal manifest digest; lineage is resolved again
+before a hint is returned. A pending terminal still reads its fully typed,
+genesis-bound running manifest because recovery has not materialized the
+claimed terminal bytes yet.
 
 Resume validates each immutable receipt against its part's embedded transaction
 footer, canonical output schema, raw byte size, and freshly computed SHA-256.
@@ -132,7 +163,7 @@ published with a same-directory hard-link no-replace operation and a directory
 synchronization. There is no authoritative mutable `HEAD`; readers traverse
 exact-recovery claims or hash-bound normal successors from genesis and reject
 incompatible dual-state artifacts. After owner acquisition, the manager first
-reserves a stable attempt identifier and creates only that claim's private
+reserves a fresh staging-attempt identifier and creates only that claim's private
 diagnostics directory. Genesis or successor publication later makes the same
 attempt identifier authoritative; failed pre-activation claims durably remove
 their unreferenced staging. The coordinator uses the deferred activation API:
@@ -142,9 +173,18 @@ timing, telemetry, and logging before consuming that capability, so no
 contender can sweep diagnostics while the prior session is still open. Dropping
 the capability fails closed by leaving ownership Active until an exact external
 fence; the ordinary no-session activation API rolls it back immediately.
-Completed read-only resumes use the same deferred boundary: their
-claim-specific diagnostics are removed before their owner release, while the
-completed attempt payload remains unchanged.
+Completed read-only resumes never make their fresh staging attempt
+authoritative, and their owner-staging intent remains until terminal
+finalization hands off cleanup. Successful finalization returns a non-cloneable,
+idempotent, retryable post-session cleanup capability. Terminal failures can
+return the same capability beside their primary error. The runner closes
+claim-scoped timing, telemetry, and logging before calling it; cleanup removes
+the staging attempt before exact owner release while the completed attempt
+payload remains unchanged. It retires the owner-staging intent between those
+steps; if exact owner release then fails, the same capability retries from the
+already-retired intent. A dropped capability fails closed, and an exactly
+fenced successor sweeps the obsolete unreferenced staging. Referenced writable
+diagnostics survive fencing.
 
 The first owner claim is a permanent immutable record at
 `.g-output/session.claim.json`. Its current authority is found by traversing

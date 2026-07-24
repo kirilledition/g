@@ -101,19 +101,26 @@ A typical run creates:
 
 ```text
 <out>.g/
-  logs/
-    events.jsonl
-  trait_0001_<phenotype>.regenie2_linear.run/
-    effective_config.toml
-    run_manifest.json
-    parts/
-      part_000000000_000000007.parquet
+  .g-output/
+    ...
+  attempts/
+    <attempt-id>/
+      diagnostics/
+        <owner-claim-id>/
+          events.jsonl
+      trait_0001_<phenotype>/
+        effective_config.toml
+        run_manifest.json
+        parts/
+          part_000000000_000000007.parquet
 ```
 
-Binary run directories use `.regenie2_binary.run`. Parquet `parts/` is the
-completed result dataset; there is no consolidation step. Resume is opt-in with
-`[output].resume = true` and rejects changes to result-affecting inputs or
-execution policy. See [Output Files](documentation/public/output-files.md) and
+Phenotype directories use deterministic plan-assigned names. Each completed
+phenotype emits exactly one `Parquet dataset saved to <absolute-parts-directory>`
+line. Parquet `parts/` is the completed result dataset; there is no consolidation
+step. Resume is opt-in with `[output].resume = true` and rejects changes to
+result-affecting inputs or execution policy. See
+[Output Files](documentation/public/output-files.md) and
 [Resume and Manifest](documentation/public/resume-and-manifest.md).
 
 ## Documentation Map

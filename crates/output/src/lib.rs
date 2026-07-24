@@ -5,6 +5,7 @@ compile_error!("g requires a 64-bit target.");
 
 mod api;
 mod chunk;
+mod digest;
 mod error;
 mod manager;
 mod manifest;

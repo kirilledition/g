@@ -445,12 +445,16 @@ fn submit_benchmark_run(prepared_run: PreparedBenchmarkRun, chunk_interval: Opti
 fn finish_benchmark_run(submitted_run: SubmittedBenchmarkRun) -> CompletedBenchmarkRun {
     let SubmittedBenchmarkRun { output_manager, delivery_token, benchmark_root } = submitted_run;
     drop(delivery_token);
-    let completed_outputs = output_manager
+    let completion = output_manager
         .close_completed()
         .expect("benchmark output should have exact coverage")
         .finish()
         .expect("benchmark output manager should finish");
-    CompletedBenchmarkRun { completed_outputs, benchmark_root }
+    assert!(
+        completion.post_session_cleanup.is_none(),
+        "a writable benchmark run must complete ownership cleanup internally"
+    );
+    CompletedBenchmarkRun { completed_outputs: completion.completed_outputs, benchmark_root }
 }
 
 fn measure_benchmark_output_metrics(
