@@ -134,6 +134,7 @@ def test_unreleased_qualification_schemas_remain_zero() -> None:
     """Keep every private pre-release evidence contract at schema zero."""
     import tests.test_regenie2_parity
 
+    assert tests.parity.harness.PARITY_METADATA_SCHEMA_VERSION == 0
     assert tooling.server.exact_parity_slurm.SCHEMA_VERSION == 0
     assert tests.test_regenie2_parity.QUALIFICATION_REPORT_SCHEMA_VERSION == 0
     assert tests.test_regenie2_parity.QUALIFICATION_BUNDLE_SCHEMA_VERSION == 0
@@ -332,7 +333,7 @@ def test_checked_in_required_workflows_use_external_evidence() -> None:
 
 def test_science_source_fingerprint_is_ordered_and_excludes_promotion_claims() -> None:
     metadata_content = (
-        b'{"schema_version":3,"workflows":[{"identifier":"workflow",'
+        b'{"schema_version":0,"workflows":[{"identifier":"workflow",'
         b'"gate_status":"diagnostic","qualification":null,"tolerances":[1]}]}'
     )
     entries = (

@@ -21,7 +21,7 @@ import tooling.science_gate
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_METADATA_PATH = Path(__file__).with_name("golden_metadata.json")
-PARITY_METADATA_SCHEMA_VERSION = 3
+PARITY_METADATA_SCHEMA_VERSION = 0
 VARIANT_KEY_COLUMNS = ("CHROM", "GENPOS", "ID", "ALLELE0", "ALLELE1")
 REQUIRED_INPUT_OPTION_NAMES = ("bgen", "sample", "phenotype_file", "covariate_file", "prediction_list")
 REQUIRED_WORKFLOW_IDENTIFIERS = frozenset(

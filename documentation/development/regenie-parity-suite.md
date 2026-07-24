@@ -15,8 +15,9 @@ produced from the exact release commit.
 The machine-readable record is `tests/parity/golden_metadata.json`. It pins the
 reference version, exact commands, artifact hashes, row counts, supported
 native CLI configuration, hashes for every workflow input, and
-statistic-specific tolerances. It does not carry a self-referential claim that
-the commit containing the metadata qualified itself.
+statistic-specific tolerances. This unreleased metadata contract uses strict
+integer schema 0. It does not carry a self-referential claim that the commit
+containing the metadata qualified itself.
 
 ## Commands
 
