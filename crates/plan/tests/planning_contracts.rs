@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use g_genotype_contracts::BgenContentSha256;
 use g_plan::{
     AssociationMode, BinaryFallbackMethod, BinaryNullKernelPlan, ComputePlan, CorrectionPlan, Device, DosageThreshold,
     FirthKernelPlan, InputPlan, KernelPlan, LinearKernelPlan, MultiPhenotypeSampleMode, NullFirthKernelPlan,
@@ -42,6 +43,7 @@ fn build_test_run_plan() -> RunPlan {
         chunk_size: 16_384,
         input: InputPlan {
             bgen_path: "study.bgen".to_string(),
+            bgen_content_sha256: Some(BgenContentSha256::from_bytes([0xab; 32])),
             sample_path: "study.sample".to_string(),
             phenotype_path: "phenotypes.tsv".to_string(),
             prediction_list_path: "predictions.list".to_string(),
@@ -128,7 +130,19 @@ fn assert_serialized_run_plan_shape(serialized_plan: &Value) {
     );
     assert_object_keys(
         &serialized_plan["input"],
-        &["bgen_path", "covariate_names", "covariate_path", "phenotype_path", "prediction_list_path", "sample_path"],
+        &[
+            "bgen_content_sha256",
+            "bgen_path",
+            "covariate_names",
+            "covariate_path",
+            "phenotype_path",
+            "prediction_list_path",
+            "sample_path",
+        ],
+    );
+    assert_eq!(
+        serialized_plan["input"]["bgen_content_sha256"],
+        "abababababababababababababababababababababababababababababababab",
     );
     assert_object_keys(
         &serialized_plan["compute"],
@@ -185,6 +199,7 @@ fn assert_decoded_run_plan_values(decoded_plan: &RunPlan) {
     assert_eq!(decoded_plan.association_mode, AssociationMode::Regenie2Binary);
     assert_eq!(decoded_plan.chunk_size, 16_384);
     assert_eq!(decoded_plan.input.bgen_path, "study.bgen");
+    assert_eq!(decoded_plan.input.bgen_content_sha256, Some(BgenContentSha256::from_bytes([0xab; 32])));
     assert_eq!(decoded_plan.input.sample_path, "study.sample");
     assert_eq!(decoded_plan.input.phenotype_path, "phenotypes.tsv");
     assert_eq!(decoded_plan.input.prediction_list_path, "predictions.list");
@@ -256,6 +271,20 @@ fn run_plan_deserialization_enforces_nested_numeric_contracts() {
     let error = serde_json::from_value::<RunPlan>(serialized_plan)
         .expect_err("invalid nested probability should reject the run plan");
     assert!(error.to_string().contains("must be in (0, 1)"));
+}
+
+#[test]
+fn run_plan_deserialization_rejects_noncanonical_bgen_content_digests() {
+    for invalid_digest in
+        [serde_json::json!(true), serde_json::json!("ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB")]
+    {
+        let mut serialized_plan =
+            serde_json::to_value(build_test_run_plan()).expect("run plan serialization should succeed");
+        serialized_plan["input"]["bgen_content_sha256"] = invalid_digest;
+
+        serde_json::from_value::<RunPlan>(serialized_plan)
+            .expect_err("noncanonical BGEN content digest should reject the run plan");
+    }
 }
 
 fn build_test_compute_group() -> PhenotypeComputeGroup {

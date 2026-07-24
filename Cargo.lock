@@ -806,6 +806,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "criterion",
+ "g-genotype-contracts",
  "g-plan",
  "hex",
  "serde",
@@ -834,6 +835,7 @@ dependencies = [
 name = "g-plan"
 version = "0.1.0"
 dependencies = [
+ "g-genotype-contracts",
  "hex",
  "serde",
  "serde_json",

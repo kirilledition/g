@@ -26,6 +26,10 @@ reset a value from the TOML file. The CLI exposes positive REGENIE-compatible
 boolean flags only. Set a value to `false` in TOML when a packaged or shared
 configuration enables it.
 
+CLI overrides are field-specific. In particular, `--bgen` replaces only
+`[input].bgen`; it does not clear or replace
+`[input].bgen_content_sha256`.
+
 Every `g regenie` run writes an `effective_config.toml` for each phenotype run.
 That file is the resolved runtime configuration after defaults, TOML, and CLI
 overrides have been applied.
@@ -126,6 +130,28 @@ IID-only matching mode.
 `g regenie` is a Step 2-only command. There is no `step` configuration field or
 `--step` compatibility flag.
 
+## Optional BGEN Content Selector
+
+`[input].bgen_content_sha256` is an optional canonical content selector.
+It accepts exactly one 64-character lowercase hexadecimal SHA-256 string:
+
+```toml
+[input]
+bgen = "/path/to/genotypes.bgen"
+bgen_content_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+Uppercase hexadecimal, non-hexadecimal characters, and strings of any other
+length are rejected. The selector is TOML-only; there is no CLI digest flag.
+If `--bgen` is also supplied, it overrides the locator while preserving the
+TOML selector.
+
+The selector does not replace the locator. `[input].bgen` remains required, and
+frontend run validation still requires that path to exist. In the current
+integration stage, the selector is validated and carried in the immutable
+input plan, but the engine does not yet consume it. Runs therefore continue to
+open the configured locator without content selection.
+
 ## Minimal Quantitative Config
 
 This example intentionally omits mutable runtime defaults such as block size,
@@ -176,7 +202,7 @@ out = "/path/to/output/g_binary_firth_regenie2"
 
 | Section | Purpose |
 | --- | --- |
-| `[input]` | Genotype, sample, phenotype, covariate, prediction-list paths, and selected columns. |
+| `[input]` | Genotype locator and optional content selector, sample, phenotype, covariate, prediction-list paths, and selected columns. |
 | `[trait]` | Quantitative/binary mode and block size. |
 | `[binary]` | Binary fallback method, p-value threshold, and Firth standard-error output. |
 | `[compute]` | Device, native CPU threads, multi-phenotype sample selection, JAX, numerical, and approximate-Firth tuning. |
@@ -213,6 +239,7 @@ Important keys include:
 
 | Concern | TOML |
 | --- | --- |
+| BGEN content selector | `[input].bgen_content_sha256` |
 | Device and native workers | `[compute] device`, `cpu_threads` |
 | Multi-phenotype sample selection | `[compute] multi_phenotype_sample_mode` |
 | Binary compute | `[compute] firth_batch_size`, `firth_candidate_capacity`, and the documented null/Firth tolerances |

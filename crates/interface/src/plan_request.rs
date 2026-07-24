@@ -35,6 +35,7 @@ pub(crate) fn compile_run_plan(config: &RegenieConfigData) -> ConfigResult<plan:
 fn build_input_plan(config: &RegenieConfigData) -> ConfigResult<plan::InputPlan> {
     Ok(plan::InputPlan {
         bgen_path: require_config_path("--bgen", config.input.bgen.as_ref())?,
+        bgen_content_sha256: config.input.bgen_content_sha256,
         sample_path: require_config_path("--sample", config.input.sample.as_ref())?,
         phenotype_path: require_config_path("--phenoFile", config.input.pheno_file.as_ref())?,
         prediction_list_path: require_config_path("--pred", config.input.pred.as_ref())?,

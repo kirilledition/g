@@ -33,9 +33,9 @@ def current_workspace_metadata() -> dict[str, typing.Any]:
             package_payload("g-genotype-cuda", ("g-genotype-contracts",), ()),
             package_payload("g-genotype", ("g-genotype-contracts",), ()),
             package_payload("g-input", ("g-plan",), ()),
-            package_payload("g-interface", ("g-plan",), ()),
+            package_payload("g-interface", ("g-genotype-contracts", "g-plan"), ()),
             package_payload("g-output", ("g-genotype-contracts", "g-plan"), ()),
-            package_payload("g-plan", (), ()),
+            package_payload("g-plan", ("g-genotype-contracts",), ()),
             package_payload("g-runtime", (), ()),
             package_payload(
                 "g-engine",

@@ -38,6 +38,25 @@ Supported:
 file, not from identifiers embedded in the BGEN. Adjacent `.sample` files are
 not discovered implicitly.
 
+TOML may additionally provide an optional BGEN content selector:
+
+```toml
+[input]
+bgen = "/path/to/genotypes.bgen"
+bgen_content_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+```
+
+The selector must be exactly 64 lowercase hexadecimal characters. It has no
+CLI flag, and `--bgen` overrides only the locator while preserving a selector
+from TOML. The locator remains required and must exist during frontend
+validation; the digest is not a locator-free input mode.
+
+In the current integration stage, the frontend validates this selector and
+carries it in the immutable input plan, but the engine does not yet use it when
+opening the BGEN. A public run therefore remains an unselected locator-based
+open: configuring the selector does not yet activate content-addressed reuse
+or pin the run to those bytes.
+
 The BGEN header sample count must equal the aligned Oxford `.sample` metadata
 count. Header offsets and reserved flags, any embedded sample-block framing,
 variant counts, and probability ranges are validated before genotype delivery.
@@ -50,21 +69,23 @@ memory-bounded.
 Files no larger than 256 MiB are captured into an immutable owned snapshot
 before indexing. Unselected opens always capture and parse their supplied
 locator independently; they never consult, publish, or replace the process
-snapshot registry. A content-selected internal request may reuse one fully
-parsed canonical payload for the latest authenticated digest and byte count,
-including its index and metadata, until a different selected source passes
-open/index validation and replaces it or the process exits. A rejected
-candidate does not evict the valid payload. Probability corruption discovered
-later still fails safely during validation or decode, but that selected content
-may already have replaced the earlier registry entry. Later mutation or
-replacement of the configured file cannot alter a run already backed by its
-owned snapshot. The registry can retain more than 256 MiB in total because
-parsed index and metadata allocations are additional to the source bytes.
-Capturing and parsing a replacement temporarily overlaps the retained payload
-with the candidate. Concurrent selected cold opens each add their own candidate
-allocation, and readers can extend old-payload overlap after publication.
-Larger files use bounded positioned reads and are rechecked during delivery;
-changing one during a run fails with a source error.
+snapshot registry. Separately, the genotype library's content-selected internal
+request may reuse one fully parsed canonical payload for the latest
+authenticated digest and byte count, including its index and metadata, until a
+different selected source passes open/index validation and replaces it or the
+process exits. This internal request path is not yet selected by the planned
+TOML field described above. A rejected candidate does not evict the valid
+payload. Probability corruption discovered later still fails safely during
+validation or decode, but that selected content may already have replaced the
+earlier registry entry. Later mutation or replacement of the configured file
+cannot alter a run already backed by its owned snapshot. The registry can
+retain more than 256 MiB in total because parsed index and metadata allocations
+are additional to the source bytes. Capturing and parsing a replacement
+temporarily overlaps the retained payload with the candidate. Concurrent
+selected cold opens each add their own candidate allocation, and readers can
+extend old-payload overlap after publication. Larger files use bounded
+positioned reads and are rechecked during delivery; changing one during a run
+fails with a source error.
 
 Unsupported options, which are absent from the CLI and rejected as unknown:
 

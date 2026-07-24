@@ -42,4 +42,5 @@ constant-time, and accessors do not repeat invariant checks on the hot path.
 
 ## Allowed downstream users
 
-`g-genotype`, `g-genotype-cuda`, `g-engine`, and `g-output`.
+`g-interface`, `g-plan`, `g-genotype`, `g-genotype-cuda`, `g-engine`, and
+`g-output`.
