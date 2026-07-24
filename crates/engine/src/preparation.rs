@@ -13,7 +13,7 @@ pub(crate) enum PipelineOutputPreparationError {
 pub(crate) struct RuntimeOutputPlan {
     pub variant_count: usize,
     pub resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat,
-    pub bgen_source_identity: Arc<g_genotype_contracts::BgenSourceIdentity>,
+    pub bgen_content_evidence: Arc<g_genotype_contracts::BgenContentEvidence>,
 }
 
 pub(crate) struct RuntimeOutputGroupInput<'a> {
@@ -72,7 +72,7 @@ pub(crate) fn build_runtime_output_initializations(
         .iter()
         .map(|phenotype_name| CurrentRunManifestHeaderInput {
             phenotype_name: phenotype_name.clone(),
-            bgen_source_identity: Arc::clone(&runtime_plan.bgen_source_identity),
+            bgen_content_evidence: Arc::clone(&runtime_plan.bgen_content_evidence),
             covariate_names: Arc::clone(&covariate_names),
             prediction_loco_files: Arc::clone(&prediction_loco_files),
             sample_count: output_group.sample_count,

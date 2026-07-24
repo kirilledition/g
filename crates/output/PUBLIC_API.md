@@ -12,23 +12,29 @@ writing.
 `CompletedOutputRun`, `OutputPostSessionCleanup`, `OutputClaimRollback`,
 `OutputActivationError`, `OutputActivationFailureParts`, native chunk handles,
 `OutputTerminalError`, `OutputTerminalFailureParts`, typed manifest
-inputs/fingerprints, trait-major statistic batches, and `OutputError`. Writer
-sessions are private implementation details. Strict on-disk reconciliation is
-fixed policy owned by this crate.
+inputs/fingerprints, `ExistingOutputResumeAgreement`, trait-major statistic
+batches, and `OutputError`. Writer sessions are private implementation details.
+Strict on-disk reconciliation is fixed policy owned by this crate.
 
 ## Public functions
 
 Plan and initialize output runs through consuming `OutputManager` typestate
 transitions, select an opaque delivery token, write validated trait-major
 chunks, and complete, interrupt, or abort the owned attempt.
-`OutputManager::open` only inspects paths and immutable lineage hints. `claim`
-acquires durable owner authority, repeats validation under that authority,
-reserves a fresh attempt identity, and creates ownership-private diagnostic
-staging without publishing attempt authority. Writable `activate` validates the
-final headers, publishes genesis or a successor for that same attempt identity,
-and starts writers. Completed read-only activation leaves the fresh staging
-attempt unreferenced. `initialize` is the convenience composition of `claim`
-and `activate`.
+`OutputManager::open` only inspects paths and immutable lineage hints.
+`existing_output_resume_agreement` reads all materialized phenotype manifests
+under one lineage snapshot and returns one plan-wide
+`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint` and
+`gpu_genotype_format`. `claim` validates current BGEN agreement, constructs and
+binds every manifest header, and rejects incompatible existing authority before
+owner acquisition. It then acquires durable owner authority, repeats lineage
+and complete execution-plan validation under that authority, reserves a fresh
+attempt identity, and creates ownership-private diagnostic staging without
+publishing attempt authority. Writable `activate` takes no header inputs: it
+publishes genesis or a successor from the headers already bound by `claim` and
+starts writers. Completed read-only activation leaves the fresh staging attempt
+unreferenced. `initialize` is the convenience composition of `claim` and
+`activate`.
 `close_completed` drains writers and returns `Covered` only after exact
 canonical chunk coverage is proven. Individual writer-session lifecycle
 methods remain crate-private.
@@ -100,12 +106,25 @@ terminal hashes; a tagged or nested status representation requires a future
 schema revision.
 The complete nested `execution_plan` graph is typed and closed as well:
 unknown or missing nested fields, unsupported enum values, and inconsistent
-backend/device/mode policy combinations are rejected. Existing-manifest GPU
-format hints are accepted only from manifest bytes bound to the freshly
-resolved genesis contract, current leaf attempt, canonical chunk plan, and,
-when finalized, immutable terminal manifest digest. A pending terminal can
-still expose its bound running manifest so recovery can materialize the claimed
-terminal bytes. The lineage is resolved again before returning the hint.
+backend/device/mode policy combinations are rejected. The schema-zero
+`execution_plan.bgen` object has exactly two keys:
+`content_sha256` (64 lowercase hexadecimal characters or explicit `null`) and
+`byte_count` (a JSON uint64). It contains no locator, filesystem metadata,
+algorithm tag, or selector request. An owned BGEN snapshot records its canonical
+content fingerprint. A positioned unattested source records `null` plus its
+byte count; this is legal for a fresh nonresumable output, but
+`ExistingOutputUnattestedBgenContent` prevents that manifest from authorizing
+resume.
+
+Existing-output agreement is accepted only from manifest bytes bound to the
+freshly resolved genesis contract, current leaf attempt, canonical chunk plan,
+and, when finalized, immutable terminal manifest digest. The reader compares
+the BGEN digest, byte count, and GPU genotype format across every materialized
+phenotype manifest. A terminal authority requires every phenotype manifest;
+an absent nonterminal manifest is skipped. A pending terminal can still expose
+its bound running manifests so recovery can materialize the claimed terminal
+bytes. After all reads, one final lineage-snapshot equality check prevents a
+concurrent successor or terminal publication from authorizing the result.
 All recovery reads open `run_manifest.json` as a non-symlink regular file and
 consume at most 1 GiB plus one detection byte. Writes larger than the same
 1 GiB schema-zero ceiling are rejected before publication, and terminal

@@ -17,10 +17,10 @@ use crate::manifest::{
 };
 use crate::persistence::attempt::{
     AttemptManifestBinding, AttemptManifestStatus, AttemptManifestWrite, AttemptRunPaths, OrphanPartPolicy,
-    VerifiedAttemptRun, attempt_manifest_value_sha256, build_attempt_manifest_value,
-    inspect_unmaterialized_attempt_run, materialize_attempt_manifest, parse_attempt_manifest_json,
-    read_optional_attempt_manifest_bytes, reuse_verified_receipts, validate_attempt_manifest_schema_zero,
-    verify_attempt_run, write_attempt_manifest, write_effective_config,
+    ValidatedAttemptManifestSchemaZero, VerifiedAttemptRun, attempt_manifest_value_sha256,
+    build_attempt_manifest_value, inspect_unmaterialized_attempt_run, materialize_attempt_manifest,
+    parse_attempt_manifest_json, read_optional_attempt_manifest_bytes, reuse_verified_receipts,
+    validate_attempt_manifest_schema_zero, verify_attempt_run, write_attempt_manifest, write_effective_config,
 };
 use crate::persistence::identifier::{AttemptIdentifier, validate_safe_path_component};
 use crate::persistence::io::{create_directories_durable, sync_nearest_existing_directory};
@@ -186,6 +186,8 @@ struct OutputPostSessionCleanupTestPause {
 struct OutputManifestHintTestPause {
     reached_sender: std::sync::mpsc::Sender<()>,
     resume_receiver: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    reach_count: std::sync::atomic::AtomicUsize,
+    final_inspect_count: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]
@@ -193,6 +195,7 @@ pub(crate) struct OutputManifestHintTestControl {
     reached_receiver: std::sync::mpsc::Receiver<()>,
     resume_sender: std::sync::mpsc::Sender<()>,
     resumed: std::sync::atomic::AtomicBool,
+    pause: Arc<OutputManifestHintTestPause>,
 }
 
 #[cfg(test)]
@@ -233,15 +236,17 @@ pub struct OutputDeliveryToken {
 ///
 /// ```no_run
 /// use g_output::{
-///     Active, Claimed, Covered, OutputError, OutputManager, OutputTerminalError, Planned,
+///     Active, Claimed, Covered, CurrentRunManifestHeaderInput, OutputError, OutputManager,
+///     OutputTerminalError, Planned,
 /// };
 /// use std::ops::Range;
 ///
 /// fn claim(
 ///     manager: OutputManager<Planned>,
+///     headers: Vec<CurrentRunManifestHeaderInput>,
 ///     chunks: &[Range<usize>],
 /// ) -> Result<OutputManager<Claimed>, OutputError> {
-///     manager.claim(chunks, false)
+///     manager.claim(headers, chunks, false)
 /// }
 ///
 /// fn close(manager: OutputManager<Active>) -> Result<OutputManager<Covered>, OutputTerminalError> {
@@ -388,6 +393,13 @@ struct ManagedOutputRun {
     writer_session: Option<Arc<OutputWriterSession>>,
 }
 
+#[derive(Clone, Copy)]
+struct CurrentBgenOutputContract {
+    content_sha256: Option<g_genotype_contracts::BgenContentSha256>,
+    byte_count: u64,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+}
+
 struct ActiveAttempt {
     run_set_id: String,
     attempt_id: AttemptIdentifier,
@@ -501,99 +513,35 @@ impl OutputManager<Planned> {
         })
     }
 
-    /// Return the genotype representation recorded by an existing leaf manifest.
+    /// Return the BGEN content and GPU representation required by all existing manifests.
     ///
     /// # Errors
     ///
-    /// Returns an error when the phenotype is unknown or its leaf manifest is
-    /// missing or invalid.
-    pub fn existing_manifest_gpu_genotype_format(
+    /// Returns an error when any planned phenotype manifest is missing under
+    /// terminal authority, invalid, unattested, or disagrees with another
+    /// materialized phenotype manifest.
+    pub fn existing_output_resume_agreement(
         &self,
-        phenotype_name: &str,
-    ) -> OutputResult<Option<g_plan::GpuGenotypeFormat>> {
-        let core = self.core()?;
-        let Some(snapshot) = core.lineage_paths.inspect()? else {
-            return Ok(None);
-        };
-        let run = core.run(phenotype_name)?;
-        let contract = snapshot
-            .genesis
-            .phenotypes
-            .iter()
-            .find(|contract| contract.phenotype_name == phenotype_name)
-            .ok_or_else(|| {
-                OutputError::InvalidInput(format!("Output immutable lineage is missing phenotype '{phenotype_name}'."))
-            })?;
-        if contract.output_directory_name != run.output_directory_name {
-            return Err(OutputError::InvalidInput(format!(
-                "Output immutable lineage directory for phenotype '{phenotype_name}' does not match the current plan."
-            )));
-        }
-        let paths = AttemptRunPaths::new(
-            &core.lineage_paths.attempts_directory,
-            &snapshot.leaf_attempt_id,
-            &contract.output_directory_name,
-        )?;
-        let terminal_authority_exists = snapshot.leaf_terminal.is_some() || snapshot.pending_terminal.is_some();
-        let manifest_bytes = match read_optional_attempt_manifest_bytes(&paths.manifest_path)? {
-            Some(manifest_bytes) => manifest_bytes,
-            None if !terminal_authority_exists => return Ok(None),
-            None => {
-                return Err(OutputError::InvalidInput(format!(
-                    "Terminal output attempt is missing manifest '{}'.",
-                    paths.manifest_path.display()
-                )));
-            }
-        };
-        let manifest_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
-        let manifest = parse_attempt_manifest_json(&manifest_bytes, &paths.manifest_path)?;
-        let binding = AttemptManifestBinding {
-            run_set_id: snapshot.genesis.run_set_id.clone(),
-            attempt_id: snapshot.leaf_attempt_id.clone(),
-            phenotype_name: contract.phenotype_name.clone(),
-            output_directory_name: contract.output_directory_name.clone(),
-            execution_plan_sha256: contract.execution_plan_sha256.clone(),
-            chunk_plan_sha256: snapshot.genesis.chunk_plan_sha256.clone(),
-        };
-        let validated = validate_attempt_manifest_schema_zero(manifest, &paths, &binding)?;
-        #[cfg(test)]
-        if let Some(pause) = core.manifest_hint_pause.as_ref() {
-            pause.wait()?;
-        }
-        if core.lineage_paths.inspect()?.as_ref() != Some(&snapshot) {
-            return Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() });
-        }
-        if let Some(terminal) = snapshot.leaf_terminal.as_ref() {
-            validate_manifest_terminal_status(&validated.status, terminal.status)?;
-            let terminal_phenotype =
-                terminal.phenotypes.iter().find(|record| record.phenotype_name == phenotype_name).ok_or_else(|| {
-                    OutputError::InvalidInput(format!(
-                        "Output immutable terminal is missing phenotype '{phenotype_name}'."
-                    ))
-                })?;
-            if terminal_phenotype.output_directory_name != contract.output_directory_name
-                || terminal_phenotype.run_manifest_sha256 != manifest_sha256
-            {
-                return Err(OutputError::InvalidInput(format!(
-                    "Output immutable terminal manifest binding for phenotype '{phenotype_name}' does not match its bytes."
-                )));
-            }
-        }
-        Ok(Some(validated.gpu_genotype_format()))
+    ) -> OutputResult<Option<crate::agreement::ExistingOutputResumeAgreement>> {
+        inspect_existing_output_resume_agreement(self.core()?, true)
     }
 
     #[cfg(test)]
     pub(crate) fn install_manifest_hint_pause_for_test(&mut self) -> OutputResult<OutputManifestHintTestControl> {
         let (reached_sender, reached_receiver) = std::sync::mpsc::channel();
         let (resume_sender, resume_receiver) = std::sync::mpsc::channel();
-        self.core_mut()?.manifest_hint_pause = Some(Arc::new(OutputManifestHintTestPause {
+        let pause = Arc::new(OutputManifestHintTestPause {
             reached_sender,
             resume_receiver: std::sync::Mutex::new(resume_receiver),
-        }));
+            reach_count: std::sync::atomic::AtomicUsize::new(0),
+            final_inspect_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        self.core_mut()?.manifest_hint_pause = Some(Arc::clone(&pause));
         Ok(OutputManifestHintTestControl {
             reached_receiver,
             resume_sender,
             resumed: std::sync::atomic::AtomicBool::new(false),
+            pause,
         })
     }
 
@@ -605,6 +553,7 @@ impl OutputManager<Planned> {
     /// explicit fencing, ownership acquisition, or staging creation fails.
     pub fn claim(
         mut self,
+        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
         planned_chunk_ranges: &[Range<usize>],
         collect_stage_timings: bool,
     ) -> OutputResult<OutputManager<Claimed>> {
@@ -612,6 +561,15 @@ impl OutputManager<Planned> {
         validate_output_writer_settings(&core.run_plan.output, core.runs.len())?;
         core.canonical_chunk_plan = Some(CanonicalChunkPlan::try_new(planned_chunk_ranges)?);
         core.collect_stage_timings = collect_stage_timings;
+        let existing_resume_agreement = inspect_existing_output_resume_agreement(&core, false)?;
+        validate_current_bgen_content_evidence(
+            &core.run_plan,
+            &current_header_inputs,
+            existing_resume_agreement.as_ref(),
+        )?;
+        let headers = build_headers(&core, current_header_inputs)?;
+        bind_headers(&mut core.runs, headers)?;
+        let planned_phenotype_contracts = phenotype_contracts(&core.runs)?;
 
         let claim_result = match core.run_plan.output.fenced_owner_claim_id.as_deref() {
             Some(fenced_claim_id) => core.lineage_paths.take_over_fenced_owner_claim(fenced_claim_id),
@@ -638,6 +596,19 @@ impl OutputManager<Planned> {
             Err(error) => return Err(core.release_after_unmutated_error(error)),
         };
         core.lineage_snapshot = durable_snapshot;
+        if let Some(snapshot) = core.lineage_snapshot.as_ref() {
+            let canonical_chunk_plan = core.canonical_chunk_plan.as_ref().ok_or_else(|| {
+                OutputError::Runtime(
+                    "Claimed output lost its canonical chunk plan during contract validation.".to_string(),
+                )
+            });
+            let contract_validation = canonical_chunk_plan.and_then(|canonical_chunk_plan| {
+                preflight_existing_lineage(&core, snapshot, canonical_chunk_plan, &planned_phenotype_contracts)
+            });
+            if let Err(error) = contract_validation {
+                return Err(core.release_after_unmutated_error(error));
+            }
+        }
         let referenced_attempts =
             core.lineage_snapshot.as_ref().map_or_else(BTreeSet::new, lineage_attempt_identifiers);
         let current_claim_identifier = match core.owner_claim.as_ref() {
@@ -687,8 +658,8 @@ impl OutputManager<Planned> {
         planned_chunk_ranges: &[Range<usize>],
         collect_stage_timings: bool,
     ) -> OutputResult<OutputManager<Active>> {
-        let claimed_manager = self.claim(planned_chunk_ranges, collect_stage_timings)?;
-        claimed_manager.activate(current_header_inputs)
+        let claimed_manager = self.claim(current_header_inputs, planned_chunk_ranges, collect_stage_timings)?;
+        claimed_manager.activate()
     }
 }
 
@@ -713,12 +684,8 @@ impl OutputManager<Claimed> {
     ///
     /// Returns an error when header coverage, lineage compatibility, durable
     /// recovery, attempt publication, or writer creation fails.
-    pub fn activate(
-        self,
-        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
-    ) -> OutputResult<OutputManager<Active>> {
-        self.activate_with_cleanup_policy(current_header_inputs, CompletedNoopCleanupPolicy::Immediate)
-            .map_err(resolve_activation_error)
+    pub fn activate(self) -> OutputResult<OutputManager<Active>> {
+        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Immediate).map_err(resolve_activation_error)
     }
 
     /// Publish attempt authority while deferring completed-noop cleanup until
@@ -731,16 +698,12 @@ impl OutputManager<Claimed> {
     /// retain any unpublished rollback and consume it only after claim-scoped
     /// diagnostics close. Dropping it deliberately leaves ownership active so
     /// recovery fails closed until an exact external fence is supplied.
-    pub fn activate_with_deferred_completed_noop_cleanup(
-        self,
-        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
-    ) -> Result<OutputManager<Active>, OutputActivationError> {
-        self.activate_with_cleanup_policy(current_header_inputs, CompletedNoopCleanupPolicy::Deferred)
+    pub fn activate_with_deferred_completed_noop_cleanup(self) -> Result<OutputManager<Active>, OutputActivationError> {
+        self.activate_with_cleanup_policy(CompletedNoopCleanupPolicy::Deferred)
     }
 
     fn activate_with_cleanup_policy(
         mut self,
-        current_header_inputs: Vec<CurrentRunManifestHeaderInput>,
         completed_noop_cleanup_policy: CompletedNoopCleanupPolicy,
     ) -> Result<OutputManager<Active>, OutputActivationError> {
         let mut core = self.take_core()?;
@@ -752,15 +715,7 @@ impl OutputManager<Claimed> {
             ));
         };
         let collect_stage_timings = core.collect_stage_timings;
-        let phenotype_contracts = match (|| {
-            let headers = build_headers(&core, current_header_inputs)?;
-            bind_headers(&mut core.runs, headers)?;
-            let phenotype_contracts = phenotype_contracts(&core.runs)?;
-            if let Some(snapshot) = core.lineage_snapshot.as_ref() {
-                preflight_existing_lineage(&core, snapshot, &canonical_chunk_plan, &phenotype_contracts)?;
-            }
-            Ok(phenotype_contracts)
-        })() {
+        let phenotype_contracts = match phenotype_contracts(&core.runs) {
             Ok(phenotype_contracts) => phenotype_contracts,
             Err(error) => return Err(unpublished_activation_error(core, error)),
         };
@@ -952,6 +907,7 @@ impl OutputPostSessionCleanupTestControl {
 #[cfg(test)]
 impl OutputManifestHintTestPause {
     fn wait(&self) -> OutputResult<()> {
+        self.reach_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.reached_sender.send(()).map_err(|error| {
             OutputError::Runtime(format!("Failed to report the output manifest hint test pause: {error}"))
         })?;
@@ -963,6 +919,10 @@ impl OutputManifestHintTestPause {
             .recv_timeout(OUTPUT_MANIFEST_HINT_TEST_TIMEOUT)
             .map_err(|error| OutputError::Runtime(format!("Output manifest hint test pause timed out: {error}")))
     }
+
+    fn record_final_inspect(&self) {
+        self.final_inspect_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]
@@ -973,6 +933,14 @@ impl OutputManifestHintTestControl {
 
     pub(crate) fn resume(&self) {
         self.resume_hint();
+    }
+
+    pub(crate) fn reach_count(&self) -> usize {
+        self.pause.reach_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn final_inspect_count(&self) -> usize {
+        self.pause.final_inspect_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn resume_hint(&self) {
@@ -1419,16 +1387,6 @@ impl OutputManagerCore {
                 release: Box::new(release_error),
             },
         }
-    }
-
-    fn run(&self, phenotype_name: &str) -> OutputResult<&ManagedOutputRun> {
-        let output_index = self
-            .run_indices_by_phenotype
-            .get(phenotype_name)
-            .ok_or_else(|| OutputError::InvalidInput(format!("Unknown planned phenotype '{phenotype_name}'.")))?;
-        self.runs.get(*output_index).ok_or_else(|| {
-            OutputError::Runtime(format!("Output index for phenotype '{phenotype_name}' is inconsistent."))
-        })
     }
 
     fn active_attempt(&self) -> OutputResult<&ActiveAttempt> {
@@ -1989,6 +1947,212 @@ fn validate_planned_names(snapshot: &LineageSnapshot, runs: &[ManagedOutputRun])
         }
     }
     Ok(())
+}
+
+fn inspect_existing_output_resume_agreement(
+    core: &OutputManagerCore,
+    pause_after_reads: bool,
+) -> OutputResult<Option<crate::agreement::ExistingOutputResumeAgreement>> {
+    let Some(snapshot) = core.lineage_paths.inspect()? else {
+        return Ok(None);
+    };
+    validate_planned_names(&snapshot, &core.runs)?;
+    let terminal_authority = snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref());
+    validate_resume_terminal_authority_shape(&snapshot, &core.runs)?;
+    let mut observed_agreements = Vec::with_capacity(core.runs.len());
+    for (run, contract) in core.runs.iter().zip(&snapshot.genesis.phenotypes) {
+        let paths = AttemptRunPaths::new(
+            &core.lineage_paths.attempts_directory,
+            &snapshot.leaf_attempt_id,
+            &contract.output_directory_name,
+        )?;
+        let Some(manifest_bytes) = read_optional_attempt_manifest_bytes(&paths.manifest_path)? else {
+            if terminal_authority.is_some() {
+                return Err(OutputError::InvalidInput(format!(
+                    "Terminal output attempt is missing manifest '{}'.",
+                    paths.manifest_path.display()
+                )));
+            }
+            continue;
+        };
+        let manifest_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
+        let manifest = parse_attempt_manifest_json(&manifest_bytes, &paths.manifest_path)?;
+        let binding = AttemptManifestBinding {
+            run_set_id: snapshot.genesis.run_set_id.clone(),
+            attempt_id: snapshot.leaf_attempt_id.clone(),
+            phenotype_name: contract.phenotype_name.clone(),
+            output_directory_name: contract.output_directory_name.clone(),
+            execution_plan_sha256: contract.execution_plan_sha256.clone(),
+            chunk_plan_sha256: snapshot.genesis.chunk_plan_sha256.clone(),
+        };
+        let validated = validate_attempt_manifest_schema_zero(manifest, &paths, &binding)?;
+        validate_finalized_resume_manifest_binding(&snapshot, run, &validated, &manifest_sha256)?;
+        let agreement = validated.existing_output_resume_agreement().ok_or_else(|| {
+            OutputError::ExistingOutputUnattestedBgenContent { manifest_path: paths.manifest_path.clone() }
+        })?;
+        observed_agreements.push(agreement);
+    }
+    #[cfg(test)]
+    if pause_after_reads && let Some(pause) = core.manifest_hint_pause.as_ref() {
+        pause.wait()?;
+    }
+    #[cfg(not(test))]
+    let _ = pause_after_reads;
+    #[cfg(test)]
+    if pause_after_reads && let Some(pause) = core.manifest_hint_pause.as_ref() {
+        pause.record_final_inspect();
+    }
+    if core.lineage_paths.inspect()?.as_ref() != Some(&snapshot) {
+        return Err(OutputError::ConcurrentLineageUpdate { record_path: core.lineage_paths.genesis_path.clone() });
+    }
+    let Some(expected_agreement) = observed_agreements.first().copied() else {
+        return Ok(None);
+    };
+    for observed_agreement in &observed_agreements[1..] {
+        if observed_agreement.bgen_content_fingerprint.content_sha256
+            != expected_agreement.bgen_content_fingerprint.content_sha256
+        {
+            return Err(OutputError::InvalidInput(
+                "Existing output phenotype manifests disagree on BGEN content SHA-256.".to_string(),
+            ));
+        }
+        if observed_agreement.bgen_content_fingerprint.byte_count
+            != expected_agreement.bgen_content_fingerprint.byte_count
+        {
+            return Err(OutputError::InvalidInput(
+                "Existing output phenotype manifests disagree on BGEN content byte count.".to_string(),
+            ));
+        }
+        if observed_agreement.gpu_genotype_format != expected_agreement.gpu_genotype_format {
+            return Err(OutputError::InvalidInput(
+                "Existing output phenotype manifests disagree on GPU genotype format.".to_string(),
+            ));
+        }
+    }
+    Ok(Some(expected_agreement))
+}
+
+fn validate_resume_terminal_authority_shape(snapshot: &LineageSnapshot, runs: &[ManagedOutputRun]) -> OutputResult<()> {
+    let Some(terminal) = snapshot.leaf_terminal.as_ref().or(snapshot.pending_terminal.as_ref()) else {
+        return Ok(());
+    };
+    if terminal.phenotypes.len() != runs.len() {
+        return Err(OutputError::InvalidInput(
+            "Output terminal phenotype count does not match the current run plan.".to_string(),
+        ));
+    }
+    for run in runs {
+        let terminal_phenotype =
+            terminal.phenotypes.iter().find(|record| record.phenotype_name == run.phenotype_name).ok_or_else(|| {
+                OutputError::InvalidInput(format!(
+                    "Output immutable terminal is missing phenotype '{}'.",
+                    run.phenotype_name
+                ))
+            })?;
+        if terminal_phenotype.output_directory_name != run.output_directory_name {
+            return Err(OutputError::InvalidInput(format!(
+                "Output immutable terminal directory for phenotype '{}' does not match the current plan.",
+                run.phenotype_name
+            )));
+        }
+    }
+    // A pending terminal binds future terminal manifest bytes. Its current
+    // running manifests remain bound by genesis and leaf identity.
+    Ok(())
+}
+
+fn validate_finalized_resume_manifest_binding(
+    snapshot: &LineageSnapshot,
+    run: &ManagedOutputRun,
+    validated: &ValidatedAttemptManifestSchemaZero,
+    manifest_sha256: &str,
+) -> OutputResult<()> {
+    let Some(terminal) = snapshot.leaf_terminal.as_ref() else {
+        return Ok(());
+    };
+    validate_manifest_terminal_status(&validated.status, terminal.status)?;
+    let terminal_phenotype =
+        terminal.phenotypes.iter().find(|record| record.phenotype_name == run.phenotype_name).ok_or_else(|| {
+            OutputError::InvalidInput(format!(
+                "Output immutable terminal is missing phenotype '{}'.",
+                run.phenotype_name
+            ))
+        })?;
+    if terminal_phenotype.run_manifest_sha256 != manifest_sha256 {
+        return Err(OutputError::InvalidInput(format!(
+            "Output immutable terminal manifest binding for phenotype '{}' does not match its bytes.",
+            run.phenotype_name
+        )));
+    }
+    Ok(())
+}
+
+fn validate_current_bgen_content_evidence(
+    run_plan: &g_plan::RunPlan,
+    current_header_inputs: &[CurrentRunManifestHeaderInput],
+    existing_resume_agreement: Option<&crate::agreement::ExistingOutputResumeAgreement>,
+) -> OutputResult<()> {
+    let mut current_contracts = current_header_inputs.iter().map(current_bgen_output_contract);
+    let Some(expected_contract) = current_contracts.next() else {
+        return Ok(());
+    };
+    if run_plan.output.resume && expected_contract.content_sha256.is_none() {
+        return Err(OutputError::InvalidInput(
+            "Output resume requires authoritative BGEN content evidence; positioned unattested BGEN input is valid only for a fresh nonresumable output."
+                .to_string(),
+        ));
+    }
+    for current_contract in current_contracts {
+        if run_plan.output.resume && current_contract.content_sha256.is_none() {
+            return Err(OutputError::InvalidInput(
+                "Output resume requires authoritative BGEN content evidence; positioned unattested BGEN input is valid only for a fresh nonresumable output."
+                    .to_string(),
+            ));
+        }
+        if current_contract.content_sha256 != expected_contract.content_sha256 {
+            return Err(OutputError::InvalidInput(
+                "Output initialization headers disagree on BGEN content SHA-256.".to_string(),
+            ));
+        }
+        if current_contract.byte_count != expected_contract.byte_count {
+            return Err(OutputError::InvalidInput(
+                "Output initialization headers disagree on BGEN content byte count.".to_string(),
+            ));
+        }
+        if current_contract.gpu_genotype_format != expected_contract.gpu_genotype_format {
+            return Err(OutputError::InvalidInput(
+                "Output initialization headers disagree on GPU genotype format.".to_string(),
+            ));
+        }
+    }
+    if let Some(existing_agreement) = existing_resume_agreement {
+        if expected_contract.content_sha256 != Some(existing_agreement.bgen_content_fingerprint.content_sha256) {
+            return Err(OutputError::InvalidInput(
+                "Current output BGEN content SHA-256 does not match existing output authority.".to_string(),
+            ));
+        }
+        if expected_contract.byte_count != existing_agreement.bgen_content_fingerprint.byte_count {
+            return Err(OutputError::InvalidInput(
+                "Current output BGEN content byte count does not match existing output authority.".to_string(),
+            ));
+        }
+        if expected_contract.gpu_genotype_format != existing_agreement.gpu_genotype_format {
+            return Err(OutputError::InvalidInput(
+                "Current output GPU genotype format does not match existing output authority.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn current_bgen_output_contract(input: &CurrentRunManifestHeaderInput) -> CurrentBgenOutputContract {
+    let (content_sha256, byte_count) = match input.bgen_content_evidence.as_ref() {
+        g_genotype_contracts::BgenContentEvidence::OwnedSnapshot(fingerprint) => {
+            (Some(fingerprint.content_sha256), fingerprint.byte_count)
+        }
+        g_genotype_contracts::BgenContentEvidence::PositionedUnattested(identity) => (None, identity.file_size),
+    };
+    CurrentBgenOutputContract { content_sha256, byte_count, gpu_genotype_format: input.resolved_gpu_genotype_format }
 }
 
 fn build_headers(

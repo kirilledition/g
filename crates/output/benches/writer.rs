@@ -1,17 +1,18 @@
 use std::ops::Range;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use g_genotype_contracts::{
-    BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, ChunkOutputStatistics, NullableFloat32Column,
+    VariantMetadataColumns, VariantMetadataStore,
 };
 use g_output::{
     Active, CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputDeliveryToken,
     OutputManager, Regenie2StatisticBatch, write_regenie2_multi_trait_chunk_f32,
 };
+use sha2::{Digest, Sha256};
 
 const BENCHMARK_CHUNK_ROW_COUNT: usize = 16_384;
 const BENCHMARK_CHUNK_COUNT: usize = 26;
@@ -182,31 +183,18 @@ fn benchmark_kernel_plan() -> g_plan::KernelPlan {
     }
 }
 
-fn benchmark_bgen_source_identity(bgen_path: &Path) -> Arc<BgenSourceIdentity> {
-    let canonical_path = bgen_path.canonicalize().expect("benchmark BGEN path should canonicalize");
-    let metadata = canonical_path.metadata().expect("benchmark BGEN metadata should be available");
-    Arc::new(BgenSourceIdentity {
-        configured_path: bgen_path.to_path_buf(),
-        canonical_path: Some(canonical_path),
-        device_identifier: metadata.dev(),
-        inode_identifier: metadata.ino(),
-        change_time_nanoseconds: timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
-        modification_time_nanoseconds: timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
-        file_size: metadata.len(),
-    })
-}
-
-fn timestamp_nanoseconds(seconds: i64, subsecond_nanoseconds: i64) -> i64 {
-    seconds
-        .checked_mul(1_000_000_000)
-        .and_then(|nanoseconds| nanoseconds.checked_add(subsecond_nanoseconds))
-        .expect("benchmark timestamp should fit int64")
+fn benchmark_bgen_content_evidence(bgen_path: &Path) -> Arc<BgenContentEvidence> {
+    let bgen_bytes = std::fs::read(bgen_path).expect("benchmark BGEN should read");
+    Arc::new(BgenContentEvidence::OwnedSnapshot(BgenContentFingerprint {
+        content_sha256: BgenContentSha256::from_bytes(Sha256::digest(&bgen_bytes).into()),
+        byte_count: u64::try_from(bgen_bytes.len()).expect("benchmark BGEN byte count should fit uint64"),
+    }))
 }
 
 fn benchmark_manifest_header(bgen_path: &Path, variant_count: usize) -> CurrentRunManifestHeaderInput {
     CurrentRunManifestHeaderInput {
         phenotype_name: BENCHMARK_PHENOTYPE_NAME.to_string(),
-        bgen_source_identity: benchmark_bgen_source_identity(bgen_path),
+        bgen_content_evidence: benchmark_bgen_content_evidence(bgen_path),
         covariate_names: Arc::from(Vec::<String>::new()),
         prediction_loco_files: Arc::from(Vec::new()),
         sample_count: 487_409,

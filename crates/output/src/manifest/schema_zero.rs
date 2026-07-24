@@ -54,24 +54,11 @@ pub(super) struct AssociationBackendSchemaZero {
     pub(super) genotype_format: g_plan::GpuGenotypeFormat,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) enum BgenContentHashAlgorithmSchemaZero {
-    #[serde(rename = "opened-file-identity")]
-    OpenedFileIdentity,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BgenFingerprintSchemaZero {
-    pub(super) path: String,
-    pub(super) configured_path: String,
-    pub(super) size: u64,
-    pub(super) mtime_ns: i64,
-    pub(super) ctime_ns: i64,
-    pub(super) device: u64,
-    pub(super) inode: u64,
-    pub(super) content_hash_algorithm: BgenContentHashAlgorithmSchemaZero,
-    pub(super) content_sha256: RequiredNullSchemaZero,
+    pub(super) content_sha256: RequiredNullableSchemaZero<g_genotype_contracts::BgenContentSha256>,
+    pub(super) byte_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -238,10 +225,6 @@ pub(super) enum RequiredNullableSchemaZero<ValueType> {
     Null(()),
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-pub(super) struct RequiredNullSchemaZero(pub(super) ());
-
 impl<ValueType> RequiredNullableSchemaZero<ValueType> {
     pub(super) fn new(value: Option<ValueType>) -> Self {
         match value {
@@ -350,6 +333,10 @@ impl ExecutionPlanSchemaZero {
         self.association_backend.genotype_format
     }
 
+    pub(crate) fn bgen_content_fingerprint(&self) -> Option<g_genotype_contracts::BgenContentFingerprint> {
+        self.bgen.content_fingerprint()
+    }
+
     pub(crate) fn phenotype_name(&self) -> &str {
         &self.phenotype_name
     }
@@ -363,7 +350,7 @@ impl ExecutionPlanSchemaZero {
     }
 
     pub(crate) fn validate(&self) -> OutputResult<()> {
-        self.bgen.validate()?;
+        self.bgen.validate();
         self.sample.validate("sample")?;
         self.phenotype_file.validate("phenotype_file")?;
         validate_non_empty_execution_plan_string(&self.phenotype_name, "phenotype_name")?;
@@ -472,19 +459,15 @@ impl ExecutionPlanSchemaZero {
 }
 
 impl BgenFingerprintSchemaZero {
-    fn validate(&self) -> OutputResult<()> {
-        validate_non_empty_execution_plan_string(&self.path, "bgen.path")?;
-        validate_non_empty_execution_plan_string(&self.configured_path, "bgen.configured_path")?;
-        if self.content_hash_algorithm != BgenContentHashAlgorithmSchemaZero::OpenedFileIdentity {
-            return Err(invalid_execution_plan(
-                "field 'bgen.content_hash_algorithm' must equal 'opened-file-identity'",
-            ));
-        }
-        if self.content_sha256 != RequiredNullSchemaZero(()) {
-            return Err(invalid_execution_plan("field 'bgen.content_sha256' must be null"));
-        }
-        let _ = (self.size, self.mtime_ns, self.ctime_ns, self.device, self.inode);
-        Ok(())
+    fn validate(&self) {
+        let _ = (self.content_sha256.as_ref(), self.byte_count);
+    }
+
+    fn content_fingerprint(&self) -> Option<g_genotype_contracts::BgenContentFingerprint> {
+        self.content_sha256.as_ref().map(|content_sha256| g_genotype_contracts::BgenContentFingerprint {
+            content_sha256: *content_sha256,
+            byte_count: self.byte_count,
+        })
     }
 }
 
@@ -749,15 +732,8 @@ pub(crate) fn canonical_execution_plan_schema_zero_test_value() -> Value {
             "genotype_format": "packed8",
         },
         "bgen": {
-            "path": "/input/genotypes.bgen",
-            "configured_path": "genotypes.bgen",
-            "size": 1024,
-            "mtime_ns": 10,
-            "ctime_ns": 11,
-            "device": 12,
-            "inode": 13,
-            "content_hash_algorithm": "opened-file-identity",
-            "content_sha256": null,
+            "content_sha256": "e".repeat(64),
+            "byte_count": 1024,
         },
         "sample": {
             "path": "/input/genotypes.sample",
@@ -845,6 +821,7 @@ mod tests {
             &["binary_kernel_config"][..],
             &["jax_policy", "approximate_firth_pseudo_inner_policy"][..],
             &["bgen", "content_sha256"][..],
+            &["bgen", "byte_count"][..],
         ] {
             let mut fixture = canonical_execution_plan_schema_zero_test_value();
             let (field_name, parent_path) = field_path.split_last().expect("field path is non-empty");
@@ -858,6 +835,45 @@ mod tests {
                 "missing required field {field_path:?} is rejected"
             );
         }
+    }
+
+    #[test]
+    fn schema_zero_bgen_fingerprint_is_an_exact_strict_two_key_object() {
+        let canonical = canonical_execution_plan_schema_zero_test_value();
+        let bgen = canonical["bgen"].as_object().expect("canonical BGEN fingerprint is an object");
+        assert_eq!(bgen.len(), 2);
+        assert!(bgen.contains_key("content_sha256"));
+        assert!(bgen.contains_key("byte_count"));
+
+        let mut unknown_field = canonical.clone();
+        unknown_field["bgen"]["locator"] = serde_json::Value::String("input.bgen".to_string());
+        assert!(ExecutionPlanSchemaZero::from_value(unknown_field).is_err());
+
+        for invalid_digest in [
+            serde_json::Value::Bool(false),
+            serde_json::Value::Number(1_u64.into()),
+            serde_json::Value::String("E".repeat(64)),
+            serde_json::Value::String("e".repeat(63)),
+        ] {
+            let mut fixture = canonical.clone();
+            fixture["bgen"]["content_sha256"] = invalid_digest;
+            assert!(ExecutionPlanSchemaZero::from_value(fixture).is_err());
+        }
+
+        for invalid_byte_count in [
+            serde_json::Value::Bool(false),
+            serde_json::Value::String("1024".to_string()),
+            serde_json::json!(1024.0),
+            serde_json::json!(-1),
+        ] {
+            let mut fixture = canonical.clone();
+            fixture["bgen"]["byte_count"] = invalid_byte_count;
+            assert!(ExecutionPlanSchemaZero::from_value(fixture).is_err());
+        }
+
+        let mut unattested = canonical;
+        unattested["bgen"]["content_sha256"] = serde_json::Value::Null;
+        ExecutionPlanSchemaZero::from_value(unattested).expect("explicit null content evidence is schema-valid");
     }
 
     #[test]

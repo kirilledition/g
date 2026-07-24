@@ -304,17 +304,17 @@ impl RunEngine {
             g_input::resolve_prediction_loco_paths(Path::new(&run_plan.input.prediction_list_path), &phenotype_names)?;
         let groups = load_groups(&run_plan, &genotype_input, &phenotype_names, &prediction_loco_paths)?;
         validate_groups(&run_plan, &groups)?;
-        let ClaimedOutputGroups { header_inputs, output_manager } = prepare_output_claim(
+        let ClaimedOutputGroups { output_manager } = prepare_output_claim(
             &run_plan,
             &groups,
             &prediction_loco_paths,
             output_manager,
             resolved_gpu_genotype_format,
-            genotype_input.reader.source_identity(),
+            genotype_input.reader.content_evidence(),
             genotype_input.reader.variant_count(),
             &planned_chunk_ranges,
         )?;
-        Ok(ClaimedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, header_inputs, output_manager })
+        Ok(ClaimedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager })
     }
 }
 
@@ -324,7 +324,6 @@ struct PreparedAssociationGroup {
 }
 
 struct ClaimedOutputGroups {
-    header_inputs: Vec<g_output::CurrentRunManifestHeaderInput>,
     output_manager: OutputManager<Claimed>,
 }
 
@@ -334,7 +333,6 @@ pub(crate) struct ClaimedRun {
     resolved_gpu_genotype_format: GpuGenotypeFormat,
     genotype_input: PreparedGenotypeInput,
     groups: Vec<AlignedPhenotypeGroup>,
-    header_inputs: Vec<g_output::CurrentRunManifestHeaderInput>,
     output_manager: OutputManager<Claimed>,
 }
 
@@ -379,9 +377,8 @@ impl ClaimedRun {
     /// The result records any output activation or delivery-token construction
     /// failure. Completed-noop cleanup remains orthogonal to that result.
     pub(crate) fn activate(self) -> RunActivationOutcome {
-        let Self { run_plan, resolved_gpu_genotype_format, genotype_input, groups, header_inputs, output_manager } =
-            self;
-        let output_manager = match output_manager.activate_with_deferred_completed_noop_cleanup(header_inputs) {
+        let Self { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;
+        let output_manager = match output_manager.activate_with_deferred_completed_noop_cleanup() {
             Ok(output_manager) => output_manager,
             Err(error) => {
                 return RunActivationOutcome { result: Err(run_activation_error(error)), post_session_cleanup: None };
@@ -612,9 +609,10 @@ fn resumed_manifest_gpu_genotype_format(
     if !run_plan.output.resume {
         return Ok(None);
     }
-    let phenotype_name =
-        &run_plan.phenotype_runs.first().ok_or(RunPreparationError::EmptyPhenotypePlan)?.phenotype_name;
-    output_manager.existing_manifest_gpu_genotype_format(phenotype_name).map_err(Into::into)
+    output_manager
+        .existing_output_resume_agreement()
+        .map(|agreement| agreement.map(|agreement| agreement.gpu_genotype_format))
+        .map_err(Into::into)
 }
 
 fn load_groups(
@@ -679,14 +677,14 @@ fn prepare_output_claim(
     prediction_loco_paths: &[g_input::PredictionLocoPath],
     output_manager: OutputManager<Planned>,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
-    bgen_source_identity: &g_genotype_contracts::BgenSourceIdentity,
+    bgen_content_evidence: &g_genotype_contracts::BgenContentEvidence,
     variant_count: usize,
     planned_chunk_ranges: &[Range<usize>],
 ) -> Result<ClaimedOutputGroups, RunPreparationError> {
     let runtime_output_plan = RuntimeOutputPlan {
         variant_count,
         resolved_gpu_genotype_format,
-        bgen_source_identity: Arc::new(bgen_source_identity.clone()),
+        bgen_content_evidence: Arc::new(bgen_content_evidence.clone()),
     };
     let mut fingerprint_cache = ManifestFileFingerprintCache::default();
     let all_prediction_loco_files: Arc<[g_output::PredictionLocoFileFingerprint]> =
@@ -704,8 +702,8 @@ fn prepare_output_claim(
         )?);
     }
     let collect_stage_timings = matches!(run_plan.telemetry, g_plan::TelemetryMode::Profile);
-    let output_manager = output_manager.claim(planned_chunk_ranges, collect_stage_timings)?;
-    Ok(ClaimedOutputGroups { header_inputs: run_initializations, output_manager })
+    let output_manager = output_manager.claim(run_initializations, planned_chunk_ranges, collect_stage_timings)?;
+    Ok(ClaimedOutputGroups { output_manager })
 }
 
 fn finish_execution<BackendError, Hooks>(

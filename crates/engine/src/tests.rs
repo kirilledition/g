@@ -7,7 +7,8 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 use g_genotype::{ChunkComputeStatistics, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
 use g_genotype_contracts::{
-    BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, ChunkOutputStatistics, NullableFloat32Column,
+    VariantMetadataColumns, VariantMetadataStore,
 };
 use g_output::{ManifestFileFingerprintCache, NativeVariantMetadataHandle, Regenie2StatisticBatch};
 
@@ -1343,15 +1344,10 @@ fn runtime_output_preparation_reuses_identity_fingerprints_and_validates_subsets
     let runtime_plan = RuntimeOutputPlan {
         variant_count: 418_943,
         resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat::Packed8,
-        bgen_source_identity: Arc::new(BgenSourceIdentity {
-            configured_path: "input.bgen".into(),
-            canonical_path: None,
-            device_identifier: 1,
-            inode_identifier: 2,
-            change_time_nanoseconds: 3,
-            modification_time_nanoseconds: 4,
-            file_size: 5,
-        }),
+        bgen_content_evidence: Arc::new(BgenContentEvidence::OwnedSnapshot(BgenContentFingerprint {
+            content_sha256: BgenContentSha256::from_bytes([1_u8; 32]),
+            byte_count: 5,
+        })),
     };
     let identity_group = test_phenotype_compute_group(vec![0, 1], vec!["trait-a", "trait-b"]);
     let identity_initializations = build_runtime_output_initializations(

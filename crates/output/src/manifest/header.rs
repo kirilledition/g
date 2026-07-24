@@ -7,11 +7,10 @@ use crate::error::{OutputError, OutputResult};
 
 use super::schema_zero::{
     ApproximateFirthPseudoInnerPolicySchemaZero, AssociationBackendKindSchemaZero, AssociationBackendSchemaZero,
-    BgenContentHashAlgorithmSchemaZero, BgenFingerprintSchemaZero, BinaryCorrectionPlanSchemaZero,
-    ExecutionPlanSchemaZero, FileContentHashAlgorithmSchemaZero, FileFingerprintSchemaZero,
-    FloatingPointDtypeSchemaZero, JaxPolicySchemaZero, KernelPlanSchemaZero, MatmulPrecisionSchemaZero,
-    OutputWriterSchemaZero, ParquetCompressionSchemaZero, ParquetFloatColumnEncodingSchemaZero,
-    PredictionInputsSchemaZero, PredictionLocoFileFingerprintSchemaZero, RequiredNullSchemaZero,
+    BgenFingerprintSchemaZero, BinaryCorrectionPlanSchemaZero, ExecutionPlanSchemaZero,
+    FileContentHashAlgorithmSchemaZero, FileFingerprintSchemaZero, FloatingPointDtypeSchemaZero, JaxPolicySchemaZero,
+    KernelPlanSchemaZero, MatmulPrecisionSchemaZero, OutputWriterSchemaZero, ParquetCompressionSchemaZero,
+    ParquetFloatColumnEncodingSchemaZero, PredictionInputsSchemaZero, PredictionLocoFileFingerprintSchemaZero,
     RequiredNullableSchemaZero, ResumePolicySchemaZero,
 };
 use super::{
@@ -20,7 +19,7 @@ use super::{
 
 pub struct CurrentRunManifestHeaderInput {
     pub phenotype_name: String,
-    pub bgen_source_identity: Arc<g_genotype_contracts::BgenSourceIdentity>,
+    pub bgen_content_evidence: Arc<g_genotype_contracts::BgenContentEvidence>,
     pub covariate_names: Arc<[String]>,
     pub prediction_loco_files: Arc<[PredictionLocoFileFingerprint]>,
     pub sample_count: usize,
@@ -118,7 +117,7 @@ fn build_execution_plan_file_fingerprints_with_cache(
     fingerprint_cache: &mut ManifestFileFingerprintCache,
 ) -> OutputResult<ExecutionPlanFileFingerprints> {
     Ok(ExecutionPlanFileFingerprints {
-        bgen: bgen_source_identity_to_schema_zero(&input.bgen_source_identity),
+        bgen: bgen_content_evidence_to_schema_zero(&input.bgen_content_evidence),
         sample: build_required_file_fingerprint_with_cache(
             fingerprint_cache,
             Path::new(&run_plan.input.sample_path),
@@ -196,20 +195,18 @@ fn usize_to_manifest_u64(value: usize, field_name: &str) -> OutputResult<u64> {
         .map_err(|error| OutputError::Runtime(format!("{field_name} does not fit manifest uint64: {error}")))
 }
 
-fn bgen_source_identity_to_schema_zero(
-    identity: &g_genotype_contracts::BgenSourceIdentity,
+fn bgen_content_evidence_to_schema_zero(
+    evidence: &g_genotype_contracts::BgenContentEvidence,
 ) -> BgenFingerprintSchemaZero {
-    let resolved_path = identity.canonical_path.as_ref().unwrap_or(&identity.configured_path);
-    BgenFingerprintSchemaZero {
-        path: resolved_path.display().to_string(),
-        configured_path: identity.configured_path.display().to_string(),
-        size: identity.file_size,
-        mtime_ns: identity.modification_time_nanoseconds,
-        ctime_ns: identity.change_time_nanoseconds,
-        device: identity.device_identifier,
-        inode: identity.inode_identifier,
-        content_hash_algorithm: BgenContentHashAlgorithmSchemaZero::OpenedFileIdentity,
-        content_sha256: RequiredNullSchemaZero(()),
+    match evidence {
+        g_genotype_contracts::BgenContentEvidence::OwnedSnapshot(fingerprint) => BgenFingerprintSchemaZero {
+            content_sha256: RequiredNullableSchemaZero::new(Some(fingerprint.content_sha256)),
+            byte_count: fingerprint.byte_count,
+        },
+        g_genotype_contracts::BgenContentEvidence::PositionedUnattested(identity) => BgenFingerprintSchemaZero {
+            content_sha256: RequiredNullableSchemaZero::new(None),
+            byte_count: identity.file_size,
+        },
     }
 }
 

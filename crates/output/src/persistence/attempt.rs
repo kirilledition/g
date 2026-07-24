@@ -170,6 +170,16 @@ pub(crate) struct ValidatedAttemptManifestSchemaZero {
 }
 
 impl ValidatedAttemptManifestSchemaZero {
+    pub(crate) fn existing_output_resume_agreement(&self) -> Option<crate::agreement::ExistingOutputResumeAgreement> {
+        self.execution_plan.bgen_content_fingerprint().map(|fingerprint| {
+            crate::agreement::ExistingOutputResumeAgreement {
+                bgen_content_fingerprint: fingerprint,
+                gpu_genotype_format: self.execution_plan.gpu_genotype_format(),
+            }
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn gpu_genotype_format(&self) -> g_plan::GpuGenotypeFormat {
         self.execution_plan.gpu_genotype_format()
     }
@@ -1282,6 +1292,7 @@ mod tests {
             chunk_size: 32,
             input: g_plan::InputPlan {
                 bgen_path: "genotypes.bgen".to_string(),
+                bgen_content_sha256: None,
                 sample_path: "genotypes.sample".to_string(),
                 phenotype_path: "phenotypes.tsv".to_string(),
                 prediction_list_path: "predictions.list".to_string(),

@@ -9,10 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow::array::Float32Array;
 use g_genotype_contracts::{
-    BgenSourceIdentity, ChunkOutputStatistics, NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
+    BgenContentEvidence, BgenContentFingerprint, BgenContentSha256, BgenSourceIdentity, ChunkOutputStatistics,
+    NullableFloat32Column, VariantMetadataColumns, VariantMetadataStore,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
     CurrentRunManifestHeaderInput, NativeChunkHandle, NativeVariantMetadataHandle, OutputManager,
@@ -196,24 +198,28 @@ fn header_for_phenotype(
     variant_count: usize,
     phenotype_name: &str,
 ) -> CurrentRunManifestHeaderInput {
-    let canonical_path = inputs.bgen.canonicalize().expect("test BGEN canonicalizes");
-    let metadata = canonical_path.metadata().expect("test BGEN metadata exists");
+    header_for_phenotype_with_evidence(
+        variant_count,
+        phenotype_name,
+        owned_snapshot_evidence(&inputs.bgen),
+        g_plan::GpuGenotypeFormat::Packed8,
+    )
+}
+
+fn header_for_phenotype_with_evidence(
+    variant_count: usize,
+    phenotype_name: &str,
+    bgen_content_evidence: Arc<BgenContentEvidence>,
+    resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat,
+) -> CurrentRunManifestHeaderInput {
     CurrentRunManifestHeaderInput {
         phenotype_name: phenotype_name.to_string(),
-        bgen_source_identity: Arc::new(BgenSourceIdentity {
-            configured_path: inputs.bgen.clone(),
-            canonical_path: Some(canonical_path),
-            device_identifier: metadata.dev(),
-            inode_identifier: metadata.ino(),
-            change_time_nanoseconds: timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
-            modification_time_nanoseconds: timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
-            file_size: metadata.len(),
-        }),
+        bgen_content_evidence,
         covariate_names: Arc::from(Vec::<String>::new()),
         prediction_loco_files: Arc::from(Vec::new()),
         sample_count: 12,
         variant_count,
-        resolved_gpu_genotype_format: g_plan::GpuGenotypeFormat::Packed8,
+        resolved_gpu_genotype_format,
         sample_mode: g_plan::MultiPhenotypeSampleMode::CompleteCase,
         phenotype_compute_group_id: Arc::from("group-id"),
         sample_set_fingerprint: Arc::from("sample-fingerprint"),
@@ -223,8 +229,67 @@ fn header_for_phenotype(
     }
 }
 
+fn owned_snapshot_evidence(path: &Path) -> Arc<BgenContentEvidence> {
+    Arc::new(BgenContentEvidence::OwnedSnapshot(bgen_content_fingerprint(path)))
+}
+
+fn bgen_content_fingerprint(path: &Path) -> BgenContentFingerprint {
+    let bytes = std::fs::read(path).expect("test BGEN reads");
+    let content_sha256 = BgenContentSha256::from_bytes(Sha256::digest(&bytes).into());
+    BgenContentFingerprint {
+        content_sha256,
+        byte_count: u64::try_from(bytes.len()).expect("test BGEN byte count fits uint64"),
+    }
+}
+
+fn expected_resume_agreement(
+    inputs: &TestInputs,
+    gpu_genotype_format: g_plan::GpuGenotypeFormat,
+) -> crate::ExistingOutputResumeAgreement {
+    crate::ExistingOutputResumeAgreement {
+        bgen_content_fingerprint: bgen_content_fingerprint(&inputs.bgen),
+        gpu_genotype_format,
+    }
+}
+
+fn positioned_unattested_evidence(path: &Path) -> Arc<BgenContentEvidence> {
+    Arc::new(BgenContentEvidence::PositionedUnattested(bgen_source_identity(path)))
+}
+
+fn bgen_source_identity(path: &Path) -> BgenSourceIdentity {
+    let canonical_path = path.canonicalize().expect("test BGEN canonicalizes");
+    let metadata = canonical_path.metadata().expect("test BGEN metadata exists");
+    BgenSourceIdentity {
+        configured_path: path.to_path_buf(),
+        canonical_path: Some(canonical_path),
+        device_identifier: metadata.dev(),
+        inode_identifier: metadata.ino(),
+        change_time_nanoseconds: timestamp_nanoseconds(metadata.ctime(), metadata.ctime_nsec()),
+        modification_time_nanoseconds: timestamp_nanoseconds(metadata.mtime(), metadata.mtime_nsec()),
+        file_size: metadata.len(),
+    }
+}
+
 fn two_phenotype_headers(inputs: &TestInputs, variant_count: usize) -> Vec<CurrentRunManifestHeaderInput> {
     vec![header(inputs, variant_count), header_for_phenotype(inputs, variant_count, SECOND_PHENOTYPE_NAME)]
+}
+
+fn single_phenotype_headers(inputs: &TestInputs, chunk_ranges: &[Range<usize>]) -> Vec<CurrentRunManifestHeaderInput> {
+    let variant_count = chunk_ranges.last().map_or(0, |range| range.end);
+    vec![header(inputs, variant_count)]
+}
+
+fn planned_headers(
+    run_plan: &g_plan::RunPlan,
+    inputs: &TestInputs,
+    chunk_ranges: &[Range<usize>],
+) -> Vec<CurrentRunManifestHeaderInput> {
+    let variant_count = chunk_ranges.last().map_or(0, |range| range.end);
+    run_plan
+        .phenotype_runs
+        .iter()
+        .map(|phenotype_run| header_for_phenotype(inputs, variant_count, &phenotype_run.phenotype_name))
+        .collect()
 }
 
 fn timestamp_nanoseconds(seconds: i64, nanoseconds: i64) -> i64 {
@@ -283,13 +348,13 @@ fn completed_noop_cleanup_fixture(label: &str) -> CompletedNoopCleanupFixture {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let claimed_manager = OutputManager::open(resume_plan, "# completed no-op cleanup fixture\n".to_string())
         .expect("completed resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims");
     let claim_id = owner_claim_identifier(&output_root);
     let staging_attempt_id =
         lineage_paths.owner_staging_attempt(&claim_id).expect("owner staging reads").expect("owner staging exists");
     let completion = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume reverifies")
@@ -385,6 +450,76 @@ enum ManifestAuthorityTamper {
     OutputDirectory,
     ChunkPlan,
     ExecutionPlan,
+}
+
+#[derive(Clone, Copy)]
+enum BgenAgreementMismatch {
+    ContentSha256,
+    ByteCount,
+    GpuGenotypeFormat,
+}
+
+impl BgenAgreementMismatch {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ContentSha256 => "content SHA-256",
+            Self::ByteCount => "byte count",
+            Self::GpuGenotypeFormat => "GPU genotype format",
+        }
+    }
+
+    fn expected_error_fragment(self) -> &'static str {
+        match self {
+            Self::ContentSha256 => "BGEN content SHA-256",
+            Self::ByteCount => "BGEN content byte count",
+            Self::GpuGenotypeFormat => "GPU genotype format",
+        }
+    }
+
+    fn apply_to_header(self, header: &mut CurrentRunManifestHeaderInput) {
+        match self {
+            Self::ContentSha256 => {
+                let BgenContentEvidence::OwnedSnapshot(fingerprint) = header.bgen_content_evidence.as_ref() else {
+                    panic!("test header has owned BGEN content evidence");
+                };
+                header.bgen_content_evidence = Arc::new(BgenContentEvidence::OwnedSnapshot(BgenContentFingerprint {
+                    content_sha256: BgenContentSha256::from_bytes([0x55; 32]),
+                    byte_count: fingerprint.byte_count,
+                }));
+            }
+            Self::ByteCount => {
+                let BgenContentEvidence::OwnedSnapshot(fingerprint) = header.bgen_content_evidence.as_ref() else {
+                    panic!("test header has owned BGEN content evidence");
+                };
+                header.bgen_content_evidence = Arc::new(BgenContentEvidence::OwnedSnapshot(BgenContentFingerprint {
+                    content_sha256: fingerprint.content_sha256,
+                    byte_count: fingerprint.byte_count + 1,
+                }));
+            }
+            Self::GpuGenotypeFormat => {
+                header.resolved_gpu_genotype_format = g_plan::GpuGenotypeFormat::Dosage;
+            }
+        }
+    }
+
+    fn apply_to_manifest(self, manifest: &mut Value) {
+        match self {
+            Self::ContentSha256 => {
+                manifest["execution_plan"]["bgen"]["content_sha256"] = Value::String("f".repeat(64));
+            }
+            Self::ByteCount => {
+                let byte_count =
+                    manifest["execution_plan"]["bgen"]["byte_count"].as_u64().expect("BGEN byte count is uint64");
+                manifest["execution_plan"]["bgen"]["byte_count"] = Value::from(byte_count + 1);
+            }
+            Self::GpuGenotypeFormat => {
+                manifest["execution_plan"]["association_backend"]["kind"] = Value::String("jax_dosage".to_string());
+                manifest["execution_plan"]["association_backend"]["genotype_format"] =
+                    Value::String("dosage".to_string());
+            }
+        }
+        rehash_manifest_execution_plan(manifest);
+    }
 }
 
 impl ManifestAuthorityTamper {
@@ -497,10 +632,16 @@ fn assert_owner_authority_released(output_root: &Path) {
         .expect("owner authority resolves to a released leaf");
 }
 
-fn claim_error(run_plan: Arc<g_plan::RunPlan>, chunk_ranges: &[Range<usize>], context: &str) -> crate::OutputError {
+fn claim_error(
+    run_plan: Arc<g_plan::RunPlan>,
+    inputs: &TestInputs,
+    chunk_ranges: &[Range<usize>],
+    context: &str,
+) -> crate::OutputError {
+    let current_header_inputs = planned_headers(&run_plan, inputs, chunk_ranges);
     OutputManager::open(run_plan, "# test configuration\n".to_string())
         .expect("manager planning is read-only")
-        .claim(chunk_ranges, false)
+        .claim(current_header_inputs, chunk_ranges, false)
         .err()
         .unwrap_or_else(|| panic!("{context}"))
 }
@@ -649,7 +790,302 @@ fn completed_attempt_uses_exact_layout_footer_receipt_and_terminal_ordering() {
 }
 
 #[test]
-fn existing_gpu_format_hint_requires_exact_immutable_lineage_bindings() {
+fn identical_bgen_content_at_different_locators_has_one_execution_plan_identity() {
+    let directory = TestDirectory::new("bgen-content-plan-identity");
+    let inputs = test_inputs(&directory);
+    let relocated_bgen =
+        directory.write("relocated-input.bgen", &std::fs::read(&inputs.bgen).expect("original BGEN reads"));
+    let relocated_inputs = TestInputs {
+        bgen: relocated_bgen,
+        sample: inputs.sample.clone(),
+        phenotype: inputs.phenotype.clone(),
+        prediction_list: inputs.prediction_list.clone(),
+    };
+    let original_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+    let relocated_plan = run_plan(&directory, &relocated_inputs, false, None, g_plan::TelemetryMode::Off);
+    let original_header_input = header(&inputs, 2);
+    let relocated_header_input = header(&relocated_inputs, 2);
+    let mut original_cache = crate::manifest::ManifestFileFingerprintCache::default();
+    let mut relocated_cache = crate::manifest::ManifestFileFingerprintCache::default();
+    let original_header = crate::manifest::build_current_run_manifest_header_value_with_cache(
+        &original_plan,
+        &original_header_input,
+        &mut original_cache,
+    )
+    .expect("original manifest header builds");
+    let relocated_header = crate::manifest::build_current_run_manifest_header_value_with_cache(
+        &relocated_plan,
+        &relocated_header_input,
+        &mut relocated_cache,
+    )
+    .expect("relocated manifest header builds");
+
+    assert_ne!(original_plan.input.bgen_path, relocated_plan.input.bgen_path);
+    assert_eq!(original_header["execution_plan_hash"], relocated_header["execution_plan_hash"]);
+    assert_eq!(original_header["execution_plan"]["bgen"], relocated_header["execution_plan"]["bgen"]);
+    let bgen =
+        original_header["execution_plan"]["bgen"].as_object().expect("BGEN execution-plan authority is an object");
+    assert_eq!(bgen.len(), 2);
+    assert_eq!(
+        bgen.get("content_sha256"),
+        Some(&Value::String(bgen_content_fingerprint(&inputs.bgen).content_sha256.to_string()))
+    );
+    assert_eq!(bgen.get("byte_count"), Some(&Value::from(inputs.bgen.metadata().expect("BGEN metadata reads").len())));
+}
+
+#[test]
+fn positioned_unattested_bgen_can_create_fresh_output_but_cannot_authorize_resume() {
+    let directory = TestDirectory::new("unattested-bgen-fresh-only");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    let unattested_header = || {
+        header_for_phenotype_with_evidence(
+            2,
+            PHENOTYPE_NAME,
+            positioned_unattested_evidence(&inputs.bgen),
+            g_plan::GpuGenotypeFormat::Packed8,
+        )
+    };
+    OutputManager::open(
+        run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# unattested fresh output\n".to_string(),
+    )
+    .expect("fresh unattested output plans")
+    .initialize(vec![unattested_header()], &chunk_ranges, false)
+    .expect("fresh unattested output initializes")
+    .finish_interrupted("SIGTERM")
+    .expect("fresh unattested output publishes a terminal");
+
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let manifest_path =
+        output_root.join("attempts").join(attempt_id).join(OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let manifest = read_json(&manifest_path);
+    let bgen =
+        manifest["execution_plan"]["bgen"].as_object().expect("unattested BGEN execution-plan authority is an object");
+    assert_eq!(bgen.len(), 2);
+    assert_eq!(bgen.get("content_sha256"), Some(&Value::Null));
+    assert_eq!(bgen.get("byte_count"), Some(&Value::from(inputs.bgen.metadata().expect("BGEN metadata reads").len())));
+
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let agreement_error = OutputManager::open(Arc::clone(&resume_plan), "# unattested resume\n".to_string())
+        .expect("unattested resume plans")
+        .existing_output_resume_agreement()
+        .expect_err("unattested manifest cannot provide resume agreement");
+    assert!(matches!(
+        agreement_error,
+        crate::OutputError::ExistingOutputUnattestedBgenContent { manifest_path: error_path }
+            if error_path == manifest_path
+    ));
+
+    let Err(claim_error) = OutputManager::open(resume_plan, "# unattested claim\n".to_string())
+        .expect("unattested claim plans")
+        .claim(vec![unattested_header()], &chunk_ranges, false)
+    else {
+        panic!("unattested existing output cannot be claimed for resume");
+    };
+    assert!(matches!(
+        claim_error,
+        crate::OutputError::ExistingOutputUnattestedBgenContent { manifest_path: error_path }
+            if error_path == manifest_path
+    ));
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn current_multi_phenotype_bgen_agreement_is_validated_before_owner_acquisition() {
+    for mismatch in [
+        BgenAgreementMismatch::ContentSha256,
+        BgenAgreementMismatch::ByteCount,
+        BgenAgreementMismatch::GpuGenotypeFormat,
+    ] {
+        let directory = TestDirectory::new(&format!("current-bgen-agreement-{}", mismatch.label()));
+        let inputs = test_inputs(&directory);
+        let run_plan = two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
+        let mut headers = two_phenotype_headers(&inputs, 2);
+        mismatch.apply_to_header(&mut headers[1]);
+        let Err(error) = OutputManager::open(run_plan, "# disagreeing headers\n".to_string())
+            .expect("disagreeing output plans")
+            .claim(headers, &single_chunk_ranges(2), false)
+        else {
+            panic!("{} disagreement must fail before ownership", mismatch.label());
+        };
+        assert!(
+            error.to_string().contains(mismatch.expected_error_fragment()),
+            "{} mismatch returned unexpected error: {error}",
+            mismatch.label()
+        );
+        assert!(!directory.path.join("results").exists(), "{} mismatch acquired output authority", mismatch.label());
+    }
+}
+
+#[test]
+fn current_bgen_must_match_existing_authority_before_owner_acquisition() {
+    let directory = TestDirectory::new("current-existing-bgen-agreement");
+    let inputs = test_inputs(&directory);
+    let chunk_ranges = single_chunk_ranges(2);
+    initialize_manager(run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off), &inputs, &chunk_ranges)
+        .finish_interrupted("SIGTERM")
+        .expect("initial output publishes terminal authority");
+    let output_root = directory.path.join("results");
+    let before_mismatch = regular_file_snapshot(&output_root);
+    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+
+    for mismatch in [
+        BgenAgreementMismatch::ContentSha256,
+        BgenAgreementMismatch::ByteCount,
+        BgenAgreementMismatch::GpuGenotypeFormat,
+    ] {
+        let mut current_header = header(&inputs, 2);
+        mismatch.apply_to_header(&mut current_header);
+        let Err(error) = OutputManager::open(
+            Arc::clone(&resume_plan),
+            format!("# current-existing {} mismatch\n", mismatch.label()),
+        )
+        .expect("resume output plans")
+        .claim(vec![current_header], &chunk_ranges, false) else {
+            panic!("{} mismatch must fail before ownership", mismatch.label());
+        };
+        assert!(
+            error.to_string().contains(mismatch.expected_error_fragment()),
+            "{} mismatch returned unexpected error: {error}",
+            mismatch.label()
+        );
+        assert_eq!(
+            regular_file_snapshot(&output_root),
+            before_mismatch,
+            "{} mismatch mutated output authority",
+            mismatch.label()
+        );
+        assert_owner_authority_released(&output_root);
+    }
+}
+
+#[test]
+fn existing_multi_phenotype_manifests_require_exact_bgen_agreement() {
+    for mismatch in [
+        BgenAgreementMismatch::ContentSha256,
+        BgenAgreementMismatch::ByteCount,
+        BgenAgreementMismatch::GpuGenotypeFormat,
+    ] {
+        let directory = TestDirectory::new(&format!("existing-bgen-agreement-{}", mismatch.label()));
+        let inputs = test_inputs(&directory);
+        let chunk_ranges = single_chunk_ranges(2);
+        let manager = OutputManager::open(
+            two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+            "# active two-phenotype output\n".to_string(),
+        )
+        .expect("two-phenotype output plans")
+        .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+        .expect("two-phenotype output initializes");
+        let output_root = directory.path.join("results");
+        let attempt_id = attempt_identifier(&output_root, None);
+        let second_manifest_path =
+            output_root.join("attempts").join(&attempt_id).join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+        let genesis_path = output_root.join(".g-output/genesis.json");
+        let original_manifest_bytes = std::fs::read(&second_manifest_path).expect("second manifest reads");
+        let original_genesis_bytes = std::fs::read(&genesis_path).expect("genesis reads");
+        let mut changed_manifest: Value =
+            serde_json::from_slice(&original_manifest_bytes).expect("second manifest parses");
+        mismatch.apply_to_manifest(&mut changed_manifest);
+        let changed_execution_plan_hash = changed_manifest["execution_plan_hash"]
+            .as_str()
+            .expect("changed execution plan hash is a string")
+            .to_string();
+        let mut changed_genesis: Value = serde_json::from_slice(&original_genesis_bytes).expect("genesis parses");
+        changed_genesis["phenotypes"][1]["execution_plan_sha256"] = Value::String(changed_execution_plan_hash);
+        std::fs::write(
+            &second_manifest_path,
+            serde_json::to_vec(&changed_manifest).expect("changed manifest serializes"),
+        )
+        .expect("changed manifest writes");
+        std::fs::write(&genesis_path, serde_json::to_vec(&changed_genesis).expect("changed genesis serializes"))
+            .expect("changed genesis writes");
+
+        let error = OutputManager::open(
+            two_phenotype_run_plan(&directory, &inputs, true, Some(attempt_id), g_plan::TelemetryMode::Off),
+            "# disagreeing existing manifests\n".to_string(),
+        )
+        .expect("existing output plans")
+        .existing_output_resume_agreement()
+        .expect_err("existing manifest disagreement is rejected");
+        assert!(
+            error.to_string().contains(mismatch.expected_error_fragment()),
+            "{} mismatch returned unexpected error: {error}",
+            mismatch.label()
+        );
+
+        std::fs::write(&second_manifest_path, original_manifest_bytes).expect("second manifest restores");
+        std::fs::write(&genesis_path, original_genesis_bytes).expect("genesis restores");
+        manager.abort("existing agreement test cleanup").expect("active output terminates");
+        assert_owner_authority_released(&output_root);
+    }
+}
+
+#[test]
+fn aggregate_resume_agreement_preserves_terminal_missing_manifest_rule() {
+    let directory = TestDirectory::new("terminal-missing-manifest-agreement");
+    let inputs = test_inputs(&directory);
+    OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# terminal with two manifests\n".to_string(),
+    )
+    .expect("two-phenotype output plans")
+    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+    .expect("two-phenotype output initializes")
+    .finish_interrupted("SIGTERM")
+    .expect("two-phenotype terminal publishes");
+
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let missing_manifest_path =
+        output_root.join("attempts").join(attempt_id).join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    std::fs::remove_file(&missing_manifest_path).expect("terminal manifest is removed for the test");
+    let error = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
+        "# terminal missing one manifest\n".to_string(),
+    )
+    .expect("resume output plans")
+    .existing_output_resume_agreement()
+    .expect_err("terminal missing manifest is rejected");
+    assert!(error.to_string().contains("Terminal output attempt is missing manifest"));
+    assert!(error.to_string().contains(&missing_manifest_path.display().to_string()));
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn aggregate_resume_agreement_skips_missing_nonterminal_manifest() {
+    let directory = TestDirectory::new("nonterminal-missing-manifest-agreement");
+    let inputs = test_inputs(&directory);
+    let manager = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# active output with two manifests\n".to_string(),
+    )
+    .expect("two-phenotype output plans")
+    .initialize(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
+    .expect("two-phenotype output initializes");
+    let output_root = directory.path.join("results");
+    let attempt_id = attempt_identifier(&output_root, None);
+    let second_manifest_path =
+        output_root.join("attempts").join(&attempt_id).join(SECOND_OUTPUT_DIRECTORY_NAME).join("run_manifest.json");
+    let second_manifest_bytes = std::fs::read(&second_manifest_path).expect("second manifest reads");
+    std::fs::remove_file(&second_manifest_path).expect("nonterminal manifest is removed for the test");
+    let agreement = OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, true, Some(attempt_id), g_plan::TelemetryMode::Off),
+        "# active output missing one manifest\n".to_string(),
+    )
+    .expect("resume output plans")
+    .existing_output_resume_agreement()
+    .expect("missing nonterminal manifest is skipped");
+    assert_eq!(agreement, Some(expected_resume_agreement(&inputs, g_plan::GpuGenotypeFormat::Packed8)));
+
+    std::fs::write(&second_manifest_path, second_manifest_bytes).expect("second manifest restores");
+    manager.abort("nonterminal missing manifest test cleanup").expect("active output terminates");
+    assert_owner_authority_released(&output_root);
+}
+
+#[test]
+fn existing_resume_agreement_requires_exact_immutable_lineage_bindings() {
     let directory = TestDirectory::new("gpu-format-authority-binding");
     let inputs = test_inputs(&directory);
     let chunk_ranges = single_chunk_ranges(2);
@@ -671,8 +1107,8 @@ fn existing_gpu_format_hint_requires_exact_immutable_lineage_bindings() {
     let planned_manager =
         OutputManager::open(resume_plan, "# authority-bound GPU hint\n".to_string()).expect("resume plans");
     assert_eq!(
-        planned_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("authority-bound hint reads"),
-        Some(g_plan::GpuGenotypeFormat::Packed8)
+        planned_manager.existing_output_resume_agreement().expect("authority-bound agreement reads"),
+        Some(expected_resume_agreement(&inputs, g_plan::GpuGenotypeFormat::Packed8))
     );
 
     for tamper in [
@@ -691,8 +1127,8 @@ fn existing_gpu_format_hint_requires_exact_immutable_lineage_bindings() {
             serde_json::to_vec_pretty(&changed_manifest).expect("changed manifest serializes"),
         )
         .expect("changed manifest writes");
-        let error = match planned_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME) {
-            Ok(format) => panic!("{} tamper must be rejected, observed {format:?}", tamper.label()),
+        let error = match planned_manager.existing_output_resume_agreement() {
+            Ok(agreement) => panic!("{} tamper must be rejected, observed {agreement:?}", tamper.label()),
             Err(error) => error,
         };
         assert!(
@@ -706,7 +1142,7 @@ fn existing_gpu_format_hint_requires_exact_immutable_lineage_bindings() {
     changed_terminal_bytes.push(b'\n');
     std::fs::write(&manifest_path, changed_terminal_bytes).expect("raw terminal manifest tamper writes");
     let changed_terminal_error = planned_manager
-        .existing_manifest_gpu_genotype_format(PHENOTYPE_NAME)
+        .existing_output_resume_agreement()
         .expect_err("semantically identical bytes outside the immutable terminal binding are rejected");
     assert!(changed_terminal_error.to_string().contains("immutable terminal manifest"));
 }
@@ -736,8 +1172,8 @@ fn finalized_noncompleted_terminals_provide_authority_bound_gpu_format_hints() {
         )
         .expect("terminal resume plans");
         assert_eq!(
-            hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("terminal hint validates"),
-            Some(g_plan::GpuGenotypeFormat::Packed8),
+            hint_manager.existing_output_resume_agreement().expect("terminal agreement validates"),
+            Some(expected_resume_agreement(&inputs, g_plan::GpuGenotypeFormat::Packed8)),
             "{status} terminal"
         );
     }
@@ -776,12 +1212,10 @@ fn swapped_two_phenotype_execution_plans_fail_before_gpu_format_hint() {
         "# swapped phenotype GPU hint\n".to_string(),
     )
     .expect("swapped phenotype resume plans");
-    for phenotype_name in [PHENOTYPE_NAME, SECOND_PHENOTYPE_NAME] {
-        let error = hint_manager
-            .existing_manifest_gpu_genotype_format(phenotype_name)
-            .expect_err("swapped execution plan is rejected before providing a hint");
-        assert!(error.to_string().contains("execution plan phenotype does not match its manifest phenotype"));
-    }
+    let error = hint_manager
+        .existing_output_resume_agreement()
+        .expect_err("swapped execution plan is rejected before providing an agreement");
+    assert!(error.to_string().contains("execution plan phenotype does not match its manifest phenotype"));
 }
 
 #[test]
@@ -971,11 +1405,7 @@ fn controlled_initialization_failures_never_leave_an_owner_claim() {
             _ => unreachable!("failure stages are exhaustive"),
         };
         assert!(initialization_result.is_err());
-        if failure_stage == "headers" {
-            assert_owner_authority_released(&output_root);
-        } else {
-            assert!(!output_root.exists(), "pre-claim validation must remain read-only");
-        }
+        assert!(!output_root.exists(), "pre-claim validation must remain read-only");
     }
 
     for failure_point in ["after_owner_staging_intent", "after_claim_diagnostics_creation"] {
@@ -1098,16 +1528,9 @@ fn failed_multi_phenotype_preactivation_allows_a_fresh_retry() {
         .expect("multi-phenotype manager plans")
         .initialize(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
         .err()
-        .expect("missing second phenotype header rejects activation");
+        .expect("missing second phenotype header rejects claim");
     assert!(initialization_error.to_string().contains("do not cover planned phenotypes exactly"));
-    assert_owner_authority_released(&output_root);
-    assert!(!output_root.join(".g-output/genesis.json").exists());
-    assert!(
-        std::fs::read_dir(output_root.join(".g-output/owner-staging"))
-            .expect("owner staging directory reads")
-            .next()
-            .is_none()
-    );
+    assert!(!output_root.exists(), "invalid headers fail before output owner acquisition");
 
     let retry_manager = OutputManager::open(plan, "# complete initialization\n".to_string())
         .expect("fresh multi-phenotype retry plans")
@@ -1139,20 +1562,23 @@ fn preactivation_failure_retains_ownership_until_explicit_rollback() {
     });
     let manager = OutputManager::open(Arc::clone(&plan), "# deferred rollback\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), true)
+        .claim(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), true)
         .expect("manager claims");
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .err()
-        .expect("missing phenotype header rejects activation");
+        .expect("prepublication activation failure is injected");
+    drop(failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
-    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(source.to_string().contains("after_owner_claim"));
     assert!(diagnostics_directory.is_dir());
 
     let output_root = directory.path.join("results");
     let contender_error = claim_error(
         Arc::clone(&plan),
+        &inputs,
         &single_chunk_ranges(2),
         "preactivation owner must survive until diagnostics close",
     );
@@ -1167,7 +1593,7 @@ fn preactivation_failure_retains_ownership_until_explicit_rollback() {
 
     OutputManager::open(plan, "# retry after rollback\n".to_string())
         .expect("retry manager plans")
-        .claim(&single_chunk_ranges(2), false)
+        .claim(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
         .expect("retry claims after rollback")
         .abort_before_activation()
         .expect("retry staging cleans and releases");
@@ -1186,16 +1612,18 @@ fn preactivation_rollback_retries_after_transient_staging_cleanup_failure() {
     let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
     let manager = OutputManager::open(Arc::clone(&plan), "# retryable deferred rollback\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), true)
+        .claim(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), true)
         .expect("manager claims");
     let claim_id = owner_claim_identifier(&output_root);
     let staging_attempt_id =
         lineage_paths.owner_staging_attempt(&claim_id).expect("staging intent reads").expect("staging intent exists");
-    let Err(activation_error) = manager.activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)]) else {
-        panic!("missing phenotype header must reject activation");
+    let activation_failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
+    let Err(activation_error) = manager.activate_with_deferred_completed_noop_cleanup() else {
+        panic!("prepublication activation failure must be injected");
     };
+    drop(activation_failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
-    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(source.to_string().contains("after_owner_claim"));
     let mut rollback = rollback.expect("unpublished activation returns rollback authority");
 
     let failure_guard = crate::manager::install_initialization_cleanup_failure_for_test("after_claim_staging_removal");
@@ -1210,7 +1638,7 @@ fn preactivation_rollback_retries_after_transient_staging_cleanup_failure() {
         Some(staging_attempt_id)
     );
     assert_surviving_owner_claim(
-        claim_error(plan, &single_chunk_ranges(2), "failed rollback retains exact authority"),
+        claim_error(plan, &inputs, &single_chunk_ranges(2), "failed rollback retains exact authority"),
         &output_root,
     );
 
@@ -1231,28 +1659,34 @@ fn dropped_deferred_rollback_fails_closed_until_exactly_fenced() {
     });
     let manager = OutputManager::open(Arc::clone(&plan), "# dropped deferred rollback\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), true)
+        .claim(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), true)
         .expect("manager claims");
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .err()
-        .expect("missing phenotype header rejects activation");
+        .expect("prepublication activation failure is injected");
+    drop(failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
-    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(source.to_string().contains("after_owner_claim"));
     drop(rollback);
 
     let output_root = directory.path.join("results");
     assert!(diagnostics_directory.is_dir(), "dropped rollback retains claim-scoped diagnostics");
     let active_claim_id = owner_claim_identifier(&output_root);
-    let contender_error =
-        claim_error(Arc::clone(&plan), &single_chunk_ranges(2), "dropped rollback must leave a surviving claim");
+    let contender_error = claim_error(
+        Arc::clone(&plan),
+        &inputs,
+        &single_chunk_ranges(2),
+        "dropped rollback must leave a surviving claim",
+    );
     assert_surviving_owner_claim(contender_error, &output_root);
 
     let fenced_plan = authorize_fenced_owner_claim(plan, active_claim_id);
     let fenced_manager = OutputManager::open(fenced_plan, "# fenced dropped rollback\n".to_string())
         .expect("fenced manager plans")
-        .claim(&single_chunk_ranges(2), false)
+        .claim(two_phenotype_headers(&inputs, 2), &single_chunk_ranges(2), false)
         .expect("exact fence takes over the dropped rollback");
     assert!(!diagnostics_directory.exists());
     fenced_manager.abort_before_activation().expect("fenced manager staging cleans and releases");
@@ -1267,13 +1701,11 @@ fn postpublication_activation_failure_terminalizes_without_rollback_authority() 
     let output_root = directory.path.join("results");
     let manager = OutputManager::open(plan, "# published activation failure\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), false)
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
         .expect("manager claims");
     let failure_guard = crate::manager::install_initialization_failure_for_test("after_attempt_claim");
-    let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
-        .err()
-        .expect("postpublication failure is injected");
+    let activation_error =
+        manager.activate_with_deferred_completed_noop_cleanup().err().expect("postpublication failure is injected");
     drop(failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
     assert!(source.to_string().contains("after_attempt_claim"));
@@ -1299,13 +1731,13 @@ fn prelink_genesis_failure_returns_rollback_and_rechecks_before_deletion() {
         let genesis_path = output_root.join(".g-output/genesis.json");
         let manager = OutputManager::open(plan, "# prelink failure\n".to_string())
             .expect("manager plans")
-            .claim(&single_chunk_ranges(2), true)
+            .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), true)
             .expect("manager claims");
         let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
         let failure_guard =
             crate::persistence::io::install_immutable_publication_file_sync_failure_for_test(genesis_path.clone());
         let activation_error = manager
-            .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+            .activate_with_deferred_completed_noop_cleanup()
             .err()
             .expect("prelink synchronization failure rejects activation");
         drop(failure_guard);
@@ -1339,7 +1771,7 @@ fn visible_genesis_after_durability_error_never_exposes_rollback() {
     let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
     let manager = OutputManager::open(Arc::clone(&plan), "# visible genesis failure\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), true)
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), true)
         .expect("manager claims");
     let claim_id = owner_claim_identifier(&output_root);
     let staged_attempt_id =
@@ -1350,7 +1782,7 @@ fn visible_genesis_after_durability_error_never_exposes_rollback() {
         3,
     );
     let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .err()
         .expect("postlink durability failure rejects activation");
     drop(failure_guard);
@@ -1366,7 +1798,7 @@ fn visible_genesis_after_durability_error_never_exposes_rollback() {
     let blocked_plan =
         run_plan(&directory, &inputs, true, Some(staged_attempt_id.as_str().to_string()), g_plan::TelemetryMode::Off);
     assert_surviving_owner_claim(
-        claim_error(blocked_plan, &single_chunk_ranges(2), "visible genesis retains its exact owner"),
+        claim_error(blocked_plan, &inputs, &single_chunk_ranges(2), "visible genesis retains its exact owner"),
         &output_root,
     );
 
@@ -1376,7 +1808,7 @@ fn visible_genesis_after_durability_error_never_exposes_rollback() {
     );
     let recovery_manager = OutputManager::open(recovery_plan, "# fenced visible genesis\n".to_string())
         .expect("fenced recovery plans")
-        .claim(&single_chunk_ranges(2), false)
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
         .expect("fenced recovery claims");
     assert!(diagnostics_directory.is_dir(), "referenced genesis diagnostics survive fencing");
     recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
@@ -1399,7 +1831,7 @@ fn visible_successor_after_durability_error_never_loses_staging() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let manager = OutputManager::open(Arc::clone(&resume_plan), "# visible successor failure\n".to_string())
         .expect("resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("resume claims");
     let claim_id = owner_claim_identifier(&output_root);
     let staged_attempt_id =
@@ -1413,10 +1845,7 @@ fn visible_successor_after_durability_error_never_loses_staging() {
         successor_path.clone(),
         3,
     );
-    let activation_error = manager
-        .activate(vec![header(&inputs, 2)])
-        .err()
-        .expect("postlink successor durability failure rejects activation");
+    let activation_error = manager.activate().err().expect("postlink successor durability failure rejects activation");
     drop(failure_guard);
     assert!(activation_error.to_string().contains("directory durability"));
     assert!(successor_path.is_file());
@@ -1433,7 +1862,7 @@ fn visible_successor_after_durability_error_never_loses_staging() {
     );
     let recovery_manager = OutputManager::open(recovery_plan, "# fenced visible successor\n".to_string())
         .expect("fenced successor recovery plans")
-        .claim(&chunk_ranges, false)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
         .expect("fenced successor recovery claims");
     assert!(diagnostics_directory.is_dir(), "referenced successor diagnostics survive fencing");
     recovery_manager.abort_before_activation().expect("recovery staging cleans and releases");
@@ -1448,15 +1877,13 @@ fn conflicting_genesis_target_fails_closed_without_rollback() {
     let output_root = directory.path.join("results");
     let manager = OutputManager::open(plan, "# conflicting genesis\n".to_string())
         .expect("manager plans")
-        .claim(&single_chunk_ranges(2), true)
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), true)
         .expect("manager claims");
     let diagnostics_directory = manager.diagnostics_directory().expect("claim diagnostics exist").to_path_buf();
     let genesis_path = output_root.join(".g-output/genesis.json");
     std::fs::write(&genesis_path, b"{}\n").expect("conflicting target publishes");
-    let activation_error = manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
-        .err()
-        .expect("conflicting genesis rejects activation");
+    let activation_error =
+        manager.activate_with_deferred_completed_noop_cleanup().err().expect("conflicting genesis rejects activation");
     let crate::OutputActivationFailureParts { rollback, .. } = activation_error.into_parts();
     assert!(rollback.is_none(), "present conflicting authority must fail closed");
     assert!(diagnostics_directory.is_dir());
@@ -1488,7 +1915,7 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed no-op\n".to_string())
         .expect("resume manager plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed output is claimed");
     let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
     let active_claim_id = owner_claim_identifier(&output_root);
@@ -1503,12 +1930,11 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
         .expect("test telemetry is written");
 
     let contender_error =
-        claim_error(Arc::clone(&resume_plan), &chunk_ranges, "unfinalized completed claim remains exclusive");
+        claim_error(Arc::clone(&resume_plan), &inputs, &chunk_ranges, "unfinalized completed claim remains exclusive");
     assert_surviving_owner_claim(contender_error, &output_root);
 
-    let completed_manager = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
-        .expect("completed output activates read-only");
+    let completed_manager =
+        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed output activates read-only");
     let token =
         completed_manager.delivery_token_for_phenotypes(&[PHENOTYPE_NAME.to_string()]).expect("read-only token builds");
     assert!(token.is_read_only());
@@ -1529,7 +1955,7 @@ fn completed_claim_has_no_cleanup_authority_before_read_only_finalization() {
     assert_owner_authority_released(&output_root);
     OutputManager::open(resume_plan, "# reacquired after cleanup\n".to_string())
         .expect("post-cleanup manager plans")
-        .claim(&chunk_ranges, false)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
         .expect("ordinary reacquisition succeeds after current-owner cleanup")
         .abort_before_activation()
         .expect("reacquired staging cleans and releases");
@@ -1618,7 +2044,7 @@ fn completed_noop_cleanup_durably_confirms_a_visible_competing_takeover() {
     let successor_plan = authorize_fenced_owner_claim(resume_plan, claim_id.clone());
     let takeover_result = OutputManager::open(successor_plan, "# visible competing takeover\n".to_string())
         .expect("successor plans")
-        .claim(&single_chunk_ranges(2), false);
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false);
     let Err(takeover_error) = takeover_result else {
         panic!("four synchronization failures must leave takeover durability unresolved");
     };
@@ -1692,9 +2118,9 @@ fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let completion = OutputManager::open(Arc::clone(&resume_plan), "# predecessor cleanup\n".to_string())
         .expect("completed resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims")
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume reverifies")
@@ -1708,7 +2134,7 @@ fn completed_noop_cleanup_is_a_noop_after_fenced_successor_release() {
         "# fenced successor\n".to_string(),
     )
     .expect("fenced successor plans")
-    .claim(&chunk_ranges, false)
+    .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
     .expect("fenced successor claims");
     successor.abort_before_activation().expect("fenced successor releases");
     assert_owner_authority_released(&output_root);
@@ -1748,9 +2174,9 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
         let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
         let manager = OutputManager::open(resume_plan, format!("# completed no-op {operation}\n"))
             .expect("completed resume plans")
-            .claim(&chunk_ranges, true)
+            .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
             .expect("completed resume claims")
-            .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+            .activate_with_deferred_completed_noop_cleanup()
             .expect("completed resume activates");
         let lifecycle_guard =
             (operation == "close").then(|| crate::manager::install_lifecycle_failure_for_test("close_completed_noop"));
@@ -1775,9 +2201,9 @@ fn every_completed_noop_terminal_failure_returns_cleanup_authority() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let covered = OutputManager::open(resume_plan, "# completed no-op finish failure\n".to_string())
         .expect("completed resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims")
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
+        .activate_with_deferred_completed_noop_cleanup()
         .expect("completed resume activates")
         .close_completed()
         .expect("completed resume first verification succeeds");
@@ -1855,14 +2281,13 @@ fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# completed predecessor\n".to_string())
         .expect("completed predecessor plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed predecessor claims");
     let predecessor_diagnostics =
         claimed_manager.diagnostics_directory().expect("predecessor diagnostics exist").to_path_buf();
     let predecessor_claim_id = owner_claim_identifier(&output_root);
-    let completed_manager = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
-        .expect("completed predecessor activates");
+    let completed_manager =
+        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed predecessor activates");
     let completion = completed_manager
         .close_completed()
         .expect("completed predecessor reverifies")
@@ -1877,7 +2302,7 @@ fn completed_noop_cleanup_racing_fenced_takeover_preserves_successor_staging() {
     let successor_manager = std::thread::scope(|scope| {
         let cleanup_thread = scope.spawn(move || predecessor_cleanup.cleanup());
         cleanup_control.wait_until_reached().expect("predecessor cleanup reaches its bounded test pause");
-        let successor_result = successor_manager.claim(&single_chunk_ranges(2), false);
+        let successor_result = successor_manager.claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false);
         cleanup_control.resume();
         let cleanup_result = cleanup_thread.join().expect("predecessor cleanup thread joins");
         cleanup_result.expect("predecessor cleanup tolerates the successor sweep");
@@ -1916,7 +2341,7 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let claimed_manager = OutputManager::open(Arc::clone(&resume_plan), "# dropped cleanup\n".to_string())
         .expect("completed resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims");
     let lineage_paths = crate::persistence::lineage::OutputLineagePaths::new(&output_root);
     let diagnostics_directory =
@@ -1928,9 +2353,8 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
         .owner_staging_attempt(&predecessor_claim_id)
         .expect("predecessor staging reads")
         .expect("predecessor staging exists");
-    let completed_manager = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup(vec![header(&inputs, 2)])
-        .expect("completed output activates read-only");
+    let completed_manager =
+        claimed_manager.activate_with_deferred_completed_noop_cleanup().expect("completed output activates read-only");
     let completion = completed_manager
         .close_completed()
         .expect("completed output reverifies")
@@ -1943,14 +2367,18 @@ fn fenced_successor_sweeps_dropped_completed_noop_cleanup() {
         lineage_paths.owner_staging_attempt(&predecessor_claim_id).expect("retained staging reads"),
         Some(staging_attempt_id.clone())
     );
-    let contender_error =
-        claim_error(Arc::clone(&resume_plan), &chunk_ranges, "dropped cleanup must retain the exact owner claim");
+    let contender_error = claim_error(
+        Arc::clone(&resume_plan),
+        &inputs,
+        &chunk_ranges,
+        "dropped cleanup must retain the exact owner claim",
+    );
     assert_surviving_owner_claim(contender_error, &output_root);
 
     let contender_plan = authorize_fenced_owner_claim(resume_plan, predecessor_claim_id.clone());
     let contender = OutputManager::open(contender_plan, "# fenced contender\n".to_string())
         .expect("fenced contender plans")
-        .claim(&chunk_ranges, false)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
         .expect("fenced contender takes over");
     assert!(!diagnostics_directory.exists());
     assert!(!lineage_paths.attempt_directory(&staging_attempt_id).exists());
@@ -1986,16 +2414,18 @@ fn completed_preactivation_failure_returns_only_rollback_authority() {
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
     let claimed_manager = OutputManager::open(resume_plan, "# completed rollback\n".to_string())
         .expect("completed resume plans")
-        .claim(&chunk_ranges, true)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, true)
         .expect("completed resume claims");
     let diagnostics_directory =
         claimed_manager.diagnostics_directory().expect("completed claim diagnostics exist").to_path_buf();
+    let failure_guard = crate::manager::install_initialization_failure_for_test("after_owner_claim");
     let activation_error = claimed_manager
-        .activate_with_deferred_completed_noop_cleanup(Vec::new())
+        .activate_with_deferred_completed_noop_cleanup()
         .err()
-        .expect("missing header rejects activation");
+        .expect("prepublication activation failure is injected");
+    drop(failure_guard);
     let crate::OutputActivationFailureParts { source, rollback } = activation_error.into_parts();
-    assert!(source.to_string().contains("do not cover planned phenotypes exactly"));
+    assert!(source.to_string().contains("after_owner_claim"));
     assert!(diagnostics_directory.is_dir());
     rollback
         .expect("unpublished activation returns rollback authority")
@@ -2494,6 +2924,7 @@ fn genesis_claim_crash_recovers_from_its_authorized_attempt_directory() {
     let resume_plan = run_plan(&directory, &inputs, true, Some(claimed_attempt.clone()), g_plan::TelemetryMode::Off);
     let blocked_error = claim_error(
         Arc::clone(&resume_plan),
+        &inputs,
         &single_chunk_ranges(2),
         "surviving owner claim blocks automatic recovery",
     );
@@ -2541,7 +2972,7 @@ fn fenced_successor_preserves_referenced_diagnostics_after_publication_crash() {
     );
     let recovery_manager = OutputManager::open(recovery_plan, "# exact recovery\n".to_string())
         .expect("exact recovery plans")
-        .claim(&single_chunk_ranges(2), false)
+        .claim(vec![header(&inputs, 2)], &single_chunk_ranges(2), false)
         .expect("exact fence claims a recovery attempt");
     assert!(predecessor_diagnostics.is_dir(), "referenced writable diagnostics must survive fencing");
     assert_eq!(
@@ -2590,7 +3021,7 @@ fn fenced_recovery_preserves_successor_diagnostics_before_staging_retirement() {
     );
     let recovery_manager = OutputManager::open(recovery_plan, "# exact successor recovery\n".to_string())
         .expect("exact successor recovery plans")
-        .claim(&chunk_ranges, false)
+        .claim(single_phenotype_headers(&inputs, &chunk_ranges), &chunk_ranges, false)
         .expect("exact fence claims another recovery attempt");
     assert!(predecessor_diagnostics.is_dir(), "referenced successor diagnostics must survive fencing");
     assert_eq!(
@@ -2615,8 +3046,12 @@ fn owner_claim_publication_crash_windows_remain_fail_closed_and_recoverable() {
         assert!(!output_root.join(".g-output/genesis.json").exists());
         let fresh_plan = if claim_published {
             let blocked_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
-            let blocked_error =
-                claim_error(blocked_plan, &single_chunk_ranges(2), "post-link crash leaves a typed surviving claim");
+            let blocked_error = claim_error(
+                blocked_plan,
+                &inputs,
+                &single_chunk_ranges(2),
+                "post-link crash leaves a typed surviving claim",
+            );
             assert_surviving_owner_claim(blocked_error, &output_root);
             authorize_fenced_owner_claim(
                 run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off),
@@ -2651,8 +3086,12 @@ fn panic_unwind_leaves_a_fail_closed_owner_claim() {
     assert!(output_root.join(".g-output/session.claim.json").is_file());
     assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).exists());
     let recovery_plan = run_plan(&directory, &inputs, true, Some(attempt), g_plan::TelemetryMode::Off);
-    let blocked_error =
-        claim_error(Arc::clone(&recovery_plan), &single_chunk_ranges(2), "panic claim blocks automatic recovery");
+    let blocked_error = claim_error(
+        Arc::clone(&recovery_plan),
+        &inputs,
+        &single_chunk_ranges(2),
+        "panic claim blocks automatic recovery",
+    );
     assert_surviving_owner_claim(blocked_error, &output_root);
 
     let recovery_plan = authorize_fenced_owner_claim(recovery_plan, owner_claim_identifier(&output_root));
@@ -2683,7 +3122,10 @@ fn nonterminal_recovery_rejects_a_dangling_manifest_symlink_as_present_but_inval
         .err()
         .expect("dangling nonterminal manifest symlink is rejected");
     assert!(error.to_string().contains("must not be a symbolic link"));
-    assert_owner_authority_released(&output_root);
+    let surviving_owner_error = crate::persistence::lineage::OutputLineagePaths::new(&output_root)
+        .reject_surviving_owner_claim()
+        .expect_err("invalid pre-owner manifest validation leaves the prior owner fail-closed");
+    assert_surviving_owner_claim(surviving_owner_error, &output_root);
 }
 
 #[test]
@@ -2704,8 +3146,12 @@ fn successor_claim_crash_is_exactly_recoverable_without_an_orphan_candidate() {
 
     let exact_recovery_plan =
         run_plan(&directory, &inputs, true, Some(claimed_successor.clone()), g_plan::TelemetryMode::Off);
-    let blocked_error =
-        claim_error(Arc::clone(&exact_recovery_plan), &chunk_ranges, "surviving owner claim blocks exact recovery");
+    let blocked_error = claim_error(
+        Arc::clone(&exact_recovery_plan),
+        &inputs,
+        &chunk_ranges,
+        "surviving owner claim blocks exact recovery",
+    );
     assert_surviving_owner_claim(blocked_error, &output_root);
     let exact_recovery_plan = authorize_fenced_owner_claim(exact_recovery_plan, owner_claim_identifier(&output_root));
     let manager = initialize_manager(exact_recovery_plan, &inputs, &chunk_ranges);
@@ -2743,15 +3189,20 @@ fn live_manager_claim_blocks_a_second_process_and_survives_owner_kill() {
     let active_claim_id = owner_claim_identifier(&output_root);
     let before_contender = regular_file_snapshot(&output_root);
     let contender_plan = run_plan(&directory, &inputs, true, Some(active_attempt.clone()), g_plan::TelemetryMode::Off);
-    let contender_error = claim_error(contender_plan, &single_chunk_ranges(2), "live owner claim blocks contender");
+    let contender_error =
+        claim_error(contender_plan, &inputs, &single_chunk_ranges(2), "live owner claim blocks contender");
     assert_surviving_owner_claim(contender_error, &output_root);
     assert_eq!(regular_file_snapshot(&output_root), before_contender);
 
     owner.kill().expect("live output owner is killed");
     owner.wait().expect("killed output owner is reaped");
     let recovery_plan = run_plan(&directory, &inputs, true, Some(active_attempt.clone()), g_plan::TelemetryMode::Off);
-    let stale_error =
-        claim_error(Arc::clone(&recovery_plan), &single_chunk_ranges(2), "killed owner leaves a fail-closed claim");
+    let stale_error = claim_error(
+        Arc::clone(&recovery_plan),
+        &inputs,
+        &single_chunk_ranges(2),
+        "killed owner leaves a fail-closed claim",
+    );
     assert_surviving_owner_claim(stale_error, &output_root);
     assert_eq!(regular_file_snapshot(&output_root), before_contender);
 
@@ -2761,6 +3212,7 @@ fn live_manager_claim_blocks_a_second_process_and_survives_owner_kill() {
     );
     let wrong_fence_error = claim_error(
         wrong_fence_plan,
+        &inputs,
         &single_chunk_ranges(2),
         "mismatched external fence cannot remove the surviving claim",
     );
@@ -2774,7 +3226,7 @@ fn live_manager_claim_blocks_a_second_process_and_survives_owner_kill() {
 
 #[cfg(unix)]
 #[test]
-fn path_aliases_to_one_output_root_contend_on_the_same_owner_claim() {
+fn path_aliases_to_one_output_root_fail_before_owner_transition() {
     let directory = TestDirectory::new("owner-path-alias");
     let inputs = test_inputs(&directory);
     let owner_plan = run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off);
@@ -2788,8 +3240,13 @@ fn path_aliases_to_one_output_root_contend_on_the_same_owner_claim() {
     let alias_directory = std::mem::ManuallyDrop::new(TestDirectory { path: alias_path });
     let contender_plan = run_plan(&alias_directory, &inputs, true, Some(attempt), g_plan::TelemetryMode::Off);
     let alias_output_root = alias_directory.path.join("results");
-    let error = claim_error(contender_plan, &single_chunk_ranges(2), "path alias observes the live owner claim");
-    assert_surviving_owner_claim(error, &alias_output_root);
+    let error = claim_error(
+        contender_plan,
+        &inputs,
+        &single_chunk_ranges(2),
+        "path alias fails strict pre-owner manifest validation",
+    );
+    assert!(error.to_string().contains("effective_config"));
     assert_eq!(
         output_root.join(".g-output/session.claim.json").metadata().expect("owner claim metadata reads").ino(),
         alias_output_root
@@ -2823,16 +3280,12 @@ fn partially_materialized_interrupted_terminal_hints_and_recovers_both_phenotype
     assert_eq!(read_json(&second_manifest_path)["status"], "running");
 
     let resume_plan = two_phenotype_run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
-    let hint_manager = OutputManager::open(Arc::clone(&resume_plan), "# partial terminal GPU hints\n".to_string())
+    let hint_manager = OutputManager::open(Arc::clone(&resume_plan), "# partial terminal agreement\n".to_string())
         .expect("partial terminal resume plans");
-    for phenotype_name in [PHENOTYPE_NAME, SECOND_PHENOTYPE_NAME] {
-        assert_eq!(
-            hint_manager
-                .existing_manifest_gpu_genotype_format(phenotype_name)
-                .expect("partially materialized manifest validates"),
-            Some(g_plan::GpuGenotypeFormat::Packed8)
-        );
-    }
+    assert_eq!(
+        hint_manager.existing_output_resume_agreement().expect("partially materialized manifests validate"),
+        Some(expected_resume_agreement(&inputs, g_plan::GpuGenotypeFormat::Packed8))
+    );
     drop(hint_manager);
 
     let recovery_plan = authorize_fenced_owner_claim(resume_plan, owner_claim_identifier(&output_root));
@@ -2848,22 +3301,31 @@ fn partially_materialized_interrupted_terminal_hints_and_recovers_both_phenotype
 }
 
 #[test]
-fn gpu_format_hint_rejects_lineage_change_between_manifest_read_and_reinspection() {
-    let directory = TestDirectory::new("gpu-format-lineage-race");
+fn whole_plan_resume_agreement_pauses_and_reinspects_once_after_all_manifest_reads() {
+    let directory = TestDirectory::new("resume-agreement-lineage-race");
     let inputs = test_inputs(&directory);
     let chunk_ranges = single_chunk_ranges(2);
-    initialize_manager(run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off), &inputs, &chunk_ranges)
-        .finish_interrupted("SIGTERM")
-        .expect("interrupted terminal publishes");
+    OutputManager::open(
+        two_phenotype_run_plan(&directory, &inputs, false, None, g_plan::TelemetryMode::Off),
+        "# two phenotype interrupted terminal\n".to_string(),
+    )
+    .expect("initial manager plans")
+    .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+    .expect("initial manager activates")
+    .finish_interrupted("SIGTERM")
+    .expect("interrupted terminal publishes");
 
-    let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
-    let mut hint_manager =
-        OutputManager::open(Arc::clone(&resume_plan), "# paused GPU hint\n".to_string()).expect("hint manager plans");
+    let resume_plan = two_phenotype_run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Off);
+    let mut hint_manager = OutputManager::open(Arc::clone(&resume_plan), "# paused resume agreement\n".to_string())
+        .expect("agreement manager plans");
     let hint_control = hint_manager.install_manifest_hint_pause_for_test().expect("hint pause installs");
     std::thread::scope(|scope| {
-        let hint_thread = scope.spawn(move || hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME));
+        let hint_thread = scope.spawn(move || hint_manager.existing_output_resume_agreement());
         hint_control.wait_until_reached().expect("hint pauses before lineage reinspection");
-        let successor = initialize_manager(resume_plan, &inputs, &chunk_ranges);
+        let successor = OutputManager::open(resume_plan, "# successor\n".to_string())
+            .expect("successor plans")
+            .initialize(two_phenotype_headers(&inputs, 2), &chunk_ranges, false)
+            .expect("successor initializes");
         hint_control.resume();
 
         let hint_error = hint_thread
@@ -2871,6 +3333,8 @@ fn gpu_format_hint_rejects_lineage_change_between_manifest_read_and_reinspection
             .expect("hint thread does not panic")
             .expect_err("lineage successor invalidates the prior hint read");
         assert!(matches!(hint_error, crate::OutputError::ConcurrentLineageUpdate { .. }));
+        assert_eq!(hint_control.reach_count(), 1);
+        assert_eq!(hint_control.final_inspect_count(), 1);
         successor.abort("manifest hint race cleanup").expect("successor terminates");
     });
     assert_owner_authority_released(&directory.path.join("results"));
@@ -2892,15 +3356,16 @@ fn pending_completed_terminal_is_finalized_after_a_process_crash() {
     assert!(!output_root.join(".g-output/terminal-finalizations").join(format!("{attempt}.json")).exists());
 
     let resume_plan = run_plan(&directory, &inputs, true, None, g_plan::TelemetryMode::Profile);
-    let hint_manager =
-        OutputManager::open(Arc::clone(&resume_plan), "# pending-terminal GPU hint\n".to_string()).expect("hint plans");
+    let hint_manager = OutputManager::open(Arc::clone(&resume_plan), "# pending-terminal agreement\n".to_string())
+        .expect("hint plans");
     assert_eq!(
-        hint_manager.existing_manifest_gpu_genotype_format(PHENOTYPE_NAME).expect("bound running manifest gives hint"),
-        Some(g_plan::GpuGenotypeFormat::Packed8)
+        hint_manager.existing_output_resume_agreement().expect("bound running manifest gives agreement"),
+        Some(expected_resume_agreement(&inputs, g_plan::GpuGenotypeFormat::Packed8))
     );
     drop(hint_manager);
     let blocked_error = claim_error(
         Arc::clone(&resume_plan),
+        &inputs,
         &single_chunk_ranges(2),
         "surviving owner claim blocks pending-terminal recovery",
     );

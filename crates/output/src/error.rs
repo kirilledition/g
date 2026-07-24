@@ -9,6 +9,11 @@ pub enum OutputError {
     #[error("Another process published a conflicting immutable output lineage record at '{}'.", record_path.display())]
     ConcurrentLineageUpdate { record_path: PathBuf },
     #[error(
+        "Existing output manifest '{}' records an unattested BGEN source with null content_sha256 and cannot authorize resume.",
+        manifest_path.display()
+    )]
+    ExistingOutputUnattestedBgenContent { manifest_path: PathBuf },
+    #[error(
         "Output owner claim '{claim_id}' at '{}' survives from process {process_id} on host '{host_name}'. Its owner may be live or may have crashed; this BeeGFS mount cannot distinguish those states safely. First use an external coordinator to fence the recorded owner, then resume with --fenced-output-owner-claim '{claim_id}' (or output.fenced_owner_claim_id). Do not remove the claim manually or infer fencing from age or PID state.",
         claim_path.display()
     )]

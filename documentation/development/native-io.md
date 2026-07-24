@@ -141,9 +141,11 @@ dataset; output does not require a consolidation pass.
 
 Output planning is read-only. The engine resolves every phenotype run path and
 inspects the immutable lineage before input preparation without creating the
-output root. Initialization publishes the durable no-replace owner claim,
-repeats validation, publishes genesis or successor authority, and only then
-creates attempt-specific state.
+output root. Output claim validates BGEN agreement and constructs every
+phenotype manifest header before publishing the durable no-replace owner claim.
+It repeats complete execution-plan validation under that authority. Activation
+then consumes only those stored headers, publishes genesis or successor
+authority, and creates attempt-specific state.
 
 ## Manifest And Resume Contract
 
@@ -164,6 +166,12 @@ input loading and manifest preparation.
 Manifest construction records `association_backend.kind` from the
 engine-resolved delivery format so resume and review tooling can distinguish
 `jax_dosage` and `jax_packed8`; it is not a `RunPlan` field.
+The exact schema-zero `execution_plan.bgen` value contains only required
+`content_sha256` and `byte_count` fields. Owned snapshots contribute the
+canonical `BgenContentFingerprint`; positioned unattested sources contribute
+an explicit null digest and their byte count. No request locator, selector,
+filesystem identity, or redundant hash-algorithm field crosses into output
+authority.
 Construction and parsing share one exact typed schema for the complete nested
 execution-plan graph. Unknown or missing nested fields and inconsistent
 backend, device, association-mode, or correction-policy combinations are
@@ -188,13 +196,18 @@ phenotype name, and 32 MiB of variable-header reserve, with at least 20% of the
 ceiling retained. Larger datasets must increase chunk size or move to a future
 control-plane schema rather than increasing recovery memory without review.
 
-Startup GPU-format hints
-additionally require a fresh lineage
-binding to the genesis phenotype and chunk-plan contracts, current leaf
-attempt, and any finalized terminal manifest digest; lineage is resolved again
-before a hint is returned. A pending terminal still reads its fully typed,
-genesis-bound running manifest because recovery has not materialized the
-claimed terminal bytes yet.
+`OutputManager::existing_output_resume_agreement` reads all materialized
+phenotype manifests under one fresh lineage snapshot and returns one
+`ExistingOutputResumeAgreement` containing `bgen_content_fingerprint` and
+`gpu_genotype_format`. Each manifest must bind to the genesis phenotype and
+chunk-plan contracts, current leaf attempt, and any finalized terminal
+manifest digest. Digest, byte count, and format must agree across the plan.
+Terminal authority requires all manifests; a missing nonterminal manifest is
+skipped. A pending terminal still reads its fully typed, genesis-bound running
+manifests because recovery has not materialized the claimed terminal bytes yet.
+Exactly one final lineage-snapshot equality check follows all reads. A null
+BGEN digest returns the dedicated unattested-content error rather than resume
+authority.
 
 Resume validates each immutable receipt against its part's embedded transaction
 footer, canonical output schema, raw byte size, and freshly computed SHA-256.

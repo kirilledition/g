@@ -1,5 +1,6 @@
 //! Public output crate facade.
 
+pub use crate::agreement::ExistingOutputResumeAgreement;
 pub use crate::chunk::{NativeChunkHandle, NativeVariantMetadataHandle};
 pub use crate::error::OutputError;
 pub use crate::manager::{

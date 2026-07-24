@@ -111,6 +111,12 @@ including maximum-length accepted lineage identifiers, a 255-byte phenotype
 name, and variable-header reserve; larger analyses must use larger chunks or a
 future control-plane schema.
 
+Within schema zero, `execution_plan.bgen` is exactly
+`{"content_sha256": <64 lowercase hex characters or null>, "byte_count": <uint64>}`.
+It deliberately omits paths, filesystem metadata, and algorithm or selector
+fields. Explicit `null` is valid only as fresh unattested output evidence and
+cannot authorize a later resume.
+
 Current parts use Parquet format version 2.0. Integer and string columns use
 the format's delta fallbacks where applicable, and all `Float32` result columns
 use `BYTE_STREAM_SPLIT` before Zstandard compression. These are physical

@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-07-23 resume and manifest behavior | Public user docs |
+| Pre-release draft | main branch as of 2026-07-24 resume and manifest behavior | Public user docs |
 
 This page is the canonical user-facing reference for resumable output runs.
 
@@ -68,6 +68,20 @@ strongly typed schema for construction and parsing. Unknown or missing nested
 fields, unsupported enum values, and inconsistent backend/device,
 association-mode, or correction-policy combinations are rejected even when
 the JSON has a self-consistent replacement hash.
+The schema-zero `execution_plan.bgen` object has exactly this authority shape:
+
+```json
+{
+  "content_sha256": "<64 lowercase hexadecimal characters or null>",
+  "byte_count": 123
+}
+```
+
+Both keys are required, `byte_count` is a JSON uint64, and no path, locator,
+filesystem metadata, content-hash algorithm tag, or selector request is part of
+the execution-plan identity. Consequently, two locators for the same attested
+BGEN content produce the same BGEN execution-plan value and do not diverge the
+execution-plan hash.
 The execution plan records
 `resume_policy = "lineage_receipts_exact_coverage"`. This value is hashed and
 intentionally rejects older pre-release manifests that used the removed
@@ -79,16 +93,20 @@ plan hashes, and canonical chunk-plan hash. Immutable attempt outcomes select
 exactly one terminal claim or exact nonterminal recovery claim. Terminal
 finalization binds the terminal claim only after every named manifest has been
 materialized and rehashed. There is no mutable `HEAD`.
-When startup asks an existing manifest for its GPU genotype-format hint, the
-reader first resolves fresh lineage authority and validates the whole typed
-manifest against the genesis run set, phenotype execution-plan digest,
-canonical chunk-plan digest, and current leaf attempt. A terminal or pending
-terminal still requires that full genesis/leaf binding. A finalized terminal
-additionally requires the exact raw manifest SHA-256 recorded for that
-phenotype. A pending terminal intentionally reads its bound running manifest:
-recovery has not materialized the claimed terminal bytes yet. The reader
-resolves lineage again before returning, so a concurrent successor or terminal
-publication cannot turn an unbound manifest read into an accepted hint.
+When startup asks existing output for resume agreement, the reader resolves one
+fresh lineage snapshot and validates every materialized phenotype manifest
+against the genesis run set, phenotype execution-plan digest, canonical
+chunk-plan digest, and current leaf attempt. It compares the BGEN content
+SHA-256, BGEN byte count, and GPU genotype format across those manifests and
+returns one plan-wide agreement only when all three fields match. A finalized
+terminal additionally requires each exact raw manifest SHA-256 recorded for its
+phenotype, and terminal authority rejects any missing phenotype manifest. A
+missing nonterminal manifest remains absent supporting state and is skipped. A
+pending terminal intentionally reads its bound running manifests because
+recovery has not materialized the claimed terminal bytes yet. After all
+manifest reads, one final lineage-snapshot equality check prevents a concurrent
+successor or terminal publication from turning stale reads into accepted
+agreement.
 
 Recovery opens each `run_manifest.json` as a non-symlink regular file and
 accepts at most 1 GiB. The reader consumes one additional detection byte so
@@ -131,10 +149,12 @@ seen during indexing plus the concrete per-trait sample-alignment recipe.
 File fingerprints include resolved path, file size, and `mtime_ns`. Smaller
 control files also include a SHA-256 content hash: sample, phenotype, covariate,
 prediction-list, and LOCO prediction files referenced by the selected
-phenotype or compute group. BGEN identity comes from the exact file opened by
-the native reader and includes device, inode, size, modification time, and
-change time. This rejects replacement or in-place mutation without hashing the
-large genotype file during normal startup.
+phenotype or compute group. BGEN is different: output consumes the canonical
+content evidence for the source actually opened by the native reader. An owned
+snapshot records its SHA-256 and byte count. A positioned unattested source
+records an explicit `null` SHA-256 and its byte count, which permits fresh
+nonresumable output but cannot later authorize resume. Output never derives
+BGEN execution-plan identity from the configured locator.
 
 ## Starting A New Run
 
@@ -150,10 +170,13 @@ with `[output].resume = true` when the existing lineage belongs to the same
 planned run.
 
 Planning a new or resumed run only inspects the selected output paths. It does
-not create the output root. Claiming then publishes the permanent root or one
-immutable owner transition, repeats lineage and policy validation under that
-authority, reserves a fresh staging-attempt identifier, and creates only
-ownership-private diagnostics. Activation publishes genesis or a successor for
+not create the output root. Claiming first validates plan-wide BGEN agreement,
+constructs and binds all phenotype headers, and rejects incompatible existing
+authority before taking ownership. It then publishes the permanent root or one
+immutable owner transition, repeats lineage and complete execution-plan
+validation under that authority, reserves a fresh staging-attempt identifier,
+and creates only ownership-private diagnostics. Activation accepts no new
+headers; it publishes genesis or a successor from the claim-bound headers for
 that same attempt identity before writers start. Completed read-only activation
 instead leaves the fresh staging attempt and its owner-staging intent
 unreferenced through final verification. After the runtime session closes, a
@@ -245,6 +268,11 @@ lineage. It compares the current requested run and every phenotype manifest
 against the canonical `execution_plan` and its hash. A mismatch fails loudly.
 Earlier manifest or lineage layouts are not adapted because the application
 has no released legacy output contract.
+
+Every existing materialized phenotype must agree on the attested BGEN content
+SHA-256, BGEN byte count, and GPU genotype format. An existing manifest with
+`execution_plan.bgen.content_sha256 = null` returns the dedicated
+unattested-BGEN error and cannot authorize resume.
 
 Incompatible resume attempts do not create a new attempt or alter a manifest,
 configuration, part, or receipt. A second process sees the surviving-owner

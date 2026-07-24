@@ -208,6 +208,7 @@ fn exact_output_recovery_is_explicit_and_resume_gated() {
         "recover.toml",
         &["trait-a"],
         &fixture.directory.path().join("recover-root"),
+        "",
         "resume = true\n",
     );
     let recovered = one_compiled_run(&[
@@ -224,6 +225,7 @@ fn exact_output_recovery_is_explicit_and_resume_gated() {
         "invalid-recover.toml",
         &["trait-a"],
         &fixture.directory.path().join("invalid-recover-root"),
+        "",
         "resume = true\nrecover_attempt = \"../escape\"\n",
     );
     let (_, _, invalid_error) = exit_dispatch(&["regenie", "--config", path_text(&invalid_config_path)]);
@@ -245,6 +247,7 @@ fn fenced_owner_claim_recovery_is_exact_and_resume_gated() {
         "fenced-owner.toml",
         &["trait-a"],
         &fixture.directory.path().join("fenced-owner-root"),
+        "",
         "resume = true\n",
     );
     let recovered = one_compiled_run(&[
@@ -261,6 +264,7 @@ fn fenced_owner_claim_recovery_is_exact_and_resume_gated() {
         "invalid-fenced-owner.toml",
         &["trait-a"],
         &fixture.directory.path().join("invalid-fenced-owner-root"),
+        "",
         "resume = true\nfenced_owner_claim_id = \"../escape\"\n",
     );
     let (_, _, invalid_error) = exit_dispatch(&["regenie", "--config", path_text(&invalid_config_path)]);
