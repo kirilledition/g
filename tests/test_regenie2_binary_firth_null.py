@@ -40,6 +40,18 @@ class NullFirthComponentReference:
     information_cholesky_factor: npt.NDArray[np.float64]
     deviance: float
     modified_score: npt.NDArray[np.float64]
+    valid: bool
+
+
+@dataclass(frozen=True)
+class NullFirthLineSearchReference:
+    """Independent upstream-v4.1 null-Firth step-halving result."""
+
+    coefficients: npt.NDArray[np.float64]
+    deviance: float
+    attempt_count: int
+    accepted: bool
+    valid: bool
 
 
 @dataclass(frozen=True)
@@ -113,26 +125,76 @@ def build_null_firth_policy_config() -> regenie2_binary_config.BinaryKernelConfi
 
 def compute_null_firth_component_reference(fixture: NullFirthFixture) -> NullFirthComponentReference:
     """Evaluate the Jeffreys-adjusted null score with NumPy."""
-    linear_predictor = fixture.covariate_matrix @ fixture.coefficients + fixture.loco_offset
-    probability = np.reciprocal(1.0 + np.exp(-linear_predictor))
-    weight = probability * (1.0 - probability)
-    information = (fixture.covariate_matrix.T * weight) @ fixture.covariate_matrix
-    cholesky_factor = np.linalg.cholesky(information)
-    negative_log_likelihood = -np.where(
-        fixture.phenotype_vector > 0.5,
-        np.log(probability),
-        np.log1p(-probability),
-    )
-    deviance = 2.0 * np.sum(negative_log_likelihood) - np.linalg.slogdet(information).logabsdet
-    projected_covariates = np.linalg.solve(information, fixture.covariate_matrix.T).T
-    leverage = weight * np.sum(projected_covariates * fixture.covariate_matrix, axis=1)
-    modified_score = fixture.covariate_matrix.T @ (
-        fixture.phenotype_vector - probability + leverage * (0.5 - probability)
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        linear_predictor = fixture.covariate_matrix @ fixture.coefficients + fixture.loco_offset
+        probability = np.reciprocal(1.0 + np.exp(-linear_predictor))
+        weight = probability * (1.0 - probability)
+        information = (fixture.covariate_matrix.T * weight) @ fixture.covariate_matrix
+        cholesky_factor = np.linalg.cholesky(information)
+        negative_log_likelihood = -np.where(
+            fixture.phenotype_vector > 0.5,
+            np.log(probability),
+            np.log1p(-probability),
+        )
+        deviance = 2.0 * np.sum(negative_log_likelihood) - np.linalg.slogdet(information).logabsdet
+        projected_covariates = np.linalg.solve(information, fixture.covariate_matrix.T).T
+        leverage = weight * np.sum(projected_covariates * fixture.covariate_matrix, axis=1)
+        modified_score = fixture.covariate_matrix.T @ (
+            fixture.phenotype_vector - probability + leverage * (0.5 - probability)
+        )
+    valid = (
+        np.all(np.isfinite(fixture.coefficients))
+        and np.all(np.isfinite(probability))
+        and np.all(np.isfinite(weight))
+        and np.all(np.isfinite(cholesky_factor))
+        and np.isfinite(deviance)
+        and np.all(np.isfinite(leverage))
+        and np.all(np.isfinite(modified_score))
     )
     return NullFirthComponentReference(
         information_cholesky_factor=cholesky_factor,
         deviance=float(deviance),
         modified_score=modified_score,
+        valid=bool(valid),
+    )
+
+
+def run_null_firth_line_search_reference(
+    *,
+    fixture: NullFirthFixture,
+    coefficient_step: npt.NDArray[np.float64],
+    maximum_attempts: int,
+    step_halving_scale: float,
+) -> NullFirthLineSearchReference:
+    """Apply the checked-in upstream-v4.1 null step-halving recurrence."""
+    current_components = compute_null_firth_component_reference(fixture)
+    accepted_coefficients = fixture.coefficients.copy()
+    accepted_deviance = current_components.deviance
+    next_coefficient_step = coefficient_step.copy()
+    accepted = False
+    attempt_count = 0
+    for attempt_count in range(1, maximum_attempts + 1):
+        candidate_coefficients = accepted_coefficients + next_coefficient_step
+        candidate_components = compute_null_firth_component_reference(
+            NullFirthFixture(
+                covariate_matrix=fixture.covariate_matrix,
+                phenotype_vector=fixture.phenotype_vector,
+                loco_offset=fixture.loco_offset,
+                coefficients=candidate_coefficients,
+            )
+        )
+        accepted = candidate_components.valid and candidate_components.deviance < accepted_deviance
+        next_coefficient_step *= step_halving_scale
+        if accepted:
+            accepted_coefficients = candidate_coefficients
+            accepted_deviance = candidate_components.deviance
+            break
+    return NullFirthLineSearchReference(
+        coefficients=accepted_coefficients,
+        deviance=accepted_deviance,
+        attempt_count=attempt_count,
+        accepted=accepted,
+        valid=current_components.valid,
     )
 
 
@@ -352,6 +414,7 @@ def test_null_firth_components_match_independent_numpy_formula() -> None:
     )
     tests.numerical.assert_absolute_difference_less_than(observed.deviance, reference.deviance, 1.0e-12)
     tests.numerical.assert_absolute_difference_less_than(observed.modified_score, reference.modified_score, 1.0e-12)
+    assert reference.valid
     assert bool(np.asarray(observed.valid))
 
 
@@ -387,6 +450,13 @@ def test_null_firth_line_search_accepts_a_deviance_decreasing_newton_step() -> N
 def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
     """Leave coefficients and deviance untouched when no attempt is authorized."""
     fixture = build_null_firth_fixture()
+    coefficient_step = np.asarray([1.0, -1.0], dtype=np.float64)
+    line_search_reference = run_null_firth_line_search_reference(
+        fixture=fixture,
+        coefficient_step=coefficient_step,
+        maximum_attempts=0,
+        step_halving_scale=0.5,
+    )
     current_components = regenie2_binary_firth_null.compute_null_firth_components(
         covariate_matrix=jnp.asarray(fixture.covariate_matrix),
         phenotype_vector=jnp.asarray(fixture.phenotype_vector),
@@ -400,15 +470,196 @@ def test_null_firth_zero_attempt_line_search_retains_trusted_state() -> None:
         loco_offset=jnp.asarray(fixture.loco_offset),
         current_coefficients=jnp.asarray(fixture.coefficients),
         current_deviance=current_components.deviance,
-        coefficient_step=jnp.asarray([1.0, -1.0]),
+        coefficient_step=jnp.asarray(coefficient_step),
         maximum_attempts=0,
         step_halving_scale=0.5,
     )
 
-    tests.numerical.assert_absolute_difference_less_than(observed.coefficients, fixture.coefficients, 1.0e-15)
-    tests.numerical.assert_absolute_difference_less_than(observed.deviance, current_components.deviance, 1.0e-15)
-    assert not bool(np.asarray(observed.accepted))
-    assert bool(np.asarray(observed.valid))
+    assert line_search_reference.attempt_count == 0
+    assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
+    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        line_search_reference.coefficients,
+        1.0e-15,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.deviance,
+        line_search_reference.deviance,
+        1.0e-12,
+    )
+
+
+def test_null_firth_line_search_rejects_valid_worse_and_equal_proposals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require strict objective improvement from a single valid proposal."""
+
+    def run_candidate(candidate_deviance: float) -> regenie2_binary_firth_types.NullFirthLineSearchResult:
+        def compute_candidate_components(
+            *,
+            covariate_matrix: jax.Array,
+            phenotype_vector: jax.Array,
+            loco_offset: jax.Array,
+            coefficients: jax.Array,
+        ) -> regenie2_binary_firth_types.NullFirthComponents:
+            del covariate_matrix, phenotype_vector, loco_offset
+            return regenie2_binary_firth_types.NullFirthComponents(
+                information_cholesky_factor=jnp.ones((1, 1), dtype=coefficients.dtype),
+                deviance=jnp.asarray(candidate_deviance, dtype=coefficients.dtype),
+                modified_score=jnp.asarray([3.0], dtype=coefficients.dtype),
+                valid=jnp.asarray(1, dtype=jnp.bool_),
+            )
+
+        monkeypatch.setattr(
+            regenie2_binary_firth_null,
+            "compute_null_firth_components",
+            compute_candidate_components,
+        )
+        return regenie2_binary_firth_null.run_null_firth_line_search(
+            covariate_matrix=jnp.ones((1, 1), dtype=jnp.float64),
+            phenotype_vector=jnp.ones((1,), dtype=jnp.float64),
+            loco_offset=jnp.zeros((1,), dtype=jnp.float64),
+            current_coefficients=jnp.asarray([0.0], dtype=jnp.float64),
+            current_deviance=jnp.asarray(10.0, dtype=jnp.float64),
+            coefficient_step=jnp.asarray([1.0], dtype=jnp.float64),
+            maximum_attempts=1,
+            step_halving_scale=0.5,
+        )
+
+    for candidate_deviance in (11.0, 10.0):
+        observed = run_candidate(candidate_deviance)
+        assert not bool(np.asarray(observed.accepted))
+        assert bool(np.asarray(observed.valid))
+        tests.numerical.assert_absolute_difference_less_than(
+            observed.coefficients,
+            np.asarray([0.0]),
+            1.0e-15,
+        )
+        tests.numerical.assert_absolute_difference_less_than(observed.deviance, 10.0, 1.0e-15)
+
+
+def test_null_firth_line_search_accepts_valid_half_step_after_invalid_full_step() -> None:
+    """Match upstream-v4.1 when overflow invalidates only the full proposal."""
+    covariate_scale = 3.0e154
+    fixture = NullFirthFixture(
+        covariate_matrix=np.full((4, 1), covariate_scale, dtype=np.float64),
+        phenotype_vector=np.ones((4,), dtype=np.float64),
+        loco_offset=np.zeros((4,), dtype=np.float64),
+        coefficients=np.asarray([-10.0 / covariate_scale], dtype=np.float64),
+    )
+    coefficient_step = np.asarray([10.0 / covariate_scale], dtype=np.float64)
+    current_reference = compute_null_firth_component_reference(fixture)
+    full_step_reference = compute_null_firth_component_reference(
+        NullFirthFixture(
+            covariate_matrix=fixture.covariate_matrix,
+            phenotype_vector=fixture.phenotype_vector,
+            loco_offset=fixture.loco_offset,
+            coefficients=fixture.coefficients + coefficient_step,
+        )
+    )
+    half_step_reference = compute_null_firth_component_reference(
+        NullFirthFixture(
+            covariate_matrix=fixture.covariate_matrix,
+            phenotype_vector=fixture.phenotype_vector,
+            loco_offset=fixture.loco_offset,
+            coefficients=fixture.coefficients + coefficient_step * 0.5,
+        )
+    )
+    line_search_reference = run_null_firth_line_search_reference(
+        fixture=fixture,
+        coefficient_step=coefficient_step,
+        maximum_attempts=2,
+        step_halving_scale=0.5,
+    )
+
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        current_coefficients=jnp.asarray(fixture.coefficients),
+        current_deviance=jnp.asarray(current_reference.deviance),
+        coefficient_step=jnp.asarray(coefficient_step),
+        maximum_attempts=2,
+        step_halving_scale=0.5,
+    )
+
+    assert current_reference.valid
+    assert not full_step_reference.valid
+    assert half_step_reference.valid
+    assert half_step_reference.deviance < current_reference.deviance
+    assert line_search_reference.attempt_count == 2
+    assert line_search_reference.accepted
+    assert line_search_reference.valid
+    assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
+    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        line_search_reference.coefficients,
+        1.0e-165,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.deviance,
+        line_search_reference.deviance,
+        1.0e-12,
+    )
+
+
+def test_null_firth_line_search_all_invalid_candidates_retain_trusted_state() -> None:
+    """Keep the trusted state after multiple invalid upstream-style proposals."""
+    covariate_scale = 4.0e155
+    fixture = NullFirthFixture(
+        covariate_matrix=np.full((4, 1), covariate_scale, dtype=np.float64),
+        phenotype_vector=np.ones((4,), dtype=np.float64),
+        loco_offset=np.zeros((4,), dtype=np.float64),
+        coefficients=np.asarray([-10.0 / covariate_scale], dtype=np.float64),
+    )
+    coefficient_step = np.asarray([10.0 / covariate_scale], dtype=np.float64)
+    current_reference = compute_null_firth_component_reference(fixture)
+    for candidate_step_scale in (1.0, 0.5, 0.25):
+        candidate_reference = compute_null_firth_component_reference(
+            NullFirthFixture(
+                covariate_matrix=fixture.covariate_matrix,
+                phenotype_vector=fixture.phenotype_vector,
+                loco_offset=fixture.loco_offset,
+                coefficients=fixture.coefficients + coefficient_step * candidate_step_scale,
+            )
+        )
+        assert not candidate_reference.valid
+    line_search_reference = run_null_firth_line_search_reference(
+        fixture=fixture,
+        coefficient_step=coefficient_step,
+        maximum_attempts=3,
+        step_halving_scale=0.5,
+    )
+
+    observed = regenie2_binary_firth_null.run_null_firth_line_search(
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
+        phenotype_vector=jnp.asarray(fixture.phenotype_vector),
+        loco_offset=jnp.asarray(fixture.loco_offset),
+        current_coefficients=jnp.asarray(fixture.coefficients),
+        current_deviance=jnp.asarray(current_reference.deviance),
+        coefficient_step=jnp.asarray(coefficient_step),
+        maximum_attempts=3,
+        step_halving_scale=0.5,
+    )
+
+    assert current_reference.valid
+    assert line_search_reference.attempt_count == 3
+    assert not line_search_reference.accepted
+    assert line_search_reference.valid
+    assert bool(np.asarray(observed.accepted)) is line_search_reference.accepted
+    assert bool(np.asarray(observed.valid)) is line_search_reference.valid
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.coefficients,
+        line_search_reference.coefficients,
+        1.0e-165,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.deviance,
+        line_search_reference.deviance,
+        1.0e-12,
+    )
 
 
 def test_null_firth_single_attempt_converges_to_a_small_modified_score() -> None:

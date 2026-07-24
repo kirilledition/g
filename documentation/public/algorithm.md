@@ -223,6 +223,10 @@ The determinant term is the Jeffreys-prior penalty used by Firth’s bias-reduct
 4. fall back through configured Newton, warm-start, line-search, and step-halving attempts;
 5. report the penalized likelihood-ratio statistic for successful corrected rows.
 
+During Newton line search, only a numerically valid proposal that lowers the
+penalized deviance is accepted. Rejected proposals do not invalidate the last
+trusted iterate, so later half-steps can still be evaluated.
+
 Approximate-Firth outer components, convergence checks, likelihood,
 information, corrected statistics, and Newton fallback use `float64`. The
 inner pseudo-logistic proposal evaluates its sigmoid, score products, and

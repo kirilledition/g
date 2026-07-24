@@ -351,7 +351,7 @@ def run_scalar_line_search_with_minimum_variance(
             score=jnp.where(accepted, components.score, state.score),
             attempt_count=state.attempt_count + jnp.asarray(1, dtype=jnp.int32),
             accepted=accepted,
-            valid=state.valid & components.valid,
+            valid=state.valid,
         )
 
     return jax.lax.while_loop(
