@@ -3,13 +3,15 @@ use std::mem::MaybeUninit;
 use rayon::prelude::*;
 
 use crate::bgen::decode::{
-    ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest, VariantMajorTileStatsMut,
-    decode_variant_major_dosage_tile, with_worker_thread_scratch,
+    ThreadScratch, VariantMajorTileDecodeRequest, VariantMajorTileStatsMut, decode_variant_major_dosage_tile,
+    with_worker_thread_scratch,
 };
 use crate::bgen::error::BgenError;
 use crate::bgen::packed8;
 use crate::bgen::sample_selection::SampleSelection;
-use crate::common::{ChunkStatisticsPolicy, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
+use crate::common::{
+    ChunkStatisticsPolicy, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer, SparseCandidateSummary,
+};
 use crate::preprocess;
 
 use super::{BgenReadSession, BgenReaderCore, validate_variant_bounds};
@@ -83,8 +85,7 @@ struct VariantMajorStatsBuffers {
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
-    zero_count: Option<Vec<i32>>,
-    homozygous_alternate_count: Option<Vec<i32>>,
+    sparse_candidate_statistics: Option<Vec<SparseCandidateSummary>>,
 }
 
 struct OwnedVariantMajorDecode {
@@ -98,10 +99,9 @@ impl VariantMajorStatsBuffers {
             dosage_sum: vec![0.0_f32; selected_variant_count],
             dosage_square_sum: vec![0.0_f32; selected_variant_count],
             observation_count: vec![0_i32; selected_variant_count],
-            zero_count: statistics_policy.collect_sparse_candidate_mask.then(|| vec![0_i32; selected_variant_count]),
-            homozygous_alternate_count: statistics_policy
+            sparse_candidate_statistics: statistics_policy
                 .collect_sparse_candidate_mask
-                .then(|| vec![0_i32; selected_variant_count]),
+                .then(|| vec![SparseCandidateSummary::default(); selected_variant_count]),
         }
     }
 
@@ -114,8 +114,7 @@ impl VariantMajorStatsBuffers {
             self.dosage_sum,
             self.dosage_square_sum,
             self.observation_count,
-            self.zero_count,
-            self.homozygous_alternate_count,
+            self.sparse_candidate_statistics,
             selected_sample_count,
             statistics_policy,
         )
@@ -389,46 +388,37 @@ where
         ) -> Result<(), crate::bgen::decode::VariantDecodeFailure>
         + Sync,
 {
-    let VariantMajorStatsBuffers {
-        dosage_sum,
-        dosage_square_sum,
-        observation_count,
-        zero_count,
-        homozygous_alternate_count,
-    } = stats_buffers;
-    match (zero_count.as_mut(), homozygous_alternate_count.as_mut()) {
-        (Some(zero_count), Some(homozygous_alternate_count)) => selected_variant_records
+    let VariantMajorStatsBuffers { dosage_sum, dosage_square_sum, observation_count, sparse_candidate_statistics } =
+        stats_buffers;
+    match sparse_candidate_statistics.as_mut() {
+        Some(sparse_candidate_statistics) => selected_variant_records
             .par_chunks(BGEN_DECODE_TILE_VARIANT_COUNT)
             .zip(output_values.par_chunks_mut(output_tile_value_count))
             .zip(dosage_sum.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .zip(dosage_square_sum.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .zip(observation_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
-            .zip(zero_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
-            .zip(homozygous_alternate_count.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
+            .zip(sparse_candidate_statistics.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
             .enumerate()
             .try_for_each(
                 |(
                     tile_index,
                     (
-                        (
-                            ((((variant_records, output_tile), dosage_sum), dosage_square_sum), observation_count),
-                            zero_count,
-                        ),
-                        homozygous_alternate_count,
+                        ((((variant_records, output_tile), dosage_sum), dosage_square_sum), observation_count),
+                        sparse_candidate_statistics,
                     ),
                 )| {
                     let mut tile_stats = variant_major_tile_stats_mut(
                         dosage_sum,
                         dosage_square_sum,
                         observation_count,
-                        Some((zero_count, homozygous_alternate_count)),
+                        Some(sparse_candidate_statistics),
                     );
                     with_worker_thread_scratch(|thread_scratch| {
                         decode_tile(thread_scratch, tile_index, variant_records, output_tile, &mut tile_stats)
                     })
                 },
             ),
-        (None, None) => selected_variant_records
+        None => selected_variant_records
             .par_chunks(BGEN_DECODE_TILE_VARIANT_COUNT)
             .zip(output_values.par_chunks_mut(output_tile_value_count))
             .zip(dosage_sum.par_chunks_mut(BGEN_DECODE_TILE_VARIANT_COUNT))
@@ -447,7 +437,6 @@ where
                     })
                 },
             ),
-        _ => unreachable!("sparse statistic buffers are allocated together"),
     }
 }
 
@@ -478,14 +467,7 @@ fn variant_major_tile_stats_mut<'buffers>(
     dosage_sum: &'buffers mut [f32],
     dosage_square_sum: &'buffers mut [f32],
     observation_count: &'buffers mut [i32],
-    sparse_candidate_counts: Option<(&'buffers mut [i32], &'buffers mut [i32])>,
+    sparse_candidate_statistics: Option<&'buffers mut [SparseCandidateSummary]>,
 ) -> VariantMajorTileStatsMut<'buffers> {
-    VariantMajorTileStatsMut {
-        dosage_sum,
-        dosage_square_sum,
-        observation_count,
-        sparse_candidate_counts: sparse_candidate_counts.map(|(zero_count, homozygous_alternate_count)| {
-            VariantMajorSparseCandidateCountsMut { zero_count, homozygous_alternate_count }
-        }),
-    }
+    VariantMajorTileStatsMut { dosage_sum, dosage_square_sum, observation_count, sparse_candidate_statistics }
 }

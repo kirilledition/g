@@ -4,14 +4,14 @@ use g_genotype_contracts::{ChunkOutputStatistics, NullableFloat32Column};
 
 use crate::common::{
     ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL,
-    EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL, Packed8RawStatistics,
+    EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL, Packed8RawStatistics, SparseCandidateSummary,
 };
 use crate::error::{GenotypeError, GenotypeResult};
 
-const ZERO_DOSAGE_UPPER_BOUND: f32 = 1.0e-4;
-const HOMOZYGOUS_ALTERNATE_DOSAGE_THRESHOLD: f32 = 1.5;
-const SPARSE_ZERO_DENSITY_THRESHOLD: f32 = 0.5;
-const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: f32 = 50.0;
+const ZERO_DOSAGE_THRESHOLD_DENOMINATOR: u128 = 10_000;
+const HOMOZYGOUS_ALTERNATE_DOSAGE_NUMERATOR: u128 = 3;
+const HOMOZYGOUS_ALTERNATE_DOSAGE_DENOMINATOR: u128 = 2;
+const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: u128 = 50;
 const MAXIMUM_PACKED8_RAW_DOSAGE: u64 = 510;
 const MAXIMUM_PACKED8_RAW_DOSAGE_SQUARE: u64 = MAXIMUM_PACKED8_RAW_DOSAGE * MAXIMUM_PACKED8_RAW_DOSAGE;
 
@@ -54,8 +54,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
     mut dosage_sum: Vec<f32>,
     mut dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
-    zero_count: Option<Vec<i32>>,
-    homozygous_alternate_count: Option<Vec<i32>>,
+    sparse_candidate_statistics: Option<Vec<SparseCandidateSummary>>,
     selected_sample_count: usize,
     statistics_policy: ChunkStatisticsPolicy,
 ) -> GenotypeResult<ChunkStats> {
@@ -70,24 +69,30 @@ pub(crate) fn build_chunk_stats_from_summaries(
     };
     let mut sparse_candidate_mask =
         statistics_policy.collect_sparse_candidate_mask.then(|| Vec::with_capacity(selected_variant_count));
-    let sparse_candidate_counts = zero_count.as_ref().zip(homozygous_alternate_count.as_ref());
-    if statistics_policy.collect_sparse_candidate_mask != sparse_candidate_counts.is_some() {
+    if statistics_policy.collect_sparse_candidate_mask != sparse_candidate_statistics.is_some() {
         return Err(GenotypeError::InvalidInput(
-            "Sparse candidate count buffers do not match the requested statistics policy.".to_string(),
+            "Exact sparse candidate summaries do not match the requested statistics policy.".to_string(),
         ));
     }
-    if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts {
-        validate_summary_length("zero count", zero_count.len(), selected_variant_count)?;
+    if let Some(sparse_candidate_statistics) = sparse_candidate_statistics.as_ref() {
         validate_summary_length(
-            "homozygous alternate count",
-            homozygous_alternate_count.len(),
+            "exact sparse candidate summary",
+            sparse_candidate_statistics.len(),
             selected_variant_count,
         )?;
     }
 
     for variant_index in 0..selected_variant_count {
         let count = observation_count[variant_index];
-        if count <= 0 {
+        if count < 0 || count > selected_sample_count_i32 {
+            return Err(GenotypeError::InvalidInput(format!(
+                "Variant observation count {count} is outside 0..={selected_sample_count_i32}."
+            )));
+        }
+        if count == 0 {
+            if let Some(sparse_candidate_statistics) = sparse_candidate_statistics.as_ref() {
+                validate_sparse_candidate_summary(sparse_candidate_statistics[variant_index], count)?;
+            }
             allele_one_frequency.push(0.0);
             dosage_sum[variant_index] = 0.0;
             if statistics_policy.retain_imputed_dosage_square_sum {
@@ -107,11 +112,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
         let dosage_mean = dosage_sum[variant_index] / count_float;
         let observed_dosage_square_sum = dosage_square_sum[variant_index];
         if statistics_policy.retain_imputed_dosage_square_sum {
-            let missing_count = selected_sample_count_i32.checked_sub(count).ok_or_else(|| {
-                GenotypeError::InvalidInput(format!(
-                    "Variant observation count {count} exceeds selected sample count {selected_sample_count_i32}."
-                ))
-            })?;
+            let missing_count = selected_sample_count_i32 - count;
             // Both counts share the enforced i32 bound and the surrounding
             // dosage-square calculation intentionally uses f32.
             #[allow(clippy::cast_precision_loss)]
@@ -127,25 +128,10 @@ pub(crate) fn build_chunk_stats_from_summaries(
         );
         allele_one_frequency.push(output_statistics.allele_one_frequency);
         info_score.push(output_statistics.info_score, output_statistics.info_score_is_valid);
-        if let (Some(sparse_candidate_mask), Some((zero_count, homozygous_alternate_count))) =
-            (sparse_candidate_mask.as_mut(), sparse_candidate_counts)
+        if let (Some(sparse_candidate_mask), Some(sparse_candidate_statistics)) =
+            (sparse_candidate_mask.as_mut(), sparse_candidate_statistics.as_ref())
         {
-            let allele_count = dosage_sum[variant_index];
-            let reference_allele_count = (2.0 * count_float) - allele_count;
-            let current_minor_allele_count = allele_count.min(reference_allele_count);
-            let regenie_flipped_zero_count = if allele_count > reference_allele_count {
-                homozygous_alternate_count[variant_index]
-            } else {
-                zero_count[variant_index]
-            };
-            // This exact bounded count is converted only to compute a density
-            // in the f32 statistics domain.
-            #[allow(clippy::cast_precision_loss)]
-            let zero_density = regenie_flipped_zero_count as f32 / count_float;
-            sparse_candidate_mask.push(
-                zero_density >= SPARSE_ZERO_DENSITY_THRESHOLD
-                    && current_minor_allele_count < RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD,
-            );
+            sparse_candidate_mask.push(classify_sparse_candidate(sparse_candidate_statistics[variant_index], count)?);
         }
         dosage_sum[variant_index] = dosage_mean;
     }
@@ -263,22 +249,87 @@ fn validate_summary_length(name: &str, observed: usize, expected: usize) -> Geno
     Ok(())
 }
 
-pub(crate) fn increment_sparse_candidate_counts(
-    dosage_value: f32,
+fn classify_sparse_candidate(
+    sparse_candidate_summary: SparseCandidateSummary,
+    observation_count: i32,
+) -> GenotypeResult<bool> {
+    validate_sparse_candidate_summary(sparse_candidate_summary, observation_count)?;
+    if observation_count == 0 {
+        return Ok(false);
+    }
+
+    let observation_count = u128::from(u32::try_from(observation_count).map_err(|_| {
+        GenotypeError::InvalidInput("Sparse candidate observation count must be nonnegative.".to_string())
+    })?);
+    let dosage_numerator = u128::from(sparse_candidate_summary.exact_dosage_sum.numerator);
+    let probability_denominator = u128::from(sparse_candidate_summary.exact_dosage_sum.probability_denominator.get());
+    let allele_count_denominator = observation_count * probability_denominator;
+    let diploid_allele_count_numerator = 2 * allele_count_denominator;
+    let allele_is_flipped = dosage_numerator > allele_count_denominator;
+    let regenie_zero_count = if allele_is_flipped {
+        sparse_candidate_summary.homozygous_alternate_count
+    } else {
+        sparse_candidate_summary.zero_count
+    };
+    let regenie_zero_count =
+        u128::from(u32::try_from(regenie_zero_count).map_err(|_| {
+            GenotypeError::InvalidInput("Sparse candidate zero count must be nonnegative.".to_string())
+        })?);
+    let minor_allele_count_numerator = dosage_numerator.min(diploid_allele_count_numerator - dosage_numerator);
+
+    Ok((2 * regenie_zero_count >= observation_count)
+        && (minor_allele_count_numerator < RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD * probability_denominator))
+}
+
+fn validate_sparse_candidate_summary(
+    sparse_candidate_summary: SparseCandidateSummary,
+    observation_count: i32,
+) -> GenotypeResult<()> {
+    if sparse_candidate_summary.zero_count < 0
+        || sparse_candidate_summary.zero_count > observation_count
+        || sparse_candidate_summary.homozygous_alternate_count < 0
+        || sparse_candidate_summary.homozygous_alternate_count > observation_count
+    {
+        return Err(GenotypeError::InvalidInput(format!(
+            "Sparse candidate counts ({}, {}) are outside 0..={observation_count}.",
+            sparse_candidate_summary.zero_count, sparse_candidate_summary.homozygous_alternate_count,
+        )));
+    }
+    let probability_denominator = u128::from(sparse_candidate_summary.exact_dosage_sum.probability_denominator.get());
+    let maximum_dosage_numerator = u128::from(u32::try_from(observation_count).map_err(|_| {
+        GenotypeError::InvalidInput("Sparse candidate observation count must be nonnegative.".to_string())
+    })?) * 2
+        * probability_denominator;
+    if u128::from(sparse_candidate_summary.exact_dosage_sum.numerator) > maximum_dosage_numerator {
+        return Err(GenotypeError::InvalidInput(format!(
+            "Exact dosage numerator {} exceeds the diploid bound {maximum_dosage_numerator}.",
+            sparse_candidate_summary.exact_dosage_sum.numerator,
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn increment_exact_sparse_candidate_counts(
+    dosage_numerator: u64,
+    probability_denominator: u32,
     zero_count: &mut i32,
     homozygous_alternate_count: &mut i32,
 ) {
-    if dosage_value <= ZERO_DOSAGE_UPPER_BOUND {
+    let dosage_numerator = u128::from(dosage_numerator);
+    let probability_denominator = u128::from(probability_denominator);
+    if dosage_numerator * ZERO_DOSAGE_THRESHOLD_DENOMINATOR <= probability_denominator {
         *zero_count += 1;
     }
-    if dosage_value >= HOMOZYGOUS_ALTERNATE_DOSAGE_THRESHOLD {
+    if dosage_numerator * HOMOZYGOUS_ALTERNATE_DOSAGE_DENOMINATOR
+        >= probability_denominator * HOMOZYGOUS_ALTERNATE_DOSAGE_NUMERATOR
+    {
         *homozygous_alternate_count += 1;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{ChunkStatisticsPolicy, Packed8RawStatistics};
+    use crate::common::{ChunkStatisticsPolicy, ExactDosageSum, Packed8RawStatistics, SparseCandidateSummary};
 
     use super::build_chunk_stats_from_summaries;
 
@@ -291,8 +342,18 @@ mod tests {
             vec![1.0, 4.0],
             vec![1.0, 8.0],
             vec![3, 3],
-            Some(vec![2, 1]),
-            Some(vec![0, 2]),
+            Some(vec![
+                SparseCandidateSummary {
+                    exact_dosage_sum: ExactDosageSum::new(1, 1),
+                    zero_count: 2,
+                    homozygous_alternate_count: 0,
+                },
+                SparseCandidateSummary {
+                    exact_dosage_sum: ExactDosageSum::new(4, 1),
+                    zero_count: 1,
+                    homozygous_alternate_count: 2,
+                },
+            ]),
             3,
             COMPLETE_STATISTICS_POLICY,
         )
@@ -316,8 +377,7 @@ mod tests {
             vec![0.0],
             vec![0.0],
             vec![0],
-            Some(vec![0]),
-            Some(vec![0]),
+            Some(vec![SparseCandidateSummary::default()]),
             4,
             COMPLETE_STATISTICS_POLICY,
         )
@@ -338,7 +398,6 @@ mod tests {
             vec![1.0],
             vec![2],
             None,
-            None,
             4,
             ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: false },
         )
@@ -357,7 +416,6 @@ mod tests {
             vec![0.0],
             vec![0],
             None,
-            None,
             1,
             ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: false },
         )
@@ -368,13 +426,142 @@ mod tests {
             vec![0.0],
             vec![0.0],
             vec![1],
-            Some(vec![1]),
-            Some(vec![0]),
+            Some(vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(0, 1),
+                zero_count: 1,
+                homozygous_alternate_count: 0,
+            }]),
             1,
             ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: false },
         )
         .expect_err("unrequested sparse summaries should fail");
         assert!(policy_error.to_string().contains("do not match the requested statistics policy"));
+    }
+
+    #[test]
+    fn exact_sparse_classification_keeps_rs5753646_and_rs80694_mac_fifty_dense() {
+        let observation_count = 2_504_i32;
+        let observation_count_float = 2_504.0_f32;
+        let historical_dosage_sum = 4_958.000_5_f32;
+        let historical_minor_allele_count = (2.0_f32 * observation_count_float) - historical_dosage_sum;
+        assert!((historical_minor_allele_count - 49.999_51).abs() < 1.0e-5);
+        assert!(historical_minor_allele_count < 50.0);
+
+        let exact_allele_count =
+            u64::from(u32::try_from((2 * observation_count) - 50).expect("test allele count should fit u32")) * 255;
+        let statistics = build_chunk_stats_from_summaries(
+            vec![historical_dosage_sum],
+            vec![historical_dosage_sum * historical_dosage_sum / observation_count_float],
+            vec![observation_count],
+            Some(vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(exact_allele_count, 255),
+                zero_count: 0,
+                homozygous_alternate_count: observation_count / 2,
+            }]),
+            usize::try_from(observation_count).expect("test sample count should fit usize"),
+            ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true },
+        )
+        .expect("exact MAC-fifty summary should preprocess");
+
+        assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![false]));
+        assert_eq!(statistics.compute.genotype_mean, vec![historical_dosage_sum / observation_count_float]);
+    }
+
+    #[test]
+    fn exact_sparse_classification_validates_counts_and_u64_bounds() {
+        let maximum_observation_count = i32::MAX;
+        let maximum_denominator = u32::MAX;
+        let maximum_numerator =
+            u64::from(u32::try_from(maximum_observation_count).expect("positive i32 should fit u32"))
+                * 2
+                * u64::from(maximum_denominator);
+        let maximum_summary = SparseCandidateSummary {
+            exact_dosage_sum: ExactDosageSum::new(maximum_numerator, maximum_denominator),
+            zero_count: 0,
+            homozygous_alternate_count: 0,
+        };
+        let maximum_statistics = build_chunk_stats_from_summaries(
+            vec![0.0],
+            vec![0.0],
+            vec![maximum_observation_count],
+            Some(vec![maximum_summary]),
+            usize::try_from(maximum_observation_count).expect("positive i32 should fit usize"),
+            ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true },
+        )
+        .expect("the i32 observation bound should fit exact u64 dosage accumulation");
+        assert_eq!(maximum_statistics.compute.sparse_candidate_mask, Some(vec![false]));
+
+        let numerator_error = build_chunk_stats_from_summaries(
+            vec![0.0],
+            vec![0.0],
+            vec![maximum_observation_count],
+            Some(vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(maximum_numerator + 1, maximum_denominator),
+                ..maximum_summary
+            }]),
+            usize::try_from(maximum_observation_count).expect("positive i32 should fit usize"),
+            ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true },
+        )
+        .expect_err("an exact numerator above the diploid bound should fail");
+        assert!(numerator_error.to_string().contains("exceeds the diploid bound"));
+
+        let count_error = build_chunk_stats_from_summaries(
+            vec![0.0],
+            vec![0.0],
+            vec![1],
+            Some(vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(0, 255),
+                zero_count: 2,
+                homozygous_alternate_count: 0,
+            }]),
+            1,
+            ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true },
+        )
+        .expect_err("a sparse count above the observation count should fail");
+        assert!(count_error.to_string().contains("outside 0..=1"));
+
+        let observation_error = build_chunk_stats_from_summaries(
+            vec![0.0],
+            vec![0.0],
+            vec![2],
+            None,
+            1,
+            ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: false },
+        )
+        .expect_err("an observation count above the selected count should fail");
+        assert!(observation_error.to_string().contains("outside 0..=1"));
+    }
+
+    #[test]
+    fn exact_sparse_counts_respect_quantized_dosage_thresholds() {
+        let mut zero_count = 0_i32;
+        let mut homozygous_alternate_count = 0_i32;
+
+        super::increment_exact_sparse_candidate_counts(1, 10_000, &mut zero_count, &mut homozygous_alternate_count);
+        super::increment_exact_sparse_candidate_counts(2, 10_000, &mut zero_count, &mut homozygous_alternate_count);
+        assert_eq!(zero_count, 1);
+        assert_eq!(homozygous_alternate_count, 0);
+
+        super::increment_exact_sparse_candidate_counts(3, 2, &mut zero_count, &mut homozygous_alternate_count);
+        super::increment_exact_sparse_candidate_counts(2, 2, &mut zero_count, &mut homozygous_alternate_count);
+        assert_eq!(zero_count, 1);
+        assert_eq!(homozygous_alternate_count, 1);
+
+        let maximum_denominator = u32::MAX;
+        let largest_zero_numerator = u64::from(maximum_denominator) / 10_000;
+        super::increment_exact_sparse_candidate_counts(
+            largest_zero_numerator,
+            maximum_denominator,
+            &mut zero_count,
+            &mut homozygous_alternate_count,
+        );
+        super::increment_exact_sparse_candidate_counts(
+            largest_zero_numerator + 1,
+            maximum_denominator,
+            &mut zero_count,
+            &mut homozygous_alternate_count,
+        );
+        assert_eq!(zero_count, 2);
     }
 
     #[test]

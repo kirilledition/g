@@ -102,7 +102,7 @@ pub(super) fn decode_variant_major_probability_pair_tile(
     if selected_probability_byte_count == 0 {
         return Ok(());
     }
-    let collect_sparse_candidate_counts = tile_stats.sparse_candidate_counts.is_some();
+    let collect_sparse_candidate_statistics = tile_stats.sparse_candidate_statistics.is_some();
     for ((tile_variant_index, variant_record), output_row) in
         variant_record_chunk.iter().enumerate().zip(output_values.chunks_exact_mut(selected_probability_byte_count))
     {
@@ -113,7 +113,7 @@ pub(super) fn decode_variant_major_probability_pair_tile(
             sample_selection,
             variant_record,
             output_row,
-            collect_sparse_candidate_counts,
+            collect_sparse_candidate_statistics,
             thread_scratch,
         )
         .map_err(|source| VariantDecodeFailure {
@@ -123,9 +123,16 @@ pub(super) fn decode_variant_major_probability_pair_tile(
         tile_stats.dosage_sum[tile_variant_index] = variant_decode_result.dosage_sum;
         tile_stats.dosage_square_sum[tile_variant_index] = variant_decode_result.dosage_square_sum;
         tile_stats.observation_count[tile_variant_index] = variant_decode_result.observation_count;
-        if let Some(sparse_candidate_counts) = tile_stats.sparse_candidate_counts.as_mut() {
-            sparse_candidate_counts.zero_count[tile_variant_index] = variant_decode_result.zero_count;
-            sparse_candidate_counts.homozygous_alternate_count[tile_variant_index] =
+        if let Some(sparse_candidate_statistics) = tile_stats.sparse_candidate_statistics.as_mut() {
+            sparse_candidate_statistics[tile_variant_index].exact_dosage_sum =
+                variant_decode_result.exact_dosage_sum.ok_or_else(|| VariantDecodeFailure {
+                    relative_variant_index: Some(tile_variant_start_index + tile_variant_index),
+                    source: BgenError::Range(
+                        "Sparse candidate packed8 decoding did not produce an exact dosage sum.".to_string(),
+                    ),
+                })?;
+            sparse_candidate_statistics[tile_variant_index].zero_count = variant_decode_result.zero_count;
+            sparse_candidate_statistics[tile_variant_index].homozygous_alternate_count =
                 variant_decode_result.homozygous_alternate_count;
         }
     }
@@ -139,7 +146,7 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
     sample_selection: &SampleSelection,
     variant_record: &VariantRecord,
     output_row: &mut [MaybeUninit<u8>],
-    collect_sparse_candidate_counts: bool,
+    collect_sparse_candidate_statistics: bool,
     thread_scratch: &mut ThreadScratch,
 ) -> Result<DosageSummary, BgenError> {
     let probability_block = read_probability_block(mmap, compression_type, variant_record, thread_scratch)?;
@@ -156,7 +163,7 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
         simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
             packed_probability_bytes,
             output_row,
-            collect_sparse_candidate_counts,
+            collect_sparse_candidate_statistics,
         )
     } else if let Some(contiguous_file_index_start) = sample_selection.contiguous_file_index_start() {
         let probability_offset = contiguous_file_index_start.checked_mul(2).ok_or_else(|| {
@@ -167,10 +174,10 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
         simd::copy_unphased_eight_bit_probability_pairs_and_summarize_simd_or_scalar(
             selected_probability_bytes,
             output_row,
-            collect_sparse_candidate_counts,
+            collect_sparse_candidate_statistics,
         )
     } else {
-        let mut raw_integer_summary = simd::EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
+        let mut raw_integer_summary = simd::EightBitRawIntegerSummary::new(collect_sparse_candidate_statistics);
         let selected_file_indices = sample_selection
             .indexed_file_indices()
             .expect("non-identity, non-contiguous sample selections store explicit file indices");
@@ -193,12 +200,11 @@ fn decode_unphased_eight_bit_variant_into_variant_major_probability_pairs(
 
 #[cfg(test)]
 mod tests {
-    use super::super::decode::{
-        VariantMajorSparseCandidateCountsMut, VariantMajorTileDecodeRequest, decode_variant_major_dosage_tile,
-    };
+    use super::super::decode::{VariantMajorTileDecodeRequest, decode_variant_major_dosage_tile};
     use super::super::metadata::VariantRecord;
     use super::super::sample_selection::build_sample_selection;
     use super::*;
+    use crate::common::{ExactDosageSum, SparseCandidateSummary};
 
     fn trusted_probability_block(
         sample_count: u32,
@@ -285,17 +291,13 @@ mod tests {
         let mut dosage_sum = vec![0.0_f32; 2];
         let mut dosage_square_sum = vec![0.0_f32; 2];
         let mut observation_count = vec![0_i32; 2];
-        let mut zero_count = vec![0_i32; 2];
-        let mut homozygous_alternate_count = vec![0_i32; 2];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 2];
 
         let mut tile_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_dosage_tile(
@@ -317,8 +319,21 @@ mod tests {
 
         assert_eq!(observation_count, vec![2, 2]);
         assert_eq!(output, vec![0.0, 1.0, 0.0, 2.0]);
-        assert_eq!(zero_count, vec![1, 1]);
-        assert_eq!(homozygous_alternate_count, vec![0, 1]);
+        assert_eq!(
+            sparse_candidate_statistics,
+            vec![
+                SparseCandidateSummary {
+                    exact_dosage_sum: ExactDosageSum::new(255, 255),
+                    zero_count: 1,
+                    homozygous_alternate_count: 0,
+                },
+                SparseCandidateSummary {
+                    exact_dosage_sum: ExactDosageSum::new(510, 255),
+                    zero_count: 1,
+                    homozygous_alternate_count: 1,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -333,16 +348,12 @@ mod tests {
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 1];
         let mut identity_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_dosage_tile(
@@ -362,6 +373,7 @@ mod tests {
         );
         let identity_output = initialized_f32_values(identity_output);
         assert_eq!(observation_count, vec![4]);
+        assert_eq!(sparse_candidate_statistics[0].exact_dosage_sum, ExactDosageSum::new(1_019, 255));
         for (observed_value, expected_value) in identity_output.iter().zip([2.0, 0.0, 1.0, 254.0 / 255.0]) {
             assert!((observed_value - expected_value).abs() < 1.0e-6);
         }
@@ -372,16 +384,12 @@ mod tests {
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 1];
         let mut noncontiguous_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_dosage_tile(
@@ -401,6 +409,7 @@ mod tests {
         );
         let noncontiguous_output = initialized_f32_values(noncontiguous_output);
         assert_eq!(observation_count, vec![2]);
+        assert_eq!(sparse_candidate_statistics[0].exact_dosage_sum, ExactDosageSum::new(764, 255));
         for (observed_value, expected_value) in noncontiguous_output.iter().zip([254.0 / 255.0, 2.0]) {
             assert!((observed_value - expected_value).abs() < 1.0e-6);
         }
@@ -474,16 +483,12 @@ mod tests {
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 1];
         let mut identity_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
@@ -503,24 +508,26 @@ mod tests {
 
         assert_eq!(identity_output, probability_bytes);
         assert_eq!(observation_count, vec![4]);
-        assert_eq!(zero_count, vec![1]);
-        assert_eq!(homozygous_alternate_count, vec![1]);
+        assert_eq!(
+            sparse_candidate_statistics,
+            vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(1_019, 255),
+                zero_count: 1,
+                homozygous_alternate_count: 1,
+            }]
+        );
 
         let contiguous_selection = build_sample_selection(4, &[1, 2]).expect("contiguous selection should build");
         let mut contiguous_output = probability_output_with_sentinels(4);
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 1];
         let mut contiguous_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
@@ -540,8 +547,14 @@ mod tests {
 
         assert_eq!(contiguous_output, vec![255, 0, 0, 255]);
         assert_eq!(observation_count, vec![2]);
-        assert_eq!(zero_count, vec![1]);
-        assert_eq!(homozygous_alternate_count, vec![0]);
+        assert_eq!(
+            sparse_candidate_statistics,
+            vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(255, 255),
+                zero_count: 1,
+                homozygous_alternate_count: 0,
+            }]
+        );
         assert!((dosage_sum[0] - 1.0).abs() < f32::EPSILON);
         assert!((dosage_square_sum[0] - 1.0).abs() < f32::EPSILON);
     }
@@ -557,16 +570,12 @@ mod tests {
         let mut dosage_sum = vec![0.0_f32; 1];
         let mut dosage_square_sum = vec![0.0_f32; 1];
         let mut observation_count = vec![0_i32; 1];
-        let mut zero_count = vec![0_i32; 1];
-        let mut homozygous_alternate_count = vec![0_i32; 1];
+        let mut sparse_candidate_statistics = vec![SparseCandidateSummary::default(); 1];
         let mut indexed_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts: Some(VariantMajorSparseCandidateCountsMut {
-                zero_count: &mut zero_count,
-                homozygous_alternate_count: &mut homozygous_alternate_count,
-            }),
+            sparse_candidate_statistics: Some(&mut sparse_candidate_statistics),
         };
         expect_decode_success(
             decode_variant_major_probability_pair_tile(
@@ -586,8 +595,14 @@ mod tests {
 
         assert_eq!(indexed_output, vec![128, 0, 0, 0, 0, 255]);
         assert_eq!(observation_count, vec![3]);
-        assert_eq!(zero_count, vec![0]);
-        assert_eq!(homozygous_alternate_count, vec![1]);
+        assert_eq!(
+            sparse_candidate_statistics,
+            vec![SparseCandidateSummary {
+                exact_dosage_sum: ExactDosageSum::new(1_019, 255),
+                zero_count: 0,
+                homozygous_alternate_count: 1,
+            }]
+        );
         assert!((dosage_sum[0] - (1019.0 / 255.0)).abs() < 1.0e-6);
         assert!(
             (dosage_square_sum[0] - ((254.0_f32.powi(2) + 510.0_f32.powi(2) + 255.0_f32.powi(2)) / 65_025.0)).abs()

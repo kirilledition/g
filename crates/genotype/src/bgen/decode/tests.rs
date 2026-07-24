@@ -6,6 +6,8 @@ use super::super::metadata::VariantRecord;
 use super::super::sample_selection::build_sample_selection;
 use super::probability::PackedProbabilityReader;
 use super::*;
+use crate::common::{ChunkStatisticsPolicy, ExactDosageSum, SparseCandidateSummary};
+use crate::preprocess;
 
 #[derive(Debug)]
 struct DecodedTile {
@@ -13,8 +15,23 @@ struct DecodedTile {
     dosage_sum: Vec<f32>,
     dosage_square_sum: Vec<f32>,
     observation_count: Vec<i32>,
+    exact_dosage_sum: Option<Vec<ExactDosageSum>>,
     zero_count: Option<Vec<i32>>,
     homozygous_alternate_count: Option<Vec<i32>>,
+}
+
+impl DecodedTile {
+    fn sparse_candidate_summary(&self, variant_index: usize) -> SparseCandidateSummary {
+        SparseCandidateSummary {
+            exact_dosage_sum: self.exact_dosage_sum.as_ref().expect("test decode should collect exact dosage sums")
+                [variant_index],
+            zero_count: self.zero_count.as_ref().expect("test decode should collect zero counts")[variant_index],
+            homozygous_alternate_count: self
+                .homozygous_alternate_count
+                .as_ref()
+                .expect("test decode should collect homozygous alternate counts")[variant_index],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +101,29 @@ fn probability_bit_count_offset(sample_count: usize) -> usize {
     4 + 2 + 1 + 1 + sample_count + 1
 }
 
+fn probability_pair_for_eight_bit_raw_dosage(raw_dosage: u32) -> [u32; 2] {
+    let stored_allele_zero_numerator = 510_u32.checked_sub(raw_dosage).expect("test dosage should be at most two");
+    [stored_allele_zero_numerator / 2, stored_allele_zero_numerator % 2]
+}
+
+fn eight_bit_probability_block(raw_dosages: &[u32], missing_sample_indices: &[usize]) -> Vec<u8> {
+    let mut ploidy = vec![2_u8; raw_dosages.len()];
+    for sample_index in missing_sample_indices {
+        ploidy[*sample_index] = 0x82;
+    }
+    let probabilities = raw_dosages
+        .iter()
+        .flat_map(|raw_dosage| probability_pair_for_eight_bit_raw_dosage(*raw_dosage))
+        .collect::<Vec<_>>();
+    probability_block(
+        u32::try_from(raw_dosages.len()).expect("test sample count should fit u32"),
+        &ploidy,
+        0,
+        8,
+        &probabilities,
+    )
+}
+
 fn dosage_output_with_sentinels(value_count: usize) -> Vec<MaybeUninit<f32>> {
     vec![MaybeUninit::new(f32::NAN); value_count]
 }
@@ -146,22 +186,15 @@ fn decode_encoded_blocks(
     let mut dosage_sum = vec![0.0_f32; probability_blocks.len()];
     let mut dosage_square_sum = vec![0.0_f32; probability_blocks.len()];
     let mut observation_count = vec![0_i32; probability_blocks.len()];
-    let mut zero_count = collect_sparse_candidate_counts.then(|| vec![0_i32; probability_blocks.len()]);
-    let mut homozygous_alternate_count = collect_sparse_candidate_counts.then(|| vec![0_i32; probability_blocks.len()]);
+    let mut sparse_candidate_statistics =
+        collect_sparse_candidate_counts.then(|| vec![SparseCandidateSummary::default(); probability_blocks.len()]);
     let mut thread_scratch = ThreadScratch::default();
     {
-        let sparse_candidate_counts = match (zero_count.as_mut(), homozygous_alternate_count.as_mut()) {
-            (Some(zero_count), Some(homozygous_alternate_count)) => {
-                Some(VariantMajorSparseCandidateCountsMut { zero_count, homozygous_alternate_count })
-            }
-            (None, None) => None,
-            _ => unreachable!("sparse candidate count buffers are allocated together"),
-        };
         let mut tile_stats = VariantMajorTileStatsMut {
             dosage_sum: &mut dosage_sum,
             dosage_square_sum: &mut dosage_square_sum,
             observation_count: &mut observation_count,
-            sparse_candidate_counts,
+            sparse_candidate_statistics: sparse_candidate_statistics.as_deref_mut(),
         };
         decode_variant_major_dosage_tile(
             VariantMajorTileDecodeRequest {
@@ -177,12 +210,22 @@ fn decode_encoded_blocks(
             &mut thread_scratch,
         )?;
     }
+    let exact_dosage_sum = sparse_candidate_statistics
+        .as_ref()
+        .map(|statistics| statistics.iter().map(|summary| summary.exact_dosage_sum).collect());
+    let zero_count = sparse_candidate_statistics
+        .as_ref()
+        .map(|statistics| statistics.iter().map(|summary| summary.zero_count).collect());
+    let homozygous_alternate_count = sparse_candidate_statistics
+        .as_ref()
+        .map(|statistics| statistics.iter().map(|summary| summary.homozygous_alternate_count).collect());
 
     Ok(DecodedTile {
         output_values: initialized_f32_values(output_values),
         dosage_sum,
         dosage_square_sum,
         observation_count,
+        exact_dosage_sum,
         zero_count,
         homozygous_alternate_count,
     })
@@ -416,6 +459,7 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
     assert!((identity.dosage_sum[0] - 3.0).abs() < 1.0e-6);
     assert!((identity.dosage_square_sum[0] - 5.0).abs() < 1.0e-6);
     assert_eq!(identity.observation_count, vec![3]);
+    assert_eq!(identity.exact_dosage_sum, Some(vec![ExactDosageSum::new(765, 255)]));
     assert_eq!(identity.zero_count, Some(vec![1]));
     assert_eq!(identity.homozygous_alternate_count, Some(vec![1]));
 
@@ -423,22 +467,25 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
         .unwrap_or_else(|_| panic!("contiguous variant-major decode should succeed"));
     assert_eq!(contiguous.output_values, vec![1.0, 2.0]);
     assert_eq!(contiguous.observation_count, vec![2]);
+    assert_eq!(contiguous.exact_dosage_sum, Some(vec![ExactDosageSum::new(765, 255)]));
 
     let noncontiguous = decode_blocks(std::slice::from_ref(&all_present_block), 3, &[2, 0], true)
         .unwrap_or_else(|_| panic!("non-contiguous variant-major decode should succeed"));
     assert_eq!(noncontiguous.output_values, vec![2.0, 0.0]);
     assert_eq!(noncontiguous.dosage_sum, vec![2.0]);
+    assert_eq!(noncontiguous.exact_dosage_sum, Some(vec![ExactDosageSum::new(510, 255)]));
 
     let missing_block = probability_block(3, &[2, 0x82, 2], 0, 8, &[255, 0, 0, 0, 0, 0]);
-    let missing = decode_blocks(&[missing_block], 3, &[2, 1, 0], false)
+    let missing = decode_blocks(&[missing_block], 3, &[2, 1, 0], true)
         .unwrap_or_else(|_| panic!("missing variant-major decode should succeed"));
     assert_eq!(missing.output_values, vec![2.0, 1.0, 0.0]);
     assert_eq!(missing.dosage_sum, vec![2.0]);
     assert_eq!(missing.dosage_square_sum, vec![4.0]);
     assert_eq!(missing.observation_count, vec![2]);
+    assert_eq!(missing.exact_dosage_sum, Some(vec![ExactDosageSum::new(510, 255)]));
 
     let fractional_missing_block = probability_block(3, &[2, 0x82, 2], 0, 8, &[128, 0, 0, 0, 64, 64]);
-    let fractional_missing = decode_blocks(&[fractional_missing_block], 3, &[2, 1, 0], false)
+    let fractional_missing = decode_blocks(&[fractional_missing_block], 3, &[2, 1, 0], true)
         .unwrap_or_else(|_| panic!("fractional missing variant-major decode should succeed"));
     let first_selected_dosage = 318.0_f32 / 255.0;
     let third_selected_dosage = 254.0_f32 / 255.0;
@@ -453,6 +500,98 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
         (fractional_missing.dosage_square_sum[0] - ((254.0_f32.powi(2) + 318.0_f32.powi(2)) / 65_025.0)).abs() < 1.0e-6
     );
     assert_eq!(fractional_missing.observation_count, vec![2]);
+    assert_eq!(fractional_missing.exact_dosage_sum, Some(vec![ExactDosageSum::new(572, 255)]));
+}
+
+#[test]
+fn exact_sparse_classification_respects_strict_mac_boundary_for_bgen_probabilities() {
+    let mut flipped_below_threshold = vec![383_u32; 51];
+    flipped_below_threshold.extend([382_u32; 49]);
+    let mut flipped_at_threshold = vec![383_u32; 50];
+    flipped_at_threshold.extend([382_u32; 50]);
+    let mut flipped_above_threshold = vec![383_u32; 50];
+    flipped_above_threshold.extend([382_u32; 49]);
+    flipped_above_threshold.push(381);
+
+    let mut unflipped_below_threshold = vec![0_u32; 50];
+    unflipped_below_threshold.extend([255_u32; 49]);
+    unflipped_below_threshold.push(254);
+    let mut unflipped_at_threshold = vec![0_u32; 50];
+    unflipped_at_threshold.extend([255_u32; 50]);
+    let mut unflipped_above_threshold = vec![0_u32; 50];
+    unflipped_above_threshold.extend([255_u32; 49]);
+    unflipped_above_threshold.push(256);
+
+    let raw_dosage_rows = [
+        flipped_below_threshold,
+        flipped_at_threshold,
+        flipped_above_threshold,
+        unflipped_below_threshold,
+        unflipped_at_threshold,
+        unflipped_above_threshold,
+    ];
+    let probability_blocks =
+        raw_dosage_rows.iter().map(|row| eight_bit_probability_block(row, &[])).collect::<Vec<_>>();
+    let sample_indices = (0..100).collect::<Vec<_>>();
+    let decoded = decode_blocks(&probability_blocks, 100, &sample_indices, true)
+        .unwrap_or_else(|failure| panic!("threshold BGEN rows should decode: {}", failure.source));
+    let decoded_without_sparse_statistics = decode_blocks(&probability_blocks, 100, &sample_indices, false)
+        .unwrap_or_else(|failure| panic!("control BGEN rows should decode: {}", failure.source));
+
+    assert_eq!(decoded.output_values, decoded_without_sparse_statistics.output_values);
+    assert_eq!(decoded.dosage_sum, decoded_without_sparse_statistics.dosage_sum);
+    assert_eq!(decoded.dosage_square_sum, decoded_without_sparse_statistics.dosage_square_sum);
+    assert_eq!(decoded.observation_count, decoded_without_sparse_statistics.observation_count);
+    assert_eq!(
+        decoded
+            .exact_dosage_sum
+            .as_ref()
+            .expect("exact sparse summaries should be retained")
+            .iter()
+            .map(|summary| summary.numerator)
+            .collect::<Vec<_>>(),
+        vec![38_251, 38_250, 38_249, 12_749, 12_750, 12_751],
+    );
+    let historical_flipped_minor_allele_count = 200.0_f32 - decoded.dosage_sum[1];
+    assert!(historical_flipped_minor_allele_count < 50.0);
+
+    let sparse_candidate_statistics =
+        (0..raw_dosage_rows.len()).map(|variant_index| decoded.sparse_candidate_summary(variant_index)).collect();
+    let statistics = preprocess::build_chunk_stats_from_summaries(
+        decoded.dosage_sum,
+        decoded.dosage_square_sum,
+        decoded.observation_count,
+        Some(sparse_candidate_statistics),
+        100,
+        ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: false, collect_sparse_candidate_mask: true },
+    )
+    .expect("exact threshold summaries should preprocess");
+    assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![true, false, false, true, false, false]));
+}
+
+#[test]
+fn exact_sparse_classification_uses_observed_calls_when_bgen_values_are_missing() {
+    let mut raw_dosages = vec![510_u32; 2];
+    raw_dosages.extend([383_u32; 50]);
+    raw_dosages.extend([382_u32; 50]);
+    let probability_block = eight_bit_probability_block(&raw_dosages, &[0, 1]);
+    let sample_indices = (0..102).collect::<Vec<_>>();
+    let decoded = decode_blocks(&[probability_block], 102, &sample_indices, true)
+        .unwrap_or_else(|failure| panic!("missing threshold BGEN row should decode: {}", failure.source));
+
+    assert_eq!(decoded.observation_count, vec![100]);
+    assert_eq!(decoded.exact_dosage_sum, Some(vec![ExactDosageSum::new(38_250, 255)]));
+    let sparse_candidate_statistics = Some(vec![decoded.sparse_candidate_summary(0)]);
+    let statistics = preprocess::build_chunk_stats_from_summaries(
+        decoded.dosage_sum,
+        decoded.dosage_square_sum,
+        decoded.observation_count,
+        sparse_candidate_statistics,
+        102,
+        ChunkStatisticsPolicy { retain_imputed_dosage_square_sum: true, collect_sparse_candidate_mask: true },
+    )
+    .expect("missing threshold summaries should preprocess");
+    assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![false]));
 }
 
 #[test]
@@ -483,7 +622,7 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
         dosage_sum: &mut dosage_sum,
         dosage_square_sum: &mut dosage_square_sum,
         observation_count: &mut observation_count,
-        sparse_candidate_counts: None,
+        sparse_candidate_statistics: None,
     };
     let shape_failure = decode_variant_major_dosage_tile(
         VariantMajorTileDecodeRequest {
@@ -506,7 +645,7 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
         dosage_sum: &mut short_dosage_sum,
         dosage_square_sum: &mut dosage_square_sum,
         observation_count: &mut observation_count,
-        sparse_candidate_counts: None,
+        sparse_candidate_statistics: None,
     };
     assert!(
         validate_variant_major_tile_stats_lengths(&short_stats, 2)
@@ -519,20 +658,35 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
 #[test]
 fn generic_variant_major_decode_covers_phased_values_and_corrupt_blocks() {
     let unphased_block = probability_block(2, &[2, 2], 0, 2, &[3, 0, 0, 3]);
-    let unphased = decode_blocks(&[unphased_block], 2, &[0, 1], false)
+    let unphased = decode_blocks(&[unphased_block], 2, &[0, 1], true)
         .unwrap_or_else(|_| panic!("generic unphased decode should succeed"));
     assert_eq!(unphased.output_values, vec![0.0, 1.0]);
+    assert_eq!(unphased.exact_dosage_sum, Some(vec![ExactDosageSum::new(3, 3)]));
 
     let phased_block = probability_block(2, &[2, 2], 1, 2, &[3, 0, 0, 3]);
-    let phased = decode_blocks(&[phased_block], 2, &[0, 1], false)
+    let phased = decode_blocks(&[phased_block], 2, &[0, 1], true)
         .unwrap_or_else(|_| panic!("generic phased decode should succeed"));
     assert_eq!(phased.output_values, vec![1.0, 1.0]);
+    assert_eq!(phased.exact_dosage_sum, Some(vec![ExactDosageSum::new(6, 3)]));
 
     let phased_missing_block = probability_block(2, &[0x82, 2], 1, 2, &[0, 0, 0, 3]);
-    let phased_missing = decode_blocks(&[phased_missing_block], 2, &[0, 1], false)
+    let phased_missing = decode_blocks(&[phased_missing_block], 2, &[0, 1], true)
         .unwrap_or_else(|_| panic!("generic phased missing decode should succeed"));
     assert_eq!(phased_missing.output_values, vec![1.0, 1.0]);
     assert_eq!(phased_missing.observation_count, vec![1]);
+    assert_eq!(phased_missing.exact_dosage_sum, Some(vec![ExactDosageSum::new(3, 3)]));
+
+    let maximum_probability = u32::MAX;
+    let thirty_two_bit_block = probability_block(2, &[2, 2], 0, 32, &[maximum_probability, 0, 0, maximum_probability]);
+    let thirty_two_bit = decode_blocks(&[thirty_two_bit_block], 2, &[1, 0], true)
+        .unwrap_or_else(|_| panic!("generic 32-bit nonmonotonic decode should succeed"));
+    assert_eq!(thirty_two_bit.output_values, vec![1.0, 0.0]);
+    assert_eq!(
+        thirty_two_bit.exact_dosage_sum,
+        Some(vec![ExactDosageSum::new(u64::from(maximum_probability), maximum_probability)])
+    );
+    assert_eq!(thirty_two_bit.zero_count, Some(vec![1]));
+    assert_eq!(thirty_two_bit.homozygous_alternate_count, Some(vec![0]));
 
     let mut invalid_blocks = vec![
         (probability_block(1, &[2], 0, 2, &[3, 0]), 2, "file header"),

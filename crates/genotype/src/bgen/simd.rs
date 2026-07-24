@@ -2,6 +2,7 @@ use std::mem::MaybeUninit;
 
 use crate::common::{
     DosageSummary, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL, EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL,
+    ExactDosageSum,
 };
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -75,6 +76,11 @@ impl EightBitRawIntegerSummary {
             observation_count: self.selected_observation_count,
             zero_count: self.zero_count,
             homozygous_alternate_count: self.homozygous_alternate_count,
+            exact_dosage_sum: self.collect_sparse_candidate_counts.then(|| {
+                let exact_dosage_numerator = u64::try_from(self.raw_dosage_total)
+                    .expect("a validated packed8 raw dosage sum should be nonnegative");
+                ExactDosageSum::new(exact_dosage_numerator, u32::from(u8::MAX))
+            }),
         }
     }
 }
@@ -659,6 +665,7 @@ mod tests {
         // are exactly representable in f32. Accumulating before scaling keeps
         // this oracle independent of the production conversion helper.
         let mut raw_dosage_sum = 0.0_f32;
+        let mut exact_raw_dosage_sum = 0_u64;
         let mut raw_dosage_square_sum = 0.0_f32;
         let mut zero_count = 0_i32;
         let mut homozygous_alternate_count = 0_i32;
@@ -670,6 +677,7 @@ mod tests {
                 - u16::from(heterozygous_probability_byte);
             let raw_dosage_value = f32::from(raw_dosage_integer);
             raw_dosage_sum += raw_dosage_value;
+            exact_raw_dosage_sum += u64::from(raw_dosage_integer);
             raw_dosage_square_sum += raw_dosage_value * raw_dosage_value;
             if collect_sparse_candidate_counts {
                 if raw_dosage_integer == 0 {
@@ -686,6 +694,8 @@ mod tests {
             observation_count: i32::try_from(probability_pairs.len()).expect("test sample count should fit i32"),
             zero_count,
             homozygous_alternate_count,
+            exact_dosage_sum: collect_sparse_candidate_counts
+                .then(|| ExactDosageSum::new(exact_raw_dosage_sum, u32::from(u8::MAX))),
         }
     }
 
@@ -722,6 +732,7 @@ mod tests {
         assert_eq!(left.observation_count, right.observation_count);
         assert_eq!(left.zero_count, right.zero_count);
         assert_eq!(left.homozygous_alternate_count, right.homozygous_alternate_count);
+        assert_eq!(left.exact_dosage_sum, right.exact_dosage_sum);
     }
 
     fn probability_patterns(sample_count: usize) -> [Vec<u8>; 5] {

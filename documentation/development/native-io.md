@@ -32,11 +32,20 @@ zlib, and BGEN v1.3 Zstandard variant blocks. Native code owns:
 - variant metadata;
 - dosage decode;
 - missing-value representation;
+- exact quantized dosage sums and integer threshold counts when binary Firth
+  sparse-candidate classification is requested;
 - cached no-missing diploid packed8 compatibility validation and fast paths;
 - chunk delivery in variant-major shape.
 
 Python/JAX kernels should receive already aligned dosage or validated packed8
 chunks and metadata, not parse file formats.
+
+Host-only dosage and packed8 readers carry the exact sum as an integer
+numerator with the variant's nonzero BGEN probability denominator. Missing calls
+are excluded. Allele orientation, strict `MAC < 50`, and half-zero-density
+comparisons use widened integer products; a requested sparse mask must never
+fall back to the rounded `f32` dosage sum. Output-facing dosage summaries remain
+in their existing `f32` representation.
 
 The BGEN index publishes variant metadata only through the validated
 `g-genotype-contracts` constructors. Store construction performs one-time,

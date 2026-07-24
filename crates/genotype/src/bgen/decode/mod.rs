@@ -7,8 +7,8 @@ mod probability;
 mod variant_major;
 
 pub(super) use matrix::{
-    ThreadScratch, VariantMajorSparseCandidateCountsMut, VariantMajorTileStatsMut, read_eight_bit_probability_pair,
-    selected_sample_count_to_i32, with_worker_thread_scratch,
+    ThreadScratch, VariantMajorTileStatsMut, read_eight_bit_probability_pair, selected_sample_count_to_i32,
+    with_worker_thread_scratch,
 };
 pub(super) use probability::{
     parse_layout_two_probability_block, read_exact_bytes, read_probability_block, read_u16_at, read_u32_at,
