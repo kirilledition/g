@@ -763,7 +763,7 @@ fn unexpected_end_of_file(offset: u64, requested_length: usize, available_length
     BgenError::Io(std::io::Error::new(
         ErrorKind::UnexpectedEof,
         format!(
-            "BGEN source ended during positioned read at offset {offset}: requested {requested_length} bytes, observed {available_length}."
+            "Unexpected end of file while reading BGEN bytes: positioned read at offset {offset} requested {requested_length} bytes, observed {available_length}."
         ),
     ))
 }
