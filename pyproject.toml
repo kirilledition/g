@@ -30,7 +30,7 @@ dev = [
     "ruff>=0.15.22",
     "scalene>=2.3.0",
     "ty>=0.0.62",
-    "skylos>=4.30.0",
+    "skylos>=4.31.1",
 ]
 cuda-format = [
     "clang-format==22.1.8",
