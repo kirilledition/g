@@ -49,7 +49,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install format dependencies without the project package
         run: uv sync --group dev --group cuda-format --frozen --no-install-project
@@ -86,7 +86,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install lint dependencies without the project package
         run: uv sync --group dev --frozen --no-install-project
@@ -117,7 +117,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install CUDA lint dependencies without the project package
         run: uv sync --group dev --group cuda-lint --frozen --no-install-project
@@ -148,7 +148,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install typecheck dependencies without the project package
         run: uv sync --group dev --frozen --no-install-project
@@ -185,7 +185,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install project and test dependencies
         run: uv sync --group dev --frozen
@@ -238,7 +238,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Build wheel and source distribution
         run: uv build --sdist --wheel --out-dir dist --clear
@@ -294,7 +294,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Run Clippy
         run: >
@@ -326,7 +326,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Run beta Clippy as an advisory check
         continue-on-error: true
@@ -358,7 +358,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Check Rust documentation
         env:
@@ -389,7 +389,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2
@@ -452,7 +452,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
 
@@ -486,7 +486,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Check minimum supported Rust version
         continue-on-error: true
@@ -516,7 +516,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       - name: Resolve direct minimal dependency versions
         continue-on-error: true
@@ -579,7 +579,7 @@ jobs:
           mold-version: "2.41.0"
           make-default: false
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           env-vars: "CARGO CC CFLAGS CXX CMAKE RUST PYO3 PYTHON Python python LD_LIBRARY_PATH"
 
