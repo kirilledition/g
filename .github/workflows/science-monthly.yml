@@ -51,7 +51,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install Mold linker
-        uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+        uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
         with:
           mold-version: "2.41.0"
           make-default: false
