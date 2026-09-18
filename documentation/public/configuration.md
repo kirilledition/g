@@ -241,6 +241,9 @@ forms are accepted.
 Trait mode is resolved from `trait_type`, `qt`, and `bt`:
 
 - Both `qt = true` and `bt = true` in the same config layer is an error.
+- A true trait flag in a later layer clears the opposite flag from an earlier
+  layer. For example, CLI `--qt` overrides TOML `bt = true`, and CLI `--bt`
+  overrides TOML `qt = true`.
 - `bt = true` selects binary mode.
 - `qt = true` selects quantitative mode.
 - Otherwise the merged `trait_type` applies, defaulting to quantitative.

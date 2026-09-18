@@ -165,6 +165,85 @@ fn defaults_toml_and_cli_layers_follow_precedence() {
 }
 
 #[test]
+fn cli_trait_flags_override_toml_trait_flags_and_types() {
+    for trait_configuration in ["bt = true", "qt = true", "trait_type = \"binary\"", "trait_type = \"quantitative\""] {
+        let fixture = CliFixture::new("trait-override");
+        let config_path = fixture.write_config(
+            "traits.toml",
+            &["trait-a"],
+            &fixture.directory.path().join("output"),
+            &format!("[trait]\n{trait_configuration}\n"),
+        );
+        for cli_flag in ["--qt", "--bt"] {
+            let arguments = vec![
+                "regenie".to_string(),
+                "--config".to_string(),
+                path_text(&config_path).to_string(),
+                cli_flag.to_string(),
+            ];
+            let compiled_run = one_compiled_run(&arguments);
+            let expected_association_mode = if cli_flag == "--qt" {
+                g_plan::AssociationMode::Regenie2Linear
+            } else {
+                g_plan::AssociationMode::Regenie2Binary
+            };
+            assert_eq!(
+                compiled_run.run_plan.association_mode, expected_association_mode,
+                "{cli_flag} must select the trait model over TOML {trait_configuration}"
+            );
+        }
+    }
+}
+
+#[test]
+fn toml_trait_flags_keep_precedence_over_trait_type() {
+    for (trait_configuration, expected_association_mode) in [
+        ("trait_type = \"binary\"\nqt = true", g_plan::AssociationMode::Regenie2Linear),
+        ("trait_type = \"quantitative\"\nbt = true", g_plan::AssociationMode::Regenie2Binary),
+        ("trait_type = \"binary\"\nqt = false\nbt = false", g_plan::AssociationMode::Regenie2Binary),
+        ("trait_type = \"quantitative\"\nqt = false\nbt = false", g_plan::AssociationMode::Regenie2Linear),
+    ] {
+        let fixture = CliFixture::new("trait-type-precedence");
+        let config_path = fixture.write_config(
+            "traits.toml",
+            &["trait-a"],
+            &fixture.directory.path().join("output"),
+            &format!("[trait]\n{trait_configuration}\n"),
+        );
+        let arguments = vec!["regenie".to_string(), "--config".to_string(), path_text(&config_path).to_string()];
+        assert_eq!(
+            one_compiled_run(&arguments).run_plan.association_mode,
+            expected_association_mode,
+            "trait resolution changed for {trait_configuration}"
+        );
+    }
+}
+
+#[test]
+fn conflicting_trait_flags_are_rejected_in_each_explicit_layer() {
+    let fixture = CliFixture::new("trait-conflict");
+    let valid_config = fixture.write_config(
+        "valid.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("valid-output"),
+        "[trait]\nbt = true\n",
+    );
+    let (exit_code, _, stderr) = exit_dispatch(&["regenie", "--config", path_text(&valid_config), "--qt", "--bt"]);
+    assert_eq!(exit_code, 1);
+    assert!(stderr.contains("--qt and --bt are mutually exclusive"));
+
+    let conflicting_config = fixture.write_config(
+        "conflicting.toml",
+        &["trait-a"],
+        &fixture.directory.path().join("conflicting-output"),
+        "[trait]\nqt = true\nbt = true\n",
+    );
+    let (exit_code, _, stderr) = exit_dispatch(&["regenie", "--config", path_text(&conflicting_config), "--qt"]);
+    assert_eq!(exit_code, 1);
+    assert!(stderr.contains("--qt and --bt are mutually exclusive"));
+}
+
+#[test]
 fn current_effective_toml_round_trips_with_schema_version_zero() {
     let fixture = CliFixture::new("effective-round-trip");
     let initial_arguments = fixture.valid_cli_arguments(&["trait-a"], "initial-output");
@@ -275,5 +354,45 @@ fn run_plan_and_batch_dispatch_preserve_geometry_and_disjoint_outputs() {
             assert!(stderr.contains("equal or nested output run roots"));
         }
         dispatch => panic!("expected nested-output error, observed {dispatch:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_output_roots_resolve_symlinks_before_parent_components() {
+    let fixture = CliFixture::new("batch-symlink-parent");
+    let actual_directory = fixture.directory.path().join("actual");
+    std::fs::create_dir_all(actual_directory.join("child")).expect("symlink target should be created");
+    let alias_path = fixture.directory.path().join("alias");
+    std::os::unix::fs::symlink(actual_directory.join("child"), &alias_path).expect("symlink should be created");
+
+    for (first_output_root, second_output_root, expect_collision) in [
+        (actual_directory.join("output"), alias_path.join("../output"), true),
+        (actual_directory.join("output"), alias_path.join("../output/nested"), true),
+        (actual_directory.join("child/output"), alias_path.join("output"), true),
+        (fixture.directory.path().join("output"), alias_path.join("../output"), false),
+    ] {
+        let first_config = fixture.write_config("first.toml", &["alpha"], &first_output_root, "");
+        let second_config = fixture.write_config("second.toml", &["beta"], &second_output_root, "");
+        for config_paths in [[&first_config, &second_config], [&second_config, &first_config]] {
+            let arguments = vec![
+                "batch".to_string(),
+                "--config".to_string(),
+                path_text(config_paths[0]).to_string(),
+                "--config".to_string(),
+                path_text(config_paths[1]).to_string(),
+            ];
+            match dispatch_cli(&arguments) {
+                CliDispatch::Exit { exit_code: 1, stderr, .. } if expect_collision => {
+                    assert!(stderr.contains("equal or nested output run roots"), "{stderr}");
+                }
+                CliDispatch::Runs(compiled_runs) if !expect_collision => assert_eq!(compiled_runs.len(), 2),
+                dispatch => panic!(
+                    "unexpected batch dispatch for {} and {} (collision = {expect_collision}): {dispatch:?}",
+                    first_output_root.display(),
+                    second_output_root.display(),
+                ),
+            }
+        }
     }
 }

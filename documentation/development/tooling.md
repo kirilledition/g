@@ -23,6 +23,9 @@ It must not recreate a second Python orchestration layer.
 Generated data and profiler output belong under ignored locations such as
 `data/benchmarks/`, `data/profiles/`, and `results/perf/`.
 
+Repository-wide Ruff checks exclude `.git/`. Git metadata, including reflogs
+for branch names ending in `.py`, is outside the Python source scope.
+
 ## Layout
 
 ```text

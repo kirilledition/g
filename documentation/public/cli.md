@@ -48,9 +48,12 @@ uv run g batch \
 Each path must contain a complete configuration, including its input and output
 paths. Batch mode does not accept per-run CLI overrides. Before starting the
 first scan, `g` constructs every frontend config, rejects equal or nested output
-run roots including aliases through existing symlink ancestors, and verifies
-that process-global logging, native thread, device, and JAX cache policies are
-compatible. Input files, sample and prediction compatibility, existing output
+run roots including aliases through existing symlink ancestors and paths with
+`..` after a symlink, and verifies that process-global logging, native thread,
+device, and JAX cache policies are
+compatible. Missing output-directory suffixes are allowed; dangling symlinks
+and paths that traverse a regular file fail validation. Input files, sample
+and prediction compatibility, existing output
 state, and resume manifests are checked by each entry's engine preflight when
 that entry starts.
 

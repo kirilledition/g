@@ -42,6 +42,8 @@ pub enum PredictionError {
     TargetSampleLengthMismatch,
     #[error("Duplicate LOCO sample key: {sample_key}")]
     DuplicateLocoSampleKey { sample_key: String },
+    #[error("Distinct target FID/IID pairs serialize to the same ambiguous LOCO sample key: {sample_key}")]
+    AmbiguousTargetSampleKey { sample_key: String },
     #[error("Target samples not found in LOCO file: {0}")]
     MissingTargetSamples(String),
     #[error(

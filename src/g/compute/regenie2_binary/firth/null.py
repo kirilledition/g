@@ -214,7 +214,8 @@ def fit_covariate_only_firth_null_model_once(
         )
         updated_iteration_count = state.iteration_count + jnp.asarray(1, dtype=jnp.int32)
         score_maximum = jnp.max(jnp.abs(components.modified_score))
-        converged = components.valid & (score_maximum < tolerance_value) & (updated_iteration_count >= 2)
+        # An already-converged start cannot provide the strict deviance decrease required by line search.
+        converged = components.valid & (score_maximum < tolerance_value)
         score_history_state = update_null_firth_score_history(
             state=regenie2_binary_firth_types.NullFirthScoreHistoryState(
                 previous_score_maximum=state.previous_score_maximum,

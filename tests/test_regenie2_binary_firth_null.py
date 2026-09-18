@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary.firth import null as regenie2_binary_firth_null
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
-
-if typing.TYPE_CHECKING:
-    import pytest
 
 PRODUCTION_NULL_FIRTH_GRADIENT_TOLERANCE = 50.0e-6
 PRODUCTION_NULL_FIRTH_MAXIMUM_STEP_SIZE = 25.0
@@ -301,8 +298,8 @@ def test_null_firth_score_history_can_disable_the_increase_failure() -> None:
 
 
 def test_null_firth_convergence_precedes_the_increase_failure() -> None:
-    """Accept convergence from iteration two onward before applying the heuristic."""
-    for convergence_iteration in (2, 27):
+    """Accept convergence before applying the score-increase heuristic."""
+    for convergence_iteration in (1, 2, 27):
         score_maxima = [float(score_maximum) for score_maximum in range(convergence_iteration)]
         observed_states = compare_score_history_sequence_to_regenie(
             score_maxima=score_maxima,
@@ -441,6 +438,53 @@ def test_null_firth_single_attempt_converges_to_a_small_modified_score() -> None
     tests.numerical.assert_absolute_difference_less_than(
         observed.penalized_log_likelihood,
         -0.5 * np.asarray(terminal_components.deviance),
+        1.0e-12,
+    )
+
+
+@pytest.mark.parametrize("case_count", [10, 4])
+def test_null_firth_wrapper_accepts_a_valid_initial_optimum(case_count: int) -> None:
+    """Retain the analytical intercept-only optimum, including a balanced cohort."""
+    sample_count = 20
+    control_count = sample_count - case_count
+    optimal_probability = (case_count + 0.5) / (sample_count + 1.0)
+    initial_coefficients = np.asarray([np.log((case_count + 0.5) / (control_count + 0.5))], dtype=np.float64)
+    covariate_matrix = jnp.ones((sample_count, 1), dtype=jnp.float64)
+    phenotype_vector = jnp.concatenate(
+        (jnp.ones((case_count,), dtype=jnp.float64), jnp.zeros((control_count,), dtype=jnp.float64))
+    )
+    loco_offset = jnp.zeros((sample_count,), dtype=jnp.float64)
+    kernel_config = build_null_firth_policy_config()
+
+    observed = regenie2_binary_firth_null.fit_covariate_only_firth_null_model(
+        covariate_matrix,
+        phenotype_vector,
+        loco_offset,
+        jnp.asarray(initial_coefficients),
+        kernel_config,
+    )
+    terminal_components = regenie2_binary_firth_null.compute_null_firth_components(
+        covariate_matrix=covariate_matrix,
+        phenotype_vector=phenotype_vector,
+        loco_offset=loco_offset,
+        coefficients=observed.coefficients,
+    )
+    expected_penalized_log_likelihood = (
+        case_count * np.log(optimal_probability)
+        + control_count * np.log1p(-optimal_probability)
+        + 0.5 * np.log(sample_count * optimal_probability * (1.0 - optimal_probability))
+    )
+
+    assert bool(np.asarray(observed.converged))
+    assert bool(np.asarray(terminal_components.valid))
+    assert (
+        float(np.max(np.abs(np.asarray(terminal_components.modified_score))))
+        < kernel_config.null_firth.gradient_tolerance
+    )
+    np.testing.assert_array_equal(observed.coefficients, initial_coefficients)
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.penalized_log_likelihood,
+        expected_penalized_log_likelihood,
         1.0e-12,
     )
 

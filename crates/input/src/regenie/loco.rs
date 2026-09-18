@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::alignment::LocoSampleAlignment;
 use super::{PredictionError, normalize_chromosome};
 
 #[derive(Debug)]
@@ -50,7 +51,6 @@ pub(super) struct LocoSampleIndex {
 #[derive(Debug)]
 struct LocoSampleIdentifierBounds {
     identifier_start: usize,
-    separator_position: usize,
     identifier_end: usize,
 }
 
@@ -157,6 +157,7 @@ fn build_indexed_source_digest(header_digest: [u8; 32], chromosome_rows: &HashMa
 pub(super) fn read_loco_chromosome_predictions_into(
     loco_file_index: &LocoFileIndex,
     chromosome: &str,
+    sample_alignment: &LocoSampleAlignment,
     prediction_values: &mut Vec<f32>,
 ) -> Result<(), PredictionError> {
     let row_index = loco_file_index
@@ -193,30 +194,8 @@ pub(super) fn read_loco_chromosome_predictions_into(
         return Err(PredictionError::InvalidLocoDataLine { line_number: row_index.line_number, field_count: 1 });
     };
     let expected_prediction_count = loco_file_index.sample_count;
-    let mut observed_prediction_count = 0_usize;
-    let mut first_prediction_error = None;
-    for value in std::iter::once(first_prediction_field).chain(fields) {
-        observed_prediction_count += 1;
-        if first_prediction_error.is_some() {
-            continue;
-        }
-        match value.parse::<f32>() {
-            Ok(prediction_value) if prediction_value.is_finite() => prediction_values.push(prediction_value),
-            Ok(_) => {
-                first_prediction_error = Some(PredictionError::NonFinitePredictionValue {
-                    line_number: row_index.line_number,
-                    value: value.to_string(),
-                });
-            }
-            Err(source) => {
-                first_prediction_error = Some(PredictionError::InvalidPredictionValue {
-                    line_number: row_index.line_number,
-                    value: value.to_string(),
-                    source,
-                });
-            }
-        }
-    }
+    let prediction_fields = std::iter::once(first_prediction_field).chain(fields);
+    let observed_prediction_count = prediction_fields.clone().count();
     if observed_prediction_count != expected_prediction_count {
         return Err(PredictionError::LocoPredictionCountMismatch {
             line_number: row_index.line_number,
@@ -244,10 +223,35 @@ pub(super) fn read_loco_chromosome_predictions_into(
             chromosome: chromosome.to_string(),
         });
     }
-    if let Some(prediction_error) = first_prediction_error {
-        return Err(prediction_error);
+    match sample_alignment {
+        LocoSampleAlignment::Identity => {
+            for value in prediction_fields {
+                prediction_values.push(parse_prediction_value(value, row_index.line_number)?);
+            }
+        }
+        LocoSampleAlignment::Indices(alignment_indices) => {
+            // Retain source tokens so selection happens before numeric validation. REGENIE
+            // writes NA for samples excluded from a phenotype's analysis.
+            let source_prediction_fields = prediction_fields.collect::<Vec<_>>();
+            for sample_index in alignment_indices {
+                prediction_values
+                    .push(parse_prediction_value(source_prediction_fields[*sample_index], row_index.line_number)?);
+            }
+        }
     }
     Ok(())
+}
+
+fn parse_prediction_value(value: &str, line_number: usize) -> Result<f32, PredictionError> {
+    let prediction_value = value.parse::<f32>().map_err(|source| PredictionError::InvalidPredictionValue {
+        line_number,
+        value: value.to_string(),
+        source,
+    })?;
+    if !prediction_value.is_finite() {
+        return Err(PredictionError::NonFinitePredictionValue { line_number, value: value.to_string() });
+    }
+    Ok(prediction_value)
 }
 
 impl LocoSourceIdentity {
@@ -296,8 +300,8 @@ fn validate_loco_header(header_line: &str) -> Result<usize, PredictionError> {
     for (sample_index, sample_identifier) in fields.enumerate() {
         sample_identifier_count += 1;
         if invalid_sample_identifier.is_none()
-            && !sample_identifier.split_once('_').is_some_and(|(family_identifier, individual_identifier)| {
-                !family_identifier.is_empty() && !individual_identifier.is_empty()
+            && !sample_identifier.match_indices('_').any(|(separator_position, _)| {
+                separator_position > 0 && separator_position + 1 < sample_identifier.len()
             })
         {
             invalid_sample_identifier = Some((sample_index, sample_identifier));
@@ -324,14 +328,10 @@ pub(super) fn parse_loco_sample_identifiers(header_line: String, sample_identifi
     let _ = fields.next().expect("validated LOCO headers contain their marker");
 
     let mut identifier_bounds = Vec::with_capacity(sample_identifier_count);
-    for (sample_index, sample_identifier) in fields.enumerate() {
-        let separator_offset = sample_identifier
-            .find('_')
-            .unwrap_or_else(|| unreachable!("LOCO sample identifier {sample_index} was validated immediately above"));
+    for sample_identifier in fields {
         let identifier_start_index = sample_identifier.as_ptr().addr() - header_address;
         identifier_bounds.push(LocoSampleIdentifierBounds {
             identifier_start: identifier_start_index,
-            separator_position: identifier_start_index + separator_offset,
             identifier_end: identifier_start_index + sample_identifier.len(),
         });
     }
@@ -341,12 +341,7 @@ pub(super) fn parse_loco_sample_identifiers(header_line: String, sample_identifi
 }
 
 impl LocoSampleIndex {
-    pub(super) fn identifiers(&self) -> impl ExactSizeIterator<Item = (&str, &str)> {
-        self.identifier_bounds.iter().map(|bounds| {
-            (
-                &self.header_line[bounds.identifier_start..bounds.separator_position],
-                &self.header_line[bounds.separator_position + 1..bounds.identifier_end],
-            )
-        })
+    pub(super) fn identifiers(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.identifier_bounds.iter().map(|bounds| &self.header_line[bounds.identifier_start..bounds.identifier_end])
     }
 }

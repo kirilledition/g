@@ -123,43 +123,98 @@ fn resolve_output_root(path: &Path) -> ConfigResult<PathBuf> {
     let absolute_path = std::path::absolute(path).map_err(|error| {
         super::ConfigError::new(format!("Failed to resolve output run root {}: {error}", path.display()))
     })?;
-    let mut normalized_path = PathBuf::new();
+    let mut resolved_path = PathBuf::new();
     for component in absolute_path.components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => {
-                normalized_path.pop();
+            Component::Prefix(_) | Component::RootDir => {
+                resolved_path.push(component.as_os_str());
             }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized_path.push(component.as_os_str());
+            Component::ParentDir | Component::Normal(_) => {
+                resolved_path.push(component.as_os_str());
+                // Resolve links before interpreting a following `..`, including
+                // after a missing component has been cancelled by `..`.
+                match resolved_path.canonicalize() {
+                    Ok(canonical_path) => resolved_path = canonical_path,
+                    Err(error)
+                        if error.kind() == ErrorKind::NotFound
+                            && !resolved_path
+                                .symlink_metadata()
+                                .is_ok_and(|metadata| metadata.file_type().is_symlink()) =>
+                    {
+                        if component == Component::ParentDir {
+                            resolved_path.pop();
+                            resolved_path.pop();
+                        }
+                    }
+                    Err(error) => {
+                        return Err(super::ConfigError::new(format!(
+                            "Failed to resolve output run root {} at {}: {error}",
+                            path.display(),
+                            resolved_path.display(),
+                        )));
+                    }
+                }
             }
         }
     }
-    for existing_ancestor in normalized_path.ancestors() {
-        match existing_ancestor.canonicalize() {
-            Ok(canonical_ancestor) => {
-                let missing_suffix =
-                    normalized_path.strip_prefix(existing_ancestor).expect("an ancestor is always a path prefix");
-                return Ok(canonical_ancestor.join(missing_suffix));
-            }
-            Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
-            Err(error) => {
-                return Err(super::ConfigError::new(format!(
-                    "Failed to resolve output run root {} at existing ancestor {}: {error}",
-                    path.display(),
-                    existing_ancestor.display(),
-                )));
-            }
-        }
-    }
-    Err(super::ConfigError::new(format!(
-        "Failed to resolve an existing ancestor for output run root {}.",
-        path.display(),
-    )))
+    Ok(resolved_path)
 }
 
 fn root_help(program_name: &str) -> String {
     format!(
         "Blazing fast REGENIE step 2 GWAS engine.\n\nUsage: {program_name} <COMMAND> [OPTIONS]\n\nCommands:\n  regenie  Run a REGENIE-compatible step 2 association scan.\n  batch    Run complete configurations sequentially in one process.\n\nOptions:\n  -h, --help  Print help\n"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_support::TemporaryDirectory;
+
+    use super::resolve_output_root;
+
+    #[test]
+    fn output_roots_normalize_missing_components_without_creating_directories() {
+        let directory = TemporaryDirectory::new("output-missing-components");
+        let output_root = directory.path().join("missing/../output/nested");
+        assert_eq!(
+            resolve_output_root(&output_root).expect("missing suffix should resolve"),
+            directory.path().canonicalize().unwrap().join("output/nested"),
+        );
+        assert!(!directory.path().join("missing").exists());
+        assert!(!directory.path().join("output").exists());
+    }
+
+    #[test]
+    fn output_roots_reject_traversal_through_files() {
+        let directory = TemporaryDirectory::new("output-file-parent");
+        let file_path = directory.write("file", "");
+        assert!(resolve_output_root(&file_path.join("../output")).is_err());
+        assert!(resolve_output_root(&file_path.join("output")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_roots_follow_simple_links_and_links_after_missing_parent_components() {
+        let directory = TemporaryDirectory::new("output-symlink-missing-parent");
+        let target_directory = directory.path().join("target");
+        std::fs::create_dir(&target_directory).unwrap();
+        std::os::unix::fs::symlink("target", directory.path().join("link")).unwrap();
+        let expected_root = target_directory.canonicalize().unwrap().join("output/nested");
+        for suffix in ["link/output/nested", "missing/../link/output/nested"] {
+            assert_eq!(resolve_output_root(&directory.path().join(suffix)).unwrap(), expected_root);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_roots_reject_dangling_symlinks() {
+        let directory = TemporaryDirectory::new("output-symlink-dangling");
+        let link_path = directory.path().join("link");
+        std::os::unix::fs::symlink("missing-target", &link_path).unwrap();
+        for output_root in [&link_path, &link_path.join("output"), &link_path.join("../output")] {
+            let error = resolve_output_root(output_root).expect_err("dangling links should fail resolution");
+            assert!(error.to_string().contains("Failed to resolve output run root"));
+        }
+    }
 }

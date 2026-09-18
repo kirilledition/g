@@ -126,8 +126,17 @@ lists and LOCO files use ASCII whitespace delimiters; Unicode whitespace is not 
 delimiter.
 
 Each LOCO header starts with `FID_IID`; every following sample token must encode
-non-empty FID and IID values separated by an underscore, and each resulting
-pair must be unique.
+non-empty FID and IID values joined by an underscore. Underscores inside either
+identifier are supported: `family_1` and `person1` match the complete token
+`family_1_person1`. Header tokens must be unique. Different sample pairs that
+produce the same joined token, such as `(a_b, c)` and `(a, b_c)`, are ambiguous
+and are rejected.
+
+Every selected sample must have a finite numeric prediction for the requested
+chromosome. Prediction values for samples excluded from that phenotype's
+analysis are not used; upstream REGENIE's `NA` entries for those samples are
+accepted. Full row lengths and source fingerprints are still validated,
+including excluded columns.
 
 Step 2 statistics depend on the prediction file, trait mode, covariates,
 chromosome, and aligned sample set. Changing the prediction list can change

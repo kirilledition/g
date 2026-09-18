@@ -710,6 +710,170 @@ fn strict_resume_repairs_orphan_commit_and_rejects_each_nonzero_contract_version
 }
 
 #[test]
+fn strict_linear_resume_rejects_threshold_changes_before_mutation() {
+    let directory = TestDirectory::new("linear-resume-thresholds");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let mut initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    Arc::get_mut(&mut initial_plan).expect("test plan has one owner").association_mode =
+        g_plan::AssociationMode::Regenie2Linear;
+    let planned_ranges = single_chunk_plan(0..1);
+    let manager = initialize_manager(Arc::clone(&initial_plan), &inputs, &phenotype_names, &planned_ranges);
+    let sessions = manager
+        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+        .expect("delivery state exists")
+        .writer_sessions;
+    let mut chunk = test_chunk(&metadata_store(1), 0..1, 1);
+    chunk.statistics.correction_code = None;
+    write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics).expect("chunk is accepted");
+    drop(sessions);
+    let completed = manager.finish().expect("linear manager finishes");
+    let run_directory = &completed[0].run_directory;
+    let manifest_path = run_directory.join("run_manifest.json");
+    let config_path = run_directory.join("effective_config.toml");
+    let part_path = only_parquet_part(&completed[0].parts_directory);
+    let original_manifest_bytes = std::fs::read(&manifest_path).expect("manifest is readable");
+    let original_config_bytes = std::fs::read(&config_path).expect("configuration is readable");
+    let original_part_bytes = std::fs::read(&part_path).expect("part is readable");
+    let original_manifest = read_manifest(run_directory);
+    assert_eq!(
+        original_manifest["execution_plan"]["linear_kernel_config"],
+        serde_json::to_value(initial_plan.compute.kernels.linear).expect("linear kernel serializes")
+    );
+
+    for field_name in ["minimum_variance", "relative_variance_tolerance"] {
+        let mut changed_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+        let changed_plan_value = Arc::get_mut(&mut changed_plan).expect("test plan has one owner");
+        changed_plan_value.association_mode = g_plan::AssociationMode::Regenie2Linear;
+        let changed_value = g_plan::PositiveF32::try_from(1.0e-4).expect("valid changed threshold");
+        match field_name {
+            "minimum_variance" => changed_plan_value.compute.kernels.linear.minimum_variance = changed_value,
+            "relative_variance_tolerance" => {
+                changed_plan_value.compute.kernels.linear.relative_variance_tolerance = changed_value;
+            }
+            _ => unreachable!("test covers only linear thresholds"),
+        }
+        let changed_header = crate::manifest::build_current_run_manifest_header_value_with_cache(
+            &changed_plan,
+            &header(PRIMARY_PHENOTYPE, &inputs, 1),
+            &mut crate::ManifestFileFingerprintCache::default(),
+        )
+        .expect("changed linear header builds");
+        assert_ne!(changed_header["execution_plan_hash"], original_manifest["execution_plan_hash"]);
+        let mut changed_manager = OutputManager::open(changed_plan, "# changed thresholds\n".to_string())
+            .expect("changed manager opens before compatibility validation");
+        let error = changed_manager
+            .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &planned_ranges, false)
+            .expect_err("changed linear threshold must reject resume");
+        assert!(error.to_string().contains(&format!("execution_plan.linear_kernel_config.{field_name}")));
+        drop(changed_manager);
+        assert_eq!(std::fs::read(&manifest_path).expect("manifest remains readable"), original_manifest_bytes);
+        assert_eq!(std::fs::read(&config_path).expect("configuration remains readable"), original_config_bytes);
+        assert_eq!(std::fs::read(&part_path).expect("part remains readable"), original_part_bytes);
+    }
+
+    let mut resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+    Arc::get_mut(&mut resume_plan).expect("test plan has one owner").association_mode =
+        g_plan::AssociationMode::Regenie2Linear;
+    let resumed_manager = initialize_manager(resume_plan, &inputs, &phenotype_names, &planned_ranges);
+    let delivery = resumed_manager
+        .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+        .expect("unchanged linear run resumes");
+    assert_eq!(delivery.committed_chunk_identifier_sets[0].iter().copied().collect::<Vec<_>>(), [0]);
+    drop(delivery);
+    resumed_manager.finish().expect("unchanged linear resume finishes");
+    assert_eq!(read_manifest(run_directory)["execution_plan_hash"], original_manifest["execution_plan_hash"]);
+    assert_eq!(std::fs::read(&part_path).expect("part remains readable"), original_part_bytes);
+}
+
+#[test]
+fn strict_resume_rejects_legacy_linear_and_approximate_firth_policies_before_mutation() {
+    for association_mode in [g_plan::AssociationMode::Regenie2Linear, g_plan::AssociationMode::Regenie2Binary] {
+        let directory = TestDirectory::new("legacy-numerical-policy");
+        let phenotype_names = [PRIMARY_PHENOTYPE];
+        let inputs = test_inputs(&directory, &phenotype_names);
+        let mut initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+        Arc::get_mut(&mut initial_plan).expect("test plan has one owner").association_mode = association_mode;
+        let run_directory = planned_run_directories(&initial_plan).remove(0);
+        let manager = initialize_manager(initial_plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
+        manager.abort().expect("initial manager closes");
+        let manifest_path = run_directory.join("run_manifest.json");
+        let config_path = run_directory.join("effective_config.toml");
+        let original_config_bytes = std::fs::read(&config_path).expect("configuration is readable");
+        let mut legacy_manifest = read_manifest(&run_directory);
+        let expected_field_path = match association_mode {
+            g_plan::AssociationMode::Regenie2Linear => {
+                legacy_manifest["execution_plan"]
+                    .as_object_mut()
+                    .expect("execution plan is an object")
+                    .remove("linear_kernel_config")
+                    .expect("new linear manifest fingerprints thresholds");
+                "execution_plan.linear_kernel_config"
+            }
+            g_plan::AssociationMode::Regenie2Binary => {
+                legacy_manifest["execution_plan"]["jax_policy"]
+                    .as_object_mut()
+                    .expect("JAX policy is an object")
+                    .remove("null_firth_initial_convergence_policy")
+                    .expect("new approximate-Firth manifest fingerprints initial convergence");
+                "execution_plan.jax_policy.null_firth_initial_convergence_policy"
+            }
+        };
+        legacy_manifest["execution_plan_hash"] = Value::String(
+            crate::manifest::build_manifest_value_sha256(&legacy_manifest["execution_plan"])
+                .expect("legacy execution plan hashes"),
+        );
+        let legacy_manifest_bytes = serde_json::to_vec_pretty(&legacy_manifest).expect("legacy manifest serializes");
+        std::fs::write(&manifest_path, &legacy_manifest_bytes).expect("legacy manifest is written");
+        let mut resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+        Arc::get_mut(&mut resume_plan).expect("test plan has one owner").association_mode = association_mode;
+        let mut resume_manager = OutputManager::open(resume_plan, "# new numerical policy\n".to_string())
+            .expect("legacy manager opens before compatibility validation");
+        let error = resume_manager
+            .initialize(vec![header(PRIMARY_PHENOTYPE, &inputs, 1)], &single_chunk_plan(0..1), false)
+            .expect_err("missing numerical policy rejects legacy resume");
+        assert!(error.to_string().contains(expected_field_path), "unexpected error: {error}");
+        drop(resume_manager);
+        assert_eq!(std::fs::read(&manifest_path).expect("manifest remains readable"), legacy_manifest_bytes);
+        assert_eq!(std::fs::read(&config_path).expect("configuration remains readable"), original_config_bytes);
+    }
+}
+
+#[test]
+fn score_only_resume_preserves_existing_kernel_and_jax_policy_contract() {
+    let directory = TestDirectory::new("score-only-resume");
+    let phenotype_names = [PRIMARY_PHENOTYPE];
+    let inputs = test_inputs(&directory, &phenotype_names);
+    let mut initial_plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+    Arc::get_mut(&mut initial_plan).expect("test plan has one owner").correction.method =
+        g_plan::BinaryFallbackMethod::ScoreOnly;
+    let run_directory = planned_run_directories(&initial_plan).remove(0);
+    let manager = initialize_manager(Arc::clone(&initial_plan), &inputs, &phenotype_names, &single_chunk_plan(0..1));
+    manager.abort().expect("initial manager closes");
+    let original_manifest = read_manifest(&run_directory);
+    assert!(original_manifest["execution_plan"].get("linear_kernel_config").is_none());
+    assert_eq!(
+        original_manifest["execution_plan"]["binary_kernel_config"],
+        serde_json::to_value(&initial_plan.compute.kernels).expect("binary kernels serialize")
+    );
+    assert_eq!(
+        original_manifest["execution_plan"]["jax_policy"],
+        serde_json::json!({
+            "device": "gpu",
+            "enable_x64": true,
+            "matmul_precision": "float32",
+            "approximate_firth_pseudo_inner_policy": null,
+        })
+    );
+    let mut resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+    Arc::get_mut(&mut resume_plan).expect("test plan has one owner").correction.method =
+        g_plan::BinaryFallbackMethod::ScoreOnly;
+    let manager = initialize_manager(resume_plan, &inputs, &phenotype_names, &single_chunk_plan(0..1));
+    manager.abort().expect("score-only run resumes and closes");
+    assert_eq!(read_manifest(&run_directory)["execution_plan_hash"], original_manifest["execution_plan_hash"]);
+}
+
+#[test]
 fn manager_planning_is_read_only_and_rejects_multi_run_collisions() {
     let directory = TestDirectory::new("manager-planning");
     let phenotype_names = [PRIMARY_PHENOTYPE, "trait_beta"];

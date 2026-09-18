@@ -39,6 +39,11 @@ Binary score-only runs prepare only the null-logistic and score state. They do
 not pay the chromosome-level null-Firth fit, full-null deviance, or Firth-state
 memory cost; those operations are exclusive to approximate-Firth runs.
 
+Quantitative kernels reduce squared shifted dosages on the selected device to
+preserve rare-allele variance in large cohorts. This adds reduction work to the
+native-summary path; raw moments alone cannot safely reconstruct that variance.
+Unshifted variants continue to use the supplied native sums of squares.
+
 ## Cold, Warm, And Hot Runs
 
 Do not compare timing modes as if they measured the same thing:

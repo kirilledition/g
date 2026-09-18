@@ -190,29 +190,13 @@ impl PredictionSource {
 
     fn materialize_chromosome(&self, chromosome: &str) -> Result<ChromosomePredictionMatrix, PredictionError> {
         let mut prediction_values = Vec::with_capacity(self.matrix_value_count);
-        let mut unaligned_prediction_values = Vec::new();
         for trait_source in &self.trait_sources {
-            match trait_source.sample_alignment.as_ref() {
-                LocoSampleAlignment::Identity => {
-                    read_loco_chromosome_predictions_into(
-                        &trait_source.file_index,
-                        chromosome,
-                        &mut prediction_values,
-                    )?;
-                }
-                LocoSampleAlignment::Indices(alignment_indices) => {
-                    unaligned_prediction_values.clear();
-                    unaligned_prediction_values.reserve(trait_source.file_index.sample_count);
-                    read_loco_chromosome_predictions_into(
-                        &trait_source.file_index,
-                        chromosome,
-                        &mut unaligned_prediction_values,
-                    )?;
-                    prediction_values.extend(
-                        alignment_indices.iter().map(|sample_index| unaligned_prediction_values[*sample_index]),
-                    );
-                }
-            }
+            read_loco_chromosome_predictions_into(
+                &trait_source.file_index,
+                chromosome,
+                &trait_source.sample_alignment,
+                &mut prediction_values,
+            )?;
         }
         debug_assert_eq!(prediction_values.len(), self.matrix_value_count);
         Ok(ChromosomePredictionMatrix {

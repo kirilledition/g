@@ -65,23 +65,20 @@ def compute_regenie2_linear_chunk_trait_major_variant_major_core(
     )
     genotype_offset = jnp.where(genotype_mean > 1.0, genotype.ALLELE_COUNT_MULTIPLIER, 0.0)
     normalized_genotype_matrix_by_variant = genotype_matrix_by_variant_compute - genotype_offset[:, None]
-    if native_genotype_mean is None or genotype_imputed_dosage_square_sum is None:
-        genotype_sum_squares_compute = jnp.einsum(
-            "ij,ij->i",
-            normalized_genotype_matrix_by_variant,
-            normalized_genotype_matrix_by_variant,
-        )
-    else:
-        sample_count_compute = jnp.asarray(genotype_matrix_by_variant_compute.shape[1], dtype=jnp.float32)
-        imputed_dosage_sum_compute = genotype_mean * sample_count_compute
-        imputed_dosage_square_sum_compute = jnp.asarray(
-            genotype_imputed_dosage_square_sum,
-            dtype=jnp.float32,
-        )
-        genotype_sum_squares_compute = (
-            imputed_dosage_square_sum_compute
-            - 2.0 * genotype_offset * imputed_dosage_sum_compute
-            + sample_count_compute * genotype_offset * genotype_offset
+    # Reconstructing shifted squares from float32 native moments subtracts
+    # quantities proportional to the cohort size and can erase rare alleles.
+    # Reduce the shifted dosages directly; raw native squares remain safe to
+    # reuse when no allele shift is needed.
+    genotype_sum_squares_compute = jnp.einsum(
+        "ij,ij->i",
+        normalized_genotype_matrix_by_variant,
+        normalized_genotype_matrix_by_variant,
+    )
+    if native_genotype_mean is not None and genotype_imputed_dosage_square_sum is not None:
+        genotype_sum_squares_compute = jnp.where(
+            genotype_offset == 0.0,
+            jnp.asarray(genotype_imputed_dosage_square_sum, dtype=jnp.float32),
+            genotype_sum_squares_compute,
         )
     covariate_count = chromosome_state.adjusted_residual_projection_coordinate_matrix.shape[1]
     stacked_projection_product = chromosome_state.score_left_hand_matrix @ normalized_genotype_matrix_by_variant.T

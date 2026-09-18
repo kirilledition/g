@@ -90,12 +90,15 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
     let approximate_firth_pseudo_inner_policy = (run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary
         && run_plan.correction.method == g_plan::BinaryFallbackMethod::FirthApproximate)
         .then_some("float32_elementwise_float64_reduction");
-    let jax_policy = json!({
+    let mut jax_policy = json!({
         "device": run_plan.compute.device.as_str(),
         "enable_x64": true,
         "matmul_precision": "float32",
         "approximate_firth_pseudo_inner_policy": approximate_firth_pseudo_inner_policy,
     });
+    if approximate_firth_pseudo_inner_policy.is_some() {
+        jax_policy["null_firth_initial_convergence_policy"] = json!("finite_initial_state_converged_score_v1");
+    }
     let output_writer = json!({
         "writer_thread_count": run_plan.output.writer_thread_count,
         "writer_queue_depth": crate::WRITER_QUEUE_DEPTH,
@@ -111,7 +114,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         .map_err(|_| OutputError::InvalidInput("Sample count does not fit manifest int64.".to_string()))?;
     let variant_count = i64::try_from(input.variant_count)
         .map_err(|_| OutputError::InvalidInput("Variant count does not fit manifest int64.".to_string()))?;
-    let execution_plan = json!({
+    let mut execution_plan = json!({
         "association_mode": run_plan.association_mode.as_str(),
         "association_backend": association_backend,
         "bgen": bgen_fingerprint,
@@ -137,6 +140,10 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "output_writer": output_writer,
         "resume_policy": RESUME_POLICY,
     });
+    if run_plan.association_mode == g_plan::AssociationMode::Regenie2Linear {
+        execution_plan["linear_kernel_config"] =
+            serde_json::to_value(run_plan.compute.kernels.linear).map_err(OutputError::runtime)?;
+    }
     let execution_plan_hash = build_manifest_value_sha256(&execution_plan)?;
     let current_header = json!({
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,

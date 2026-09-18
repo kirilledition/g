@@ -34,6 +34,7 @@ optional TOML file, and explicit CLI overrides.
 - selected association backend such as `jax_dosage` or `jax_packed8`, with the
   resolved genotype delivery format;
 - binary correction plan and binary kernel settings when applicable;
+- quantitative variance thresholds when applicable;
 - JAX device/precision policy and dtype choices;
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
@@ -121,6 +122,7 @@ Common mismatch causes:
   content even when path, size, and `mtime_ns` are preserved;
 - changed phenotype or covariate columns;
 - changed trait mode, binary correction plan, or Firth settings;
+- changed `linear_minimum_variance` or `linear_relative_variance_tolerance`;
 - changed selected association backend;
 - changed multi-phenotype sample mode, aligned sample set, aligned phenotype or
   covariate design, or prediction alignment;
@@ -129,6 +131,15 @@ Common mismatch causes:
   policy recorded in the execution plan.
 
 Resume is not a way to combine different analyses into one output directory.
+Quantitative manifests include the linear kernel settings. Older pre-release
+quantitative manifests without those settings cannot be resumed; start a new
+output directory so that every part uses the same numerical policy.
+
+Approximate-Firth manifests also identify the null solver's initial-convergence
+policy. Runs created before valid initial convergence was accepted require a
+new output directory. Binary score-only manifests are unaffected by this
+policy change.
+
 Approximate-Firth manifests fingerprint the fixed inner proposal policy as
 `float32_elementwise_float64_reduction`. Older pre-release runs used the prior
 all-`float64` inner policy and have a different execution plan and hash, so

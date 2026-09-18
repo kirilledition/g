@@ -71,7 +71,6 @@ impl PartialConfig {
         if override_config.metadata.is_some() {
             self.metadata = override_config.metadata;
         }
-        self.apply_trait_flag_precedence();
         Ok(())
     }
 
@@ -80,14 +79,6 @@ impl PartialConfig {
             return Err(ConfigError::new("--qt and --bt are mutually exclusive."));
         }
         Ok(())
-    }
-
-    fn apply_trait_flag_precedence(&mut self) {
-        if self.trait_config.bt == Some(true) {
-            self.trait_config.qt = Some(false);
-        } else if self.trait_config.qt == Some(true) {
-            self.trait_config.bt = Some(false);
-        }
     }
 }
 
@@ -109,6 +100,12 @@ impl PartialTraitConfig {
         overlay_option!(self, override_config, qt);
         overlay_option!(self, override_config, bt);
         overlay_option!(self, override_config, bsize);
+        // Select using the incoming layer before the previous layer's flag can win.
+        if override_config.qt == Some(true) {
+            self.bt = Some(false);
+        } else if override_config.bt == Some(true) {
+            self.qt = Some(false);
+        }
     }
 }
 

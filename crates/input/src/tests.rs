@@ -376,3 +376,270 @@ fn deferred_prediction_source_rejects_replaced_loco_file() {
         Err(PredictionError::IndexedLocoFileChanged { .. })
     ));
 }
+
+#[test]
+fn predictions_preserve_identity_and_reordered_full_sample_alignments() {
+    let fixture = InputFixture::new("full-prediction-alignments");
+    fixture.directory.write(
+        "phenotypes.tsv",
+        "FID\tIID\ttrait-a\ttrait-b\nfamily-1\tindividual-1\t1\t10\nfamily-2\tindividual-2\t2\t20\nfamily-3\tindividual-3\t3\t30\nfamily-4\tindividual-4\t4\t40\n",
+    );
+    let sample_identifiers = fixture.sample_identifiers();
+    let phenotype_names = InputFixture::phenotype_names();
+    let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+    let mut groups = load_aligned_phenotype_groups(&fixture.request(
+        &sample_identifiers,
+        &prediction_loco_paths,
+        &phenotype_names,
+        g_plan::MultiPhenotypeSampleMode::CompleteCase,
+    ))
+    .expect("complete sample fixture should align");
+    assert_eq!(groups.len(), 1);
+    groups[0].plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+    let predictions = groups[0].take_chromosome_prediction_matrix("1").expect("all samples should materialize");
+    assert_eq!(predictions.trait_count, 2);
+    assert_eq!(predictions.sample_count, 4);
+    assert_f32_values(&predictions.prediction_values, &[0.1, 0.2, 0.3, 0.4, 1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn excluded_prediction_values_follow_each_phenotype_sample_mask() {
+    for excluded_value in ["NA", "NaN", "inf", "1e100", "invalid"] {
+        let fixture = InputFixture::new("excluded-predictions");
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n1 0.1 0.2 0.3 {excluded_value}\n"
+            ),
+        );
+        fixture.directory.write(
+            "trait-b.loco",
+            &format!(
+                "FID_IID family-4_individual-4 family-2_individual-2 family-1_individual-1 family-3_individual-3\n1 4 2 {excluded_value} 3\n"
+            ),
+        );
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = InputFixture::phenotype_names();
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        let mut per_phenotype_groups = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        ))
+        .expect("excluded predictions should not prevent phenotype alignment");
+        assert_eq!(per_phenotype_groups.len(), 2);
+        for (group_index, group) in per_phenotype_groups.iter_mut().enumerate() {
+            group.plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+            let predictions = group
+                .take_chromosome_prediction_matrix("1")
+                .expect("only the phenotype's selected predictions should be parsed");
+            assert_eq!(predictions.trait_count, 1);
+            assert_eq!(predictions.sample_count, 3);
+            let expected_values = if group_index == 0 { [0.1, 0.2, 0.3] } else { [2.0, 3.0, 4.0] };
+            assert_f32_values(&predictions.prediction_values, &expected_values);
+        }
+
+        let mut complete_case_groups = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::CompleteCase,
+        ))
+        .expect("excluded predictions should not prevent complete-case alignment");
+        assert_eq!(complete_case_groups.len(), 1);
+        complete_case_groups[0].plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+        let predictions = complete_case_groups[0]
+            .take_chromosome_prediction_matrix("1")
+            .expect("only complete-case predictions should be parsed");
+        assert_eq!(predictions.trait_count, 2);
+        assert_eq!(predictions.sample_count, 2);
+        assert_f32_values(&predictions.prediction_values, &[0.2, 0.3, 2.0, 3.0]);
+    }
+}
+
+#[test]
+fn selected_invalid_prediction_values_return_typed_errors() {
+    for selected_value in ["NA", "invalid", "NaN", "inf", "1e100"] {
+        let fixture = InputFixture::new("selected-invalid-predictions");
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n1 0.1 {selected_value} 0.3 NA\n"
+            ),
+        );
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        let mut groups = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        ))
+        .expect("prediction values should be validated lazily");
+        groups[0].plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+        let result = groups[0].take_chromosome_prediction_matrix("1");
+        if matches!(selected_value, "NA" | "invalid") {
+            assert!(matches!(
+                result,
+                Err(PredictionError::InvalidPredictionValue { line_number: 2, value, .. })
+                    if value == selected_value
+            ));
+        } else {
+            assert!(matches!(
+                result,
+                Err(PredictionError::NonFinitePredictionValue { line_number: 2, value })
+                    if value == selected_value
+            ));
+        }
+    }
+}
+
+#[test]
+fn excluded_samples_do_not_relax_prediction_row_shape_validation() {
+    for prediction_row in ["1 0.1 0.2 0.3", "1 0.1 0.2 0.3 NA NA"] {
+        let fixture = InputFixture::new("excluded-prediction-row-shape");
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n{prediction_row}\n"
+            ),
+        );
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        let result = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        ));
+        assert!(matches!(
+            result,
+            Err(InputError::Prediction(PredictionError::LocoPredictionCountMismatch {
+                line_number: 2,
+                expected_count: 4,
+                observed_count,
+            })) if observed_count == prediction_row.split_ascii_whitespace().count() - 1
+        ));
+    }
+}
+
+#[test]
+fn prediction_fingerprints_include_excluded_sample_values() {
+    let fixture = InputFixture::new("excluded-prediction-fingerprint");
+    let sample_identifiers = fixture.sample_identifiers();
+    let phenotype_names = vec!["trait-a".to_string()];
+    let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+    let mut fingerprints = Vec::new();
+    for excluded_value in ["NA", "invalid"] {
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n1 0.1 0.2 0.3 {excluded_value}\n"
+            ),
+        );
+        let mut groups = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        ))
+        .expect("excluded prediction values should index");
+        groups[0].plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+        let predictions = groups[0].take_chromosome_prediction_matrix("1").expect("selected values should load");
+        assert_f32_values(&predictions.prediction_values, &[0.1, 0.2, 0.3]);
+        fingerprints.push(groups[0].phenotype_group.prediction_alignment_fingerprint.clone());
+    }
+    assert_ne!(fingerprints[0], fingerprints[1]);
+}
+
+#[test]
+fn underscore_sample_identifiers_align_by_the_complete_serialized_key() {
+    let fixture = InputFixture::new("underscore-prediction-identifiers");
+    let sample_identifiers = SampleIdentifierData {
+        family_identifiers: ["family_one", "_family", "family", "excluded_family"].map(str::to_string).to_vec(),
+        individual_identifiers: ["individual_one", "person", "person_", "individual"].map(str::to_string).to_vec(),
+    };
+    fixture.directory.write(
+        "phenotypes.tsv",
+        "FID\tIID\ttrait-a\nfamily\tperson_\t3\nfamily_one\tindividual_one\t1\n_family\tperson\t2\nexcluded_family\tindividual\tNA\n",
+    );
+    fixture.directory.write(
+        "trait-a.loco",
+        "FID_IID family_person_ excluded_family_individual _family_person family_one_individual_one\n1 0.3 NA 0.2 0.1\n",
+    );
+    let phenotype_names = vec!["trait-a".to_string()];
+    let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+    let request = PhenotypeGroupLoadRequest {
+        covariate_path: None,
+        ..fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        )
+    };
+    let mut groups = load_aligned_phenotype_groups(&request).expect("underscores in either identifier should align");
+    assert_eq!(groups[0].sample_indices, [0, 1, 2]);
+    groups[0].plan_prediction_uses(&[Arc::from("1")]).expect("chromosome should plan");
+    let predictions = groups[0].take_chromosome_prediction_matrix("1").expect("underscore identifiers should load");
+    assert_f32_values(&predictions.prediction_values, &[0.1, 0.2, 0.3]);
+}
+
+#[test]
+fn duplicate_serialized_loco_header_keys_are_rejected() {
+    let fixture = InputFixture::new("duplicate-loco-header-keys");
+    fixture.directory.write(
+        "trait-a.loco",
+        "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4 family-4_individual-4\n1 0.1 0.2 0.3 NA NA\n",
+    );
+    let sample_identifiers = fixture.sample_identifiers();
+    let phenotype_names = vec!["trait-a".to_string()];
+    let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+    assert!(matches!(
+        load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        )),
+        Err(InputError::Prediction(PredictionError::DuplicateLocoSampleKey { sample_key }))
+            if sample_key == "family-4_individual-4"
+    ));
+}
+
+#[test]
+fn ambiguous_serialized_target_keys_are_rejected_even_when_one_sample_is_excluded() {
+    for second_phenotype_value in ["2", "NA"] {
+        let fixture = InputFixture::new("ambiguous-target-keys");
+        let sample_identifiers = SampleIdentifierData {
+            family_identifiers: ["family_one", "family", "other"].map(str::to_string).to_vec(),
+            individual_identifiers: ["individual", "one_individual", "person"].map(str::to_string).to_vec(),
+        };
+        fixture.directory.write(
+            "phenotypes.tsv",
+            &format!(
+                "FID\tIID\ttrait-a\nfamily_one\tindividual\t1\nfamily\tone_individual\t{second_phenotype_value}\nother\tperson\t3\n"
+            ),
+        );
+        fixture.directory.write("trait-a.loco", "FID_IID family_one_individual other_person\n1 0.1 0.3\n");
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        let request = PhenotypeGroupLoadRequest {
+            covariate_path: None,
+            ..fixture.request(
+                &sample_identifiers,
+                &prediction_loco_paths,
+                &phenotype_names,
+                g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+            )
+        };
+        assert!(matches!(
+            load_aligned_phenotype_groups(&request),
+            Err(InputError::Prediction(PredictionError::AmbiguousTargetSampleKey { sample_key }))
+                if sample_key == "family_one_individual"
+        ));
+    }
+}

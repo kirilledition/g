@@ -128,13 +128,12 @@ def compute_linear_reference_with_genotype_statistics(
 
     genotype_offsets = np.where(genotype_means > 1.0, 2.0, 0.0)
     normalized_genotypes = fixture.genotype_matrix_by_variant - genotype_offsets[:, None]
-    if imputed_dosage_square_sum is None:
-        genotype_sum_squares = np.sum(normalized_genotypes**2, axis=1)
-    else:
-        sample_count = fixture.genotype_matrix_by_variant.shape[1]
-        imputed_dosage_sum = genotype_means * sample_count
-        genotype_sum_squares = (
-            imputed_dosage_square_sum - 2.0 * genotype_offsets * imputed_dosage_sum + sample_count * genotype_offsets**2
+    genotype_sum_squares = np.sum(normalized_genotypes**2, axis=1)
+    if imputed_dosage_square_sum is not None:
+        genotype_sum_squares = np.where(
+            genotype_offsets == 0.0,
+            imputed_dosage_square_sum,
+            genotype_sum_squares,
         )
     genotype_projection_coordinates = whitened_covariate_transpose @ normalized_genotypes.T
     genotype_residual_sum_squares = genotype_sum_squares - np.sum(genotype_projection_coordinates**2, axis=0)
@@ -178,10 +177,13 @@ def test_packed8_decode_matches_probability_definition() -> None:
 
     observed = genotype.decode_packed8_probability_pairs_to_variant_major_dosage(packed_probabilities)
 
+    # GPU float32 division can round 510 / 255 to the predecessor of 2.0,
+    # one epsilon away. The exclusive bound admits that rounding error while
+    # rejecting a two-step error immediately below 2.0.
     tests.numerical.assert_absolute_difference_less_than(
         observed,
         np.asarray([[0.0, 2.0, 1.0, 1.0]], dtype=np.float64),
-        1.0e-7,
+        2.0 * float(np.finfo(np.float32).eps),
     )
 
 
@@ -303,8 +305,8 @@ def test_linear_chunk_matches_independent_numpy_reference() -> None:
     assert observed.correction_code is None
 
 
-def test_linear_native_statistics_path_uses_supplied_moments() -> None:
-    """Use native BGEN summaries instead of silently reducing delivered dosages."""
+def test_linear_native_statistics_path_uses_unshifted_supplied_moments() -> None:
+    """Reuse native square sums only when allele orientation leaves them valid."""
     fixture = build_linear_fixture()
     chromosome_state = build_linear_chromosome_state(fixture)
     direct_genotype_means = np.mean(fixture.genotype_matrix_by_variant, axis=1)
@@ -358,6 +360,77 @@ def test_linear_native_statistics_path_uses_supplied_moments() -> None:
         reference.log10_p_value,
         LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
     )
+
+
+def test_linear_large_cohort_rare_alleles_match_float64_reference() -> None:
+    """Preserve rare-allele variance through dense, native, and packed8 paths."""
+    sample_count = 500_000
+    carrier_count = 5
+    phenotype_matrix = np.tile(np.asarray([-1.0, 1.0]), sample_count // 2)[None, :]
+    phenotype_matrix[:, :carrier_count] = 4.0
+    genotype_matrix_by_variant = np.zeros((2, sample_count), dtype=np.float64)
+    genotype_matrix_by_variant[0, :] = 2.0
+    genotype_matrix_by_variant[:, :carrier_count] = 1.0
+    fixture = LinearFixture(
+        covariate_matrix=np.ones((sample_count, 1), dtype=np.float64),
+        phenotype_matrix=phenotype_matrix,
+        loco_prediction_matrix=np.zeros_like(phenotype_matrix),
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(fixture)
+    reference = compute_linear_reference(fixture)
+    # Match the native packed8 summary boundary: exact integer accumulation,
+    # float32 conversion, multiplication by the float32 scale reciprocal,
+    # then mean calculation. Reconstructing shifted squares gives 4.75, not 5.
+    probability_scale = np.float32(255.0)
+    raw_dosages = (genotype_matrix_by_variant * probability_scale).astype(np.int64)
+    native_genotype_means = (
+        np.sum(raw_dosages, axis=1).astype(np.float32)
+        * (np.float32(1.0) / probability_scale)
+        / np.float32(sample_count)
+    )
+    native_genotype_square_sums = np.sum(raw_dosages**2, axis=1).astype(np.float32) * (
+        np.float32(1.0) / (probability_scale * probability_scale)
+    )
+    packed_probabilities = np.zeros((2, sample_count, 2), dtype=np.uint8)
+    packed_probabilities[1, :, 0] = 255
+    packed_probabilities[:, :carrier_count, 0] = 0
+    packed_probabilities[:, :carrier_count, 1] = 255
+
+    for use_native_statistics in (False, True):
+        decoded_result = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_donating_inputs(
+            chromosome_state=chromosome_state,
+            genotype_matrix_by_variant=jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
+            native_genotype_mean=jnp.asarray(native_genotype_means) if use_native_statistics else None,
+            genotype_imputed_dosage_square_sum=(
+                jnp.asarray(native_genotype_square_sums) if use_native_statistics else None
+            ),
+            linear_minimum_variance=1.0e-8,
+            linear_relative_variance_tolerance=1.0e-7,
+        )
+        packed_result = regenie2_linear_score.compute_multi_linear_chunk_packed8_donating_inputs(
+            chromosome_state=chromosome_state,
+            packed_probability_pairs_by_variant=jnp.asarray(packed_probabilities),
+            native_genotype_mean=jnp.asarray(native_genotype_means) if use_native_statistics else None,
+            genotype_imputed_dosage_square_sum=(
+                jnp.asarray(native_genotype_square_sums) if use_native_statistics else None
+            ),
+            linear_minimum_variance=1.0e-8,
+            linear_relative_variance_tolerance=1.0e-7,
+        )
+        for observed in (decoded_result, packed_result):
+            tests.numerical.assert_absolute_difference_less_than(observed.beta, reference.beta, 2.0e-5)
+            tests.numerical.assert_absolute_difference_less_than(
+                observed.standard_error,
+                reference.standard_error,
+                2.0e-6,
+            )
+            tests.numerical.assert_absolute_difference_less_than(observed.chi_squared, reference.chi_squared, 4.0e-4)
+            tests.numerical.assert_absolute_difference_less_than(
+                observed.log10_p_value,
+                reference.log10_p_value,
+                1.0e-4,
+            )
 
 
 def test_linear_monomorphic_variant_produces_invalid_statistics() -> None:

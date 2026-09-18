@@ -136,6 +136,10 @@ The same test can be viewed as the one-degree-of-freedom additive least-squares 
 Numerical policy:
 
 - If allele-one mean dosage is greater than `1`, `g` may shift or flip the internal genotype representation to reduce cancellation. The public `BETA` is restored to `ALLELE1` orientation.
+- Quantitative tests calculate shifted genotype sums of squares directly from
+  shifted dosages. Reconstructing them from rounded raw moments can lose rare
+  allele contributions in large cohorts. Unshifted variants can reuse native
+  sums of squares.
 - A variant is invalid when residualized genotype variance is too close to zero under `[compute].linear_minimum_variance` and `[compute].linear_relative_variance_tolerance`.
 - A phenotype/chromosome state is invalid when the adjusted residual variance is not positive.
 
@@ -222,6 +226,11 @@ The determinant term is the Jeffreys-prior penalty used by Firth’s bias-reduct
 3. try scalar pseudo-Firth and sparse-carrier paths when applicable;
 4. fall back through configured Newton, warm-start, line-search, and step-halving attempts;
 5. report the penalized likelihood-ratio statistic for successful corrected rows.
+
+The covariate-only Firth solver accepts a valid initial fit whose modified
+score already satisfies the convergence tolerance. This includes balanced,
+intercept-only cohorts with zero LOCO offsets; an already converged fit does
+not need a further decrease in penalized deviance.
 
 Approximate-Firth outer components, convergence checks, likelihood,
 information, corrected statistics, and Newton fallback use `float64`. The
