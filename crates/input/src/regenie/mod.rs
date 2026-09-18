@@ -20,6 +20,10 @@ use list::parse_prediction_list_file;
 fn normalize_chromosome(chromosome: &str) -> String {
     let normalized = chromosome.to_ascii_lowercase();
     let without_prefix = normalized.strip_prefix("chr").unwrap_or(&normalized);
+    // Human REGENIE Step 1 writes chromosome X predictions under numeric 23.
+    if without_prefix == "x" {
+        return "23".to_string();
+    }
     if without_prefix.chars().all(|character| character.is_ascii_digit()) {
         without_prefix.parse::<u64>().map_or_else(|_| without_prefix.to_string(), |value| value.to_string())
     } else {

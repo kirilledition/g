@@ -96,6 +96,17 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "matmul_precision": "float32",
         "approximate_firth_pseudo_inner_policy": approximate_firth_pseudo_inner_policy,
     });
+    match run_plan.association_mode {
+        g_plan::AssociationMode::Regenie2Linear => {
+            jax_policy["linear_projection_policy"] = json!("centered_scaled_float64_qr_explicit_residual_v1");
+            jax_policy["linear_residual_resolution"] = json!("relative_float64_dimension_epsilon_v1");
+        }
+        g_plan::AssociationMode::Regenie2Binary => {
+            jax_policy["binary_null_logistic_policy"] = json!("float64_centered_loco_safeguarded_newton_v1");
+            jax_policy["binary_covariate_policy"] = json!("centered_scaled_float64_qr_to_float32_v1");
+            jax_policy["binary_score_validity_policy"] = json!("reject_uniform_dosages_v1");
+        }
+    }
     if approximate_firth_pseudo_inner_policy.is_some() {
         jax_policy["null_firth_initial_convergence_policy"] = json!("finite_initial_state_converged_score_v1");
     }
@@ -131,6 +142,7 @@ pub(crate) fn build_current_run_manifest_header_value_with_cache(
         "binary_kernel_config": binary_kernel_config,
         "jax_policy": jax_policy,
         "score_dtype": "float32",
+        "genotype_summary_policy": "float64_moments_until_float32_boundary_v1",
         "multi_phenotype_sample_mode": input.sample_mode.as_str(),
         "phenotype_compute_group_id": input.phenotype_compute_group_id.as_ref(),
         "sample_set_fingerprint": input.sample_set_fingerprint.as_ref(),

@@ -125,7 +125,7 @@ pub fn execute_coordinated_run<Backend, Hooks>(
 ) -> Result<Vec<PhenotypeRunArtifact>, EngineRunError<Hooks::Error>>
 where
     Backend: AssociationBackend + 'static,
-    Hooks: RunHooks,
+    Hooks: RunHooks<BackendError = Backend::Error>,
 {
     execute_coordinated_run_detail(
         run_plan,
@@ -165,7 +165,7 @@ fn execute_coordinated_run_detail<Backend, Hooks>(
 ) -> Result<Vec<PhenotypeRunArtifact>, CoordinatedRunDetailError<Backend::Error, Hooks::Error>>
 where
     Backend: AssociationBackend + 'static,
-    Hooks: RunHooks,
+    Hooks: RunHooks<BackendError = Backend::Error>,
 {
     let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())
         .map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;

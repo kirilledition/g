@@ -10,8 +10,8 @@ use super::*;
 #[derive(Debug)]
 struct DecodedTile {
     output_values: Vec<f32>,
-    dosage_sum: Vec<f32>,
-    dosage_square_sum: Vec<f32>,
+    dosage_sum: Vec<f64>,
+    dosage_square_sum: Vec<f64>,
     observation_count: Vec<i32>,
     zero_count: Option<Vec<i32>>,
     homozygous_alternate_count: Option<Vec<i32>>,
@@ -143,8 +143,8 @@ fn decode_encoded_blocks(
 
     let output_value_count = probability_blocks.len() * sample_indices.len();
     let mut output_values = dosage_output_with_sentinels(output_value_count);
-    let mut dosage_sum = vec![0.0_f32; probability_blocks.len()];
-    let mut dosage_square_sum = vec![0.0_f32; probability_blocks.len()];
+    let mut dosage_sum = vec![0.0_f64; probability_blocks.len()];
+    let mut dosage_square_sum = vec![0.0_f64; probability_blocks.len()];
     let mut observation_count = vec![0_i32; probability_blocks.len()];
     let mut zero_count = collect_sparse_candidate_counts.then(|| vec![0_i32; probability_blocks.len()]);
     let mut homozygous_alternate_count = collect_sparse_candidate_counts.then(|| vec![0_i32; probability_blocks.len()]);
@@ -450,9 +450,136 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
     }
     assert!((fractional_missing.dosage_sum[0] - (572.0 / 255.0)).abs() < 1.0e-6);
     assert!(
-        (fractional_missing.dosage_square_sum[0] - ((254.0_f32.powi(2) + 318.0_f32.powi(2)) / 65_025.0)).abs() < 1.0e-6
+        (fractional_missing.dosage_square_sum[0] - ((254.0_f64.powi(2) + 318.0_f64.powi(2)) / 65_025.0)).abs() < 1.0e-6
     );
     assert_eq!(fractional_missing.observation_count, vec![2]);
+}
+
+#[test]
+fn large_eight_bit_cohorts_preserve_fractional_moments_and_missing_imputation() {
+    let sample_count = 500_000_u32;
+    let sample_count_usize = usize::try_from(sample_count).expect("sample count should fit usize");
+    let expected_dosage = 110.0_f64 / 255.0;
+    let mut probabilities = [200, 0].repeat(sample_count_usize);
+    let mut ploidy = vec![2; sample_count_usize];
+    let present_block = probability_block(sample_count, &ploidy, 0, 8, &probabilities);
+    ploidy[0] = 0x82;
+    probabilities[..2].fill(0);
+    let missing_block = probability_block(sample_count, &ploidy, 0, 8, &probabilities);
+    let probability_blocks = [present_block, missing_block];
+
+    for sample_indices in
+        [(0..sample_count_usize).collect::<Vec<_>>(), (0..sample_count_usize).rev().collect::<Vec<_>>()]
+    {
+        let decoded = decode_blocks(&probability_blocks, sample_count_usize, &sample_indices, false)
+            .unwrap_or_else(|_| panic!("large fractional cohort should decode"));
+        // The same mathematical dosage is repeated. Its closed-form moments
+        // provide an oracle independent of decoder reduction order and dtype.
+        for (variant_index, observed_count) in [sample_count, sample_count - 1].into_iter().enumerate() {
+            let expected_sum = f64::from(observed_count) * expected_dosage;
+            let expected_square_sum = f64::from(observed_count) * expected_dosage.powi(2);
+            assert!((decoded.dosage_sum[variant_index] - expected_sum).abs() < 1.0e-9);
+            assert!((decoded.dosage_square_sum[variant_index] - expected_square_sum).abs() < 1.0e-9);
+        }
+        assert!(
+            decoded
+                .output_values
+                .iter()
+                .all(|dosage| (f64::from(*dosage) - expected_dosage).abs() < f64::from(f32::EPSILON))
+        );
+        let statistics = crate::preprocess::build_chunk_stats_from_summaries(
+            decoded.dosage_sum,
+            decoded.dosage_square_sum,
+            decoded.observation_count,
+            None,
+            None,
+            sample_count_usize,
+            crate::common::ChunkStatisticsPolicy {
+                retain_imputed_dosage_square_sum: true,
+                collect_sparse_candidate_mask: false,
+            },
+        )
+        .expect("accurate fractional moments should build statistics");
+        for mean in statistics.compute.genotype_mean {
+            assert!((f64::from(mean) - expected_dosage).abs() < 2.0e-8);
+        }
+        let square_sums = statistics.compute.imputed_dosage_square_sum.expect("linear moments should be retained");
+        assert_eq!(square_sums[0].to_bits(), square_sums[1].to_bits());
+        let expected_square_sum = f64::from(sample_count) * expected_dosage.powi(2);
+        assert!((f64::from(square_sums[0]) / expected_square_sum - 1.0).abs() < 6.0e-8);
+    }
+}
+
+#[test]
+fn large_eight_bit_decode_preserves_rare_variant_info_and_allele_bounds() {
+    let sample_count = 500_000_u32;
+    let sample_count_usize = usize::try_from(sample_count).expect("sample count should fit usize");
+    let mut probability_blocks = Vec::new();
+    for homozygous_probability_pair in [[255, 0], [0, 0]] {
+        let mut probabilities = homozygous_probability_pair.repeat(sample_count_usize);
+        probabilities[..2].copy_from_slice(&[0, 255]);
+        probability_blocks.push(probability_block(sample_count, &vec![2; sample_count_usize], 0, 8, &probabilities));
+    }
+    let sample_indices = (0..sample_count_usize).collect::<Vec<_>>();
+    let decoded = decode_blocks(&probability_blocks, sample_count_usize, &sample_indices, true)
+        .unwrap_or_else(|_| panic!("large rare-variant cohorts should decode"));
+    assert!(decoded.output_values.iter().all(|dosage| (0.0..=2.0).contains(dosage)));
+    let statistics = crate::preprocess::build_chunk_stats_from_summaries(
+        decoded.dosage_sum,
+        decoded.dosage_square_sum,
+        decoded.observation_count,
+        decoded.zero_count,
+        decoded.homozygous_alternate_count,
+        sample_count_usize,
+        crate::common::ChunkStatisticsPolicy {
+            retain_imputed_dosage_square_sum: true,
+            collect_sparse_candidate_mask: true,
+        },
+    )
+    .expect("rare-variant moments should build statistics");
+    let expected_info = 2.0 * f64::from(sample_count - 1) / f64::from(2 * sample_count - 1);
+    for info_score in statistics.output.info_score.values {
+        assert!((f64::from(info_score) - expected_info).abs() < 3.0e-8);
+    }
+    assert_eq!(statistics.output.info_score.validity_bytes, vec![0b11]);
+    assert_eq!(statistics.compute.sparse_candidate_mask, Some(vec![true, true]));
+}
+
+#[test]
+fn generic_decode_preserves_precise_moments_across_probability_widths_and_phasing() {
+    for probability_bit_count in 1..=32 {
+        // Exercise large cohorts on both a common dense width and the widest
+        // supported encoding; the remaining widths also cross byte boundaries.
+        let sample_count = if [16, 32].contains(&probability_bit_count) { 500_000_u32 } else { 19_u32 };
+        let sample_count_usize = usize::try_from(sample_count).expect("sample count should fit usize");
+        let maximum_probability = u32::MAX >> (32 - probability_bit_count);
+        let first_probability = maximum_probability - maximum_probability / 5;
+        let mut probabilities = [first_probability, 0].repeat(sample_count_usize);
+        probabilities[..2].fill(0);
+        probabilities[2 * (sample_count_usize - 1)..].fill(0);
+        let mut ploidy = vec![2; sample_count_usize];
+        ploidy[0] = 0x82;
+        for phased_flag in [0, 1] {
+            let block = probability_block(sample_count, &ploidy, phased_flag, probability_bit_count, &probabilities);
+            let sample_indices = (0..sample_count_usize).rev().collect::<Vec<_>>();
+            let decoded = decode_blocks(&[block], sample_count_usize, &sample_indices, false)
+                .unwrap_or_else(|_| panic!("generic probability moments should decode"));
+            let encoded_dosage_numerator =
+                2 * u64::from(maximum_probability) - u64::from(2 - phased_flag) * u64::from(first_probability);
+            // Form the dosage independently from integer numerators, then use
+            // closed-form moments for repeated calls plus one dosage-two call.
+            #[allow(clippy::cast_precision_loss)]
+            let expected_dosage = encoded_dosage_numerator as f64 / f64::from(maximum_probability);
+            let expected_sum = f64::from(sample_count - 2) * expected_dosage + 2.0;
+            let expected_square_sum = f64::from(sample_count - 2) * expected_dosage.powi(2) + 4.0;
+            let expected_mean = expected_sum / f64::from(sample_count - 1);
+            assert!((decoded.dosage_sum[0] / expected_sum - 1.0).abs() < 2.0e-11);
+            assert!((decoded.dosage_square_sum[0] / expected_square_sum - 1.0).abs() < 2.0e-11);
+            let imputed_value = *decoded.output_values.last().expect("reversed missing call should be last");
+            assert!((f64::from(imputed_value) - expected_mean).abs() < f64::from(f32::EPSILON));
+            assert!(decoded.output_values.iter().all(|dosage| (0.0..=2.0).contains(dosage)));
+        }
+    }
 }
 
 #[test]
@@ -476,8 +603,8 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
     let sample_selection = build_sample_selection(2, &[0, 1]).expect("identity selection should build");
     let mut thread_scratch = ThreadScratch::default();
     let mut output_values = vec![MaybeUninit::<f32>::uninit(); 3];
-    let mut dosage_sum = vec![0.0_f32; 2];
-    let mut dosage_square_sum = vec![0.0_f32; 2];
+    let mut dosage_sum = vec![0.0_f64; 2];
+    let mut dosage_square_sum = vec![0.0_f64; 2];
     let mut observation_count = vec![0_i32; 2];
     let mut tile_stats = VariantMajorTileStatsMut {
         dosage_sum: &mut dosage_sum,
@@ -501,7 +628,7 @@ fn variant_major_tile_collects_statistics_and_rejects_shape_mismatches() {
     .expect_err("short output should fail");
     assert!(shape_failure.source.to_string().contains("contains 3 values, expected 4"));
 
-    let mut short_dosage_sum = vec![0.0_f32; 1];
+    let mut short_dosage_sum = vec![0.0_f64; 1];
     let short_stats = VariantMajorTileStatsMut {
         dosage_sum: &mut short_dosage_sum,
         dosage_square_sum: &mut dosage_square_sum,

@@ -124,16 +124,20 @@ def decode_packed8_deflate_batch(
         zero_counts,
         homozygous_alternate_counts,
         statuses,
-        genotype_mean,
+        _legacy_genotype_mean,
     ) = foreign_outputs
 
+    # Keep the existing FFI shape while deriving both compute moments from its
+    # exact integers. Narrowing a raw total first biases means and square sums
+    # in large cohorts; the native mean predates this precision policy.
+    dosage_sums = jnp.asarray(raw_dosage_sums, dtype=jnp.float64) / genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR
+    genotype_mean = jnp.asarray(dosage_sums / selected_sample_count, dtype=jnp.float32)
+
     if retain_imputed_dosage_square_sum:
-        packed8_probability_square_scale = jnp.asarray(
-            1.0 / (genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR * genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR),
+        imputed_dosage_square_sum = jnp.asarray(
+            jnp.asarray(raw_dosage_square_sums, dtype=jnp.float64)
+            / (genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR * genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR),
             dtype=jnp.float32,
-        )
-        imputed_dosage_square_sum = (
-            jnp.asarray(raw_dosage_square_sums, dtype=jnp.float32) * packed8_probability_square_scale
         )
     else:
         imputed_dosage_square_sum = None

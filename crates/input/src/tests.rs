@@ -643,3 +643,162 @@ fn ambiguous_serialized_target_keys_are_rejected_even_when_one_sample_is_exclude
         ));
     }
 }
+
+#[test]
+fn chromosome_x_predictions_align_with_regenie_chromosome_23_in_both_directions() {
+    for (loco_chromosome, requested_chromosome) in
+        [("23", "X"), ("23", "chrX"), ("X", "23"), ("chrX", "023"), ("chr23", "x")]
+    {
+        let fixture = InputFixture::new("chromosome-x-alias");
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n{loco_chromosome} 0.1 0.2 0.3 NA\n"
+            ),
+        );
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        let mut groups = load_aligned_phenotype_groups(&fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        ))
+        .expect("chromosome X prediction input should align");
+        groups[0].plan_prediction_uses(&[Arc::from(requested_chromosome)]).expect("chromosome X alias should plan");
+        let predictions = groups[0]
+            .take_chromosome_prediction_matrix(requested_chromosome)
+            .expect("chromosome X alias should materialize");
+        assert_f32_values(&predictions.prediction_values, &[0.1, 0.2, 0.3]);
+    }
+}
+
+#[test]
+fn duplicate_normalized_chromosome_x_prediction_rows_are_rejected() {
+    for (first_chromosome, second_chromosome) in [("X", "23"), ("chrX", "023"), ("x", "chr23")] {
+        let fixture = InputFixture::new("duplicate-chromosome-x");
+        fixture.directory.write(
+            "trait-a.loco",
+            &format!(
+                "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n{first_chromosome} 0.1 0.2 0.3 NA\n{second_chromosome} 0.4 0.5 0.6 NA\n"
+            ),
+        );
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        assert!(matches!(
+            load_aligned_phenotype_groups(&fixture.request(
+                &sample_identifiers,
+                &prediction_loco_paths,
+                &phenotype_names,
+                g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+            )),
+            Err(InputError::Prediction(PredictionError::DuplicateChromosome { chromosome })) if chromosome == "23"
+        ));
+    }
+}
+
+#[test]
+fn duplicate_selected_phenotype_header_columns_are_rejected() {
+    for (header, duplicated_column) in [
+        ("FID\tIID\ttrait-a\ttrait-a", "trait-a"),
+        ("FID\tFID\tIID\ttrait-a", "FID"),
+        ("FID\tIID\tIID\ttrait-a", "IID"),
+    ] {
+        let fixture = InputFixture::new("duplicate-phenotype-header");
+        fixture.directory.write("phenotypes.tsv", &format!("{header}\n"));
+        let sample_identifiers = fixture.sample_identifiers();
+        let phenotype_names = vec!["trait-a".to_string()];
+        let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+        assert!(matches!(
+            load_aligned_phenotype_groups(&fixture.request(
+                &sample_identifiers,
+                &prediction_loco_paths,
+                &phenotype_names,
+                g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+            )),
+            Err(InputError::SampleAlignment(message))
+                if message.contains(&format!("Selected column '{duplicated_column}' appears more than once"))
+        ));
+    }
+}
+
+#[test]
+fn duplicate_selected_covariate_header_columns_are_rejected() {
+    let selected_covariate_names = ["age".to_string()];
+    for covariate_names in [None, Some(selected_covariate_names.as_slice())] {
+        for (header, duplicated_column) in
+            [("FID\tIID\tage\tage", "age"), ("FID\tFID\tIID\tage", "FID"), ("FID\tIID\tIID\tage", "IID")]
+        {
+            let fixture = InputFixture::new("duplicate-covariate-header");
+            fixture.directory.write("covariates.tsv", &format!("{header}\n"));
+            let sample_identifiers = fixture.sample_identifiers();
+            let phenotype_names = vec!["trait-a".to_string()];
+            let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+            let request = PhenotypeGroupLoadRequest {
+                covariate_names,
+                ..fixture.request(
+                    &sample_identifiers,
+                    &prediction_loco_paths,
+                    &phenotype_names,
+                    g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+                )
+            };
+            assert!(matches!(
+                load_aligned_phenotype_groups(&request),
+                Err(InputError::SampleAlignment(message))
+                    if message.contains(&format!("Selected column '{duplicated_column}' appears more than once"))
+            ));
+        }
+    }
+}
+
+#[test]
+fn duplicate_oxford_identifier_header_columns_are_rejected() {
+    for (header, row, duplicated_column) in
+        [("ID_1 ID_1 ID_2", "family other individual", "ID_1"), ("ID_1 ID_2 ID_2", "family individual other", "ID_2")]
+    {
+        let directory = TemporaryDirectory::new("duplicate-oxford-header");
+        let sample_path = directory.write("samples.sample", &format!("{header}\n0 0 0\n{row}\n"));
+        assert!(matches!(
+            load_sample_identifier_data_from_sample_file(&sample_path, 1),
+            Err(InputError::SampleAlignment(message))
+                if message.contains(&format!("duplicate identifier column '{duplicated_column}'"))
+        ));
+    }
+}
+
+#[test]
+fn duplicate_unselected_columns_do_not_change_sample_alignment() {
+    let fixture = InputFixture::new("duplicate-unselected-columns");
+    fixture.directory.write(
+        "samples.sample",
+        "ID_1 ID_2 unused unused\n0 0 C C\nfamily-1 individual-1 a b\nfamily-2 individual-2 a b\nfamily-3 individual-3 a b\nfamily-4 individual-4 a b\n",
+    );
+    fixture.directory.write(
+        "phenotypes.tsv",
+        "FID\tIID\ttrait-a\tunused\tunused\nfamily-3\tindividual-3\t3\tx\ty\nfamily-1\tindividual-1\t1\tx\ty\nfamily-2\tindividual-2\t2\tx\ty\n",
+    );
+    fixture.directory.write(
+        "covariates.tsv",
+        "FID\tIID\tage\tunused\tunused\nfamily-2\tindividual-2\t20\tx\ty\nfamily-3\tindividual-3\t30\tx\ty\nfamily-1\tindividual-1\t10\tx\ty\n",
+    );
+    let sample_identifiers = fixture.sample_identifiers();
+    let phenotype_names = vec!["trait-a".to_string()];
+    let prediction_loco_paths = fixture.prediction_loco_paths(&phenotype_names);
+    let selected_covariate_names = ["age".to_string()];
+    let request = PhenotypeGroupLoadRequest {
+        covariate_names: Some(&selected_covariate_names),
+        ..fixture.request(
+            &sample_identifiers,
+            &prediction_loco_paths,
+            &phenotype_names,
+            g_plan::MultiPhenotypeSampleMode::PerPhenotype,
+        )
+    };
+    let groups = load_aligned_phenotype_groups(&request).expect("unselected duplicate columns should be ignored");
+    assert_eq!(groups[0].sample_indices, [0, 1, 2]);
+    assert_f32_values(&groups[0].phenotype_values, &[1.0, 2.0, 3.0]);
+    assert_f32_values(&groups[0].covariate_values, &[1.0, 10.0, 1.0, 20.0, 1.0, 30.0]);
+}

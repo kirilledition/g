@@ -31,6 +31,14 @@ replaced with underscores and long names are truncated in directory slugs.
 
 `[output].output_run_directory` overrides the default `<out>.g` run root.
 
+Before creating output metadata, `g` resolves existing symlinks and rejects
+equal or nested physical output locations across phenotypes, including their
+`parts/` directories. Distinct path spellings cannot be used to share writable
+result directories. Dangling symlinks and paths through regular files fail
+validation.
+The resolved absolute run and parts paths are retained for subsequent
+inspection and writing, and reported artifact paths use these destinations.
+
 ## Parquet Dataset Layout
 
 Parquet parts are the only result format and the completed dataset. No
@@ -80,6 +88,9 @@ table = results.to_table()
 
 Part files are committed atomically and carry chunk-commit metadata in their
 Parquet footer. The run manifest records the same commits for resume.
+In-progress part files use hidden temporary names, so the directory reader
+above excludes them. After every selected run passes resume compatibility,
+recognized stale temporary part files are removed before writing resumes.
 
 ## Result Schema
 

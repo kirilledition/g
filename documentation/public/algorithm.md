@@ -135,6 +135,15 @@ The same test can be viewed as the one-degree-of-freedom additive least-squares 
 
 Numerical policy:
 
+- Covariate rank validation uses centered, scaled columns and `float64`
+  arithmetic. Large sample counts or a change in a covariate's units should
+  not by themselves make a full-rank design invalid.
+- Quantitative preparation uses a `float64` QR basis for the covariate span.
+  Phenotype and LOCO residuals are projected explicitly before their norms are
+  reduced, avoiding subtraction of large, nearly equal sums of squares.
+  Residuals below the scale-dependent `float64` projection resolution are
+  treated as zero variance, so roundoff from a trait in the covariate span
+  cannot become an association signal.
 - If allele-one mean dosage is greater than `1`, `g` may shift or flip the internal genotype representation to reduce cancellation. The public `BETA` is restored to `ALLELE1` orientation.
 - Quantitative tests calculate shifted genotype sums of squares directly from
   shifted dosages. Reconstructing them from rounded raw moments can lose rare
@@ -156,6 +165,19 @@ The null coefficients are estimated by iteratively reweighted least squares. The
 - `[compute].binary_null_maximum_iterations`
 - `[compute].binary_null_coefficient_tolerance`
 - `[compute].null_logistic_nonconvergence_policy`
+
+Binary preparation centers and scales nuisance covariates in `float64`, then
+uses a QR basis with the intercept preserved. The conditioned design is shared
+by the null fit, score projection, and approximate-Firth correction. The null
+solver absorbs the mean LOCO offset into the intercept, initializes from the
+observed case fraction, fits in `float64`, and safeguards Newton proposals with a finite
+likelihood check and step reduction. A small reduced step alone does not
+establish convergence; the full Newton correction must satisfy tolerance.
+The centered offset representation is retained for score and Firth preparation;
+the score kernel's final operands remain `float32`.
+Variants with identical dosage in every selected sample are explicitly invalid
+for the score test. This includes fractional constant dosages; small projection
+roundoff cannot make them eligible for Firth correction.
 
 After fitting the null model:
 
@@ -287,6 +309,11 @@ The constants come from BGEN Layout 2 probability storage with 8 bits per stored
 
 Missing genotype dosages are represented as `NaN` during decode. Before the statistical kernel runs, missing dosages are replaced by the variant’s observed mean dosage among aligned samples. Output `N`, `A1FREQ`, and `INFO` use observed genotype calls, not the imputed compute values.
 
+Native dosage moments remain in `float64` through accumulation, imputation,
+and summary-statistic calculation. Packed probability records retain exact
+integer moments until this conversion, including GPU-produced summaries.
+Only the final compute and output columns are converted to `float32`.
+
 | Field | Meaning |
 | --- | --- |
 | `N` | Observed genotype count after sample alignment. |
@@ -382,7 +409,9 @@ Residualize(value) =
     value - CovariateProjection × value
 ```
 
-The implementation uses Cholesky-whitened covariate matrices rather than materializing the full projection matrix for every chunk, but the statistical effect is the same.[^implementation-linear]
+The quantitative implementation uses a centered, scaled QR basis without
+materializing the full sample-by-sample projection matrix. This preserves the
+same covariate span with more stable arithmetic.[^implementation-linear]
 
 For the binary score test, `WeightedResidualize(value, weights)` means the analogous covariate removal after multiplying each sample by the square root of its Bernoulli variance under the null model.[^implementation-binary]
 
@@ -402,6 +431,6 @@ For the binary score test, `WeightedResidualize(value, weights)` means the analo
 
 [^bgen]: BGEN Working Group, [BGEN v1.2 specification](https://www.chg.ox.ac.uk/~gav/bgen_format/spec/v1.2.html), “Genotype data block (Layout 2)”, “Probability data storage”, and “Representation of probabilities”. Implementation: `crates/genotype/src/bgen/decode/mod.rs` and `crates/genotype/src/preprocess.rs`.
 
-[^implementation-linear]: Implementation: `src/g/compute/regenie2_linear/state.py` builds the Cholesky-whitened covariate projection state; `src/g/compute/regenie2_linear/score.py` applies it to variant chunks.
+[^implementation-linear]: Implementation: `src/g/compute/regenie2_linear/state.py` builds the orthonormal covariate projection state; `src/g/compute/regenie2_linear/score.py` applies it to variant chunks.
 
 [^implementation-binary]: Implementation: `src/g/compute/regenie2_binary/state.py` builds the weighted null-model score state; `src/g/compute/regenie2_binary/score.py` computes score, information, `BETA`, `SE`, `CHISQ`, and `LOG10P`.

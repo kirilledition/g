@@ -44,6 +44,21 @@ preserve rare-allele variance in large cohorts. This adds reduction work to the
 native-summary path; raw moments alone cannot safely reconstruct that variance.
 Unshifted variants continue to use the supplied native sums of squares.
 
+Covariate preparation uses `float64` conditioning and QR once per aligned
+sample group. Quantitative preparation keeps its covariate basis and phenotype
+residuals in `float64` until chromosome residual projection; genotype chunks
+and score operands remain `float32`. Compared with storing those shared arrays
+in `float32`, persistent storage grows by approximately
+`4 × samples × (covariate parameters + phenotypes)` bytes: about 60 MB for
+500,000 samples, 20 parameters, and 10 phenotypes. Setup also needs temporary
+conditioning arrays. Binary preparation stores its final conditioned design
+in `float32` and pays the QR cost during group preparation.
+Its chromosome-level null fit uses `float64` safeguarded Newton arithmetic;
+per-variant score computation remains `float32`.
+Binary scoring also checks whether dosages vary across samples. The decoded
+path carries that check through its existing sample tiles; the materialized
+path performs a per-variant comparison reduction.
+
 ## Cold, Warm, And Hot Runs
 
 Do not compare timing modes as if they measured the same thing:

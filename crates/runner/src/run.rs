@@ -119,6 +119,9 @@ pub trait NativeRunHost: Send {
     /// Name the signal associated with an engine interruption, when known.
     fn interruption_signal_name(error: &Self::Error) -> Option<&str>;
 
+    /// Recover a host interruption retained by a failed backend callback.
+    fn backend_interruption_error(error: &<Self::Backend as AssociationBackend>::Error) -> Option<Self::Error>;
+
     /// Classify a terminal Python-boundary error as a resumable interruption.
     fn interruption_kind(&mut self, error: &Self::Error) -> Option<NativeRunInterruption>;
 
@@ -150,6 +153,7 @@ impl<Host> RunHooks for HostRunHooks<'_, Host>
 where
     Host: NativeRunHost,
 {
+    type BackendError = <Host::Backend as AssociationBackend>::Error;
     type Error = Host::Error;
 
     fn check_interruption(&mut self) -> Result<(), Self::Error> {
@@ -158,6 +162,10 @@ where
 
     fn interruption_signal_name(error: &Self::Error) -> Option<&str> {
         Host::interruption_signal_name(error)
+    }
+
+    fn backend_interruption_error(error: &Self::BackendError) -> Option<Self::Error> {
+        Host::backend_interruption_error(error)
     }
 }
 
@@ -456,23 +464,38 @@ where
     let config_updates = plan_jax_runtime_config_updates(setup_session);
     host.apply_jax_config_updates(&config_updates)?;
     if setup_session.gpu_validation_status == crate::jax_runtime::JaxGpuValidationStatus::Pending {
-        let nvidia_driver_visible = nvidia_driver_files_are_visible();
-        let (backend_initialization_failed, devices) = if nvidia_driver_visible {
-            match host.observe_jax_devices() {
-                Ok(devices) => (false, devices),
-                Err(_error) => (true, Vec::new()),
-            }
-        } else {
-            (false, Vec::new())
-        };
-        let validation_plan = plan_jax_gpu_validation(nvidia_driver_visible, backend_initialization_failed, &devices);
-        if validation_plan.status == crate::jax_runtime::JaxGpuValidationStatus::Failed {
-            return Err(host.run_error(validation_plan.message.into_owned()));
-        }
-        setup_session.complete_gpu_validation(validation_plan.status, validation_plan.message);
+        validate_jax_gpu_runtime(host, setup_session, nvidia_driver_files_are_visible())?;
     }
     emit_jax_runtime_setup_diagnostics(setup_session, telemetry_session, thread_name)
         .map_err(|message| host.run_error(message))
+}
+
+fn validate_jax_gpu_runtime<Host>(
+    host: &mut Host,
+    setup_session: &mut JaxRuntimeSetupSession<'_>,
+    nvidia_driver_visible: bool,
+) -> Result<(), Host::Error>
+where
+    Host: NativeRunHost,
+{
+    let validation_plan = if nvidia_driver_visible {
+        match host.observe_jax_devices() {
+            Ok(devices) => plan_jax_gpu_validation(true, false, &devices),
+            Err(error) => {
+                if host.interruption_kind(&error).is_some() {
+                    return Err(error);
+                }
+                plan_jax_gpu_validation(true, true, &[])
+            }
+        }
+    } else {
+        plan_jax_gpu_validation(false, false, &[])
+    };
+    if validation_plan.status == crate::jax_runtime::JaxGpuValidationStatus::Failed {
+        return Err(host.run_error(validation_plan.message.into_owned()));
+    }
+    setup_session.complete_gpu_validation(validation_plan.status, validation_plan.message);
+    Ok(())
 }
 
 fn global_process_runtime_state() -> &'static Mutex<RunnerProcessRuntimeState> {
@@ -595,6 +618,7 @@ mod tests {
         HostRunHooks, RunnerProcessRuntimeState, check_interruption, completed_terminal_result, configure_jax_runtime,
         failed_terminal_result, interrupted_terminal_result, lock_runtime_state, preflight_compiled_runs, run_cli,
         run_compiled_cli, run_compiled_runs, runtime_close_failure_result, terminal_result_from_error,
+        validate_jax_gpu_runtime,
     };
     use crate::jax_runtime::{JaxRuntimeSetupSession, build_jax_runtime_policy};
     use crate::test_support::{
@@ -786,6 +810,70 @@ mod tests {
             .expect("CPU runtime should configure");
         assert_eq!(host.calls, ["apply_jax_config_updates"]);
         assert_eq!(host.config_update_names.len(), 7);
+    }
+
+    #[test]
+    fn jax_gpu_validation_preserves_discovery_interruptions() {
+        let mut run_plan =
+            crate::test_support::run_plan(Path::new("jax-interruption"), g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.device = g_plan::Device::Gpu;
+        let policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
+        for (error_kind, expected_exit_code) in
+            [(TestErrorKind::Sigint, 130), (TestErrorKind::Sigterm, 143), (TestErrorKind::FlushedSigint, 130)]
+        {
+            let expected_error = TestHostError { kind: error_kind, message: "discovery interrupted".to_string() };
+            let mut host = TestNativeRunHost {
+                observed_devices_error: Some(expected_error.clone()),
+                ..TestNativeRunHost::default()
+            };
+            let mut setup_session = JaxRuntimeSetupSession::new(true, &policy);
+            let error = validate_jax_gpu_runtime(&mut host, &mut setup_session, true)
+                .expect_err("device discovery should preserve interruptions");
+
+            assert_eq!(error, expected_error);
+            assert_eq!(host.calls, ["observe_jax_devices"]);
+            assert_eq!(setup_session.gpu_validation_status, crate::jax_runtime::JaxGpuValidationStatus::Pending);
+            let output = terminal_result_from_error(&mut host, None, "test-thread", &error);
+            assert_eq!(output.exit_code, expected_exit_code);
+            assert!(!output.stderr_chunks.concat().contains("CUDA-enabled JAX backend"));
+        }
+    }
+
+    #[test]
+    fn jax_gpu_validation_preserves_backend_failure_diagnostic() {
+        let mut run_plan =
+            crate::test_support::run_plan(Path::new("jax-failure"), g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.device = g_plan::Device::Gpu;
+        let policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
+        let mut host = TestNativeRunHost {
+            observed_devices_error: Some(TestHostError::failure("CUDA initialization failed")),
+            ..TestNativeRunHost::default()
+        };
+        let mut setup_session = JaxRuntimeSetupSession::new(true, &policy);
+        let error = validate_jax_gpu_runtime(&mut host, &mut setup_session, true)
+            .expect_err("device discovery failure should explain GPU setup requirements");
+
+        assert_eq!(error.kind, TestErrorKind::Failure);
+        assert!(error.message.contains("no CUDA-enabled JAX backend could be initialized"));
+        assert_eq!(host.calls, ["observe_jax_devices"]);
+        assert_eq!(setup_session.gpu_validation_status, crate::jax_runtime::JaxGpuValidationStatus::Pending);
+        assert_eq!(terminal_result_from_error(&mut host, None, "test-thread", &error).exit_code, 1);
+    }
+
+    #[test]
+    fn jax_gpu_validation_skips_device_discovery_without_driver() {
+        let mut run_plan =
+            crate::test_support::run_plan(Path::new("jax-missing-driver"), g_plan::AssociationMode::Regenie2Linear);
+        run_plan.compute.device = g_plan::Device::Gpu;
+        let policy = build_jax_runtime_policy(&run_plan).expect("test JAX policy should build");
+        let mut host = TestNativeRunHost::default();
+        let mut setup_session = JaxRuntimeSetupSession::new(true, &policy);
+        let error = validate_jax_gpu_runtime(&mut host, &mut setup_session, false)
+            .expect_err("missing NVIDIA driver should fail before JAX device discovery");
+
+        assert_eq!(error.kind, TestErrorKind::Failure);
+        assert!(error.message.contains("cannot see the NVIDIA driver"));
+        assert!(host.calls.is_empty());
     }
 
     #[test]

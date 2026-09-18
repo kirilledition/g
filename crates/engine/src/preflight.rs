@@ -140,15 +140,73 @@ fn validate_covariate_matrix_rank(row_count: usize, column_count: usize, values:
     if column_count == 0 {
         return Ok(());
     }
+    i32::try_from(row_count.max(column_count))
+        .map_err(|_| PreflightError::JaxIndexCapacityExceeded { label: "covariate matrix dimension" })?;
+    let mut rank_matrix = DMatrix::from_row_iterator(row_count, column_count, values.iter().copied().map(f64::from));
+    normalize_covariate_rank_matrix(&mut rank_matrix)?;
+    let singular_values = rank_matrix.svd(false, false).singular_values;
+    validate_covariate_singular_values(row_count, column_count, singular_values.as_slice())
+}
+
+fn validate_covariate_singular_values(
+    row_count: usize,
+    column_count: usize,
+    singular_values: &[f64],
+) -> Result<(), PreflightError> {
     let dimension_count = i32::try_from(row_count.max(column_count))
         .map(f64::from)
         .map_err(|_| PreflightError::JaxIndexCapacityExceeded { label: "covariate matrix dimension" })?;
-    let rank_matrix = DMatrix::from_row_iterator(row_count, column_count, values.iter().copied().map(f64::from));
-    let singular_values = rank_matrix.svd(false, false).singular_values;
     let largest_singular_value = singular_values.iter().copied().fold(0.0_f64, f64::max);
-    let tolerance = largest_singular_value * dimension_count * f64::from(f32::EPSILON);
+    let tolerance = largest_singular_value * dimension_count * f64::EPSILON;
     if singular_values.iter().filter(|singular_value| **singular_value > tolerance).count() < column_count {
         return Err(PreflightError::CovariateMatrixRankDeficient);
     }
     Ok(())
+}
+
+fn normalize_covariate_rank_matrix(matrix: &mut DMatrix<f64>) -> Result<(), PreflightError> {
+    let row_count = matrix.nrows();
+    let sample_count = i32::try_from(row_count)
+        .map(f64::from)
+        .map_err(|_| PreflightError::JaxIndexCapacityExceeded { label: "covariate matrix dimension" })?;
+    let first_value = matrix[(0, 0)];
+    let has_intercept = first_value.abs() > 0.0
+        && (1..row_count).all(|row_index| matrix[(row_index, 0)].to_bits() == first_value.to_bits());
+    for column_index in 0..matrix.ncols() {
+        // Centering preserves the design span only when the intercept is already present.
+        if has_intercept && column_index > 0 {
+            let column_mean =
+                (0..row_count).map(|row_index| matrix[(row_index, column_index)]).sum::<f64>() / sample_count;
+            for row_index in 0..row_count {
+                matrix[(row_index, column_index)] -= column_mean;
+            }
+        }
+        let column_norm = (0..row_count).map(|row_index| matrix[(row_index, column_index)].powi(2)).sum::<f64>().sqrt();
+        if column_norm > 0.0 {
+            for row_index in 0..row_count {
+                matrix[(row_index, column_index)] /= column_norm;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PreflightError, validate_covariate_singular_values};
+
+    #[test]
+    fn normalized_orthogonal_designs_remain_full_rank_at_large_sample_counts() {
+        let maximum_sample_count = usize::try_from(i32::MAX).expect("supported targets represent i32::MAX");
+        for sample_count in [8_388_608, maximum_sample_count] {
+            validate_covariate_singular_values(sample_count, 1, &[1.0])
+                .expect("a normalized intercept retains rank at every supported sample count");
+            validate_covariate_singular_values(sample_count, 2, &[1.0, 1.0])
+                .expect("normalized orthogonal covariates retain rank at every supported sample count");
+            assert_eq!(
+                validate_covariate_singular_values(sample_count, 2, &[1.0, 0.0]),
+                Err(PreflightError::CovariateMatrixRankDeficient)
+            );
+        }
+    }
 }

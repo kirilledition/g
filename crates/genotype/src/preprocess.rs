@@ -2,16 +2,13 @@
 
 use g_genotype_contracts::{ChunkOutputStatistics, NullableFloat32Column};
 
-use crate::common::{
-    ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL,
-    EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL, Packed8RawStatistics,
-};
+use crate::common::{ChunkComputeStatistics, ChunkStatisticsPolicy, ChunkStats, Packed8RawStatistics};
 use crate::error::{GenotypeError, GenotypeResult};
 
 const ZERO_DOSAGE_UPPER_BOUND: f32 = 1.0e-4;
 const HOMOZYGOUS_ALTERNATE_DOSAGE_THRESHOLD: f32 = 1.5;
-const SPARSE_ZERO_DENSITY_THRESHOLD: f32 = 0.5;
-const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: f32 = 50.0;
+const SPARSE_ZERO_DENSITY_THRESHOLD: f64 = 0.5;
+const RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD: f64 = 50.0;
 const MAXIMUM_PACKED8_RAW_DOSAGE: u64 = 510;
 const MAXIMUM_PACKED8_RAW_DOSAGE_SQUARE: u64 = MAXIMUM_PACKED8_RAW_DOSAGE * MAXIMUM_PACKED8_RAW_DOSAGE;
 
@@ -47,12 +44,12 @@ pub(crate) fn build_empty_chunk_stats(
     }
 }
 
-// This consumes one decode's statistics buffers. Moving the optional Vec
-// handles preserves that ownership boundary without copying their storage.
+// This consumes one decode's statistics buffers and retains f64 moments
+// until the completed output and compute columns are narrowed to f32.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn build_chunk_stats_from_summaries(
-    mut dosage_sum: Vec<f32>,
-    mut dosage_square_sum: Vec<f32>,
+    mut dosage_sum: Vec<f64>,
+    mut dosage_square_sum: Vec<f64>,
     observation_count: Vec<i32>,
     zero_count: Option<Vec<i32>>,
     homozygous_alternate_count: Option<Vec<i32>>,
@@ -100,10 +97,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
             continue;
         }
 
-        // Association statistics are intentionally computed in the f32 output
-        // domain after the sample count has been validated within i32 bounds.
-        #[allow(clippy::cast_precision_loss)]
-        let count_float = count as f32;
+        let count_float = f64::from(count);
         let dosage_mean = dosage_sum[variant_index] / count_float;
         let observed_dosage_square_sum = dosage_square_sum[variant_index];
         if statistics_policy.retain_imputed_dosage_square_sum {
@@ -112,10 +106,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
                     "Variant observation count {count} exceeds selected sample count {selected_sample_count_i32}."
                 ))
             })?;
-            // Both counts share the enforced i32 bound and the surrounding
-            // dosage-square calculation intentionally uses f32.
-            #[allow(clippy::cast_precision_loss)]
-            let missing_count_float = missing_count as f32;
+            let missing_count_float = f64::from(missing_count);
             dosage_square_sum[variant_index] =
                 observed_dosage_square_sum + (missing_count_float * dosage_mean * dosage_mean);
         }
@@ -138,10 +129,7 @@ pub(crate) fn build_chunk_stats_from_summaries(
             } else {
                 zero_count[variant_index]
             };
-            // This exact bounded count is converted only to compute a density
-            // in the f32 statistics domain.
-            #[allow(clippy::cast_precision_loss)]
-            let zero_density = regenie_flipped_zero_count as f32 / count_float;
+            let zero_density = f64::from(regenie_flipped_zero_count) / count_float;
             sparse_candidate_mask.push(
                 zero_density >= SPARSE_ZERO_DENSITY_THRESHOLD
                     && current_minor_allele_count < RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT_THRESHOLD,
@@ -150,13 +138,18 @@ pub(crate) fn build_chunk_stats_from_summaries(
         dosage_sum[variant_index] = dosage_mean;
     }
 
+    // Means and imputed square sums are bounded by diploid dosage and the
+    // validated i32 sample count; only the completed compute columns use f32.
+    #[allow(clippy::cast_possible_truncation)]
+    let genotype_mean = dosage_sum.into_iter().map(|value| value as f32).collect();
+    #[allow(clippy::cast_possible_truncation)]
+    let imputed_dosage_square_sum = statistics_policy
+        .retain_imputed_dosage_square_sum
+        .then(|| dosage_square_sum.into_iter().map(|value| value as f32).collect());
+
     Ok(ChunkStats {
         output: ChunkOutputStatistics { allele_one_frequency, observation_count, info_score },
-        compute: ChunkComputeStatistics {
-            genotype_mean: dosage_sum,
-            imputed_dosage_square_sum: statistics_policy.retain_imputed_dosage_square_sum.then_some(dosage_square_sum),
-            sparse_candidate_mask,
-        },
+        compute: ChunkComputeStatistics { genotype_mean, imputed_dosage_square_sum, sparse_candidate_mask },
     })
 }
 
@@ -210,14 +203,14 @@ impl Packed8RawStatistics {
                 info_score.push(0.0, false);
                 continue;
             }
-            // Device summaries are exact bounded integers; conversion happens
-            // once at the documented f32 association-output boundary.
+            // The enforced i32 sample bound keeps both integer totals exactly
+            // representable in f64. INFO subtracts large nearby moments, so
+            // narrow only the final output columns, never the moments.
             #[allow(clippy::cast_precision_loss)]
-            let dosage_sum = raw_dosage_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL;
+            let dosage_sum = raw_dosage_sum as f64 / 255.0;
             #[allow(clippy::cast_precision_loss)]
-            let dosage_square_sum = raw_dosage_square_sum as f32 * EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL;
-            #[allow(clippy::cast_precision_loss)]
-            let count_float = output_observation_count as f32;
+            let dosage_square_sum = raw_dosage_square_sum as f64 / (255.0 * 255.0);
+            let count_float = f64::from(output_observation_count);
             let dosage_mean = dosage_sum / count_float;
             let output_statistics =
                 calculate_output_variant_statistics(dosage_sum, dosage_square_sum, count_float, dosage_mean);
@@ -230,10 +223,10 @@ impl Packed8RawStatistics {
 
 #[inline]
 fn calculate_output_variant_statistics(
-    dosage_sum: f32,
-    observed_dosage_square_sum: f32,
-    count_float: f32,
-    dosage_mean: f32,
+    dosage_sum: f64,
+    observed_dosage_square_sum: f64,
+    count_float: f64,
+    dosage_mean: f64,
 ) -> OutputVariantStatistics {
     let allele_one_frequency = dosage_mean / 2.0;
     let variance_numerator = (observed_dosage_square_sum - (dosage_sum * dosage_mean)).max(0.0);
@@ -245,7 +238,15 @@ fn calculate_output_variant_statistics(
     } else {
         (0.0, false)
     };
-    OutputVariantStatistics { allele_one_frequency, info_score, info_score_is_valid }
+    // Both output statistics are bounded to [0, 1]; preserve f64 throughout
+    // cancellation-sensitive variance and Hardy-Weinberg calculations.
+    #[allow(clippy::cast_possible_truncation)]
+    let output_statistics = OutputVariantStatistics {
+        allele_one_frequency: allele_one_frequency as f32,
+        info_score: info_score as f32,
+        info_score_is_valid,
+    };
+    output_statistics
 }
 
 fn checked_selected_sample_count(selected_sample_count: usize) -> GenotypeResult<i32> {
@@ -410,5 +411,50 @@ mod tests {
         .into_output_statistics()
         .expect_err("out-of-range device summary should fail");
         assert!(bound_error.to_string().contains("outside the selected-sample bounds"));
+    }
+
+    #[test]
+    fn packed8_output_statistics_preserve_rare_variant_info_in_both_allele_orientations() {
+        let sample_count = 500_000_u32;
+        let output = Packed8RawStatistics {
+            dosage_sums: vec![255, u64::from(sample_count) * 510 - 255, 0, u64::from(sample_count) * 510],
+            dosage_square_sums: vec![
+                65_025,
+                u64::from(sample_count - 1) * 260_100 + 65_025,
+                0,
+                u64::from(sample_count) * 260_100,
+            ],
+            statuses: vec![0; 4],
+            selected_sample_count: usize::try_from(sample_count).expect("sample count should fit usize"),
+        }
+        .into_output_statistics()
+        .expect("large packed8 integer summaries should convert");
+
+        // One heterozygous call among homozygous calls has this analytical
+        // observed variance / Hardy-Weinberg variance, independent of allele.
+        let expected_info = 2.0 * f64::from(sample_count - 1) / f64::from(2 * sample_count - 1);
+        for variant_index in 0..2 {
+            assert!((f64::from(output.info_score.values[variant_index]) - expected_info).abs() < 3.0e-8);
+        }
+        assert_eq!(output.info_score.values[0].to_bits(), output.info_score.values[1].to_bits());
+        assert_eq!(output.info_score.validity_bytes, vec![0b0011]);
+        assert_eq!(output.allele_one_frequency[2..], [0.0, 1.0]);
+        assert!(output.allele_one_frequency.iter().all(|frequency| (0.0..=1.0).contains(frequency)));
+    }
+
+    #[test]
+    fn packed8_monomorphic_output_stays_bounded_at_maximum_sample_count() {
+        let sample_count = u64::try_from(i32::MAX).expect("positive sample limit should fit u64");
+        let output = Packed8RawStatistics {
+            dosage_sums: vec![sample_count * 510],
+            dosage_square_sums: vec![sample_count * 260_100],
+            statuses: vec![0],
+            selected_sample_count: usize::try_from(sample_count).expect("sample count should fit usize"),
+        }
+        .into_output_statistics()
+        .expect("maximum supported sample count should preserve bounded summaries");
+        assert_eq!(output.allele_one_frequency, vec![1.0]);
+        assert_eq!(output.info_score.values, vec![0.0]);
+        assert_eq!(output.info_score.validity_bytes, vec![0]);
     }
 }

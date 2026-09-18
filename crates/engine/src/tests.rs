@@ -639,6 +639,81 @@ fn preflight_accepts_full_rank_finite_quantitative_and_binary_inputs() {
 }
 
 #[test]
+fn preflight_accepts_shifted_and_scaled_covariates_for_both_trait_modes() {
+    for covariate_values in [
+        [1_000_000.0_f32, 1_000_001.0, 1_000_002.0, 1_000_003.0],
+        [1.0e-12, 2.0e-12, 3.0e-12, 4.0e-12],
+        [1.0e12, 2.0e12, 3.0e12, 4.0e12],
+    ] {
+        for intercept_value in [1.0, 2.0] {
+            let covariates = covariate_values.iter().flat_map(|value| [intercept_value, *value]).collect::<Vec<_>>();
+            for is_binary_trait in [false, true] {
+                validate_multi_trait_preflight_values(1, 4, &[0.0, 1.0, 0.0, 1.0], 4, 2, &covariates, is_binary_trait)
+                    .expect("a full-rank design should not depend on covariate units or intercept scale");
+            }
+        }
+    }
+}
+
+#[test]
+fn preflight_rejects_dependent_covariates_after_conditioning() {
+    for dependent_column in [[0.0_f32; 5], [1.0; 5], [0.0, 2.0, 4.0, 6.0, 8.0], [1.0, 3.0, 5.0, 7.0, 9.0]] {
+        let covariates = [0.0, 1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .zip(dependent_column)
+            .flat_map(|(independent_value, dependent_value)| [1.0, independent_value, dependent_value])
+            .collect::<Vec<_>>();
+        for is_binary_trait in [false, true] {
+            assert_eq!(
+                validate_multi_trait_preflight_values(
+                    1,
+                    5,
+                    &[0.0, 1.0, 0.0, 1.0, 0.0],
+                    5,
+                    3,
+                    &covariates,
+                    is_binary_trait,
+                )
+                .expect_err("zero, constant, proportional, and affine-dependent columns remain rank deficient"),
+                PreflightError::CovariateMatrixRankDeficient
+            );
+        }
+    }
+}
+
+#[test]
+fn preflight_preserves_rank_without_an_explicit_intercept() {
+    let covariates = [1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 5.0];
+    for is_binary_trait in [false, true] {
+        validate_multi_trait_preflight_values(1, 4, &[0.0, 1.0, 0.0, 1.0], 4, 2, &covariates, is_binary_trait)
+            .expect("x and x + 1 span a full-rank design when no constant column is present");
+    }
+}
+
+#[test]
+fn preflight_accepts_large_cohorts_with_ordinary_covariates() {
+    let sample_count = 100_000_usize;
+    let phenotypes = (0..sample_count)
+        .map(|sample_index| if sample_index.is_multiple_of(2) { 0.0 } else { 1.0 })
+        .collect::<Vec<_>>();
+    let covariates = (0..sample_count)
+        .flat_map(|sample_index| [1.0, if sample_index.is_multiple_of(2) { 40.0 } else { 60.0 }])
+        .collect::<Vec<_>>();
+    for is_binary_trait in [false, true] {
+        validate_multi_trait_preflight_values(
+            1,
+            sample_count,
+            &phenotypes,
+            sample_count,
+            2,
+            &covariates,
+            is_binary_trait,
+        )
+        .expect("cohort size should not make an ordinary full-rank age covariate appear deficient");
+    }
+}
+
+#[test]
 fn preflight_rejects_shape_finiteness_rank_and_binary_contract_violations() {
     let valid_covariates = [1.0, 0.0, 1.0, 1.0];
     let cases = [
@@ -851,6 +926,195 @@ fn valid_run_plan() -> g_plan::RunPlan {
             output_directory_name: "0001-trait".to_string(),
         }],
     }
+}
+
+struct RunPreparationFixture {
+    directory: std::path::PathBuf,
+}
+
+impl RunPreparationFixture {
+    fn new() -> Self {
+        static NEXT_FIXTURE_IDENTIFIER: AtomicUsize = AtomicUsize::new(0);
+        let fixture_identifier = NEXT_FIXTURE_IDENTIFIER.fetch_add(1, Ordering::Relaxed);
+        let directory =
+            std::env::temp_dir().join(format!("g-engine-run-preparation-{}-{fixture_identifier}", std::process::id()));
+        std::fs::create_dir(&directory).expect("run preparation fixture directory is created");
+        let fixture = Self { directory };
+        fixture.write_bgen();
+        fixture.write(
+            "input.sample",
+            "ID_1 ID_2\n0 0\nfamily-1 individual-1\nfamily-2 individual-2\nfamily-3 individual-3\nfamily-4 individual-4\n",
+        );
+        fixture.write(
+            "phenotypes.tsv",
+            "FID\tIID\ttrait-a\ttrait-b\nfamily-1\tindividual-1\t1\tNA\nfamily-2\tindividual-2\t2\t1\nfamily-3\tindividual-3\t1\t2\nfamily-4\tindividual-4\tNA\t1\n",
+        );
+        fixture.write(
+            "covariates.tsv",
+            "FID\tIID\tage\tinvalid\nfamily-1\tindividual-1\t10\tinf\nfamily-2\tindividual-2\t20\tinf\nfamily-3\tindividual-3\t30\tinf\nfamily-4\tindividual-4\t40\tinf\n",
+        );
+        fixture.write("predictions.list", "trait-a predictions.loco\ntrait-b predictions.loco\n");
+        fixture.write(
+            "predictions.loco",
+            "FID_IID family-1_individual-1 family-2_individual-2 family-3_individual-3 family-4_individual-4\n22 0.1 0.2 0.3 0.4\n",
+        );
+        fixture
+    }
+
+    fn write(&self, name: &str, contents: &str) {
+        std::fs::write(self.directory.join(name), contents).expect("run preparation input fixture is written");
+    }
+
+    fn path_text(&self, name: &str) -> String {
+        self.directory.join(name).to_str().expect("test fixture paths are UTF-8").to_string()
+    }
+
+    fn write_bgen(&self) {
+        // One uncompressed layout-2 variant with four diploid, unphased samples.
+        let mut bytes = Vec::new();
+        for header_value in [20_u32, 20, 1, 4] {
+            bytes.extend_from_slice(&header_value.to_le_bytes());
+        }
+        bytes.extend_from_slice(b"bgen");
+        bytes.extend_from_slice(&(2_u32 << 2).to_le_bytes());
+        for identifier in ["variant-1", "rs-1", "22"] {
+            bytes.extend_from_slice(&u16::try_from(identifier.len()).expect("short BGEN identifier").to_le_bytes());
+            bytes.extend_from_slice(identifier.as_bytes());
+        }
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        for allele in *b"AG" {
+            bytes.extend_from_slice(&1_u32.to_le_bytes());
+            bytes.push(allele);
+        }
+        let mut probabilities = Vec::new();
+        probabilities.extend_from_slice(&4_u32.to_le_bytes());
+        probabilities.extend_from_slice(&2_u16.to_le_bytes());
+        probabilities.extend_from_slice(&[2, 2, 2, 2, 2, 2, 0, 8]);
+        probabilities.extend_from_slice(&[0, 0, 255, 0, 0, 255, 0, 0]);
+        bytes.extend_from_slice(&u32::try_from(probabilities.len()).expect("small probability block").to_le_bytes());
+        bytes.extend_from_slice(&probabilities);
+        std::fs::write(self.directory.join("input.bgen"), bytes).expect("minimal valid BGEN fixture is written");
+    }
+
+    fn run_plan(&self) -> g_plan::RunPlan {
+        let mut run_plan = valid_run_plan();
+        run_plan.chunk_size = 2;
+        run_plan.input = g_plan::InputPlan {
+            bgen_path: self.path_text("input.bgen"),
+            sample_path: self.path_text("input.sample"),
+            phenotype_path: self.path_text("phenotypes.tsv"),
+            prediction_list_path: self.path_text("predictions.list"),
+            covariate_path: None,
+            covariate_names: Vec::new(),
+        };
+        run_plan.compute.device = g_plan::Device::Cpu;
+        run_plan.compute.cpu_thread_count = Some(1);
+        run_plan.compute.multi_phenotype_sample_mode = g_plan::MultiPhenotypeSampleMode::PerPhenotype;
+        run_plan.output.output_run_root = self.path_text("output");
+        run_plan.output.writer_thread_count = 1;
+        run_plan.phenotype_runs = ["trait-a", "trait-b"]
+            .into_iter()
+            .map(|name| g_plan::PhenotypeRunPlan {
+                phenotype_name: name.to_string(),
+                output_directory_name: format!("{name}.run"),
+            })
+            .collect();
+        run_plan
+    }
+
+    fn manifest(&self, phenotype_name: &str) -> serde_json::Value {
+        let manifest_path = self.directory.join("output").join(format!("{phenotype_name}.run/run_manifest.json"));
+        let manifest_text = std::fs::read_to_string(manifest_path).expect("prepared run writes its manifest");
+        serde_json::from_str(&manifest_text).expect("prepared run manifest is valid JSON")
+    }
+}
+
+impl Drop for RunPreparationFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+#[test]
+fn run_preparation_accepts_intercept_only_binary_and_quantitative_inputs() {
+    for association_mode in [g_plan::AssociationMode::Regenie2Binary, g_plan::AssociationMode::Regenie2Linear] {
+        for sample_mode in
+            [g_plan::MultiPhenotypeSampleMode::PerPhenotype, g_plan::MultiPhenotypeSampleMode::CompleteCase]
+        {
+            let fixture = RunPreparationFixture::new();
+            let mut run_plan = fixture.run_plan();
+            run_plan.association_mode = association_mode;
+            run_plan.compute.multi_phenotype_sample_mode = sample_mode;
+            let prepared_run = crate::run::RunEngine::open(run_plan, String::new())
+                .expect("valid run plan opens")
+                .prepare()
+                .expect("omitted covariates should prepare an intercept-only design");
+            assert_eq!(prepared_run.resolved_gpu_genotype_format(), g_plan::GpuGenotypeFormat::Dosage);
+            let expected_sample_count =
+                if sample_mode == g_plan::MultiPhenotypeSampleMode::CompleteCase { 2 } else { 3 };
+            for phenotype_name in ["trait-a", "trait-b"] {
+                let manifest = fixture.manifest(phenotype_name);
+                let execution_plan = &manifest["execution_plan"];
+                assert_eq!(execution_plan["association_mode"], association_mode.as_str());
+                assert_eq!(execution_plan["sample_count"], expected_sample_count);
+                assert_eq!(execution_plan["multi_phenotype_sample_mode"], sample_mode.as_str());
+                assert_eq!(execution_plan["covariate_names"], serde_json::json!(["intercept"]));
+                assert!(execution_plan["covariate_file"].is_null());
+            }
+            drop(prepared_run);
+        }
+    }
+}
+
+#[test]
+fn run_preparation_rejects_covariate_names_without_a_file() {
+    let fixture = RunPreparationFixture::new();
+    let mut run_plan = fixture.run_plan();
+    run_plan.input.covariate_names = vec!["age".to_string()];
+    let result = crate::run::RunEngine::open(run_plan, String::new()).expect("valid output plan opens").prepare();
+    assert!(matches!(
+        result,
+        Err(RunPreparationError::Input(g_input::InputError::SampleAlignment(message)))
+            if message == "Covariate names cannot be provided without a covariate table."
+    ));
+}
+
+#[test]
+fn run_preparation_preserves_explicit_empty_and_named_covariate_selections() {
+    for covariate_names in [Vec::new(), vec!["age".to_string()]] {
+        let fixture = RunPreparationFixture::new();
+        let mut run_plan = fixture.run_plan();
+        run_plan.input.covariate_path = Some(fixture.path_text("covariates.tsv"));
+        run_plan.input.covariate_names.clone_from(&covariate_names);
+        let prepared_run = crate::run::RunEngine::open(run_plan, String::new())
+            .expect("valid output plan opens")
+            .prepare()
+            .expect("unselected invalid covariates must not be inferred or parsed");
+        let mut expected_covariate_names = vec!["intercept".to_string()];
+        expected_covariate_names.extend(covariate_names);
+        for phenotype_name in ["trait-a", "trait-b"] {
+            let manifest = fixture.manifest(phenotype_name);
+            assert_eq!(manifest["execution_plan"]["covariate_names"], serde_json::json!(expected_covariate_names));
+            assert_eq!(manifest["execution_plan"]["sample_count"], 3);
+            assert!(manifest["execution_plan"]["covariate_file"].is_object());
+        }
+        drop(prepared_run);
+    }
+}
+
+#[test]
+fn run_preparation_validates_explicitly_selected_covariate_values() {
+    let fixture = RunPreparationFixture::new();
+    let mut run_plan = fixture.run_plan();
+    run_plan.input.covariate_path = Some(fixture.path_text("covariates.tsv"));
+    run_plan.input.covariate_names = vec!["invalid".to_string()];
+    let result = crate::run::RunEngine::open(run_plan, String::new()).expect("valid output plan opens").prepare();
+    assert!(matches!(
+        result,
+        Err(RunPreparationError::Input(g_input::InputError::NonFiniteCovariateValue { covariate_name, value }))
+            if covariate_name == "invalid" && value == "inf"
+    ));
 }
 
 #[test]

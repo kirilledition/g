@@ -6,8 +6,8 @@ use super::super::BgenError;
 use super::probability::read_exact_bytes;
 
 pub(in crate::bgen) struct VariantMajorTileStatsMut<'a> {
-    pub(in crate::bgen) dosage_sum: &'a mut [f32],
-    pub(in crate::bgen) dosage_square_sum: &'a mut [f32],
+    pub(in crate::bgen) dosage_sum: &'a mut [f64],
+    pub(in crate::bgen) dosage_square_sum: &'a mut [f64],
     pub(in crate::bgen) observation_count: &'a mut [i32],
     pub(in crate::bgen) sparse_candidate_counts: Option<VariantMajorSparseCandidateCountsMut<'a>>,
 }
@@ -31,14 +31,15 @@ pub(in crate::bgen) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {
         let reciprocal_scale = 1.0_f32 / 255.0_f32;
         let mut dosage_lookup = Vec::with_capacity(usize::from(u16::MAX) + 1);
         for packed_probability_index in 0..=u16::MAX {
-            let homozygous_reference_probability = f32::from(
+            let homozygous_reference_probability = i16::from(
                 u8::try_from(packed_probability_index & 0x00FF).expect("low packed probability byte should fit u8"),
-            ) * reciprocal_scale;
-            let heterozygous_probability = f32::from(
+            );
+            let heterozygous_probability = i16::from(
                 u8::try_from((packed_probability_index & 0xFF00) >> 8)
                     .expect("high packed probability byte should fit u8"),
-            ) * reciprocal_scale;
-            dosage_lookup.push(2.0_f32 - ((2.0_f32 * homozygous_reference_probability) + heterozygous_probability));
+            );
+            let raw_dosage = 510 - (2 * homozygous_reference_probability) - heterozygous_probability;
+            dosage_lookup.push(f32::from(raw_dosage) * reciprocal_scale);
         }
         dosage_lookup
     })

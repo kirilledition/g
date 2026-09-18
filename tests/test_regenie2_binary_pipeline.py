@@ -899,7 +899,8 @@ def test_zero_candidate_pipeline_retains_score_results() -> None:
         kernel_config=prepared.kernel_config,
         chromosome_state=prepared.chromosome_state,
     )
-    score_result = regenie2_binary_score.compute_multi_binary_score_test_chunk_variant_major(
+    # Compare the same compiled score path used by the API, so this isolates retention during correction.
+    score_result = regenie2_binary_score.compute_multi_binary_score_test_variant_major(
         chromosome_state=prepared.chromosome_state.score_state,
         genotype_matrix_by_variant=jnp.asarray(prepared.fixture.genotype_matrix_by_variant),
         firth_candidate_p_threshold=None,

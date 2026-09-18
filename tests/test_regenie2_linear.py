@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.common import genotype, linalg, pvalue
@@ -113,18 +114,19 @@ def compute_linear_reference_with_genotype_statistics(
     """Compute quantitative statistics with explicit native genotype moments."""
     covariates = fixture.covariate_matrix
     phenotypes = fixture.phenotype_matrix
-    covariate_crossproduct = covariates.T @ covariates
-    phenotype_coefficients = np.linalg.solve(covariate_crossproduct, covariates.T @ phenotypes.T)
-    phenotype_residual_matrix = phenotypes - (covariates @ phenotype_coefficients).T
-
-    cholesky_factor = np.linalg.cholesky(covariate_crossproduct)
-    whitened_covariate_transpose = np.linalg.solve(cholesky_factor, covariates.T)
+    conditioned_covariates = covariates.copy()
+    if np.all(covariates[:, 0] == covariates[0, 0]) and covariates[0, 0] != 0.0:
+        conditioned_covariates[:, 1:] -= np.mean(conditioned_covariates[:, 1:], axis=0)
+    conditioned_covariates /= np.linalg.norm(conditioned_covariates, axis=0)
+    orthonormal_covariates, _, _ = np.linalg.svd(conditioned_covariates, full_matrices=False)
+    whitened_covariate_transpose = orthonormal_covariates.T
+    phenotype_residual_matrix = phenotypes - (phenotypes @ orthonormal_covariates) @ whitened_covariate_transpose
     adjusted_residual_matrix = phenotype_residual_matrix - fixture.loco_prediction_matrix
     residual_projection_coordinates = adjusted_residual_matrix @ whitened_covariate_transpose.T
-    adjusted_residual_sum_squares = np.sum(adjusted_residual_matrix**2, axis=1) - np.sum(
-        residual_projection_coordinates**2,
-        axis=1,
+    projected_adjusted_residual_matrix = adjusted_residual_matrix - (
+        residual_projection_coordinates @ whitened_covariate_transpose
     )
+    adjusted_residual_sum_squares = np.sum(projected_adjusted_residual_matrix**2, axis=1)
 
     genotype_offsets = np.where(genotype_means > 1.0, 2.0, 0.0)
     normalized_genotypes = fixture.genotype_matrix_by_variant - genotype_offsets[:, None]
@@ -137,9 +139,7 @@ def compute_linear_reference_with_genotype_statistics(
         )
     genotype_projection_coordinates = whitened_covariate_transpose @ normalized_genotypes.T
     genotype_residual_sum_squares = genotype_sum_squares - np.sum(genotype_projection_coordinates**2, axis=0)
-    covariance = adjusted_residual_matrix @ normalized_genotypes.T - (
-        residual_projection_coordinates @ genotype_projection_coordinates
-    )
+    covariance = projected_adjusted_residual_matrix @ normalized_genotypes.T
     degrees_of_freedom = covariates.shape[0] - covariates.shape[1]
     null_mean_squared_error = adjusted_residual_sum_squares / degrees_of_freedom
 
@@ -159,12 +159,39 @@ def build_linear_chromosome_state(
 ) -> regenie2_linear_state.Regenie2MultiLinearChromosomeState:
     """Build the production state for the deterministic fixture."""
     shared_state = regenie2_linear_state.build_multi_linear_state(
-        covariate_matrix=jnp.asarray(fixture.covariate_matrix),
-        phenotype_matrix=jnp.asarray(fixture.phenotype_matrix),
+        covariate_matrix=jnp.asarray(fixture.covariate_matrix, dtype=jnp.float32),
+        phenotype_matrix=jnp.asarray(fixture.phenotype_matrix, dtype=jnp.float32),
     )
     return regenie2_linear_state.build_multi_linear_chromosome_state(
         state=shared_state,
-        loco_prediction_matrix=jnp.asarray(fixture.loco_prediction_matrix),
+        loco_prediction_matrix=jnp.asarray(fixture.loco_prediction_matrix, dtype=jnp.float32),
+    )
+
+
+def assert_linear_statistics_match_reference(
+    observed: regenie2_linear_score.Regenie2MultiLinearChunkResult,
+    reference: LinearReferenceResult,
+) -> None:
+    """Apply the existing per-statistic accuracy bounds to a regression fixture."""
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.beta,
+        reference.beta,
+        LINEAR_BETA_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.standard_error,
+        reference.standard_error,
+        LINEAR_STANDARD_ERROR_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.chi_squared,
+        reference.chi_squared,
+        LINEAR_CHI_SQUARED_ABSOLUTE_TOLERANCE,
+    )
+    tests.numerical.assert_absolute_difference_less_than(
+        observed.log10_p_value,
+        reference.log10_p_value,
+        LINEAR_LOG10_P_VALUE_ABSOLUTE_TOLERANCE,
     )
 
 
@@ -265,6 +292,298 @@ def test_linear_state_residualizes_phenotypes_against_covariates() -> None:
 
     tests.numerical.assert_absolute_difference_less_than(crossproduct, np.zeros_like(crossproduct), 2.0e-5)
     assert float(np.asarray(shared_state.degrees_of_freedom)) == 6.0
+
+
+@pytest.mark.parametrize(
+    ("covariate_offset", "covariate_scale"),
+    [
+        (2_000.0, 0.125),
+        (10_000.0, 1.0),
+        (0.0, 2.0**-30),
+        (2.0**-30, 2.0**-40),
+        (2.0**30, 2.0**10),
+    ],
+)
+def test_linear_covariate_affine_changes_preserve_statistics(
+    covariate_offset: float,
+    covariate_scale: float,
+) -> None:
+    """Preserve the design span across exactly representable shifts and scales."""
+    fixture = build_linear_fixture()
+    transformed_covariates = fixture.covariate_matrix.copy()
+    transformed_covariates[:, 1] = covariate_offset + covariate_scale * transformed_covariates[:, 1]
+    transformed_fixture = LinearFixture(
+        covariate_matrix=transformed_covariates,
+        phenotype_matrix=fixture.phenotype_matrix,
+        loco_prediction_matrix=fixture.loco_prediction_matrix,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    # The native boundary supplies float32; all transformations in this test
+    # retain their information exactly at that boundary.
+    np.testing.assert_array_equal(transformed_covariates.astype(np.float32).astype(np.float64), transformed_covariates)
+    chromosome_state = build_linear_chromosome_state(transformed_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(fixture))
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(transformed_fixture))
+    assert float(np.asarray(chromosome_state.degrees_of_freedom)) == 6.0
+    assert chromosome_state.score_left_hand_matrix.dtype == jnp.float32
+
+
+def test_linear_loco_covariate_components_preserve_statistics() -> None:
+    """Project large LOCO covariate components before computing residual norms."""
+    fixture = build_linear_fixture()
+    baseline_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=np.round(fixture.phenotype_matrix * 8.0) / 8.0,
+        loco_prediction_matrix=np.round(fixture.loco_prediction_matrix * 16.0) / 16.0,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    loco_covariate_coefficients = np.asarray([[8_192.0, -4_096.0], [-16_384.0, 8_192.0]], dtype=np.float64)
+    transformed_loco_predictions = baseline_fixture.loco_prediction_matrix + (
+        loco_covariate_coefficients @ fixture.covariate_matrix.T
+    )
+    np.testing.assert_array_equal(
+        transformed_loco_predictions.astype(np.float32).astype(np.float64),
+        transformed_loco_predictions,
+    )
+    transformed_fixture = LinearFixture(
+        covariate_matrix=baseline_fixture.covariate_matrix,
+        phenotype_matrix=baseline_fixture.phenotype_matrix,
+        loco_prediction_matrix=transformed_loco_predictions,
+        genotype_matrix_by_variant=baseline_fixture.genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(transformed_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+    baseline_state = build_linear_chromosome_state(baseline_fixture)
+
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(baseline_fixture))
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(transformed_fixture))
+    tests.numerical.assert_absolute_difference_less_than(
+        chromosome_state.adjusted_residual_sum_squares,
+        baseline_state.adjusted_residual_sum_squares,
+        1.0e-7,
+    )
+
+
+def test_linear_phenotype_covariate_components_preserve_statistics() -> None:
+    """Remove large phenotype covariate components before float32 score work."""
+    fixture = build_linear_fixture()
+    baseline_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=np.round(fixture.phenotype_matrix * 8.0) / 8.0,
+        loco_prediction_matrix=np.round(fixture.loco_prediction_matrix * 16.0) / 16.0,
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    phenotype_covariate_coefficients = np.asarray([[8_192.0, -4_096.0], [-16_384.0, 8_192.0]], dtype=np.float64)
+    transformed_phenotypes = baseline_fixture.phenotype_matrix + (
+        phenotype_covariate_coefficients @ fixture.covariate_matrix.T
+    )
+    np.testing.assert_array_equal(
+        transformed_phenotypes.astype(np.float32).astype(np.float64),
+        transformed_phenotypes,
+    )
+    transformed_fixture = LinearFixture(
+        covariate_matrix=baseline_fixture.covariate_matrix,
+        phenotype_matrix=transformed_phenotypes,
+        loco_prediction_matrix=baseline_fixture.loco_prediction_matrix,
+        genotype_matrix_by_variant=baseline_fixture.genotype_matrix_by_variant,
+    )
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=build_linear_chromosome_state(transformed_fixture),
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(baseline_fixture))
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(transformed_fixture))
+
+
+def test_linear_nearly_collinear_full_rank_design_preserves_statistics() -> None:
+    """Retain an independent direction near float32 input precision."""
+    fixture = build_linear_fixture()
+    independent_direction = np.tile(np.asarray([-1.0, 1.0]), 4)
+    # Keep genotype residual variances well conditioned while making the
+    # covariate parameterization nearly dependent.
+    genotype_matrix_by_variant = fixture.genotype_matrix_by_variant[:2]
+    transformed_covariates = np.column_stack(
+        [fixture.covariate_matrix, fixture.covariate_matrix[:, 1] + (2.0**-22) * independent_direction],
+    )
+    np.testing.assert_array_equal(transformed_covariates.astype(np.float32).astype(np.float64), transformed_covariates)
+    transformed_fixture = LinearFixture(
+        covariate_matrix=transformed_covariates,
+        phenotype_matrix=fixture.phenotype_matrix,
+        loco_prediction_matrix=fixture.loco_prediction_matrix,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+    )
+    # This well-conditioned parameterization spans the same three directions.
+    reference_fixture = LinearFixture(
+        covariate_matrix=np.column_stack([fixture.covariate_matrix, independent_direction]),
+        phenotype_matrix=fixture.phenotype_matrix,
+        loco_prediction_matrix=fixture.loco_prediction_matrix,
+        genotype_matrix_by_variant=genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(transformed_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(reference_fixture))
+    assert float(np.asarray(chromosome_state.degrees_of_freedom)) == 5.0
+
+
+@pytest.mark.parametrize(
+    "covariate_matrix",
+    [
+        np.column_stack([np.ones(8), np.zeros(8)]),
+        np.column_stack([np.ones(8), np.ones(8)]),
+        np.column_stack([np.ones(8), np.arange(8), 10_000.0 + np.arange(8) * 2.0]),
+    ],
+    ids=["zero-column", "duplicate-intercept", "dependent-covariates"],
+)
+def test_linear_rank_deficient_design_is_rejected(covariate_matrix: npt.NDArray[np.float64]) -> None:
+    """Reject dependent designs instead of projecting QR completion directions."""
+    fixture = build_linear_fixture()
+
+    with pytest.raises(ValueError, match="full column rank"):
+        regenie2_linear_state.build_multi_linear_state(
+            covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
+            phenotype_matrix=jnp.asarray(fixture.phenotype_matrix, dtype=jnp.float32),
+        )
+
+
+def test_linear_design_requires_positive_residual_degrees_of_freedom() -> None:
+    """Reject a saturated design before building any residual statistics."""
+    with pytest.raises(ValueError, match="positive residual degrees of freedom"):
+        regenie2_linear_state.build_multi_linear_state(
+            covariate_matrix=jnp.eye(3, dtype=jnp.float32),
+            phenotype_matrix=jnp.ones((1, 3), dtype=jnp.float32),
+        )
+
+
+def test_linear_projection_without_intercept_preserves_column_span() -> None:
+    """Leave means intact when there is no leading intercept to absorb them."""
+    fixture = build_linear_fixture()
+    covariate_matrix = fixture.covariate_matrix[:, 1:]
+    shared_state = regenie2_linear_state.build_multi_linear_state(
+        covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
+        phenotype_matrix=jnp.asarray(fixture.phenotype_matrix, dtype=jnp.float32),
+    )
+    reference_coefficients = np.linalg.lstsq(covariate_matrix, fixture.phenotype_matrix.T, rcond=None)[0]
+    expected_residuals = fixture.phenotype_matrix - (covariate_matrix @ reference_coefficients).T
+
+    tests.numerical.assert_absolute_difference_less_than(
+        shared_state.phenotype_residual_matrix,
+        expected_residuals,
+        2.0e-7,
+    )
+    assert float(np.asarray(shared_state.degrees_of_freedom)) == 7.0
+
+
+@pytest.mark.parametrize("covariate_coefficients", [[1.0, 0.0], [0.0, 1.0], [3.0, 2.0]])
+def test_linear_phenotype_in_covariate_span_has_invalid_statistics(covariate_coefficients: list[float]) -> None:
+    """Discard projection roundoff when phenotype residual variance is zero."""
+    fixture = build_linear_fixture()
+    zero_variance_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=(fixture.covariate_matrix @ np.asarray(covariate_coefficients))[None, :],
+        loco_prediction_matrix=np.zeros((1, fixture.covariate_matrix.shape[0]), dtype=np.float64),
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(zero_variance_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    np.testing.assert_array_equal(np.asarray(chromosome_state.adjusted_residual_sum_squares), np.zeros(1))
+    np.testing.assert_array_equal(np.asarray(observed.beta), np.zeros((1, fixture.genotype_matrix_by_variant.shape[0])))
+    for values in (observed.standard_error, observed.chi_squared, observed.log10_p_value):
+        assert bool(np.all(np.isnan(np.asarray(values))))
+
+
+def test_linear_loco_explaining_residual_has_invalid_statistics() -> None:
+    """Reject zero residual variance after an exact LOCO fit with covariate components."""
+    fixture = build_linear_fixture()
+    phenotype_matrix = np.asarray([[1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0]])
+    zero_variance_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=phenotype_matrix,
+        loco_prediction_matrix=phenotype_matrix + 2_048.0 + 4_096.0 * fixture.covariate_matrix[:, 1],
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(zero_variance_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    np.testing.assert_array_equal(np.asarray(chromosome_state.adjusted_residual_sum_squares), np.zeros(1))
+    assert bool(np.all(np.isnan(np.asarray(observed.chi_squared))))
+
+
+@pytest.mark.parametrize(
+    ("phenotype_offset", "phenotype_scale"),
+    [(0.0, 2.0**-40), (1.0, 2.0**-22), (2.0**16, 2.0**-7)],
+)
+def test_linear_small_residual_scale_retains_valid_statistics(
+    phenotype_offset: float,
+    phenotype_scale: float,
+) -> None:
+    """Keep small true variation when it is resolved relative to the source scale."""
+    fixture = build_linear_fixture()
+    phenotype_matrix = phenotype_offset + phenotype_scale * np.asarray(
+        [[1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0]],
+    )
+    np.testing.assert_array_equal(phenotype_matrix.astype(np.float32).astype(np.float64), phenotype_matrix)
+    small_variance_fixture = LinearFixture(
+        covariate_matrix=fixture.covariate_matrix,
+        phenotype_matrix=phenotype_matrix,
+        loco_prediction_matrix=np.zeros_like(phenotype_matrix),
+        genotype_matrix_by_variant=fixture.genotype_matrix_by_variant,
+    )
+    chromosome_state = build_linear_chromosome_state(small_variance_fixture)
+    observed = regenie2_linear_score.compute_regenie2_linear_chunk_trait_major_variant_major_core(
+        chromosome_state=chromosome_state,
+        genotype_matrix_by_variant=jnp.asarray(fixture.genotype_matrix_by_variant, dtype=jnp.float32),
+        native_genotype_mean=None,
+        genotype_imputed_dosage_square_sum=None,
+        linear_minimum_variance=1.0e-8,
+        linear_relative_variance_tolerance=1.0e-7,
+    )
+
+    assert bool(np.all(np.asarray(chromosome_state.adjusted_residual_sum_squares) > 0.0))
+    assert_linear_statistics_match_reference(observed, compute_linear_reference(small_variance_fixture))
 
 
 def test_linear_chunk_matches_independent_numpy_reference() -> None:

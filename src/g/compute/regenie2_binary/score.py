@@ -32,11 +32,13 @@ class ScoreReduction:
     Attributes:
         stacked_product_by_variant: Projection and score products by variant.
         weighted_genotype_sum_squares: Weighted minor-allele sums of squares.
+        variable_genotype_mask: Variants with at least two distinct delivered dosages.
 
     """
 
     stacked_product_by_variant: jax.Array
     weighted_genotype_sum_squares: jax.Array
+    variable_genotype_mask: jax.Array
 
 
 def reduce_materialized_score_genotypes(
@@ -50,6 +52,10 @@ def reduce_materialized_score_genotypes(
             "vs,ts->tv",
             score_genotype_matrix_by_variant * score_genotype_matrix_by_variant,
             chromosome_state.bernoulli_weight,
+        ),
+        variable_genotype_mask=jnp.any(
+            score_genotype_matrix_by_variant != score_genotype_matrix_by_variant[:, :1],
+            axis=1,
         ),
     )
 
@@ -74,6 +80,7 @@ def reduce_tiled_score_genotypes(
             (chromosome_state.null_logistic_converged.shape[0], variant_count),
             dtype=raw_genotype_matrix_by_variant.dtype,
         ),
+        variable_genotype_mask=jnp.zeros((variant_count,), dtype=jnp.bool_),
     )
 
     def reduce_tile(tile_index: jax.Array, reduction: ScoreReduction) -> ScoreReduction:
@@ -113,6 +120,10 @@ def reduce_tiled_score_genotypes(
                     bernoulli_weight_tile,
                 )
             ),
+            variable_genotype_mask=(
+                reduction.variable_genotype_mask
+                | jnp.any(raw_genotype_tile != raw_genotype_matrix_by_variant[:, :1], axis=1)
+            ),
         )
 
     reduction = jax.lax.fori_loop(
@@ -142,6 +153,10 @@ def reduce_tiled_score_genotypes(
                 score_genotype_tail * score_genotype_tail,
                 chromosome_state.bernoulli_weight[:, tiled_sample_count:],
             )
+        ),
+        variable_genotype_mask=(
+            reduction.variable_genotype_mask
+            | jnp.any(raw_genotype_tail != raw_genotype_matrix_by_variant[:, :1], axis=1)
         ),
     )
 
@@ -178,7 +193,9 @@ def build_multi_binary_score_result(
         minimum_variance,
         relative_variance_tolerance,
     )
-    statistic_mask = positive_variance_mask & null_logistic_converged
+    # Every native design includes an intercept, so a uniform dosage has no
+    # residual variance even when float32 projection roundoff leaves it positive.
+    statistic_mask = positive_variance_mask & null_logistic_converged & score_reduction.variable_genotype_mask[None, :]
     inverse_variance = jnp.where(statistic_mask, jnp.reciprocal(variance), 0.0)
     beta = jnp.where(
         statistic_mask,

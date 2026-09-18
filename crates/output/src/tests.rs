@@ -20,6 +20,15 @@ use crate::{
 
 const PRIMARY_PHENOTYPE: &str = "trait_alpha";
 
+#[path = "tests/paths.rs"]
+mod paths;
+
+#[path = "tests/policies.rs"]
+mod policies;
+
+#[path = "tests/staging.rs"]
+mod staging;
+
 struct TestDirectory {
     path: PathBuf,
 }
@@ -840,7 +849,7 @@ fn strict_resume_rejects_legacy_linear_and_approximate_firth_policies_before_mut
 }
 
 #[test]
-fn score_only_resume_preserves_existing_kernel_and_jax_policy_contract() {
+fn score_only_resume_fingerprints_null_logistic_policy_without_firth_policy() {
     let directory = TestDirectory::new("score-only-resume");
     let phenotype_names = [PRIMARY_PHENOTYPE];
     let inputs = test_inputs(&directory, &phenotype_names);
@@ -863,6 +872,9 @@ fn score_only_resume_preserves_existing_kernel_and_jax_policy_contract() {
             "enable_x64": true,
             "matmul_precision": "float32",
             "approximate_firth_pseudo_inner_policy": null,
+            "binary_null_logistic_policy": "float64_centered_loco_safeguarded_newton_v1",
+            "binary_covariate_policy": "centered_scaled_float64_qr_to_float32_v1",
+            "binary_score_validity_policy": "reject_uniform_dosages_v1",
         })
     );
     let mut resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
@@ -909,7 +921,7 @@ fn manager_planning_is_read_only_and_rejects_multi_run_collisions() {
     let error = OutputManager::open(Arc::new(collision_plan), "# collision\n".to_string())
         .err()
         .expect("colliding output paths are rejected");
-    assert!(error.to_string().contains("resolve to the same run directory"));
+    assert!(error.to_string().contains("resolve to equal or nested output directories"));
     assert!(!collision_run_directory.exists());
 }
 

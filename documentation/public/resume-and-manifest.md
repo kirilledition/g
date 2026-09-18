@@ -36,6 +36,8 @@ optional TOML file, and explicit CLI overrides.
 - binary correction plan and binary kernel settings when applicable;
 - quantitative variance thresholds when applicable;
 - JAX device/precision policy and dtype choices;
+- genotype-moment accumulation, covariate projection, and binary null-solver
+  numerical policies;
 - output writer settings;
 - committed chunk identifiers and Parquet part metadata.
 
@@ -97,6 +99,11 @@ the current production Parquet schema, and its footer commits must have unique
 chunk identifiers, exact row counts, and ranges matching the current BGEN
 chunk plan.
 
+Part writes use hidden temporary files. Compatible resume removes recognized
+stale temporary part files, including visible temporary files from older
+writers, after all selected runs pass validation. An incompatible resume leaves
+these files untouched along with the other output artifacts.
+
 ## Compatibility Checks
 
 Resume first requires an existing pre-release schema-v0 `run_manifest.json`. It then
@@ -131,14 +138,19 @@ Common mismatch causes:
   policy recorded in the execution plan.
 
 Resume is not a way to combine different analyses into one output directory.
+Current manifests also fingerprint precise genotype moments, stable covariate
+projection, and safeguarded binary null fitting. Runs created before these
+policies were recorded require fresh output directories in both quantitative
+and binary modes; their results cannot be mixed with current parts.
+
 Quantitative manifests include the linear kernel settings. Older pre-release
 quantitative manifests without those settings cannot be resumed; start a new
 output directory so that every part uses the same numerical policy.
 
 Approximate-Firth manifests also identify the null solver's initial-convergence
 policy. Runs created before valid initial convergence was accepted require a
-new output directory. Binary score-only manifests are unaffected by this
-policy change.
+new output directory. Binary score-only manifests omit this Firth-specific
+marker but still require the current genotype and null-logistic policies above.
 
 Approximate-Firth manifests fingerprint the fixed inner proposal policy as
 `float32_elementwise_float64_reduction`. Older pre-release runs used the prior
@@ -164,6 +176,11 @@ During `g regenie`, the first SIGINT or SIGTERM requests graceful shutdown. The
 engine flushes queued chunks, saves committed output for resume, prints an
 interruption message, and exits with `128 + signal_number` such as `130` for
 SIGINT.
+
+Interruptions raised while Python initializes a backend or executes a backend
+callback retain their signal classification across the native boundary. If
+output has been initialized, the same graceful flush and interruption metadata
+path applies; an interrupted startup still returns the signal-derived status.
 
 After that, rerun the same command with a config containing:
 

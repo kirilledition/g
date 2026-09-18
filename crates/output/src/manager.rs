@@ -21,6 +21,61 @@ use crate::session::{
 };
 const COMMAND_INTERFACE: &str = "g regenie";
 
+fn validate_output_directory_ownership(runs: &[ManagedOutputRun]) -> OutputResult<()> {
+    let mut reserved_directories = BTreeMap::<PathBuf, &str>::new();
+    for run in runs {
+        let run_directory = crate::paths::resolve_output_directory(&run.configured_paths.run_directory)?;
+        let parts_directory = crate::paths::resolve_output_directory(&run.configured_paths.parts_directory)?;
+        for (planned_path, current_path) in
+            [(&run.paths.run_directory, &run_directory), (&run.paths.parts_directory, &parts_directory)]
+        {
+            if planned_path != current_path {
+                return Err(OutputError::InvalidInput(format!(
+                    "Output directory '{}' changed after planning to '{}'.",
+                    planned_path.display(),
+                    current_path.display(),
+                )));
+            }
+        }
+        if run_directory.starts_with(&parts_directory) {
+            return Err(OutputError::InvalidInput(format!(
+                "Phenotype output '{}' has a parts directory '{}' equal to or containing its run directory '{}'.",
+                run.phenotype_name,
+                parts_directory.display(),
+                run_directory.display(),
+            )));
+        }
+        for current_directory in [&run_directory, &parts_directory] {
+            for (existing_directory, existing_phenotype_name) in &reserved_directories {
+                if current_directory.starts_with(existing_directory)
+                    || existing_directory.starts_with(current_directory)
+                {
+                    return Err(OutputError::InvalidInput(format!(
+                        "Phenotype outputs '{existing_phenotype_name}' and '{}' resolve to equal or nested output directories '{}' and '{}'.",
+                        run.phenotype_name,
+                        existing_directory.display(),
+                        current_directory.display(),
+                    )));
+                }
+            }
+        }
+        reserved_directories.insert(run_directory, &run.phenotype_name);
+        reserved_directories.insert(parts_directory, &run.phenotype_name);
+    }
+    Ok(())
+}
+
+fn remove_validated_staging_files(runs: &[ManagedOutputRun]) -> OutputResult<()> {
+    let staging_paths = runs
+        .iter()
+        .map(|run| crate::resume::find_stale_chunk_staging_files(&run.paths.parts_directory))
+        .collect::<OutputResult<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    crate::resume::remove_stale_chunk_staging_files(&staging_paths)
+}
+
 /// Writer and resume state consumed by one association group.
 pub struct OutputDeliveryState {
     pub writer_sessions: Vec<Arc<OutputWriterSession>>,
@@ -35,6 +90,7 @@ pub struct CompletedOutputRun {
 
 struct ManagedOutputRun {
     phenotype_name: String,
+    configured_paths: OutputRunPaths,
     paths: OutputRunPaths,
     existing_manifest_json: Option<String>,
     effective_config_path: PathBuf,
@@ -61,10 +117,15 @@ impl OutputManager {
     pub fn open(run_plan: Arc<g_plan::RunPlan>, effective_config_toml: String) -> OutputResult<Self> {
         let mut runs = Vec::with_capacity(run_plan.phenotype_runs.len());
         let mut run_indices_by_phenotype = BTreeMap::new();
-        let mut phenotype_names_by_run_directory = BTreeMap::new();
         for phenotype_run in &run_plan.phenotype_runs {
             let output_root = Path::new(&run_plan.output.output_run_root).join(&phenotype_run.output_directory_name);
-            let output_run_paths = resolve_output_run_paths(&output_root, run_plan.association_mode.as_str());
+            let configured_paths = resolve_output_run_paths(&output_root, run_plan.association_mode.as_str());
+            // Inspect and mutate the same physical paths, even when a missing
+            // prefix followed by `..` makes the configured spelling unreadable.
+            let output_run_paths = OutputRunPaths {
+                run_directory: crate::paths::resolve_output_directory(&configured_paths.run_directory)?,
+                parts_directory: crate::paths::resolve_output_directory(&configured_paths.parts_directory)?,
+            };
             let output_index = runs.len();
             if run_indices_by_phenotype.insert(phenotype_run.phenotype_name.clone(), output_index).is_some() {
                 return Err(OutputError::InvalidInput(format!(
@@ -72,24 +133,17 @@ impl OutputManager {
                     phenotype_run.phenotype_name
                 )));
             }
-            if let Some(existing_phenotype_name) = phenotype_names_by_run_directory
-                .insert(output_run_paths.run_directory.clone(), phenotype_run.phenotype_name.clone())
-            {
-                return Err(OutputError::InvalidInput(format!(
-                    "Phenotype outputs '{existing_phenotype_name}' and '{}' resolve to the same run directory '{}'.",
-                    phenotype_run.phenotype_name,
-                    output_run_paths.run_directory.display()
-                )));
-            }
             let effective_config_path = output_run_paths.run_directory.join("effective_config.toml");
             runs.push(ManagedOutputRun {
                 phenotype_name: phenotype_run.phenotype_name.clone(),
+                configured_paths,
                 paths: output_run_paths,
                 existing_manifest_json: None,
                 effective_config_path,
                 committed_chunk_identifiers: Arc::new(BTreeSet::new()),
             });
         }
+        validate_output_directory_ownership(&runs)?;
         for run in &mut runs {
             run.existing_manifest_json = inspect_output_run(&run.paths, run_plan.output.resume)?;
         }
@@ -134,6 +188,7 @@ impl OutputManager {
         if self.writer_sessions.is_some() {
             return Err(OutputError::InvalidInput("Output manager is already initialized.".to_string()));
         }
+        validate_output_directory_ownership(&self.runs)?;
         validate_output_writer_settings(&self.run_plan.output, self.runs.len())?;
         let mut headers_by_phenotype = BTreeMap::new();
         let mut fingerprint_cache = ManifestFileFingerprintCache::default();
@@ -181,6 +236,9 @@ impl OutputManager {
         } else {
             std::iter::repeat_with(|| None).take(self.runs.len()).collect()
         };
+        if self.run_plan.output.resume {
+            remove_validated_staging_files(&self.runs)?;
+        }
         for run in &self.runs {
             std::fs::create_dir_all(&run.paths.parts_directory).map_err(OutputError::runtime)?;
         }

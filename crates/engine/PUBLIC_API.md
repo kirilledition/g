@@ -19,6 +19,11 @@ payloads remain owned by their domain crates and are referenced directly rather
 than mirrored or re-exported. Run preparation/execution state, upstream error
 types, and scheduler reports remain internal implementation details.
 
+`RunHooks` associates the backend error type and can recover a typed host
+interruption from it. The engine performs this classification before choosing
+graceful output flushing or ordinary failure abort; it never identifies signals
+from error-message text.
+
 ## Public functions
 
 Invoke the coarse coordinated run entry point used by `g-runner`.

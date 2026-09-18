@@ -72,6 +72,13 @@ Python thread. It imports canonical genotype, input, and output payload types
 only to convert the private `AssociationBackend` boundary to and from NumPy;
 all services remain behind `g-engine` and `g-runner`.
 
+Backend errors retain their concrete host type through delivery and scheduling.
+`RunHooks` asks the host whether such an error represents an interruption before
+the engine chooses graceful flushing or failure abort. The Python adapter
+recognizes signal exceptions by type, preserves their identity, and leaves
+interrupted lazy backend initialization retryable. It does not classify
+signals by matching exception text.
+
 Engine resolves the prediction list once into an input-owned path catalog.
 Input indexing/alignment and output-manifest fingerprinting borrow that same
 catalog, so group preparation does not reparse the list or duplicate its path

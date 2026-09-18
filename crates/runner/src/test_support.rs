@@ -251,6 +251,7 @@ pub(crate) struct TestNativeRunHost {
     pub(crate) backend_plan_kinds: Vec<BackendPlanKind>,
     pub(crate) config_update_names: Vec<String>,
     pub(crate) observed_devices: Vec<JaxDevice>,
+    pub(crate) observed_devices_error: Option<TestHostError>,
     pub(crate) interruption_results: VecDeque<Result<(), TestHostError>>,
     pub(crate) current_thread_error: Option<TestHostError>,
 }
@@ -272,6 +273,9 @@ impl NativeRunHost for TestNativeRunHost {
 
     fn observe_jax_devices(&mut self) -> Result<Vec<JaxDevice>, Self::Error> {
         self.calls.push("observe_jax_devices");
+        if let Some(error) = self.observed_devices_error.take() {
+            return Err(error);
+        }
         Ok(std::mem::take(&mut self.observed_devices))
     }
 
@@ -318,6 +322,10 @@ impl NativeRunHost for TestNativeRunHost {
             TestErrorKind::Sigterm => Some(NativeRunInterruption::Sigterm),
             TestErrorKind::FlushedSigint => Some(NativeRunInterruption::FlushedSigint),
         }
+    }
+
+    fn backend_interruption_error(error: &Infallible) -> Option<Self::Error> {
+        match *error {}
     }
 
     fn run_error(&mut self, message: String) -> Self::Error {

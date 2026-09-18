@@ -13,6 +13,9 @@ runner-owned JAX runtime observations, and the mode-specialized
 `g-plan::Device` separately from this mode-specialized plan. The backend plan
 borrows canonical `g-plan` kernel policy rather than redefining scalar
 settings. The Python host names no `g-runtime` type.
+`NativeRunHost` preserves typed backend and startup interruptions for the
+engine lifecycle and signal-derived exit status. Ordinary backend failures
+retain their diagnostic and abort behavior.
 
 ## Public functions
 

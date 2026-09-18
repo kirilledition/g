@@ -151,8 +151,8 @@ fn decode_variant_dosages_into_variant_major_row(
     }
     let mut bit_reader = PackedProbabilityReader::new(parsed_probability_block.probability_bytes);
     selected_sample_count_to_i32(selected_sample_count)?;
-    let mut dosage_sum = 0.0_f32;
-    let mut dosage_square_sum = 0.0_f32;
+    let mut dosage_sum = 0.0_f64;
+    let mut dosage_square_sum = 0.0_f64;
     let mut observation_count = 0_i32;
     let mut has_missing_values = false;
     let mut sparse_candidate_counts = collect_sparse_candidate_counts.then_some((0_i32, 0_i32));
@@ -191,8 +191,8 @@ fn decode_variant_dosages_into_variant_major_row(
             has_missing_values = true;
             continue;
         }
-        dosage_sum += dosage_value;
-        dosage_square_sum += dosage_value * dosage_value;
+        dosage_sum += dosage_value_f64;
+        dosage_square_sum += dosage_value_f64 * dosage_value_f64;
         observation_count += 1;
         if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
             preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
@@ -252,11 +252,8 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
         );
     }
 
-    let mut dosage_sum = 0.0_f32;
-    let mut dosage_square_sum = 0.0_f32;
-    let mut observation_count = 0_i32;
+    let mut integer_summary = simd::EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
     let mut has_missing_values = false;
-    let mut sparse_candidate_counts = collect_sparse_candidate_counts.then_some((0_i32, 0_i32));
     let probability_pairs =
         exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
     let dosage_lookup = unphased_eight_bit_dosage_lookup();
@@ -285,17 +282,12 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
             has_missing_values = true;
             continue;
         }
-        dosage_sum += dosage_value;
-        dosage_square_sum += dosage_value * dosage_value;
-        observation_count += 1;
-        if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
-            preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
-        }
+        integer_summary.record_probability_pair(probability_pair);
     }
 
-    impute_variant_major_row_if_needed(output_row, dosage_sum, observation_count, has_missing_values);
-    let (zero_count, homozygous_alternate_count) = sparse_candidate_counts.unwrap_or_default();
-    Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
+    let summary = integer_summary.into_decode_summary();
+    impute_variant_major_row_if_needed(output_row, summary.dosage_sum, summary.observation_count, has_missing_values);
+    Ok(summary)
 }
 
 fn decode_all_present_unphased_eight_bit_subset(
@@ -327,10 +319,7 @@ fn decode_all_present_unphased_eight_bit_subset(
     let selected_file_indices = sample_selection
         .indexed_file_indices()
         .expect("non-identity, non-contiguous sample selections store explicit file indices");
-    let mut dosage_sum = 0.0_f32;
-    let mut dosage_square_sum = 0.0_f32;
-    let mut observation_count = 0_i32;
-    let mut sparse_candidate_counts = collect_sparse_candidate_counts.then_some((0_i32, 0_i32));
+    let mut integer_summary = simd::EightBitRawIntegerSummary::new(collect_sparse_candidate_counts);
     for (selected_index, file_sample_index) in selected_file_indices.iter().copied().enumerate() {
         let probability_offset = file_sample_index.checked_mul(2).ok_or_else(|| {
             BgenError::InvalidFormat("Integer overflow while indexing 8-bit BGEN probabilities.".to_string())
@@ -346,30 +335,23 @@ fn decode_all_present_unphased_eight_bit_subset(
         )?;
         let dosage_value = dosage_lookup[packed_eight_bit_probability_index(probability_pair)];
         output_row[selected_index].write(dosage_value);
-        dosage_sum += dosage_value;
-        dosage_square_sum += dosage_value * dosage_value;
-        observation_count += 1;
-        if let Some((zero_count, homozygous_alternate_count)) = sparse_candidate_counts.as_mut() {
-            preprocess::increment_sparse_candidate_counts(dosage_value, zero_count, homozygous_alternate_count);
-        }
+        integer_summary.record_probability_pair(probability_pair);
     }
-    let (zero_count, homozygous_alternate_count) = sparse_candidate_counts.unwrap_or_default();
-    Ok(DosageSummary { dosage_sum, dosage_square_sum, observation_count, zero_count, homozygous_alternate_count })
+    Ok(integer_summary.into_decode_summary())
 }
 
 fn impute_variant_major_row_if_needed(
     output_row: &mut [MaybeUninit<f32>],
-    dosage_sum: f32,
+    dosage_sum: f64,
     observation_count: i32,
     has_missing_values: bool,
 ) {
     if !has_missing_values {
         return;
     }
-    // Observation counts are exact up to the enforced i32 sample limit; f32
-    // division matches the dosage accumulator and output representation.
-    #[allow(clippy::cast_precision_loss)]
-    let imputed_dosage_value = dosage_sum / observation_count.max(1) as f32;
+    // Compute the observed mean before narrowing to genotype storage.
+    #[allow(clippy::cast_possible_truncation)]
+    let imputed_dosage_value = (dosage_sum / f64::from(observation_count.max(1))) as f32;
     let initialized_output_row = unsafe {
         // Every selected sample position is written exactly once before this
         // function is called. Decode failures return before reaching this point.

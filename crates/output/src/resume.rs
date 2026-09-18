@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -9,6 +9,68 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use crate::error::OutputError;
 use crate::{manifest, schema};
+
+/// Find abandoned writer staging files without changing any output artifacts.
+///
+/// Reject directories or symbolic links with a reserved staging name so they
+/// cannot remain visible to dataset readers or redirect a subsequent write.
+pub(crate) fn find_stale_chunk_staging_files(parts_directory: &Path) -> Result<Vec<PathBuf>, OutputError> {
+    let directory_entries = match std::fs::read_dir(parts_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(OutputError::runtime(error)),
+    };
+    let mut staging_paths = Vec::new();
+    for directory_entry in directory_entries {
+        let directory_entry = directory_entry.map_err(OutputError::runtime)?;
+        let file_name = directory_entry.file_name();
+        if !file_name.to_str().is_some_and(is_chunk_staging_file_name) {
+            continue;
+        }
+        if !directory_entry.file_type().map_err(OutputError::runtime)?.is_file() {
+            return Err(OutputError::InvalidInput(format!(
+                "Output staging path must be a regular file: {}",
+                directory_entry.path().display()
+            )));
+        }
+        staging_paths.push(directory_entry.path());
+    }
+    Ok(staging_paths)
+}
+
+/// Remove prevalidated staging files after every run passes resume validation.
+pub(crate) fn remove_stale_chunk_staging_files(staging_paths: &[PathBuf]) -> Result<(), OutputError> {
+    for staging_path in staging_paths {
+        if !std::fs::symlink_metadata(staging_path).map_err(OutputError::runtime)?.is_file() {
+            return Err(OutputError::InvalidInput(format!(
+                "Output staging path must be a regular file: {}",
+                staging_path.display()
+            )));
+        }
+        std::fs::remove_file(staging_path).map_err(OutputError::runtime)?;
+    }
+    Ok(())
+}
+
+fn is_chunk_staging_file_name(file_name: &str) -> bool {
+    let file_name = file_name.strip_prefix('.').unwrap_or(file_name);
+    let Some(part_file_name) = file_name.strip_suffix(".tmp") else {
+        return false;
+    };
+    let Some(chunk_identifiers) = part_file_name.strip_prefix("part_").and_then(|name| name.strip_suffix(".parquet"))
+    else {
+        return false;
+    };
+    let (first_identifier, last_identifier) =
+        chunk_identifiers.split_once('_').unwrap_or((chunk_identifiers, chunk_identifiers));
+    let (Ok(first_identifier), Ok(last_identifier)) = (first_identifier.parse::<i64>(), last_identifier.parse::<i64>())
+    else {
+        return false;
+    };
+    first_identifier >= 0
+        && last_identifier >= 0
+        && crate::writer::build_part_file_name(first_identifier, last_identifier) == part_file_name
+}
 
 pub(crate) fn repair_strict_manifest_chunk_commits(
     parts_directory: &Path,

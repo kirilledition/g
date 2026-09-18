@@ -282,8 +282,8 @@ mod tests {
         let sample_selection = build_sample_selection(3, &[1, 2]).expect("subset sample selection should build");
         let mut output = dosage_output_with_sentinels(4);
         let mut thread_scratch = ThreadScratch::default();
-        let mut dosage_sum = vec![0.0_f32; 2];
-        let mut dosage_square_sum = vec![0.0_f32; 2];
+        let mut dosage_sum = vec![0.0_f64; 2];
+        let mut dosage_square_sum = vec![0.0_f64; 2];
         let mut observation_count = vec![0_i32; 2];
         let mut zero_count = vec![0_i32; 2];
         let mut homozygous_alternate_count = vec![0_i32; 2];
@@ -330,8 +330,8 @@ mod tests {
             build_sample_selection(4, &[0, 1, 2, 3]).expect("identity sample selection should build");
         let mut identity_output = dosage_output_with_sentinels(4);
         let mut thread_scratch = ThreadScratch::default();
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut dosage_sum = vec![0.0_f64; 1];
+        let mut dosage_square_sum = vec![0.0_f64; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
@@ -369,8 +369,8 @@ mod tests {
         let noncontiguous_selection =
             build_sample_selection(4, &[3, 0]).expect("non-contiguous sample selection should build");
         let mut noncontiguous_output = dosage_output_with_sentinels(2);
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut dosage_sum = vec![0.0_f64; 1];
+        let mut dosage_square_sum = vec![0.0_f64; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
@@ -405,7 +405,7 @@ mod tests {
             assert!((observed_value - expected_value).abs() < 1.0e-6);
         }
         assert!((dosage_sum[0] - (764.0 / 255.0)).abs() < 1.0e-6);
-        assert!((dosage_square_sum[0] - ((254.0_f32.powi(2) + 510.0_f32.powi(2)) / 65_025.0)).abs() < 1.0e-6);
+        assert!((dosage_square_sum[0] - ((254.0_f64.powi(2) + 510.0_f64.powi(2)) / 65_025.0)).abs() < 1.0e-6);
     }
 
     #[test]
@@ -471,8 +471,8 @@ mod tests {
         let mut thread_scratch = ThreadScratch::default();
         let identity_selection = build_sample_selection(4, &[0, 1, 2, 3]).expect("identity selection should build");
         let mut identity_output = probability_output_with_sentinels(probability_bytes.len());
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut dosage_sum = vec![0.0_f64; 1];
+        let mut dosage_square_sum = vec![0.0_f64; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
@@ -508,8 +508,8 @@ mod tests {
 
         let contiguous_selection = build_sample_selection(4, &[1, 2]).expect("contiguous selection should build");
         let mut contiguous_output = probability_output_with_sentinels(4);
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut dosage_sum = vec![0.0_f64; 1];
+        let mut dosage_square_sum = vec![0.0_f64; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
@@ -542,8 +542,8 @@ mod tests {
         assert_eq!(observation_count, vec![2]);
         assert_eq!(zero_count, vec![1]);
         assert_eq!(homozygous_alternate_count, vec![0]);
-        assert!((dosage_sum[0] - 1.0).abs() < f32::EPSILON);
-        assert!((dosage_square_sum[0] - 1.0).abs() < f32::EPSILON);
+        assert!((dosage_sum[0] - 1.0).abs() < f64::EPSILON);
+        assert!((dosage_square_sum[0] - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -554,8 +554,8 @@ mod tests {
         let mut thread_scratch = ThreadScratch::default();
         let indexed_selection = build_sample_selection(4, &[3, 0, 2]).expect("indexed sample selection should build");
         let mut indexed_output = probability_output_with_sentinels(6);
-        let mut dosage_sum = vec![0.0_f32; 1];
-        let mut dosage_square_sum = vec![0.0_f32; 1];
+        let mut dosage_sum = vec![0.0_f64; 1];
+        let mut dosage_square_sum = vec![0.0_f64; 1];
         let mut observation_count = vec![0_i32; 1];
         let mut zero_count = vec![0_i32; 1];
         let mut homozygous_alternate_count = vec![0_i32; 1];
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(homozygous_alternate_count, vec![1]);
         assert!((dosage_sum[0] - (1019.0 / 255.0)).abs() < 1.0e-6);
         assert!(
-            (dosage_square_sum[0] - ((254.0_f32.powi(2) + 510.0_f32.powi(2) + 255.0_f32.powi(2)) / 65_025.0)).abs()
+            (dosage_square_sum[0] - ((254.0_f64.powi(2) + 510.0_f64.powi(2) + 255.0_f64.powi(2)) / 65_025.0)).abs()
                 < 1.0e-6
         );
     }

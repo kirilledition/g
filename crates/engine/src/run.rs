@@ -10,6 +10,7 @@ use g_input::{AlignedPhenotypeGroup, PhenotypeGroupLoadRequest};
 use g_output::{CompletedOutputRun, ManifestFileFingerprintCache, OutputDeliveryState, OutputManager};
 use g_plan::{GpuGenotypeFormat, RunPlan};
 
+use crate::association_scheduler::SchedulerError;
 use crate::backend::AssociationBackend;
 use crate::delivery::{AssociationDeliveryRequest, AssociationDeliverySettings, PreparedGenotypeInput};
 use crate::delivery_execution::{AssociationDeliveryReport, DeliveryError, run_association_delivery};
@@ -51,6 +52,7 @@ pub(crate) enum RunPreparationError {
 
 /// Binding-owned hooks used at the native run boundary.
 pub trait RunHooks {
+    type BackendError: std::error::Error + Send + Sync + 'static;
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Check whether execution must stop.
@@ -62,6 +64,10 @@ pub trait RunHooks {
 
     /// Return the process signal name associated with an interruption error.
     fn interruption_signal_name(error: &Self::Error) -> Option<&str>;
+
+    /// Recover a typed host interruption raised inside a backend callback.
+    /// Ordinary backend failures must return `None`.
+    fn backend_interruption_error(error: &Self::BackendError) -> Option<Self::Error>;
 }
 
 /// Completed native execution and its output artifacts.
@@ -201,7 +207,7 @@ impl PreparedRun {
     ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
     where
         Backend: AssociationBackend + 'static,
-        Hooks: RunHooks,
+        Hooks: RunHooks<BackendError = Backend::Error>,
     {
         let PreparedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;
         let statistics_policy = match run_plan.association_mode {
@@ -349,13 +355,17 @@ fn load_groups(
         Path::new(&run_plan.input.sample_path),
         genotype_input.reader.sample_count(),
     )?;
+    // With a table, an empty selection explicitly requests zero covariates.
+    // Without a table, the absence of a selection requests an intercept-only model.
+    let covariate_names = (run_plan.input.covariate_path.is_some() || !run_plan.input.covariate_names.is_empty())
+        .then_some(run_plan.input.covariate_names.as_slice());
     let groups = g_input::load_aligned_phenotype_groups(&PhenotypeGroupLoadRequest {
         sample_identifiers: &sample_identifiers,
         phenotype_path: &run_plan.input.phenotype_path,
         prediction_loco_paths,
         phenotype_names,
         covariate_path: run_plan.input.covariate_path.as_deref(),
-        covariate_names: Some(&run_plan.input.covariate_names),
+        covariate_names,
         is_binary_trait: run_plan.association_mode == g_plan::AssociationMode::Regenie2Binary,
         sample_mode: run_plan.compute.multi_phenotype_sample_mode,
     })?;
@@ -441,8 +451,22 @@ fn finish_execution<BackendError, Hooks>(
     output_manager: OutputManager,
 ) -> Result<RunExecution, RunExecutionError<BackendError, Hooks::Error>>
 where
-    Hooks: RunHooks,
+    Hooks: RunHooks<BackendError = BackendError>,
 {
+    // A backend callback may consume a signal before the next interruption hook.
+    let delivery_result = delivery_result.map_err(|delivery| {
+        let interruption = match &delivery {
+            DeliveryError::Backend { source, .. }
+            | DeliveryError::Scheduler(SchedulerError::Backend { source, .. }) => {
+                Hooks::backend_interruption_error(source)
+            }
+            _ => None,
+        };
+        match interruption {
+            Some(interruption) => DeliveryError::Interrupted(interruption),
+            None => delivery,
+        }
+    });
     match delivery_result {
         Ok(delivery_reports) => output_manager
             .finish()

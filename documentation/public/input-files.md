@@ -93,6 +93,12 @@ Column selection rules:
 - Repeat `--covarCol` for each covariate.
 - Multiple phenotypes write one output run per phenotype.
 
+Omitting the covariate file and covariate selections uses an intercept-only
+design. Selected phenotype, covariate, and identity column names must occur
+exactly once in their table header; ambiguous selected columns are rejected.
+Duplicate unselected columns do not affect the analysis. Oxford sample headers
+must likewise contain unambiguous `ID_1` and `ID_2` columns.
+
 Binary phenotypes use REGENIE-style coding:
 
 | Input value | Internal value |
@@ -137,6 +143,10 @@ chromosome. Prediction values for samples excluded from that phenotype's
 analysis are not used; upstream REGENIE's `NA` entries for those samples are
 accepted. Full row lengths and source fingerprints are still validated,
 including excluded columns.
+
+For human REGENIE predictions, chromosome `X`, `chrX`, and numeric `23` match
+the same LOCO row. A file containing multiple rows with these equivalent labels
+is rejected. This label matching does not change the supported genotype ploidy.
 
 Step 2 statistics depend on the prediction file, trait mode, covariates,
 chromosome, and aligned sample set. Changing the prediction list can change

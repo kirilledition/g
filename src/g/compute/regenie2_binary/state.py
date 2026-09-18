@@ -19,7 +19,7 @@ class Regenie2MultiBinaryState:
     """Reusable state for multi-trait binary REGENIE step 2 association.
 
     Attributes:
-        covariate_matrix: Covariate design matrix including intercept.
+        covariate_matrix: Orthogonal nuisance design scaled to unit variance with a leading unit intercept.
         phenotype_matrix: Binary phenotype matrix with shape ``traits x samples``.
 
     """
@@ -37,7 +37,7 @@ class PreparedBinaryTraitState:
         phenotype_vector: Binary phenotype vector.
         null_logistic_coefficients: Covariate-only null logistic coefficients.
         score_residual: Raw score residual.
-        loco_offset: LOCO offset in the logistic linear predictor.
+        loco_offset: Centered LOCO offset in the shared logistic and Firth linear predictors.
         square_root_weight: Square root of Bernoulli variance.
         bernoulli_weight: Bernoulli variance.
         weighted_genotype_projection_matrix: Cholesky-whitened weighted covariate transpose.
@@ -122,9 +122,46 @@ def build_multi_binary_state(
     covariate_matrix: jax.Array,
     phenotype_matrix: jax.Array,
 ) -> Regenie2MultiBinaryState:
-    """Build reusable multi-trait binary step 2 state."""
+    """Build a stable shared nuisance basis before float32 materialization.
+
+    Float64 centering, scaling, and QR preserve the covariate column span while
+    protecting the null fit and weighted projection from covariate units and
+    correlations. The orthonormal basis is scaled by the square root of sample
+    count, retaining a leading unit intercept. Null logistic, score, and Firth
+    preparation all use this same coefficient basis.
+
+    Raises:
+        ValueError: If the design lacks a unit intercept, is rank deficient, or
+            leaves no residual degrees of freedom.
+
+    """
+    covariate_matrix_float64 = jnp.asarray(covariate_matrix, dtype=jnp.float64)
+    if covariate_matrix_float64.ndim != 2 or covariate_matrix_float64.shape[1] == 0:
+        raise ValueError("Binary covariate design must include a leading unit intercept.")
+    sample_count = covariate_matrix_float64.shape[0]
+    covariate_count = covariate_matrix_float64.shape[1]
+    if sample_count <= covariate_count:
+        raise ValueError("Binary covariate design must leave positive residual degrees of freedom.")
+    if not bool(jnp.all(covariate_matrix_float64[:, 0] == 1.0)):
+        raise ValueError("Binary covariate design must include a leading unit intercept.")
+    covariate_offsets = jnp.mean(covariate_matrix_float64, axis=0).at[0].set(0.0)
+    centered_covariate_matrix = covariate_matrix_float64 - covariate_offsets[None, :]
+    covariate_scales = jnp.sqrt(jnp.mean(centered_covariate_matrix**2, axis=0)).at[0].set(1.0)
+    conditioned_covariate_matrix = centered_covariate_matrix / jnp.where(
+        covariate_scales > 0.0,
+        covariate_scales,
+        1.0,
+    )
+    orthonormal_covariate_matrix, triangular_factor = jnp.linalg.qr(conditioned_covariate_matrix, mode="reduced")
+    singular_values = jnp.linalg.svd(triangular_factor, compute_uv=False)
+    rank_tolerance = max(sample_count, covariate_count) * jnp.finfo(jnp.float64).eps * singular_values[0]
+    if not bool(jnp.all(jnp.isfinite(singular_values) & (singular_values > rank_tolerance))):
+        raise ValueError("Binary covariate design must have full column rank after centering and scaling.")
+    scaled_covariate_basis = (
+        (orthonormal_covariate_matrix * jnp.sqrt(jnp.asarray(sample_count, dtype=jnp.float64))).at[:, 0].set(1.0)
+    )
     return Regenie2MultiBinaryState(
-        covariate_matrix=jnp.asarray(covariate_matrix, dtype=jnp.float32),
+        covariate_matrix=jnp.asarray(scaled_covariate_basis, dtype=jnp.float32),
         phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jnp.float32),
     )
 
@@ -135,8 +172,9 @@ def prepare_binary_trait_state(
     loco_offset: jax.Array,
     kernel_config: regenie2_binary_config.BinaryScoreConfig,
 ) -> PreparedBinaryTraitState:
-    """Prepare shared null-logistic and score quantities for one trait."""
-    loco_offset_compute = jnp.asarray(loco_offset, dtype=jnp.float32)
+    """Prepare one trait in the conditioned design from ``build_multi_binary_state``."""
+    loco_offset_float64 = jnp.asarray(loco_offset, dtype=jnp.float64)
+    loco_offset_compute = loco_offset_float64 - jnp.mean(loco_offset_float64)
     null_logistic_fit_state = regenie2_binary_null_logistic.fit_null_logistic_coefficients(
         covariate_matrix=covariate_matrix,
         phenotype_vector=phenotype_vector,
@@ -145,29 +183,31 @@ def prepare_binary_trait_state(
     )
     null_logistic_coefficients = null_logistic_fit_state.coefficients
     fitted_probability = regenie2_binary_logistic.compute_clipped_logistic_probability(
-        covariate_matrix @ null_logistic_coefficients + loco_offset_compute,
+        covariate_matrix.astype(jnp.float64) @ null_logistic_coefficients + loco_offset_compute,
         kernel_config,
     )
-    bernoulli_weight = jnp.maximum(
+    bernoulli_weight_float64 = jnp.maximum(
         fitted_probability * (1.0 - fitted_probability),
         kernel_config.numerical.minimum_variance,
     )
-    square_root_weight = jnp.sqrt(bernoulli_weight)
-    weighted_covariate_matrix = square_root_weight[:, None] * covariate_matrix
+    bernoulli_weight = jnp.asarray(bernoulli_weight_float64, dtype=jnp.float32)
+    square_root_weight_float64 = jnp.sqrt(bernoulli_weight_float64)
+    square_root_weight = jnp.asarray(square_root_weight_float64, dtype=jnp.float32)
+    weighted_covariate_matrix = square_root_weight_float64[:, None] * covariate_matrix.astype(jnp.float64)
     weighted_covariate_transpose = weighted_covariate_matrix.T
     weighted_covariate_crossproduct = weighted_covariate_transpose @ weighted_covariate_matrix
     cholesky_factor = jnp.linalg.cholesky(
         weighted_covariate_crossproduct
-        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float32)
+        + jnp.eye(weighted_covariate_crossproduct.shape[0], dtype=jnp.float64)
         * kernel_config.numerical.minimum_variance
     )
-    weighted_genotype_projection_matrix = jax.lax.linalg.triangular_solve(
+    weighted_genotype_projection_matrix_float64 = jax.lax.linalg.triangular_solve(
         cholesky_factor,
         weighted_covariate_transpose,
         left_side=True,
         lower=True,
     )
-    score_residual = phenotype_vector - fitted_probability
+    score_residual = jnp.asarray(phenotype_vector - fitted_probability, dtype=jnp.float32)
     return PreparedBinaryTraitState(
         phenotype_vector=phenotype_vector,
         null_logistic_coefficients=null_logistic_coefficients,
@@ -175,8 +215,11 @@ def prepare_binary_trait_state(
         loco_offset=loco_offset_compute,
         square_root_weight=square_root_weight,
         bernoulli_weight=bernoulli_weight,
-        weighted_genotype_projection_matrix=weighted_genotype_projection_matrix,
-        score_projection_matrix=weighted_genotype_projection_matrix * square_root_weight[None, :],
+        weighted_genotype_projection_matrix=jnp.asarray(weighted_genotype_projection_matrix_float64, dtype=jnp.float32),
+        score_projection_matrix=jnp.asarray(
+            weighted_genotype_projection_matrix_float64 * square_root_weight_float64[None, :],
+            dtype=jnp.float32,
+        ),
         null_logistic_converged=null_logistic_fit_state.converged,
     )
 
@@ -208,7 +251,7 @@ def prepare_binary_traits(
     kernel_config: regenie2_binary_config.BinaryScoreConfig,
 ) -> PreparedBinaryTraitState:
     """Prepare shared null-logistic quantities for every requested trait."""
-    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=jnp.float32)
+    loco_offset_matrix_compute = jnp.asarray(loco_offset_matrix, dtype=jnp.float64)
     return jax.vmap(
         lambda phenotype_vector, loco_offset: prepare_binary_trait_state(
             state.covariate_matrix,

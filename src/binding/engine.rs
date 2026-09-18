@@ -1,6 +1,6 @@
 //! Private PyO3 adapter for the coarse JAX association backend.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use numpy::ndarray::{Array2, ArrayView1, ArrayView2, ArrayView3, Ix1, Ix2};
 use numpy::{
@@ -9,6 +9,7 @@ use numpy::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::sync::PyOnceLock;
 #[cfg(target_os = "linux")]
 use pyo3::types::PyCapsule;
 use pyo3::types::{PyDict, PyModule};
@@ -18,6 +19,8 @@ use g_genotype as native_genotype;
 use g_input as native_input;
 use g_output as native_output;
 
+use crate::binding::cli::python_interruption_signal_name;
+
 /// Private adapter implementing the Python-free engine contract.
 pub(crate) struct PyJaxBackend {
     backend: Py<PyAny>,
@@ -25,8 +28,8 @@ pub(crate) struct PyJaxBackend {
     kind: BackendKind,
 }
 
-static NVCOMP_FFI_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
-static FIRTH_COMPONENTS_FFI_REGISTRATION: OnceLock<bool> = OnceLock::new();
+static NVCOMP_FFI_REGISTRATION: PyOnceLock<()> = PyOnceLock::new();
+static FIRTH_COMPONENTS_FFI_REGISTRATION: PyOnceLock<bool> = PyOnceLock::new();
 const SUPPORTED_JAX_VERSION: &str = "0.11.0";
 const SUPPORTED_JAXLIB_VERSION: &str = "0.11.0";
 
@@ -105,7 +108,7 @@ pub(crate) fn create_jax_backend(
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryScore })
         }
         g_runner::JaxAssociationBackendPlan::BinaryFirth { correction, kernels } => {
-            let use_cuda_firth_components = device == g_plan::Device::Gpu && register_firth_components_ffi_target(py);
+            let use_cuda_firth_components = device == g_plan::Device::Gpu && register_firth_components_ffi_target(py)?;
             let keyword_arguments =
                 binary_firth_backend_keyword_arguments(py, kernels, *correction, use_cuda_firth_components)?;
             let backend = backend_module.getattr("BinaryFirthJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
@@ -133,22 +136,24 @@ fn jax_runtime_version_error(jax_version: &str, jaxlib_version: &str) -> Option<
 }
 
 fn register_nvcomp_ffi_target(py: Python<'_>) -> PyResult<()> {
-    NVCOMP_FFI_REGISTRATION
-        .get_or_init(|| register_nvcomp_ffi_target_once(py).map_err(|error| error.to_string()))
-        .as_ref()
-        .map_err(|message| PyRuntimeError::new_err(message.clone()))
-        .copied()
+    NVCOMP_FFI_REGISTRATION.get_or_try_init(py, || register_nvcomp_ffi_target_once(py)).copied()
+}
+
+fn contextual_backend_error(py: Python<'_>, error: PyErr, context: &str) -> PyErr {
+    if python_interruption_signal_name(py, &error).is_some() {
+        error
+    } else {
+        PyRuntimeError::new_err(format!("{context}: {error}"))
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
     let nvcomp_module = PyModule::import(py, "nvidia.libnvcomp").map_err(|error| {
-        PyRuntimeError::new_err(format!(
-            "GPU packed8 delivery requires the official nvidia-libnvcomp-cu12 package: {error}"
-        ))
+        contextual_backend_error(py, error, "GPU packed8 delivery requires the official nvidia-libnvcomp-cu12 package")
     })?;
     let loaded_library = nvcomp_module.call_method0("load_library").map_err(|error| {
-        PyRuntimeError::new_err(format!("The official nvidia.libnvcomp loader failed to load libnvcomp.so.5: {error}"))
+        contextual_backend_error(py, error, "The official nvidia.libnvcomp loader failed to load libnvcomp.so.5")
     })?;
     if loaded_library.is_none() {
         return Err(PyRuntimeError::new_err("The official nvidia.libnvcomp loader could not find libnvcomp.so.5."));
@@ -170,7 +175,7 @@ fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
             (g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET, capsule),
             Some(&keyword_arguments),
         )
-        .map_err(|error| PyRuntimeError::new_err(format!("JAX nvCOMP FFI target registration failed: {error}")))?;
+        .map_err(|error| contextual_backend_error(py, error, "JAX nvCOMP FFI target registration failed"))?;
     Ok(())
 }
 
@@ -179,8 +184,14 @@ fn register_nvcomp_ffi_target_once(_py: Python<'_>) -> PyResult<()> {
     Err(PyRuntimeError::new_err("GPU packed8 delivery through nvCOMP is supported only on Linux."))
 }
 
-fn register_firth_components_ffi_target(py: Python<'_>) -> bool {
-    *FIRTH_COMPONENTS_FFI_REGISTRATION.get_or_init(|| register_firth_components_ffi_target_once(py).unwrap_or(false))
+fn register_firth_components_ffi_target(py: Python<'_>) -> PyResult<bool> {
+    FIRTH_COMPONENTS_FFI_REGISTRATION
+        .get_or_try_init(py, || optional_ffi_registration_result(py, register_firth_components_ffi_target_once(py)))
+        .copied()
+}
+
+fn optional_ffi_registration_result(py: Python<'_>, result: PyResult<bool>) -> PyResult<bool> {
+    result.or_else(|error| if python_interruption_signal_name(py, &error).is_some() { Err(error) } else { Ok(false) })
 }
 
 #[cfg(target_os = "linux")]
@@ -716,7 +727,52 @@ fn parse_correction_codes(
 
 #[cfg(test)]
 mod tests {
-    use super::{SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION, jax_runtime_version_error};
+    use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError};
+    use pyo3::prelude::*;
+    use pyo3::sync::PyOnceLock;
+
+    use super::{
+        SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION, contextual_backend_error, jax_runtime_version_error,
+        optional_ffi_registration_result,
+    };
+    use crate::binding::cli::NativeSigtermRequested;
+
+    #[test]
+    fn backend_setup_context_preserves_interruptions() {
+        Python::initialize();
+        Python::attach(|py| {
+            for error in [PyKeyboardInterrupt::new_err("stop"), NativeSigtermRequested::new_err("terminate")] {
+                let original_exception = error.value(py).as_ptr();
+                let contextual_error = contextual_backend_error(py, error, "loading GPU runtime failed");
+                assert_eq!(contextual_error.value(py).as_ptr(), original_exception);
+            }
+            let failure = contextual_backend_error(py, PyRuntimeError::new_err("KeyboardInterrupt"), "GPU setup");
+            assert!(failure.is_instance_of::<PyRuntimeError>(py));
+            assert!(failure.to_string().contains("GPU setup"));
+        });
+    }
+
+    #[test]
+    fn optional_backend_registration_retries_after_interruption() {
+        Python::initialize();
+        Python::attach(|py| {
+            let registration = PyOnceLock::new();
+            let error = registration
+                .get_or_try_init(py, || optional_ffi_registration_result(py, Err(PyKeyboardInterrupt::new_err("stop"))))
+                .expect_err("optional setup must preserve interruption");
+            assert!(error.is_instance_of::<PyKeyboardInterrupt>(py));
+            assert!(registration.get(py).is_none());
+            assert!(
+                *registration
+                    .get_or_try_init(py, || optional_ffi_registration_result(py, Ok(true)))
+                    .expect("interrupted setup can be retried")
+            );
+            assert!(
+                !optional_ffi_registration_result(py, Err(PyRuntimeError::new_err("optional GPU support unavailable")))
+                    .expect("ordinary optional-support failures retain fallback")
+            );
+        });
+    }
 
     #[test]
     fn exact_supported_jax_pair_is_accepted() {

@@ -262,6 +262,7 @@ fn validate_nonempty_sample_key<R: Read>(
 }
 
 fn required_column_index(headers: &[String], column_name: &str, table_path: &str) -> SampleAlignmentResult<usize> {
+    validate_unique_selected_column(headers, column_name, table_path)?;
     Ok(column_index(headers, column_name).ok_or_else(|| {
         if column_name == "FID" || column_name == "IID" {
             format!("Identifier column '{column_name}' was not found in {table_path}.")
@@ -273,6 +274,15 @@ fn required_column_index(headers: &[String], column_name: &str, table_path: &str
 
 fn column_index(headers: &[String], column_name: &str) -> Option<usize> {
     headers.iter().position(|header| header == column_name)
+}
+
+fn validate_unique_selected_column(headers: &[String], column_name: &str, table_path: &str) -> Result<(), String> {
+    if headers.iter().filter(|header| header.as_str() == column_name).nth(1).is_some() {
+        return Err(format!(
+            "Selected column '{column_name}' appears more than once in {table_path}; selected column names must be unique."
+        ));
+    }
+    Ok(())
 }
 
 impl TabularColumnSelection {
@@ -376,6 +386,7 @@ fn read_covariate_table(
     let covariate_indices: Vec<usize> = selected_covariate_names
         .iter()
         .map(|covariate_name| {
+            validate_unique_selected_column(&headers, covariate_name, &covariate_path_text)?;
             column_index(&headers, covariate_name)
                 .ok_or_else(|| format!("Covariate column '{covariate_name}' was not found."))
         })

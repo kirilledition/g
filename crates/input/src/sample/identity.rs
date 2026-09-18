@@ -121,6 +121,12 @@ fn validate_sample_file_header(
         ));
     }
     for identifier_column_name in ["ID_1", "ID_2"] {
+        if column_names.iter().filter(|column_name| column_name.as_str() == identifier_column_name).nth(1).is_some() {
+            return Err(format!(
+                "Sample file '{}' contains duplicate identifier column '{identifier_column_name}'.",
+                sample_path.display(),
+            ));
+        }
         let identifier_column_index =
             column_names.iter().position(|column_name| column_name == identifier_column_name).ok_or_else(|| {
                 format!(

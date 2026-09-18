@@ -14,7 +14,6 @@ use crate::bgen::CompressedPacked8Batch;
 const SESSION_BUFFER_POOL_CAPACITY: usize = 3;
 
 pub(crate) const EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL: f32 = 1.0_f32 / 255.0_f32;
-pub(crate) const EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL: f32 = 1.0_f32 / (255.0_f32 * 255.0_f32);
 
 pub(crate) struct SessionBufferPool<Buffer> {
     available_buffers: Mutex<Vec<Buffer>>,
@@ -112,8 +111,8 @@ impl Drop for PooledPacked8Buffer {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct DosageSummary {
-    pub(crate) dosage_sum: f32,
-    pub(crate) dosage_square_sum: f32,
+    pub(crate) dosage_sum: f64,
+    pub(crate) dosage_square_sum: f64,
     pub(crate) observation_count: i32,
     pub(crate) zero_count: i32,
     pub(crate) homozygous_alternate_count: i32,

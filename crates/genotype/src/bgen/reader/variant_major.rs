@@ -80,8 +80,8 @@ impl VariantMajorDecodeRequest<'_> {
 }
 
 struct VariantMajorStatsBuffers {
-    dosage_sum: Vec<f32>,
-    dosage_square_sum: Vec<f32>,
+    dosage_sum: Vec<f64>,
+    dosage_square_sum: Vec<f64>,
     observation_count: Vec<i32>,
     zero_count: Option<Vec<i32>>,
     homozygous_alternate_count: Option<Vec<i32>>,
@@ -95,8 +95,8 @@ struct OwnedVariantMajorDecode {
 impl VariantMajorStatsBuffers {
     fn new(selected_variant_count: usize, statistics_policy: ChunkStatisticsPolicy) -> Self {
         Self {
-            dosage_sum: vec![0.0_f32; selected_variant_count],
-            dosage_square_sum: vec![0.0_f32; selected_variant_count],
+            dosage_sum: vec![0.0_f64; selected_variant_count],
+            dosage_square_sum: vec![0.0_f64; selected_variant_count],
             observation_count: vec![0_i32; selected_variant_count],
             zero_count: statistics_policy.collect_sparse_candidate_mask.then(|| vec![0_i32; selected_variant_count]),
             homozygous_alternate_count: statistics_policy
@@ -475,8 +475,8 @@ fn pad_compute_statistics(statistics: &mut ChunkStats, compute_variant_count: us
 }
 
 fn variant_major_tile_stats_mut<'buffers>(
-    dosage_sum: &'buffers mut [f32],
-    dosage_square_sum: &'buffers mut [f32],
+    dosage_sum: &'buffers mut [f64],
+    dosage_square_sum: &'buffers mut [f64],
     observation_count: &'buffers mut [i32],
     sparse_candidate_counts: Option<(&'buffers mut [i32], &'buffers mut [i32])>,
 ) -> VariantMajorTileStatsMut<'buffers> {

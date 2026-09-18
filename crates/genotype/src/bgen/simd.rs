@@ -1,8 +1,6 @@
 use std::mem::MaybeUninit;
 
-use crate::common::{
-    DosageSummary, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL, EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL,
-};
+use crate::common::{DosageSummary, EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const AVX2_SAMPLE_COUNT: usize = 8;
@@ -65,13 +63,13 @@ impl EightBitRawIntegerSummary {
         }
     }
 
-    // Exact integer accumulation avoids lane-order drift; conversion occurs
-    // once at the documented f32 dosage-statistics boundary.
+    // The enforced i32 sample bound keeps both integer totals exactly
+    // representable in f64. Retain that precision through moment calculations.
     #[allow(clippy::cast_precision_loss)]
     pub(super) fn into_decode_summary(self) -> DosageSummary {
         DosageSummary {
-            dosage_sum: self.raw_dosage_total as f32 * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL,
-            dosage_square_sum: self.raw_dosage_square_total as f32 * EIGHT_BIT_PROBABILITY_SCALE_SQUARE_RECIPROCAL,
+            dosage_sum: self.raw_dosage_total as f64 / 255.0,
+            dosage_square_sum: self.raw_dosage_square_total as f64 / (255.0 * 255.0),
             observation_count: self.selected_observation_count,
             zero_count: self.zero_count,
             homozygous_alternate_count: self.homozygous_alternate_count,
@@ -565,7 +563,7 @@ mod tests {
 
     const TRUSTED_IDENTITY_SAMPLE_COUNTS: [usize; 10] = [0, 1, 7, 8, 15, 16, 17, 31, 32, 33];
     const DOSAGE_VALUE_TOLERANCE: f32 = 2.0 * f32::EPSILON;
-    const SUMMARY_TOLERANCE_PER_SAMPLE: f32 = 1.0e-6;
+    const SUMMARY_TOLERANCE_PER_SAMPLE: f64 = 1.0e-12;
 
     #[derive(Debug)]
     struct ScalarDecode {
@@ -655,11 +653,11 @@ mod tests {
     }
 
     fn expected_summary(probabilities: &[u8], collect_sparse_candidate_counts: bool) -> DosageSummary {
-        // These fixtures contain at most 33 samples, so both raw integer sums
-        // are exactly representable in f32. Accumulating before scaling keeps
+        // Both raw integer sums are exactly representable in f64.
+        // Accumulating before scaling keeps
         // this oracle independent of the production conversion helper.
-        let mut raw_dosage_sum = 0.0_f32;
-        let mut raw_dosage_square_sum = 0.0_f32;
+        let mut raw_dosage_sum = 0.0_f64;
+        let mut raw_dosage_square_sum = 0.0_f64;
         let mut zero_count = 0_i32;
         let mut homozygous_alternate_count = 0_i32;
         let (probability_pairs, _) = probabilities.as_chunks::<2>();
@@ -668,7 +666,7 @@ mod tests {
             let raw_dosage_integer = 510_u16
                 - 2 * u16::from(homozygous_reference_probability_byte)
                 - u16::from(heterozygous_probability_byte);
-            let raw_dosage_value = f32::from(raw_dosage_integer);
+            let raw_dosage_value = f64::from(raw_dosage_integer);
             raw_dosage_sum += raw_dosage_value;
             raw_dosage_square_sum += raw_dosage_value * raw_dosage_value;
             if collect_sparse_candidate_counts {
@@ -715,7 +713,7 @@ mod tests {
     }
 
     fn assert_summaries_close(left: DosageSummary, right: DosageSummary, sample_count: usize) {
-        let tolerance = f32::from(u16::try_from(sample_count.max(1)).expect("test sample count should fit u16"))
+        let tolerance = f64::from(u16::try_from(sample_count.max(1)).expect("test sample count should fit u16"))
             * SUMMARY_TOLERANCE_PER_SAMPLE;
         assert!((left.dosage_sum - right.dosage_sum).abs() < tolerance);
         assert!((left.dosage_square_sum - right.dosage_square_sum).abs() < tolerance * 4.0);

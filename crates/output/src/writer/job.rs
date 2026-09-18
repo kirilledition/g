@@ -18,7 +18,9 @@ pub(crate) fn write_regenie_step2_chunk_job(
 ) -> OutputResult<RegenieStep2ChunkWriteResult> {
     let total_start_time = start_optional_timing(collect_stage_timings);
     let chunk_file_path = parts_directory.join(&job.chunk_file_name);
-    let temporary_chunk_file_path = chunk_file_path.with_extension("parquet.tmp");
+    // Arrow dataset discovery skips hidden files, including incomplete writes
+    // left behind when a process stops before the atomic rename.
+    let temporary_chunk_file_path = parts_directory.join(format!(".{}.tmp", job.chunk_file_name));
     let (chunk_count, row_count) = if collect_stage_timings {
         let chunk_count = u64::try_from(job.chunks.len()).map_err(OutputError::runtime)?;
         let row_count = job.chunks.iter().try_fold(0_u64, |total_row_count, chunk_job| {

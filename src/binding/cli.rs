@@ -7,7 +7,7 @@ use pyo3::exceptions::{PyException, PyKeyboardInterrupt, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use crate::binding::engine::{PyJaxBackend, create_jax_backend};
+use crate::binding::engine::{PyJaxBackend, PyJaxBackendError, create_jax_backend};
 use crate::binding::{jax_runtime, logging};
 
 pyo3::create_exception!(g, NativeSigtermRequested, PyException);
@@ -24,6 +24,16 @@ struct PythonRunHost;
 // lifetime; the method item alone is not higher-ranked enough for `attach`.
 fn check_python_signals(python: Python<'_>) -> PyResult<()> {
     python.check_signals()
+}
+
+pub(crate) fn python_interruption_signal_name(py: Python<'_>, error: &PyErr) -> Option<&'static str> {
+    if error.is_instance_of::<NativeSigtermRequested>(py) {
+        Some("SIGTERM")
+    } else if error.is_instance_of::<PyKeyboardInterrupt>(py) {
+        Some("SIGINT")
+    } else {
+        None
+    }
 }
 
 impl native_runner::NativeRunHost for PythonRunHost {
@@ -69,15 +79,16 @@ impl native_runner::NativeRunHost for PythonRunHost {
     }
 
     fn interruption_signal_name(error: &Self::Error) -> Option<&str> {
-        Python::attach(|py| {
-            if error.is_instance_of::<NativeSigtermRequested>(py) {
-                Some("SIGTERM")
-            } else if error.is_instance_of::<PyKeyboardInterrupt>(py) {
-                Some("SIGINT")
-            } else {
-                None
+        Python::attach(|py| python_interruption_signal_name(py, error))
+    }
+
+    fn backend_interruption_error(error: &PyJaxBackendError) -> Option<Self::Error> {
+        match error {
+            PyJaxBackendError::Python(error) if Self::interruption_signal_name(error).is_some() => {
+                Some(Python::attach(|py| error.clone_ref(py)))
             }
-        })
+            _ => None,
+        }
     }
 
     fn interruption_kind(&mut self, error: &Self::Error) -> Option<native_runner::NativeRunInterruption> {
@@ -160,4 +171,36 @@ pub(crate) fn register_module(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeCliRunResult>()?;
     module.add_function(wrap_pyfunction!(run, module)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use g_runner::NativeRunHost;
+
+    use super::*;
+
+    #[test]
+    fn backend_interruptions_preserve_original_python_exception() {
+        Python::initialize();
+        Python::attach(|py| {
+            for error in [PyKeyboardInterrupt::new_err("stop"), NativeSigtermRequested::new_err("terminate")] {
+                let original_exception = error.value(py).as_ptr();
+                let backend_error = PyJaxBackendError::Python(error);
+                let recovered = PythonRunHost::backend_interruption_error(&backend_error)
+                    .expect("typed backend interruption should be preserved");
+                assert_eq!(recovered.value(py).as_ptr(), original_exception);
+            }
+        });
+    }
+
+    #[test]
+    fn interruption_names_in_failure_messages_do_not_classify_as_signals() {
+        Python::initialize();
+        for backend_error in [
+            PyJaxBackendError::Python(PyRuntimeError::new_err("KeyboardInterrupt: SIGINT")),
+            PyJaxBackendError::InvalidInput("SIGTERM".to_string()),
+        ] {
+            assert!(PythonRunHost::backend_interruption_error(&backend_error).is_none());
+        }
+    }
 }
