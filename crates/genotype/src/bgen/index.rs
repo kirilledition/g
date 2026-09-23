@@ -12,10 +12,12 @@ use super::metadata::VariantRecord;
 const LAYOUT_TWO_FIXED_PROBABILITY_BLOCK_LENGTH: usize = 10;
 const MAXIMUM_SUPPORTED_PROBABILITY_BLOCK_BYTES_PER_SAMPLE: usize = 9;
 
+#[derive(Clone, Debug)]
 pub(super) struct ParsedVariantIndex {
-    pub(super) variant_records: Vec<VariantRecord>,
+    pub(super) variant_records: Arc<[VariantRecord]>,
     pub(super) variant_metadata: Arc<VariantMetadataStore>,
-    pub(super) chromosome_boundary_indices: Vec<usize>,
+    pub(super) chromosome_boundary_indices: Arc<[usize]>,
+    pub(super) retained_storage_bytes: usize,
 }
 
 struct StringDictionaryBuilder {
@@ -220,8 +222,31 @@ pub(super) fn parse_variant_index(
     }
 
     chromosome_boundary_indices.push(variant_count);
+    // All published buffers below have exact lengths. Include dictionary Arc
+    // allocations and array control blocks in the cache's storage budget;
+    // allocator bookkeeping is a small additional process-level overhead.
+    let retained_storage_bytes = [
+        variant_records.len().saturating_mul(size_of::<VariantRecord>()),
+        chromosome_boundary_indices.len().saturating_mul(size_of::<usize>()),
+        chromosome_codes.len().saturating_mul(size_of::<u32>()),
+        allele_one_codes.len().saturating_mul(size_of::<u32>()),
+        allele_two_codes.len().saturating_mul(size_of::<u32>()),
+        position.len().saturating_mul(size_of::<i64>()),
+        variant_identifier_offsets.len().saturating_mul(size_of::<u32>()),
+        variant_identifier_text.len(),
+        metadata_text_dictionary.values.len().saturating_mul(size_of::<Arc<str>>()),
+        metadata_text_dictionary
+            .values
+            .iter()
+            .map(|value| shared_text_allocation_bytes(value.len()))
+            .fold(0, usize::saturating_add),
+        size_of::<VariantMetadataStore>(),
+        6 * size_of::<usize>(),
+    ]
+    .into_iter()
+    .fold(0, usize::saturating_add);
     Ok(ParsedVariantIndex {
-        variant_records,
+        variant_records: variant_records.into(),
         variant_metadata: Arc::new(
             VariantMetadataStore::from_parts(
                 metadata_text_dictionary.values.into_boxed_slice(),
@@ -236,8 +261,19 @@ pub(super) fn parse_variant_index(
                 contextualize_variant_metadata_invariant("Parsed BGEN variant metadata violates its invariants", error)
             })?,
         ),
-        chromosome_boundary_indices,
+        chromosome_boundary_indices: chromosome_boundary_indices.into(),
+        retained_storage_bytes,
     })
+}
+
+fn shared_text_allocation_bytes(text_byte_count: usize) -> usize {
+    // Arc's two reference counts give the complete allocation usize alignment,
+    // even though the trailing UTF-8 bytes only require byte alignment.
+    let alignment = align_of::<usize>();
+    let unaligned_bytes = (2 * size_of::<usize>()).saturating_add(text_byte_count);
+    let remainder = unaligned_bytes % alignment;
+    let padding = if remainder == 0 { 0 } else { alignment - remainder };
+    unaligned_bytes.saturating_add(padding)
 }
 
 fn maximum_supported_probability_block_length(sample_count: usize) -> Result<usize, BgenError> {
@@ -298,4 +334,17 @@ fn validate_variant_probability_block(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shared_text_budget_includes_reference_counts_and_allocation_padding() {
+        let word_bytes = size_of::<usize>();
+        assert_eq!(super::shared_text_allocation_bytes(0), 2 * word_bytes);
+        assert_eq!(super::shared_text_allocation_bytes(1), 3 * word_bytes);
+        assert_eq!(super::shared_text_allocation_bytes(word_bytes), 3 * word_bytes);
+        assert_eq!(super::shared_text_allocation_bytes(word_bytes + 1), 4 * word_bytes);
+        assert_eq!(super::shared_text_allocation_bytes(usize::MAX), usize::MAX);
+    }
 }

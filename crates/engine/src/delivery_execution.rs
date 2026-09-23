@@ -40,7 +40,7 @@ pub(crate) struct AssociationDeliveryReport {
 
 enum PlannedGenotypeDelivery {
     Host,
-    CompressedPacked8(g_genotype::CompressedPacked8BatchLayout),
+    CompressedPacked8(Arc<g_genotype::CompressedPacked8BatchLayout>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -237,7 +237,7 @@ where
     {
         return Ok(PlannedGenotypeDelivery::Host);
     }
-    Ok(match genotype_input.reader.plan_compressed_packed8_batch_layout(chunk_specs)? {
+    Ok(match genotype_input.compressed_layout_for_chunks(chunk_specs)? {
         Some(layout) => PlannedGenotypeDelivery::CompressedPacked8(layout),
         None => PlannedGenotypeDelivery::Host,
     })

@@ -130,10 +130,10 @@ impl RunEngine {
     pub(crate) fn prepare(self) -> Result<PreparedRun, RunPreparationError> {
         let Self { run_plan, mut output_manager } = self;
         let chunk_size = positive_u32_as_usize(run_plan.chunk_size, "analysis chunk size")?;
-        let genotype_input = PreparedGenotypeInput {
-            reader: g_genotype::BgenReaderCore::open(Path::new(&run_plan.input.bgen_path))?,
+        let genotype_input = PreparedGenotypeInput::new(
+            g_genotype::BgenReaderCore::open(Path::new(&run_plan.input.bgen_path))?,
             chunk_size,
-        };
+        );
         if genotype_input.reader.variant_count() == 0 {
             return Err(PreflightError::EmptyBgenInput.into());
         }
@@ -421,6 +421,16 @@ fn prepare_output_groups(
         bgen_source_identity: Arc::new(bgen_source_identity.clone()),
     };
     let mut fingerprint_cache = ManifestFileFingerprintCache::default();
+    for group in &groups {
+        let fingerprints = group.indexed_prediction_file_fingerprints().map_err(g_input::InputError::from)?;
+        for fingerprint in fingerprints {
+            fingerprint_cache.register_indexed_prediction_file_fingerprint(
+                fingerprint.path(),
+                fingerprint.metadata(),
+                fingerprint.content_sha256(),
+            )?;
+        }
+    }
     let all_prediction_loco_files: Arc<[g_output::PredictionLocoFileFingerprint]> =
         build_prediction_loco_file_fingerprints_with_cache(prediction_loco_paths, &mut fingerprint_cache)?.into();
     let mut run_initializations = Vec::with_capacity(run_plan.phenotype_runs.len());

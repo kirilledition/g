@@ -1037,6 +1037,63 @@ impl Drop for RunPreparationFixture {
 }
 
 #[test]
+fn compressed_layout_reuse_preserves_exact_resume_geometry_and_source_checks() {
+    let fixture = RunPreparationFixture::new();
+    let bgen_path = fixture.directory.join("input.bgen");
+    let original_bytes = std::fs::read(&bgen_path).expect("fixture BGEN is readable");
+    // The fixture's final block contains a four-byte length and 22 probability bytes.
+    let metadata_end = original_bytes.len() - 26;
+    let mut variant = original_bytes[24..metadata_end].to_vec();
+    let compressed_probabilities =
+        [120_u8, 156, 99, 97, 96, 96, 96, 98, 96, 2, 3, 6, 14, 6, 134, 255, 96, 4, 0, 10, 115, 2, 25];
+    variant.extend_from_slice(&27_u32.to_le_bytes());
+    variant.extend_from_slice(&22_u32.to_le_bytes());
+    variant.extend_from_slice(&compressed_probabilities);
+    let mut bytes = original_bytes[..24].to_vec();
+    bytes[8..12].copy_from_slice(&2_u32.to_le_bytes());
+    bytes[20..24].copy_from_slice(&9_u32.to_le_bytes());
+    bytes.extend_from_slice(&variant);
+    bytes.extend_from_slice(&variant);
+    std::fs::write(&bgen_path, &bytes).expect("two compressed fixture variants are written");
+    let reader = g_genotype::BgenReaderCore::open(&bgen_path).expect("compressed fixture opens");
+    assert_eq!(
+        reader.packed8_compatibility_with_cache().expect("compressed fixture validates"),
+        g_genotype::Packed8Compatibility::Compatible
+    );
+    let genotype_input = crate::delivery::PreparedGenotypeInput::new(reader, 1);
+    let full_plan = [
+        g_genotype::ChunkSpec { variant_start_index: 0, variant_stop_index: 1 },
+        g_genotype::ChunkSpec { variant_start_index: 1, variant_stop_index: 2 },
+    ];
+    let first = genotype_input.compressed_layout_for_chunks(&full_plan).expect("initial plan succeeds").unwrap();
+    let repeated = genotype_input.compressed_layout_for_chunks(&full_plan).expect("identical plan succeeds").unwrap();
+    assert!(Arc::ptr_eq(&first, &repeated));
+    let resumed = genotype_input.compressed_layout_for_chunks(&full_plan[1..]).expect("resume plan succeeds").unwrap();
+    assert!(!Arc::ptr_eq(&first, &resumed));
+    let reversed_plan = [
+        g_genotype::ChunkSpec { variant_start_index: 1, variant_stop_index: 2 },
+        g_genotype::ChunkSpec { variant_start_index: 0, variant_stop_index: 1 },
+    ];
+    let reversed =
+        genotype_input.compressed_layout_for_chunks(&reversed_plan).expect("reordered plan succeeds").unwrap();
+    assert!(!Arc::ptr_eq(&resumed, &reversed));
+    let invalid_plan = [g_genotype::ChunkSpec { variant_start_index: 0, variant_stop_index: 3 }];
+    assert!(genotype_input.compressed_layout_for_chunks(&invalid_plan).is_err());
+    let after_failure = genotype_input
+        .compressed_layout_for_chunks(&reversed_plan)
+        .expect("failed plans do not replace cache")
+        .unwrap();
+    assert!(Arc::ptr_eq(&reversed, &after_failure));
+    let session = genotype_input.reader.read_session(&[0, 1, 2, 3]).expect("sample selection is valid");
+    let batch = session.pack_compressed_packed8_batch(&first, 0, 1).expect("evicted layout remains usable while owned");
+    assert_eq!(batch.member_metadata().len(), 3);
+    session.finish().expect("unchanged source validates");
+    bytes.push(0);
+    std::fs::write(&bgen_path, bytes).expect("source is changed between groups");
+    assert!(genotype_input.reader.read_session(&[0, 1, 2, 3]).is_err());
+}
+
+#[test]
 fn run_preparation_accepts_intercept_only_binary_and_quantitative_inputs() {
     for association_mode in [g_plan::AssociationMode::Regenie2Binary, g_plan::AssociationMode::Regenie2Linear] {
         for sample_mode in
@@ -1248,4 +1305,245 @@ fn prediction_manifest_fingerprints_cover_every_input_and_reuse_cache() {
             .expect("cached prediction fingerprints are reusable");
     assert_eq!(repeated_fingerprints.len(), fingerprints.len());
     std::fs::remove_dir_all(&temporary_root).expect("test temporary directory is removed");
+}
+
+mod compressed_layout_benchmark {
+    use std::collections::BTreeSet;
+    use std::hint::black_box;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    use crate::delivery::PreparedGenotypeInput;
+
+    const CHUNK_SIZE: usize = 16_384;
+    const REPETITIONS: usize = 31;
+    const WARMUP_PAIRS: usize = 3;
+    const HIT_BUNDLE_SIZE: u32 = 10_000;
+
+    #[derive(Clone, Copy)]
+    enum PlanningMethod {
+        Uncached,
+        Reused,
+    }
+
+    #[derive(Clone, Copy)]
+    enum TimingScope {
+        Guarded,
+        PlanningOnly,
+    }
+
+    struct LayoutBenchmark {
+        input: PreparedGenotypeInput,
+        chunks: Vec<g_genotype::ChunkSpec>,
+        reversed_chunks: Vec<g_genotype::ChunkSpec>,
+        sample_groups: Vec<Vec<usize>>,
+    }
+
+    impl LayoutBenchmark {
+        fn open() -> Self {
+            let path = PathBuf::from(
+                std::env::var_os("GWAS_ENGINE_BGEN_BENCHMARK_PATH")
+                    .expect("set GWAS_ENGINE_BGEN_BENCHMARK_PATH to the full chr22 BGEN"),
+            );
+            let reader = g_genotype::BgenReaderCore::open(&path).expect("benchmark BGEN opens");
+            assert_eq!(reader.variant_count(), 418_943, "benchmark requires the full chr22 geometry");
+            assert_eq!(reader.sample_count(), 2_504, "benchmark requires the full chr22 sample set");
+            assert_eq!(
+                reader.packed8_compatibility_with_cache().expect("packed8 compatibility resolves outside timing"),
+                g_genotype::Packed8Compatibility::Compatible,
+            );
+            let chunks = reader
+                .plan_chromosome_homogeneous_chunks(CHUNK_SIZE, &BTreeSet::new())
+                .expect("full chromosome-aware chunk plan builds outside timing");
+            assert!(chunks.len() > 1, "reversing the plan must change its ordered cache key");
+            let reversed_chunks = chunks
+                .iter()
+                .rev()
+                .map(|chunk| g_genotype::ChunkSpec {
+                    variant_start_index: chunk.variant_start_index,
+                    variant_stop_index: chunk.variant_stop_index,
+                })
+                .collect();
+            let source_sample_count = reader.sample_count();
+            let missing_sample_count = source_sample_count / 20;
+            let sample_groups = (0..32)
+                .map(|group_index| {
+                    let missing_start_index = group_index * 73;
+                    (0..source_sample_count)
+                        .filter(|sample_index| {
+                            (sample_index + source_sample_count - missing_start_index) % source_sample_count
+                                >= missing_sample_count
+                        })
+                        .collect()
+                })
+                .collect();
+            Self { input: PreparedGenotypeInput::new(reader, CHUNK_SIZE), chunks, reversed_chunks, sample_groups }
+        }
+
+        fn prime_miss(&self) {
+            let session = self.input.reader.read_session(&self.sample_groups[0]).expect("priming source guard opens");
+            black_box(
+                self.input
+                    .compressed_layout_for_chunks(black_box(&self.reversed_chunks))
+                    .expect("different ordered geometry evicts the full-plan cache")
+                    .expect("benchmark source must use zlib"),
+            );
+            // Both timed arms end their identical preamble with this complete
+            // scan, so forcing a candidate miss does not uniquely warm its data.
+            black_box(
+                self.input
+                    .reader
+                    .plan_compressed_packed8_batch_layout(black_box(&self.chunks))
+                    .expect("uncached priming scan succeeds")
+                    .expect("benchmark source must use zlib"),
+            );
+            session.finish().expect("priming source guard closes");
+        }
+
+        fn plan(&self, method: PlanningMethod) {
+            match method {
+                PlanningMethod::Uncached => {
+                    black_box(
+                        self.input
+                            .reader
+                            .plan_compressed_packed8_batch_layout(black_box(&self.chunks))
+                            .expect("uncached planning succeeds")
+                            .expect("benchmark source must use zlib"),
+                    );
+                }
+                PlanningMethod::Reused => {
+                    black_box(
+                        self.input
+                            .compressed_layout_for_chunks(black_box(&self.chunks))
+                            .expect("cached planning succeeds")
+                            .expect("benchmark source must use zlib"),
+                    );
+                }
+            }
+        }
+
+        fn measure(&self, group_count: usize, method: PlanningMethod, scope: TimingScope) -> f64 {
+            let outer_session = match scope {
+                TimingScope::Guarded => None,
+                TimingScope::PlanningOnly => {
+                    Some(self.input.reader.read_session(&self.sample_groups[0]).expect("outer source guard opens"))
+                }
+            };
+            let started_at = Instant::now();
+            for sample_indices in &self.sample_groups[..group_count] {
+                let session = match scope {
+                    TimingScope::Guarded => Some(
+                        self.input.reader.read_session(black_box(sample_indices)).expect("group source guard opens"),
+                    ),
+                    TimingScope::PlanningOnly => None,
+                };
+                self.plan(method);
+                if let Some(session) = session {
+                    session.finish().expect("group source guard closes");
+                }
+            }
+            let elapsed_seconds = started_at.elapsed().as_secs_f64();
+            if let Some(session) = outer_session {
+                session.finish().expect("outer source guard closes");
+            }
+            elapsed_seconds
+        }
+
+        fn measure_pairs(&self, group_count: usize, scope: TimingScope) -> serde_json::Value {
+            let mut pairs = Vec::with_capacity(REPETITIONS);
+            for pair_index in 0..WARMUP_PAIRS + REPETITIONS {
+                let uncached_first = pair_index % 2 == 0;
+                let methods = if uncached_first {
+                    [PlanningMethod::Uncached, PlanningMethod::Reused]
+                } else {
+                    [PlanningMethod::Reused, PlanningMethod::Uncached]
+                };
+                let mut uncached_seconds = 0.0;
+                let mut reused_seconds = 0.0;
+                for method in methods {
+                    self.prime_miss();
+                    let elapsed_seconds = self.measure(group_count, method, scope);
+                    match method {
+                        PlanningMethod::Uncached => uncached_seconds = elapsed_seconds,
+                        PlanningMethod::Reused => reused_seconds = elapsed_seconds,
+                    }
+                }
+                if pair_index >= WARMUP_PAIRS {
+                    pairs.push(serde_json::json!({
+                        "uncached_first": uncached_first,
+                        "uncached_seconds": uncached_seconds,
+                        "reused_seconds": reused_seconds,
+                        "saved_seconds": uncached_seconds - reused_seconds,
+                    }));
+                }
+            }
+            serde_json::json!({
+                "group_count": group_count,
+                "candidate_misses_per_trial": 1,
+                "candidate_hits_per_trial": group_count - 1,
+                "pairs": pairs,
+            })
+        }
+
+        fn measure_hit_bundles(&self) -> Vec<f64> {
+            self.plan(PlanningMethod::Reused);
+            (0..REPETITIONS)
+                .map(|_| {
+                    let session = self.input.reader.read_session(&self.sample_groups[0]).expect("hit guard opens");
+                    let started_at = Instant::now();
+                    for _ in 0..HIT_BUNDLE_SIZE {
+                        self.plan(PlanningMethod::Reused);
+                    }
+                    let seconds_per_hit = started_at.elapsed().as_secs_f64() / f64::from(HIT_BUNDLE_SIZE);
+                    session.finish().expect("hit guard closes");
+                    seconds_per_hit
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    #[ignore = "real chr22 stage benchmark; run only in a CPU allocation with an isolated release target"]
+    fn real_chr22_compressed_layout_reuse() {
+        let benchmark = LayoutBenchmark::open();
+        let guarded: Vec<_> = [1, 8, 32]
+            .into_iter()
+            .map(|group_count| benchmark.measure_pairs(group_count, TimingScope::Guarded))
+            .collect();
+        let planning_only: Vec<_> = [1, 8, 32]
+            .into_iter()
+            .map(|group_count| benchmark.measure_pairs(group_count, TimingScope::PlanningOnly))
+            .collect();
+        let source = benchmark.input.reader.source_identity();
+        let report = serde_json::json!({
+            "scope": "compressed_layout_planning_only",
+            "debug_assertions": cfg!(debug_assertions),
+            "variant_count": benchmark.input.reader.variant_count(),
+            "source_sample_count": benchmark.input.reader.sample_count(),
+            "selected_sample_count_per_group": benchmark.sample_groups[0].len(),
+            "chunk_size": CHUNK_SIZE,
+            "chunks": benchmark.chunks.iter().map(|chunk| serde_json::json!({
+                "start": chunk.variant_start_index, "stop": chunk.variant_stop_index,
+            })).collect::<Vec<_>>(),
+            "source_identity": {
+                "configured_path": source.configured_path,
+                "canonical_path": source.canonical_path,
+                "device": source.device_identifier,
+                "inode": source.inode_identifier,
+                "change_time_nanoseconds": source.change_time_nanoseconds,
+                "modification_time_nanoseconds": source.modification_time_nanoseconds,
+                "file_size": source.file_size,
+            },
+            "warmup_pairs_per_case": WARMUP_PAIRS,
+            "repetitions": REPETITIONS,
+            "guarded": guarded,
+            "planning_only": planning_only,
+            "hit_bundle_size": HIT_BUNDLE_SIZE,
+            "planning_only_seconds_per_hit": benchmark.measure_hit_bundles(),
+        });
+        let report_path = std::env::var_os("GWAS_ENGINE_LAYOUT_BENCHMARK_REPORT")
+            .expect("set GWAS_ENGINE_LAYOUT_BENCHMARK_REPORT to an ignored result path");
+        std::fs::write(report_path, serde_json::to_vec_pretty(&report).expect("benchmark report serializes"))
+            .expect("benchmark report is written");
+    }
 }

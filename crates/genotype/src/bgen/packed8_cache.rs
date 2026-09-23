@@ -41,12 +41,19 @@ impl ValidationCacheSource {
     }
 
     pub(super) fn is_unchanged(&self) -> std::io::Result<bool> {
+        if !self.matches_opened_file(&self.file)? {
+            return Ok(false);
+        }
         let current_file = match File::open(&self.identity.configured_path) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
         };
-        bgen_source_metadata_matches(&self.identity, &current_file.metadata()?)
+        self.matches_opened_file(&current_file)
+    }
+
+    pub(super) fn matches_opened_file(&self, file: &File) -> std::io::Result<bool> {
+        bgen_source_metadata_matches(&self.identity, &file.metadata()?)
     }
 }
 

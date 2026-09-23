@@ -6,11 +6,15 @@ use crate::error::InputResult;
 mod alignment;
 mod cache;
 mod error;
+mod fingerprint;
+#[cfg(test)]
+mod fingerprint_tests;
 mod list;
 mod loco;
 mod source;
 
 pub use error::PredictionError;
+pub use fingerprint::IndexedPredictionFileFingerprint;
 pub use source::ChromosomePredictionMatrix;
 pub(crate) use source::{PredictionSource, PredictionSourceLoader};
 

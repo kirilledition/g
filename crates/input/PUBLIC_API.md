@@ -7,8 +7,9 @@ Sample, phenotype, covariate, prediction, and phenotype-group alignment.
 ## Public types
 
 `InputError`, the opaque sample-identifier payload, phenotype-group load
-request, aligned phenotype groups, chromosome prediction matrices, and
-prediction errors. Sample identity is the fixed, non-empty `(FID, IID)` pair;
+request, aligned phenotype groups, chromosome prediction matrices,
+`IndexedPredictionFileFingerprint` snapshots, and prediction errors.
+Sample identity is the fixed, non-empty `(FID, IID)` pair;
 it is not a configurable planning domain.
 
 ## Public functions
@@ -16,6 +17,10 @@ it is not a configurable planning domain.
 Load sample identifiers, align phenotype groups, and resolve LOCO paths.
 Prediction sources expose post-resume use planning and move-only chromosome
 matrices; file indexes and alignment recipes remain private.
+`AlignedPhenotypeGroup::indexed_prediction_file_fingerprints` returns verified
+snapshots in phenotype order. Each opaque snapshot exposes its configured
+`path`, original `metadata`, and exact `content_sha256` through getters.
+Consumers must recheck the supplied source identity before using a digest.
 
 ## This crate must not expose
 
@@ -24,12 +29,21 @@ BGEN decoding internals, output writing, JAX device handling, engine scheduler s
 ## Performance constraints
 
 Keep sample matrix ownership explicit. Index each selected LOCO file once per
-canonical path, retaining only its path, source sample count, and chromosome
-row offsets and raw-row digests after group alignment is built. Identical
+canonical path, retaining its path, source sample count, source metadata,
+whole-file SHA-256, and chromosome row offsets and raw-row digests after group
+alignment is built. The whole-file digest covers every original byte, including
+blank lines, CRLF/LF terminators, physical row order, and any final newline;
+it is accumulated during indexing without a second file read. Identical
 headers share one loader-only identifier index and one alignment recipe per
-group; identity-aligned groups do not allocate an index vector. File size,
-nanosecond mtime, and row digests guard deferred reads against changes after
-indexing. The required prediction-alignment fingerprint also binds the indexed
+group; identity-aligned groups do not allocate an index vector. Device, inode,
+nanosecond ctime and mtime, file size, and row digests guard deferred reads
+against changes after indexing. Snapshot creation rechecks both the indexed
+source and configured aliases, rejecting replacements and retargeted symlinks.
+The digest describes the indexing read, not an atomic filesystem snapshot.
+Metadata checks can miss concurrent in-place edits with indistinguishable
+timestamps; deferred row digests still reject changed rows consumed by compute.
+Callers must keep inputs unchanged during execution.
+The required prediction-alignment fingerprint also binds the indexed
 header, every normalized chromosome row digest, trait order, and the concrete
 identity/index alignment recipe, without rereading a LOCO file. Resume planning
 checks only chromosome blocks with pending output.
@@ -39,7 +53,9 @@ maps use a randomized high-throughput hasher, while persisted identity remains
 the canonical SHA-256 fingerprint and never depends on map iteration or hashes.
 The engine resolves the prediction list once; input consumes that borrowed
 catalog rather than reparsing it for each group, and the same catalog drives
-output-manifest fingerprints.
+output-manifest fingerprints. The engine forwards verified snapshots to the
+output cache; persisted file-fingerprint values and prediction-alignment
+fingerprints remain unchanged for unchanged inputs.
 The source then reads, parses, finite-validates, and aligns one chromosome
 directly into its final trait-major matrix when the engine reaches it. The
 final allocation transfers to the backend. Only repeated noncontiguous

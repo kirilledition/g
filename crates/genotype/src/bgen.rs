@@ -2,6 +2,7 @@ mod decode;
 mod error;
 mod format;
 mod index;
+mod index_cache;
 mod metadata;
 mod packed8;
 mod packed8_cache;

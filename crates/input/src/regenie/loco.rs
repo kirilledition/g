@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::alignment::LocoSampleAlignment;
+use super::fingerprint::IndexedPredictionFileFingerprint;
 use super::{PredictionError, normalize_chromosome};
 
 #[derive(Debug)]
@@ -17,6 +18,8 @@ pub(super) struct LocoFileIndex {
     pub(super) source_digest: [u8; 32],
     pub(super) chromosome_rows: HashMap<String, LocoRowIndex>,
     source_identity: LocoSourceIdentity,
+    source_metadata: std::fs::Metadata,
+    content_sha256: [u8; 32],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +72,7 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
     let mut header_line = None;
     let mut header_digest = None;
     let mut chromosome_rows = HashMap::new();
+    let mut content_hash = Sha256::new();
     loop {
         let byte_offset = reader.stream_position()?;
         line.clear();
@@ -76,6 +80,7 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
         if byte_count == 0 {
             break;
         }
+        content_hash.update(line.as_bytes());
         line_number += 1;
         let mut fields = line.split_ascii_whitespace();
         let Some(first_field) = fields.next() else {
@@ -127,9 +132,29 @@ pub(super) fn index_loco_file(loco_file_path: &Path) -> Result<IndexedLocoFile, 
             source_digest,
             chromosome_rows,
             source_identity,
+            source_metadata: metadata,
+            content_sha256: content_hash.finalize().into(),
         },
         header_line,
     })
+}
+
+impl LocoFileIndex {
+    pub(super) fn file_fingerprint(
+        &self,
+        configured_path: &Path,
+    ) -> Result<IndexedPredictionFileFingerprint, PredictionError> {
+        let file = File::open(configured_path)?;
+        ensure_loco_source_unchanged(&self.file_path, &self.source_identity, &file)?;
+        if configured_path != self.file_path && !loco_source_path_matches(configured_path, &self.source_identity)? {
+            return Err(PredictionError::IndexedLocoFileChanged { path: configured_path.to_path_buf() });
+        }
+        Ok(IndexedPredictionFileFingerprint {
+            path: configured_path.to_path_buf(),
+            metadata: self.source_metadata.clone(),
+            content_sha256: self.content_sha256,
+        })
+    }
 }
 
 fn build_indexed_source_digest(header_digest: [u8; 32], chromosome_rows: &HashMap<String, LocoRowIndex>) -> [u8; 32] {

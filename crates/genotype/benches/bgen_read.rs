@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -18,6 +20,38 @@ struct PackedBatchBenchmarkCase {
     variant_start: usize,
     variant_stop: usize,
     fresh_storage: bool,
+}
+
+struct IndexEvictionFixture {
+    path: PathBuf,
+}
+
+impl IndexEvictionFixture {
+    fn create() -> Self {
+        let directory = std::env::temp_dir().join(format!("g-bgen-index-benchmark-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("benchmark fixture directory should be created");
+        let path = directory.join("empty.bgen");
+        let mut header = vec![0_u8; 24];
+        header[0..4].copy_from_slice(&20_u32.to_le_bytes());
+        header[4..8].copy_from_slice(&20_u32.to_le_bytes());
+        header[16..20].copy_from_slice(b"bgen");
+        header[20..24].copy_from_slice(&(2_u32 << 2).to_le_bytes());
+        fs::write(&path, header).expect("cache-eviction fixture should be written");
+        Self { path }
+    }
+
+    fn evict(&self) {
+        drop(BgenReaderCore::open(&self.path).expect("distinct-inode fixture should replace the cached index"));
+    }
+}
+
+impl Drop for IndexEvictionFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        if let Some(directory) = self.path.parent() {
+            let _ = fs::remove_dir(directory);
+        }
+    }
 }
 
 fn benchmark_bgen_path() -> PathBuf {
@@ -82,10 +116,30 @@ fn benchmark_variant_major_read(
 
 fn benchmark_bgen_open(criterion: &mut Criterion) {
     let bgen_path = benchmark_bgen_path();
+    let eviction_fixture = IndexEvictionFixture::create();
     let source_byte_count = std::fs::metadata(&bgen_path).expect("benchmark BGEN metadata should be available").len();
     let mut open_group = criterion.benchmark_group("bgen_open_and_index");
     open_group.throughput(Throughput::Bytes(source_byte_count));
     open_group.bench_function("sequential_index", |benchmark| {
+        // Eviction is untimed and uses a distinct inode. Source aliases must
+        // hit the cache, so alternate symlink paths are not a cold-index probe.
+        benchmark.iter_batched(
+            || eviction_fixture.evict(),
+            |()| {
+                std::hint::black_box(
+                    BgenReaderCore::open(std::hint::black_box(&bgen_path))
+                        .expect("native Rust BGEN reader should index benchmark input"),
+                );
+            },
+            BatchSize::PerIteration,
+        );
+    });
+    // Public cache admission includes a two-second source probation. Both
+    // waiting and the required fresh promotion parse are outside hit timing.
+    drop(BgenReaderCore::open(&bgen_path).expect("repeated-open source observation should begin"));
+    std::thread::sleep(Duration::from_secs(2));
+    drop(BgenReaderCore::open(&bgen_path).expect("repeated-open benchmark index should be promoted"));
+    open_group.bench_function("cached_reopen", |benchmark| {
         benchmark.iter(|| {
             std::hint::black_box(
                 BgenReaderCore::open(std::hint::black_box(&bgen_path))

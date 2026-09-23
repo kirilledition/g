@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::regenie::{ChromosomePredictionMatrix, PredictionError, PredictionLocoPath, PredictionSource};
+use crate::regenie::{
+    ChromosomePredictionMatrix, IndexedPredictionFileFingerprint, PredictionError, PredictionLocoPath, PredictionSource,
+};
 
 #[derive(Debug)]
 pub struct AlignedPhenotypeGroup {
@@ -13,6 +15,20 @@ pub struct AlignedPhenotypeGroup {
 }
 
 impl AlignedPhenotypeGroup {
+    /// Return verified whole-file fingerprints in this group's phenotype order.
+    ///
+    /// Digests are captured during indexing; this only rechecks source identity.
+    /// Consumers must verify the returned metadata again before reusing a digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an indexed file or its configured path has changed.
+    pub fn indexed_prediction_file_fingerprints(
+        &self,
+    ) -> Result<Vec<IndexedPredictionFileFingerprint>, PredictionError> {
+        self.prediction_source.indexed_file_fingerprints()
+    }
+
     /// Replace prediction use counts with post-resume chromosome blocks.
     ///
     /// Only chromosomes left after resume reconciliation are validated for

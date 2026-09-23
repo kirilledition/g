@@ -8,6 +8,7 @@ Output run preparation, manifest compatibility, resume validation, and chunked P
 
 `OutputManager`, `OutputDeliveryState`, `CompletedOutputRun`, opaque output
 writer sessions, native chunk handles, typed manifest inputs/fingerprints,
+`ManifestFileFingerprintCache`,
 trait-major statistic batches, and `OutputError`. Strict on-disk reconciliation
 is fixed policy owned by this crate.
 
@@ -19,6 +20,11 @@ run. `OutputManager::open` only inspects paths and existing manifest hints;
 filesystem mutation starts in `initialize` after the complete output plan and
 headers validate. Individual writer-session lifecycle methods remain
 crate-private.
+`ManifestFileFingerprintCache::register_indexed_prediction_file_fingerprint`
+accepts a path, metadata, and exact SHA-256 captured by one verified indexing
+read. It rechecks source identity before storing the fingerprint.
+`build_prediction_loco_file_fingerprint` reuses registered fingerprints only
+while the configured path still resolves to the registered source.
 
 ## This crate must not expose
 
@@ -29,6 +35,20 @@ telemetry sinks, PyO3 classes, or public administrative submodules.
 
 Write chunk batches through handles and array views. Do not serialize Rust
 crate-to-crate data through JSON; JSON exists only inside manifest persistence.
+Prediction fingerprints reuse the raw-byte whole-file digest captured during
+input indexing. The output cache independently checks canonical path, device,
+inode, nanosecond ctime and mtime, and file size. Registration pins each
+configured prediction path to that identity: observable changes or symlink
+retargeting fail instead of hashing a replacement, and re-registration cannot
+replace an existing pin. Unchanged aliases share the cached fingerprint;
+conflicting digests for one identity are rejected. Other unregistered file
+fingerprints retain their ordinary metadata-based refresh behavior.
+The content snapshot moves to the indexing read; metadata validation does not
+guarantee detection of every concurrent edit on coarse-timestamp filesystems.
+Input's deferred row hashes continue to validate consumed prediction bytes.
+This reuse leaves persisted fingerprint fields and values unchanged, including
+the canonical path and SHA-256 of every original byte, so it does not change
+manifest compatibility for unchanged inputs.
 Consume canonical `g-genotype-contracts` columns directly; output must not
 depend on the BGEN implementation crate or introduce adapter mirrors.
 Fresh multi-trait chunks select all writer lanes without constructing an

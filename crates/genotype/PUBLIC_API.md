@@ -38,6 +38,32 @@ compatibility; callers do not restat it from the configured path. The cache
 stores typed compatible and dosage-required outcomes so an incompatible source
 is not rescanned on every run.
 
+Repeated opens also reuse the last successfully parsed immutable index within
+the process when its estimated allocation is at most 256 MiB. This separate single-entry
+cache shares metadata and offset arrays, retains one opened descriptor to
+prevent inode reuse, and retains no mapping or genotype payload. Cache identity
+uses device, inode, nanosecond change/modify times, and size from the newly
+opened file; aliases of the same unchanged file can share an index. Every open
+still validates its header and embedded sample block, maps its own file, and
+checks both the opened descriptor and configured path before returning. Failed
+parses are not cached. Larger indexes are used normally without retention;
+cache entries live until replacement or process exit. Active readers retain
+their own shared references independently of cache eviction. The 256 MiB
+allocation budget includes shared index buffers, Arc reference counts, and
+alignment padding; allocator overhead and the single entry's paths are
+additional small allocations. It is not a process RSS bound.
+
+Index admission requires at least two monotonic seconds observing the same
+file identity, followed by a fresh successful parse. During this probation
+only the descriptor and identity are retained; an index parsed during probation
+is never reused. This avoids stale indexes when a same-size rewrite restores
+mtime within a filesystem's one-second ctime granularity, without relying on
+client/server wall-clock agreement. The first two opens can therefore parse
+even old data, and additional opens inside probation also parse. There is no
+blocking wait in application opens; later opens promote or reuse naturally.
+Any observed source-identity change restarts probation. Benchmark hit timings
+perform probation and promotion outside the timed region.
+
 For compatible zlib sources, `BgenReaderCore` derives one opaque compressed slab
 layout from the actual pending chunk plan; non-zlib sources return no compressed
 layout so callers can retain host delivery. `BgenReadSession` exposes invariant

@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active production architecture | Production code as of 2026-07-19 | Development maintainers |
+| Active production architecture | Production code as of 2026-09-23 | Development maintainers |
 
 `g` is a Rust host application with a Python/JAX numerical backend. Rust owns
 configuration, planning, input, scheduling, lifecycle, telemetry, shutdown,
@@ -83,6 +83,24 @@ Engine resolves the prediction list once into an input-owned path catalog.
 Input indexing/alignment and output-manifest fingerprinting borrow that same
 catalog, so group preparation does not reparse the list or duplicate its path
 strings.
+
+Input computes each LOCO source's complete raw-byte SHA-256 during row indexing
+and exposes an opaque, metadata-verified fingerprint snapshot. Engine registers
+those snapshots with output before building manifest fingerprints. Output pins
+each registered configured path to its indexed physical identity and fails on
+observable changes. The digest describes the indexing read; coarse filesystem
+timestamps can hide concurrent edits from metadata checks, while deferred row
+hashes still verify consumed prediction bytes. Inputs must remain unchanged
+during execution. The persisted manifest schema and digest recipe are unchanged.
+
+Genotype owns a process-local, single-entry BGEN index cache. It retains shared
+immutable index arrays and an inode-pinning descriptor, with a 256 MiB estimated
+index-allocation limit. Admission requires a monotonic stability interval and
+a subsequent fresh parse to handle coarse filesystem timestamps. Every reader
+still owns a fresh validated mapping.
+Engine separately keeps one compressed-layout plan per prepared input, keyed
+by exact ordered pending chunk ranges. Neither cache retains decoded genotypes,
+sample masks, LOCO matrices, or device state.
 
 Genotype, engine, and output import one canonical set of data-plane column
 contracts from `g-genotype-contracts`. Genotype retains dictionary-coded

@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | main branch as of 2026-07-01 CPU and GPU Step 2 runs | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-23 | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
@@ -83,9 +83,30 @@ uv run --no-sync g batch \
 
 Batch mode constructs every frontend config and checks output-root and
 process-policy compatibility before starting. Run-owned input, output, and
-resume preflight remains per entry. The process reuses only process-global
-JAX/CUDA state and compiled executables. Shape changes may compile an additional
+resume preflight remains per entry. The process reuses JAX/CUDA state, compiled
+executables, and one verified BGEN index. Shape changes may compile an additional
 executable, so group configs with stable shapes when throughput is the priority.
+
+The process-local BGEN cache retains at most one index with an estimated
+allocation size of 256 MiB or less, plus one open file descriptor. It retains
+no mapping or genotype payload. Larger indexes are usable but are not cached.
+Each open still validates the source and creates its own mapping; matching
+device, inode, size, modification time, and change time permit index reuse,
+including through path aliases. An index remains reusable after the previous
+reader closes. This helps repeated scans within one process, not independent
+CLI processes. Allocator bookkeeping and retained free pages can make process
+RSS larger than the cache's allocation budget.
+Before admitting an index, the cache observes an unchanged physical identity
+for at least two seconds using a monotonic clock, then reparses the source.
+This avoids stale reuse when filesystem timestamps have only second precision.
+The initial opens can therefore still pay indexing cost; admission never waits
+or blocks a run for that interval.
+
+In the [September 2026 measurements](../development/performance-review-2026-09-23.md),
+repeated hot binary scans took 11.8% less time on the chromosome-22 fixture.
+Fresh-process runs did not improve, and an uncached BGEN open cost about 3 ms
+more. These results describe that workload and cache state, not a general
+speed guarantee.
 
 Native decode buffers submitted to JAX transfer their allocation into NumPy;
 there is no full genotype memcpy at the binding boundary. Phenotype,
@@ -98,7 +119,15 @@ validates only chromosome blocks that still need output. When execution
 reaches one of those blocks, input reads, parses, finite-validates, and aligns
 just that chromosome into its final trait-major matrix. File metadata snapshots
 and raw-row SHA-256 digests reject changes between indexing and deferred
-reading. Fully committed chromosomes therefore never allocate or parse
+reading. Indexing also computes the exact whole-file SHA-256 used by output
+fingerprints, avoiding a second complete read. Output verifies and pins that
+indexed source identity; observable identity changes cause an error.
+The digest describes the bytes read during indexing. Inputs must remain
+unchanged during a run: metadata checks cannot detect every concurrent edit
+on a filesystem with coarse timestamps, while deferred row digests protect
+the prediction values actually read. Persisted fingerprint values and resume
+compatibility are unchanged for unchanged inputs.
+Fully committed chromosomes therefore never allocate or parse
 prediction values. A repeated noncontiguous chromosome block alone keeps one
 matrix for safe clones until its final planned use.
 
@@ -121,6 +150,12 @@ memory. Group-level device state is created at first use and released after its
 final chromosome preparation. Fully resumed phenotype groups initialize
 progress but do not select BGEN samples, prepare JAX state, or start scheduler
 workers; every remaining group uses the same direct delivery path.
+
+Within a run, successive groups reuse the compressed packed8 layout plan when
+their ordered pending chunk ranges match exactly. Different sample masks can
+share that geometry, while different resume subsets replace the one cached
+plan. This retains only chunk metadata: each group still reads and decodes its
+genotypes and prepares its own statistical state.
 
 ## Runtime Knobs
 

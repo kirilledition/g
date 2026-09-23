@@ -1,6 +1,7 @@
 //! Deferred prediction source indexing and chromosome matrix assembly.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -8,6 +9,7 @@ use sha2::{Digest, Sha256};
 use super::alignment::LocoSampleAlignment;
 use super::cache::{LocoAlignmentCache, LocoFileIndexCache};
 use super::error::PredictionError;
+use super::fingerprint::IndexedPredictionFileFingerprint;
 use super::loco::{LocoFileIndex, read_loco_chromosome_predictions_into};
 use super::{PredictionLocoPath, normalize_chromosome};
 
@@ -22,6 +24,7 @@ pub(crate) struct PredictionSource {
 
 #[derive(Debug)]
 struct PredictionTraitSource {
+    configured_path: PathBuf,
     file_index: Arc<LocoFileIndex>,
     sample_alignment: Arc<LocoSampleAlignment>,
 }
@@ -98,7 +101,11 @@ impl<'paths> PredictionSourceLoader<'paths> {
                 target_individual_identifiers,
                 target_sample_indices,
             )?;
-            trait_sources.push(PredictionTraitSource { file_index: indexed_file.file_index, sample_alignment });
+            trait_sources.push(PredictionTraitSource {
+                configured_path: resolved_path.loco_file_path.clone(),
+                file_index: indexed_file.file_index,
+                sample_alignment,
+            });
         }
         Ok(PredictionSource {
             trait_sources,
@@ -111,6 +118,13 @@ impl<'paths> PredictionSourceLoader<'paths> {
 }
 
 impl PredictionSource {
+    pub(crate) fn indexed_file_fingerprints(&self) -> Result<Vec<IndexedPredictionFileFingerprint>, PredictionError> {
+        self.trait_sources
+            .iter()
+            .map(|trait_source| trait_source.file_index.file_fingerprint(&trait_source.configured_path))
+            .collect()
+    }
+
     pub(crate) fn alignment_source_digest(&self) -> [u8; 32] {
         let mut fingerprint_hash = Sha256::new();
         fingerprint_hash.update(b"prediction-alignment-source-v1");
