@@ -92,7 +92,8 @@ def apply_selected_firth_candidate_corrections(
 def apply_firth_multi_variant_major_fixed_capacity_corrections(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
+    genotype_values_by_variant: jax.Array,
+    genotype_is_packed8: bool,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     firth_se: bool,
     candidate_mask: jax.Array,
@@ -106,7 +107,8 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     """Apply device-resident multi-trait Firth corrections with a fixed candidate capacity."""
     firth_batch_size = min(kernel_config.firth_candidate.batch_size, candidate_capacity)
     selected_rows = regenie2_binary_firth_batch_prepare.select_multi_firth_candidate_rows(
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_values_by_variant=genotype_values_by_variant,
+        genotype_is_packed8=genotype_is_packed8,
         candidate_mask=candidate_mask,
         candidate_capacity=candidate_capacity,
         firth_batch_size=firth_batch_size,

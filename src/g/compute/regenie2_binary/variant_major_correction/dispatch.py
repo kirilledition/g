@@ -19,13 +19,14 @@ if typing.TYPE_CHECKING:
 
 @functools.partial(
     jax.jit,
-    static_argnames=("firth_se", "kernel_config"),
+    static_argnames=("firth_se", "kernel_config", "genotype_is_packed8"),
     donate_argnames=("result",),
 )
 def apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
-    genotype_matrix_by_variant: jax.Array,
+    genotype_values_by_variant: jax.Array,
+    genotype_is_packed8: bool,
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     firth_se: bool,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
@@ -36,12 +37,14 @@ def apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
     candidate_mask = result.correction_code == types.BinaryCorrectionCode.FIRTH_SUCCESS.value
     firth_candidate_count = jnp.sum(candidate_mask, dtype=jnp.int32)
     candidate_capacity = (
-        min(kernel_config.firth_candidate.candidate_capacity, genotype_matrix_by_variant.shape[0])
+        min(kernel_config.firth_candidate.candidate_capacity, genotype_values_by_variant.shape[0])
         * result.beta.shape[0]
     )
+
     corrected_result = fixed_capacity.apply_firth_multi_variant_major_fixed_capacity_corrections(
         chromosome_state=chromosome_state,
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_values_by_variant=genotype_values_by_variant,
+        genotype_is_packed8=genotype_is_packed8,
         result=result,
         firth_se=firth_se,
         candidate_mask=candidate_mask,

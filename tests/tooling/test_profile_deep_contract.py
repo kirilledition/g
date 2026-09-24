@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
+import sys
 import tomllib
+import types
 import typing
 
+import pytest
+
+from tooling.benchmark import native_lifecycle
 from tooling.cli import profile_regenie2_deep
 from tooling.profile_deep import commands as profile_deep_commands
 from tooling.profile_deep import models as profile_deep_models
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def candidate() -> profile_deep_models.Step2Candidate:
@@ -103,3 +108,118 @@ def test_repeated_trials_keep_profile_run_out_of_headline(tmp_path: Path, monkey
     assert all(call.get("diagnostic_options") is None for call in measured_calls)
     diagnostic_call = next(call for call in observed_calls if str(call["name"]).endswith("_stage_diagnostic"))
     assert diagnostic_call["diagnostic_options"] == {"telemetry": "profile"}
+
+
+@pytest.mark.parametrize("profiler_status", ["success", "partial"])
+@pytest.mark.parametrize("output_row_count", [None, 0, 4])
+def test_external_profiler_success_requires_completed_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    output_row_count: int | None,
+    profiler_status: str,
+) -> None:
+    """A stopped sampler can return zero while its application is incomplete."""
+    application_metadata = profile_regenie2_deep.GTrialApplicationMetadata(
+        wall_time_seconds=None,
+        output_row_count=output_row_count,
+        output_path=None,
+        application_output_run_directory=str(tmp_path / "application.g"),
+        profile_summary_path=None,
+        device_diagnostics=None,
+        child_reported_cache_directory=None,
+    )
+    monkeypatch.setattr(
+        profile_regenie2_deep,
+        "collect_g_trial_application_metadata",
+        lambda **arguments: application_metadata,
+    )
+    run_paths = profile_deep_models.DeepProfilerRunPaths(
+        application_output_prefix=tmp_path / "application",
+        application_output_run_directory=tmp_path / "application.g",
+        stage_timing_path=None,
+        profile_script_path=tmp_path / "child.py",
+    )
+    retained_trace = tmp_path / "partial-trace.json"
+    result = profile_regenie2_deep.attach_deep_profiler_metadata(
+        result=dataclasses.replace(
+            trial_result("sampler"),
+            status=profiler_status,
+            output_row_count=None,
+            notes="Original profiler diagnostic.",
+        ),
+        run_paths=run_paths,
+        profiler_artifact_path=retained_trace,
+    )
+
+    assert result.status == ("failed" if output_row_count is None else profiler_status)
+    assert result.notes is not None and "Original profiler diagnostic." in result.notes
+    assert result.profiler_artifact_path == str(retained_trace)
+    if output_row_count is None:
+        assert result.notes is not None and "partial run" in result.notes
+
+
+@pytest.mark.parametrize("capture_trace", [False, True])
+def test_trace_warmup_is_separate_from_captured_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    capture_trace: bool,
+) -> None:
+    """Only trace diagnostics warm up, using distinct output and explicit scope."""
+    events: list[str] = []
+    output_prefixes: list[str] = []
+
+    def run_application(arguments: list[str]) -> int:
+        events.append("application")
+        output_prefixes.append(arguments[arguments.index("--out") + 1])
+        return 0
+
+    def start_trace(directory: str, *, profiler_options: typing.Any) -> None:
+        assert profiler_options.python_tracer_level == 0
+        events.append("start_trace")
+
+    fake_package: typing.Any = types.ModuleType("g")
+    fake_cli: typing.Any = types.ModuleType("g.cli")
+    fake_cli.run = run_application
+    fake_package.cli = fake_cli
+    fake_jax: typing.Any = types.ModuleType("jax")
+    fake_jax.__version__ = "test"
+    fake_jax.profiler = types.SimpleNamespace(
+        ProfileOptions=lambda: types.SimpleNamespace(python_tracer_level=1),
+        start_trace=start_trace,
+        stop_trace=lambda: events.append("stop_trace"),
+    )
+    monkeypatch.setitem(sys.modules, "g", fake_package)
+    monkeypatch.setitem(sys.modules, "g.cli", fake_cli)
+    monkeypatch.setitem(sys.modules, "jax", fake_jax)
+    monkeypatch.setattr(native_lifecycle, "discover_completed_run_directory", lambda **arguments: tmp_path / "run")
+    monkeypatch.setattr(
+        native_lifecycle,
+        "measure_completed_output_run",
+        lambda directory: types.SimpleNamespace(parquet_paths=[str(tmp_path / "part.parquet")]),
+    )
+    paths = types.SimpleNamespace(
+        binary_phenotype_path=tmp_path / "phenotype.txt",
+        regenie_prediction_list_path=tmp_path / "predictions.list",
+        bgen_path=tmp_path / "genotypes.bgen",
+        sample_path=tmp_path / "genotypes.sample",
+        covariate_path=tmp_path / "covariates.txt",
+    )
+    command = profile_deep_commands.build_g_step2_child_command(
+        baseline_paths=paths,
+        candidate=candidate(),
+        output_prefix=tmp_path / "profile",
+        trace_directory=tmp_path / "trace" if capture_trace else None,
+    )
+
+    exec(command[2], {})
+
+    if capture_trace:
+        assert events == ["application", "start_trace", "application", "stop_trace"]
+        assert output_prefixes == [str(tmp_path / "profile.trace_warmup"), str(tmp_path / "profile")]
+        scope = json.loads((tmp_path / "trace" / "capture_scope.json").read_text(encoding="utf-8"))
+        assert scope["includes_cold_initialization"] is False
+        assert scope["warmup_output_root"] == str(tmp_path / "profile.trace_warmup.g")
+    else:
+        assert events == ["application"]
+        assert output_prefixes == [str(tmp_path / "profile")]

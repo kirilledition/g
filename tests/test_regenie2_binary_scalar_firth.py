@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import os
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 import tests.numerical
 from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import logistic as regenie2_binary_logistic
 from g.compute.regenie2_binary.firth import scalar_approx as regenie2_binary_firth_scalar_approx
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
+from g.compute.regenie2_binary.firth.batch import compute as regenie2_binary_firth_batch_compute
 
 
 @dataclass(frozen=True)
@@ -326,6 +331,106 @@ def test_scalar_newton_solver_converges_on_regular_dense_lane() -> None:
     assert float(np.abs(np.asarray(terminal_components.score))) < 1.0e-8
     assert float(np.asarray(terminal.chi_squared)) >= 0.0
     assert float(np.asarray(terminal.standard_error)) > 0.0
+
+
+@pytest.mark.parametrize("maximum_iterations", [30, 60])
+@pytest.mark.parametrize("use_cuda_components", [False, True])
+def test_mixed_scalar_batch_preserves_independent_solver_results(
+    maximum_iterations: int,
+    *,
+    use_cuda_components: bool,
+) -> None:
+    """Retain pseudo and Newton results beside padded and failed-null lanes."""
+    if use_cuda_components and os.environ.get("GWAS_ENGINE_TEST_NATIVE_CUDA_FIRTH") != "1":
+        pytest.skip("Native CUDA cases require an initialized Firth FFI target in this process.")
+    kernel_config = build_binary_kernel_config()
+    kernel_config = dataclasses.replace(
+        kernel_config,
+        approximate_firth=dataclasses.replace(
+            kernel_config.approximate_firth,
+            maximum_iterations=maximum_iterations,
+            use_cuda_components=use_cuda_components,
+        ),
+    )
+    parameters = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(kernel_config)
+
+    def initialize_lane(
+        phenotype: jax.Array,
+        genotype: jax.Array,
+        offset: jax.Array,
+    ) -> regenie2_binary_firth_types.ScalarApproximateFirthInitialState:
+        active_sample_mask = jnp.ones_like(phenotype, dtype=jnp.bool_)
+        full_null_deviance = regenie2_binary_logistic.compute_logistic_deviance(
+            phenotype,
+            regenie2_binary_logistic.compute_regenie_logistic_probability(offset),
+            active_sample_mask,
+        )
+        return regenie2_binary_firth_scalar_approx.initialize_single_variant_regenie_approximate_firth(
+            phenotype_vector=phenotype,
+            genotype_vector=genotype,
+            offset_vector=offset,
+            carrier_sample_mask=active_sample_mask,
+            full_null_deviance=full_null_deviance,
+            sparse_correction=jnp.asarray(0, dtype=jnp.bool_),
+            solver_parameters=parameters,
+        )
+
+    pseudo_initial_state = initialize_lane(
+        jnp.asarray([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]),
+        jnp.asarray([0.25, 0.25, 0.75, 0.75, 1.0, 1.0, 1.25, 1.25], dtype=jnp.float32),
+        jnp.zeros((8,), dtype=jnp.float64),
+    )
+    # Five cases among seven carriers give the nonzero Firth optimum log(11 / 5).
+    # Hard calls avoid a decimal fixture that stalls just above tolerance in
+    # the unchanged CUDA scalar solver when step-halving reaches roundoff.
+    newton_initial_state = initialize_lane(
+        jnp.asarray([1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+        jnp.asarray([0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], dtype=jnp.float32),
+        jnp.zeros((8,), dtype=jnp.float64),
+    )
+    newton_initial_state = dataclasses.replace(
+        newton_initial_state,
+        solver_parameters=dataclasses.replace(parameters, pseudo_maximum_iterations=jnp.asarray(0, dtype=jnp.int32)),
+    )
+    failed_null_initial_state = dataclasses.replace(
+        newton_initial_state,
+        deviance_null=jnp.asarray(jnp.nan),
+    )
+    pseudo_reference = regenie2_binary_firth_scalar_approx.run_initialized_scalar_pseudo_firth_solver(
+        pseudo_initial_state
+    )
+    rejected_pseudo = regenie2_binary_firth_scalar_approx.run_initialized_scalar_pseudo_firth_solver(
+        newton_initial_state
+    )
+    newton_reference = regenie2_binary_firth_scalar_approx.run_initialized_scalar_newton_raphson_firth_solver(
+        newton_initial_state
+    )
+    assert bool(np.asarray(pseudo_reference.valid_mask))
+    assert not bool(np.asarray(rejected_pseudo.valid_mask))
+    assert bool(np.asarray(newton_reference.valid_mask))
+    initial_states = jax.tree.map(
+        lambda *values: jnp.stack(values),
+        pseudo_initial_state,
+        newton_initial_state,
+        newton_initial_state,
+        failed_null_initial_state,
+    )
+    observed = jax.jit(regenie2_binary_firth_batch_compute.resolve_initialized_scalar_firth_batch)(
+        initial_states=initial_states,
+        solver_active_mask=jnp.asarray([True, True, False, False]),
+    )
+    reference = regenie2_binary_firth_scalar_approx.finalize_scalar_firth_terminal_result(
+        jax.tree.map(lambda *values: jnp.stack(values), pseudo_reference, newton_reference)
+    )
+    np.testing.assert_array_equal(observed.valid_mask, np.asarray([True, True, False, False]))
+    for field_name in ("beta", "standard_error", "chi_squared", "log10_p_value"):
+        observed_values = np.asarray(getattr(observed, field_name))
+        tests.numerical.assert_absolute_difference_less_than(
+            observed_values[:2],
+            np.asarray(getattr(reference, field_name)),
+            1.0e-10,
+        )
+        assert bool(np.all(np.isnan(observed_values[2:])))
 
 
 def test_finalization_uses_chi_square_tail_without_changing_status() -> None:

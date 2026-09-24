@@ -258,6 +258,17 @@ py-spy, Scalene, Memray, Nsight Systems, Nsight Compute, and Linux perf when
 the tools and node permissions allow them. Missing or permission-blocked
 optional profilers are reported as skipped.
 
+JAX trace capture warms up one complete application run in the same process
+before starting the trace, using a distinct `.trace_warmup.g` output root.
+Python call tracing is disabled so device work and host dispatch remain
+inspectable without filling the trace with compilation and import calls.
+The trace directory's `capture_scope.json` records this scope, warmup time,
+output root, and JAX version. These traces describe a warm application run;
+fresh-process initialization remains covered by the separate stage diagnostic
+and startup-oriented profilers. External profiler success also requires valid
+completed application output. An interrupted sampler's partial trace is retained
+but is not reported as a successful application profile.
+
 Headline candidate and finalist trials use production telemetry-off execution.
 Exact stage timing is a separate diagnostic lifecycle and is excluded from
 headline elapsed times. Current native profile telemetry must contain:

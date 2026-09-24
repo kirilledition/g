@@ -145,9 +145,30 @@ def build_g_step2_child_command(
         requested_stage_timing_path = {stage_timing_path!r}
         jax_module = None
         if trace_directory is not None:
+            warmup_arguments = list(cli_arguments)
+            warmup_output_prefix = {trace_warmup_output_prefix!r}
+            warmup_arguments[warmup_arguments.index("--out") + 1] = warmup_output_prefix
+            warmup_start_time = time.perf_counter()
+            warmup_exit_code = g.cli.run(warmup_arguments)
+            warmup_seconds = time.perf_counter() - warmup_start_time
+            if warmup_exit_code != 0:
+                raise RuntimeError(f"g trace warmup exited with status {{warmup_exit_code}}.")
             import jax as jax_module
 
-            jax_module.profiler.start_trace(trace_directory)
+            profile_options = jax_module.profiler.ProfileOptions()
+            profile_options.python_tracer_level = 0
+            trace_path = Path(trace_directory)
+            trace_path.mkdir(parents=True, exist_ok=True)
+            (trace_path / "capture_scope.json").write_text(json.dumps({{
+                "schema_version": 1,
+                "scope": "same_process_warm_application_run",
+                "warmup_output_root": warmup_output_prefix + ".g",
+                "warmup_seconds": warmup_seconds,
+                "python_tracer_level": 0,
+                "jax_version": jax_module.__version__,
+                "includes_cold_initialization": False,
+            }}, indent=2) + "\\n", encoding="utf-8")
+            jax_module.profiler.start_trace(trace_directory, profiler_options=profile_options)
         try:
             start_time = time.perf_counter()
             exit_code = g.cli.run(cli_arguments)
@@ -188,6 +209,7 @@ def build_g_step2_child_command(
     ).format(
         cli_arguments_payload=json.dumps(cli_arguments),
         output_root=str(Path(f"{output_prefix}.g")),
+        trace_warmup_output_prefix=str(Path(f"{output_prefix}.trace_warmup")),
         trace_directory=str(trace_directory) if trace_directory is not None else None,
         memory_profile_path=str(memory_profile_path) if memory_profile_path is not None else None,
         stage_timing_path=str(stage_timing_path) if stage_timing_path is not None else None,

@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft | main branch as of 2026-06-30 resume and manifest behavior | Public user docs |
+| Pre-release draft | Step 2 resume and manifest behavior as of 2026-09-24 | Public user docs |
 
 This page is the canonical user-facing reference for resumable output runs.
 
@@ -91,6 +91,25 @@ resume = true
 Resume is always strict: after manifest compatibility passes, `g` reconciles
 committed chunk identifiers with the chunk files on disk before continuing.
 There is no public resume-validation mode.
+
+If every chunk is already committed for every selected phenotype, the validated
+resume completes without importing or configuring JAX, discovering devices, or
+constructing an association backend. Input alignment, execution-plan and source
+fingerprints, requested device policy, and every Parquet part still pass the
+usual validation. Process-global logging, thread, and already configured JAX
+policy compatibility checks also apply. A resume with pending chunks initializes
+the requested backend and computes those chunks normally.
+
+This reduces startup work for a completed resume. Fresh analyses and partial
+resumes still initialize their compute runtime. Profile telemetry for a completed
+resume has native preparation/execution timings and no JAX setup or backend
+initialization stage.
+
+This deferred initialization applies only when `resume = true`. Fresh analyses
+initialize JAX before preparing output manifests, preserving the ability to fix a
+device setup error and retry without an initialized output directory. During a
+resume, an initialization failure aborts active writers while preserving existing
+committed output; an interruption flushes writers and records its signal.
 
 Resume requires current chunk commit metadata in every Parquet part.
 Parts without the native writer's `g.output.chunk_commits` footer metadata are

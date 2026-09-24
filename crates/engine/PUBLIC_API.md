@@ -26,7 +26,14 @@ from error-message text.
 
 ## Public functions
 
-Invoke the coarse coordinated run entry point used by `g-runner`.
+Invoke the coarse coordinated run entry point used by `g-runner`. Its backend
+initializer receives the canonical plan only after native preparation and strict
+resume reconciliation succeed. The runner supplies an already initialized backend
+for fresh analyses and a deferred initializer for explicit resumes. Fully committed
+runs retain normal delivery,
+progress, interruption, and output completion handling without invoking the
+initializer. Initialization failures abort prepared output; typed interruptions
+flush it and record interruption metadata.
 
 ## This crate must not expose
 

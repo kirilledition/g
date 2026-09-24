@@ -31,18 +31,3 @@ class CorrectedMultiBinaryScoreChunkResult:
     association: Regenie2MultiBinaryScoreChunkResult
     firth_candidate_count: jax.Array
     firth_candidate_capacity: int
-
-
-@jax.tree_util.register_dataclass
-@dataclass(frozen=True)
-class DecodedMultiBinaryScoreChunkResult:
-    """Packed8 score result retaining its decoded device genotypes.
-
-    Attributes:
-        genotype_matrix_by_variant: Decoded variant-major dosage matrix.
-        score_result: Trait-major score-test result.
-
-    """
-
-    genotype_matrix_by_variant: jax.Array
-    score_result: Regenie2MultiBinaryScoreChunkResult

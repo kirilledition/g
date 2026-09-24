@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-23 | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-24 | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
@@ -59,6 +59,20 @@ Binary scoring also checks whether dosages vary across samples. The decoded
 path carries that check through its existing sample tiles; the materialized
 path performs a per-variant comparison reduction.
 
+For packed8 binary input, approximate Firth retains the packed chunk and decodes
+only selected correction rows. It avoids keeping a full float32 dosage matrix
+alive through scoring and correction; correction capacity and sample count
+still determine the selected matrix size. The float32 decoding boundary and
+statistical formulas are preserved. On the large synthetic fixture in the
+[profiling review](../development/performance-review-2026-09-24.md), process-
+lifetime peak live JAX allocation fell by 27%; allocator pool reservation did
+not fall. This is a workload-specific memory result, not a speed guarantee.
+
+CUDA Firth batches exclude inactive lanes and successful pseudo-stage lanes
+from subsequent solver work. Benefits depend on candidate density and fallback
+frequency. Small candidate sets can add overhead; CPU components keep their
+original validity handling.
+
 ## Cold, Warm, And Hot Runs
 
 Do not compare timing modes as if they measured the same thing:
@@ -71,6 +85,18 @@ Do not compare timing modes as if they measured the same thing:
 
 Use cold-process timing for batch-job wall-clock expectations. Use warm-cache
 or hot same-process timing only when that is the workflow being measured.
+
+Fresh GPU compilation can choose different vendor matrix kernels, changing low
+float32 bits as well as runtime even with identical source and inputs. Record
+software versions, device details, and compilation-cache provenance when
+comparing results. The [profiling review](../development/performance-review-2026-09-24.md)
+includes controlled replay that separates this variation from a decoding change.
+
+Explicit resumes that have no pending output still perform input and committed-
+output validation, then finish without initializing JAX or a device backend.
+In the same review's completed-run comparison, median fresh harness-process
+time fell from 13.49 s to 1.08 s. This measures completed resumes with warm
+filesystem caches; unfinished scans still need their normal compute runtime.
 
 For several compatible production scans, use the native batch command to make
 the hot same-process path explicit:

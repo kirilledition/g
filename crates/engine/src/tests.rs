@@ -1547,3 +1547,104 @@ mod compressed_layout_benchmark {
             .expect("benchmark report is written");
     }
 }
+
+#[test]
+fn coordinated_resume_initializes_backend_only_for_pending_phenotypes() {
+    struct GroupInterruptionHooks {
+        backend: Arc<TestBackend>,
+        interrupt_second_group: bool,
+    }
+
+    impl crate::run::RunHooks for GroupInterruptionHooks {
+        type BackendError = TestBackendError;
+        type Error = TestBackendError;
+
+        fn check_interruption(&mut self) -> Result<(), Self::Error> {
+            let prepared_group_count = self
+                .backend
+                .events
+                .lock()
+                .expect("test events remain available")
+                .iter()
+                .filter(|event| event.as_str() == "prepare_group")
+                .count();
+            if self.interrupt_second_group && prepared_group_count == 2 {
+                Err(TestBackendError("interrupt"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn interruption_signal_name(error: &Self::Error) -> Option<&str> {
+            (error.0 == "interrupt").then_some("SIGINT")
+        }
+
+        fn backend_interruption_error(_error: &Self::BackendError) -> Option<Self::Error> {
+            None
+        }
+    }
+
+    let fixture = RunPreparationFixture::new();
+    let make_run_plan = |resume| {
+        let mut run_plan = fixture.run_plan();
+        run_plan.association_mode = g_plan::AssociationMode::Regenie2Linear;
+        run_plan.output.resume = resume;
+        run_plan
+    };
+    let backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    let mut hooks = GroupInterruptionHooks { backend: Arc::clone(&backend), interrupt_second_group: true };
+    let interrupted = crate::execute_coordinated_run(
+        make_run_plan(false),
+        String::new(),
+        |_, _, _| Ok(Arc::clone(&backend)),
+        &mut hooks,
+        &g_runtime::TelemetryRunSession::default(),
+        "resume-test",
+        None,
+    );
+    assert!(matches!(interrupted, Err(crate::EngineRunError::Interrupted(TestBackendError("interrupt")))));
+    assert_eq!(fixture.manifest("trait-a")["committed_chunks"].as_array().expect("commit list").len(), 1);
+    assert!(fixture.manifest("trait-b")["committed_chunks"].as_array().expect("commit list").is_empty());
+    let preserved_part = std::fs::read_dir(fixture.directory.join("output/trait-a.run/parts"))
+        .expect("committed phenotype has output")
+        .next()
+        .expect("committed phenotype has a part")
+        .expect("part entry is readable")
+        .path();
+    let preserved_bytes = std::fs::read(&preserved_part).expect("first phenotype output is readable");
+
+    let resumed_backend = Arc::new(TestBackend::new(TestFailureStage::None));
+    hooks = GroupInterruptionHooks { backend: Arc::clone(&resumed_backend), interrupt_second_group: false };
+    let mut initialization_count = 0;
+    let artifacts = crate::execute_coordinated_run(
+        make_run_plan(true),
+        String::new(),
+        |_, _, _| {
+            initialization_count += 1;
+            Ok(Arc::clone(&resumed_backend))
+        },
+        &mut hooks,
+        &g_runtime::TelemetryRunSession::default(),
+        "resume-test",
+        None,
+    )
+    .expect("asymmetric phenotype coverage resumes");
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(initialization_count, 1);
+    assert_eq!(resumed_backend.transfer_count.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(&preserved_part).expect("preserved part remains readable"), preserved_bytes);
+    assert_eq!(fixture.manifest("trait-a")["status"], "completed");
+    assert_eq!(fixture.manifest("trait-b")["status"], "completed");
+
+    crate::execute_coordinated_run::<TestBackend, _, _>(
+        make_run_plan(true),
+        String::new(),
+        |_, _, _| panic!("fully committed outputs must not initialize a backend"),
+        &mut hooks,
+        &g_runtime::TelemetryRunSession::default(),
+        "resume-test",
+        None,
+    )
+    .expect("fully committed phenotypes finish without a backend");
+    assert_eq!(resumed_backend.transfer_count.load(Ordering::SeqCst), 1);
+}

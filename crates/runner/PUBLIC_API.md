@@ -24,7 +24,12 @@ layout into a generic `g-runtime::NativeRunSessionPolicy`, owns process-global
 setup, constructs terminal output, and invokes the coordinated engine run
 exactly once per compiled run. It rejects an incompatible process-global
 logging topology under the runtime-state lock before opening run files or
-starting asynchronous writers.
+starting asynchronous writers. Native thread policy is configured before engine
+preparation. Explicit resumes defer JAX setup and backend construction until
+the prepared engine reports pending chunks; completed resumes still validate
+compatibility with any JAX policy already configured in the process. Fresh runs
+initialize the backend before engine preparation, preserving startup failure
+behavior without newly initialized output manifests.
 
 ## This crate must not expose
 

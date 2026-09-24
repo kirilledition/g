@@ -1742,6 +1742,20 @@ def attach_deep_profiler_metadata(
         expected_output_root=run_paths.application_output_run_directory,
         require_child_artifacts=False,
     )
+    if result.status in {"success", "partial"} and application_metadata.output_row_count is None:
+        result = dataclasses.replace(
+            result,
+            status="failed",
+            notes=" ".join(
+                note
+                for note in (
+                    result.notes,
+                    "Profiler returned successfully, but its application did not produce valid completed output. "
+                    "The retained profiler artifact may contain only a partial run.",
+                )
+                if note
+            ),
+        )
     return dataclasses.replace(
         result,
         wall_time_seconds=(

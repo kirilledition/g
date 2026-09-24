@@ -54,13 +54,14 @@ def take_candidate_stat_vector(stat_vector: jax.Array | None, candidate_indices:
 
 def select_multi_firth_candidate_rows(
     *,
-    genotype_matrix_by_variant: jax.Array,
+    genotype_values_by_variant: jax.Array,
+    genotype_is_packed8: bool,
     candidate_mask: jax.Array,
     candidate_capacity: int,
     firth_batch_size: int,
 ) -> SelectedMultiFirthCandidateRows:
-    """Select fixed-capacity candidate rows from a decoded genotype matrix."""
-    variant_count = genotype_matrix_by_variant.shape[0]
+    """Select candidate rows and decode only selected packed probabilities."""
+    variant_count = genotype_values_by_variant.shape[0]
     batch_plan = regenie2_binary_candidate_planning.build_device_firth_batch_plan(
         candidate_mask.reshape((-1,)),
         candidate_capacity=candidate_capacity,
@@ -68,15 +69,24 @@ def select_multi_firth_candidate_rows(
     )
     flat_fallback_indices = batch_plan.fallback_index_matrix.reshape((-1,))
     flat_variant_indices = flat_fallback_indices % variant_count
+    if genotype_is_packed8:
+        selected_genotypes = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+            jnp.take(genotype_values_by_variant, flat_variant_indices, axis=0)
+        )
+        # Keep the previous float32 materialization boundary before allele
+        # subtraction and weighted residualization can fuse with decoding.
+        selected_genotypes = jax.lax.optimization_barrier(selected_genotypes)
+    else:
+        selected_genotypes = jnp.take(
+            jnp.asarray(genotype_values_by_variant, dtype=jnp.float32),
+            flat_variant_indices,
+            axis=0,
+        )
     return SelectedMultiFirthCandidateRows(
         flat_active_mask=batch_plan.fallback_active_mask_matrix.reshape((-1,)),
         flat_trait_indices=flat_fallback_indices // variant_count,
         flat_variant_indices=flat_variant_indices,
-        genotype_matrix_by_variant=jnp.take(
-            jnp.asarray(genotype_matrix_by_variant, dtype=jnp.float32),
-            flat_variant_indices,
-            axis=0,
-        ),
+        genotype_matrix_by_variant=selected_genotypes,
     )
 
 

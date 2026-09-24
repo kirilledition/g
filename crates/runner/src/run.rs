@@ -5,7 +5,9 @@ use std::time::Instant;
 
 use g_engine::{AssociationBackend, RunHooks};
 use g_interface::{CliDispatch, CompiledCliRun};
-use g_runtime::{NativeRunSession, NativeRunSessionPolicy, ProcessRuntimeState, TelemetryRunSession};
+use g_runtime::{
+    NativeRunSession, NativeRunSessionPolicy, ProcessRuntimeState, StageTimingRecorder, TelemetryRunSession,
+};
 use serde::Serialize;
 
 use crate::backend_plan::JaxAssociationBackendPlan;
@@ -295,30 +297,33 @@ where
     let thread_name = host.current_thread_name()?;
     let mut execution_result = (|| {
         host.install_python_logging()?;
-        let runtime_start_time = Instant::now();
-        configure_process_runtime(
-            host,
-            &run_plan,
-            native_session.policy(),
-            native_session.telemetry_session(),
-            &thread_name,
-        )?;
-        native_session.record_stage_duration("jax_runtime_configuration", runtime_start_time);
-
-        let backend_start_time = Instant::now();
-        let backend =
-            host.create_backend(run_plan.compute.device, JaxAssociationBackendPlan::from_run_plan(&run_plan))?;
-        native_session.record_stage_duration("jax_backend_initialization", backend_start_time);
+        configure_native_process_runtime(host, &run_plan, native_session.policy())?;
 
         let telemetry_session = native_session.telemetry_session().clone();
-        let stage_timing_recorder = native_session.stage_timing_recorder();
+        let mut stage_timing_recorder = native_session.stage_timing_recorder();
+        let prepared_backend = if run_plan.output.resume {
+            None
+        } else {
+            Some(initialize_backend(
+                host,
+                &run_plan,
+                &telemetry_session,
+                &thread_name,
+                stage_timing_recorder.as_deref_mut(),
+            )?)
+        };
         let thread_name_for_run = thread_name.as_str();
         let execution_result = Host::detach(|| {
             let mut hooks = HostRunHooks { host };
             g_engine::execute_coordinated_run(
                 run_plan,
                 effective_config_toml,
-                backend,
+                |prepared_plan, hooks: &mut HostRunHooks<'_, Host>, recorder| match prepared_backend {
+                    Some(backend) => Ok(backend),
+                    None => {
+                        initialize_backend(hooks.host, prepared_plan, &telemetry_session, thread_name_for_run, recorder)
+                    }
+                },
                 &mut hooks,
                 &telemetry_session,
                 thread_name_for_run,
@@ -385,12 +390,33 @@ where
     NativeRunSession::new(&mut state.native, policy).map_err(|error| host.run_error(error.to_string()))
 }
 
-fn configure_process_runtime<Host>(
+fn initialize_backend<Host>(
+    host: &mut Host,
+    run_plan: &g_plan::RunPlan,
+    telemetry_session: &TelemetryRunSession,
+    thread_name: &str,
+    mut recorder: Option<&mut StageTimingRecorder>,
+) -> Result<Arc<Host::Backend>, Host::Error>
+where
+    Host: NativeRunHost,
+{
+    let runtime_start_time = Instant::now();
+    configure_process_runtime(host, run_plan, telemetry_session, thread_name)?;
+    if let Some(recorder) = recorder.as_deref_mut() {
+        recorder.add_stage_duration("jax_runtime_configuration", runtime_start_time.elapsed().as_secs_f64());
+    }
+    let backend_start_time = Instant::now();
+    let backend = host.create_backend(run_plan.compute.device, JaxAssociationBackendPlan::from_run_plan(run_plan))?;
+    if let Some(recorder) = recorder {
+        recorder.add_stage_duration("jax_backend_initialization", backend_start_time.elapsed().as_secs_f64());
+    }
+    Ok(backend)
+}
+
+fn configure_native_process_runtime<Host>(
     host: &mut Host,
     run_plan: &g_plan::RunPlan,
     logging_policy: &NativeRunSessionPolicy,
-    telemetry_session: &TelemetryRunSession,
-    thread_name: &str,
 ) -> Result<(), Host::Error>
 where
     Host: NativeRunHost,
@@ -413,14 +439,26 @@ where
         &NativeRuntimeKnobsDiagnosticFields { threads: rayon_thread_count },
     )
     .map_err(|error| host.run_error(format!("Failed to serialize runtime diagnostic event: {error}")))?;
-    let setup_preparation_required = {
+    if let Some(thread_count) = rayon_thread_count {
         let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
-        if let Some(thread_count) = rayon_thread_count {
-            state
-                .native
-                .configure_rayon_thread_pool(thread_count)
-                .map_err(|error| host.run_error(error.to_string()))?;
-        }
+        state.native.configure_rayon_thread_pool(thread_count).map_err(|error| host.run_error(error.to_string()))?;
+    }
+    Ok(())
+}
+
+fn configure_process_runtime<Host>(
+    host: &mut Host,
+    run_plan: &g_plan::RunPlan,
+    telemetry_session: &TelemetryRunSession,
+    thread_name: &str,
+) -> Result<(), Host::Error>
+where
+    Host: NativeRunHost,
+{
+    let jax_policy = build_jax_runtime_policy(run_plan).map_err(|error| host.run_error(error.to_string()))?;
+    let runtime_state = global_process_runtime_state();
+    let setup_preparation_required = {
+        let state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
         state.jax.setup_preparation_required(&jax_policy).map_err(|error| host.run_error(error.to_string()))?
     };
     if setup_preparation_required {
@@ -434,10 +472,6 @@ where
     configure_jax_runtime(host, &mut setup_session, telemetry_session, thread_name)?;
     let gpu_validation_status = setup_session.gpu_validation_status;
     let mut state = lock_runtime_state(runtime_state).map_err(|message| host.run_error(message))?;
-    state
-        .native
-        .require_compatible_runtime_policy(logging_policy, rayon_thread_count)
-        .map_err(|error| host.run_error(error.to_string()))?;
     if should_configure_jax {
         state
             .jax

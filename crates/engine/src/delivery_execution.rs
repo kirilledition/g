@@ -84,7 +84,7 @@ type DeliveryResult<Value, BackendError, InterruptionError> =
 /// backend execution, scheduling, or output fails.
 pub(crate) fn run_association_delivery<Backend, CheckInterruption, InterruptionError>(
     genotype_input: &PreparedGenotypeInput,
-    backend: &Arc<Backend>,
+    backend: Option<&Arc<Backend>>,
     mut request: AssociationDeliveryRequest,
     mut check_interruption: CheckInterruption,
 ) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
@@ -98,6 +98,9 @@ where
         check_interruption().map_err(DeliveryError::Interrupted)?;
         return Ok(AssociationDeliveryReport { processed_chunk_count: 0, warnings: Vec::new() });
     }
+    let backend = backend.ok_or_else(|| {
+        DeliveryError::InvalidInput("Pending association chunks require an initialized backend.".to_string())
+    })?;
     let read_session = genotype_input.reader.read_session(&request.group.sample_indices)?;
     let delivery_result = run_prepared_association_delivery(
         genotype_input,

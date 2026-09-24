@@ -333,6 +333,11 @@ def compute_multi_binary_score_test_packed8_core(
     )
 
 
+compute_multi_binary_score_test_packed8 = jax.jit(
+    compute_multi_binary_score_test_packed8_core,
+    static_argnames=SCORE_STATIC_ARGNAMES,
+)
+
 compute_multi_binary_score_test_packed8_donating_inputs = jax.jit(
     compute_multi_binary_score_test_packed8_core,
     static_argnames=SCORE_STATIC_ARGNAMES,

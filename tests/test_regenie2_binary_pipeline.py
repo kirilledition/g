@@ -6,6 +6,7 @@ import dataclasses
 import math
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +14,7 @@ import pytest
 
 import tests.numerical
 from g import jax_backend, types
+from g.compute.common import genotype as compute_genotype
 from g.compute.common import result as association_result
 from g.compute.regenie2_binary import api as regenie2_binary_api
 from g.compute.regenie2_binary import candidates as regenie2_binary_candidates
@@ -22,6 +24,7 @@ from g.compute.regenie2_binary import score as regenie2_binary_score
 from g.compute.regenie2_binary import state as regenie2_binary_state
 from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 from g.compute.regenie2_binary.firth.batch import prepare as regenie2_binary_firth_prepare
+from g.compute.regenie2_binary.variant_major_correction import dispatch as variant_major_dispatch
 from g.compute.regenie2_binary.variant_major_correction import fixed_capacity
 
 # The production solver intentionally stops at a 2.5e-4 adjusted-score
@@ -103,6 +106,15 @@ class ScalarFirthOracleComponents:
     genotype_information: float
     penalized_deviance: float
     score: float
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class MaterializedPackedScoreReference:
+    """Previous packed score boundary retaining rounded raw float32 dosages."""
+
+    genotype_matrix_by_variant: jax.Array
+    score_result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult
 
 
 @dataclass(frozen=True)
@@ -889,9 +901,23 @@ def test_multi_trait_pipeline_preserves_reordered_candidate_associations() -> No
     assert_firth_association_matches_references(observed.association, references)
 
 
-def test_zero_candidate_pipeline_retains_score_results() -> None:
+@pytest.mark.parametrize("include_untestable_variant", [False, True])
+def test_zero_candidate_pipeline_retains_score_results(*, include_untestable_variant: bool) -> None:
     """Leave score rows untouched when no lane crosses the Firth threshold."""
-    prepared = build_prepared_firth_pipeline()
+    fixture = build_firth_pipeline_fixture()
+    if include_untestable_variant:
+        fixture = dataclasses.replace(
+            fixture,
+            genotype_matrix_by_variant=np.concatenate(
+                (fixture.genotype_matrix_by_variant, np.zeros_like(fixture.genotype_matrix_by_variant[:1])),
+                axis=0,
+            ),
+            sparse_candidate_mask=np.concatenate((fixture.sparse_candidate_mask, np.asarray([False]))),
+        )
+    prepared = prepare_firth_pipeline(
+        fixture=fixture,
+        kernel_config=build_binary_kernel_config(candidate_capacity=2, batch_size=2),
+    )
     observed = run_production_firth_pipeline(
         prepared=prepared,
         firth_se=False,
@@ -910,22 +936,10 @@ def test_zero_candidate_pipeline_retains_score_results() -> None:
     )
 
     assert int(np.asarray(observed.firth_candidate_count)) == 0
-    tests.numerical.assert_absolute_difference_less_than(observed.association.beta, score_result.beta, 1.0e-12)
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.standard_error,
-        score_result.standard_error,
-        1.0e-12,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.chi_squared,
-        score_result.chi_squared,
-        1.0e-12,
-    )
-    tests.numerical.assert_absolute_difference_less_than(
-        observed.association.log10_p_value,
-        score_result.log10_p_value,
-        1.0e-12,
-    )
+    np.testing.assert_array_equal(observed.association.beta, score_result.beta)
+    np.testing.assert_array_equal(observed.association.standard_error, score_result.standard_error)
+    np.testing.assert_array_equal(observed.association.chi_squared, score_result.chi_squared)
+    np.testing.assert_array_equal(observed.association.log10_p_value, score_result.log10_p_value)
     np.testing.assert_array_equal(observed.association.correction_code, score_result.correction_code)
 
 
@@ -1038,6 +1052,114 @@ def test_null_firth_failure_propagates_through_production_pipeline(
     assert bool(np.all(np.isnan(np.asarray(observed.association.log10_p_value))))
 
 
+@pytest.mark.parametrize("use_native_mean", [False, True])
+def test_packed_fractional_corrections_match_materialized_dosages(*, use_native_mean: bool) -> None:
+    """Preserve decoded float32 rounding through flipping and residualization."""
+    prepared = build_prepared_firth_pipeline()
+    packed_probability_pairs = jnp.asarray(
+        [
+            [[0, 42], [51, 102], [0, 15], [64, 128], [0, 129], [0, 252], [128, 41], [200, 47]],
+            [[235, 17], [102, 51], [201, 36], [63, 127], [224, 9], [111, 112], [201, 44], [127, 19]],
+            [[127, 2], [126, 2], [127, 2], [126, 2], [127, 2], [126, 2], [126, 2], [127, 2]],
+        ],
+        dtype=jnp.uint8,
+    )
+    native_mean = (
+        jnp.asarray([1.25, 0.75, np.nextafter(np.float32(1.0), np.float32(2.0))], dtype=jnp.float32)
+        if use_native_mean
+        else None
+    )
+    kernel_config = dataclasses.replace(
+        prepared.kernel_config,
+        firth_candidate=regenie2_binary_config.FirthCandidateConfig(candidate_capacity=4, batch_size=2),
+    )
+    sparse_mask = jnp.asarray([False, True, False])
+
+    @jax.jit
+    def build_materialized_reference(
+        chromosome_state: regenie2_binary_state.Regenie2MultiBinaryScoreChromosomeState,
+        packed_genotypes: jax.Array,
+        genotype_mean: jax.Array | None,
+    ) -> MaterializedPackedScoreReference:
+        dosages = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(packed_genotypes)
+        means = compute_genotype.compute_diploid_genotype_mean(dosages, genotype_mean)
+        return MaterializedPackedScoreReference(
+            genotype_matrix_by_variant=dosages,
+            score_result=regenie2_binary_score.compute_multi_binary_score_test_packed8_with_flip_mask(
+                chromosome_state=chromosome_state,
+                packed_probability_pairs_by_variant=packed_genotypes,
+                genotype_flip_mask=means > 1.0,
+                firth_candidate_p_threshold=1.0,
+                minimum_variance=kernel_config.numerical.minimum_variance,
+                relative_variance_tolerance=kernel_config.numerical.relative_variance_tolerance,
+            ),
+        )
+
+    materialized_reference = build_materialized_reference(
+        prepared.chromosome_state.score_state,
+        packed_probability_pairs,
+        native_mean,
+    )
+    expected = variant_major_dispatch.apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
+        chromosome_state=prepared.chromosome_state,
+        genotype_values_by_variant=materialized_reference.genotype_matrix_by_variant,
+        genotype_is_packed8=False,
+        result=materialized_reference.score_result,
+        firth_se=False,
+        kernel_config=kernel_config,
+        sparse_candidate_mask=sparse_mask,
+        native_genotype_mean=native_mean,
+    )
+    observed = regenie2_binary_api.compute_regenie2_multi_binary_chunk_from_chromosome_state_packed8(
+        chromosome_state=prepared.chromosome_state,
+        packed_probability_pairs_by_variant=packed_probability_pairs,
+        correction_plan=types.BinaryCorrectionPlan(p_threshold=1.0, firth_se=False),
+        kernel_config=kernel_config,
+        sparse_candidate_mask=sparse_mask,
+        native_genotype_mean=native_mean,
+    )
+    assert int(np.asarray(expected.firth_candidate_count)) == 3
+    for field_name in ("beta", "standard_error", "chi_squared", "log10_p_value", "correction_code"):
+        expected_values = np.asarray(getattr(expected.association, field_name))
+        observed_values = np.asarray(getattr(observed.association, field_name))
+        np.testing.assert_array_equal(observed_values.view(np.uint8), expected_values.view(np.uint8))
+
+
+@pytest.mark.parametrize("candidate_capacity", [1, 4, 8])
+def test_packed_candidate_selection_matches_decoded_fractional_rows(candidate_capacity: int) -> None:
+    """Preserve probability rounding and padded trait-major candidate order."""
+    packed_probability_pairs = jnp.asarray(
+        [
+            [[255, 0], [102, 51], [63, 127]],
+            [[0, 255], [0, 0], [128, 127]],
+            [[1, 254], [127, 126], [254, 1]],
+        ],
+        dtype=jnp.uint8,
+    )
+    candidate_mask = jnp.asarray([[False, True, True], [True, False, True]])
+    decoded_dosages = compute_genotype.decode_packed8_probability_pairs_to_variant_major_dosage(
+        packed_probability_pairs
+    )
+    expected = regenie2_binary_firth_prepare.select_multi_firth_candidate_rows(
+        genotype_values_by_variant=decoded_dosages,
+        genotype_is_packed8=False,
+        candidate_mask=candidate_mask,
+        candidate_capacity=candidate_capacity,
+        firth_batch_size=2,
+    )
+    observed = regenie2_binary_firth_prepare.select_multi_firth_candidate_rows(
+        genotype_values_by_variant=packed_probability_pairs,
+        genotype_is_packed8=True,
+        candidate_mask=candidate_mask,
+        candidate_capacity=candidate_capacity,
+        firth_batch_size=2,
+    )
+    np.testing.assert_array_equal(observed.genotype_matrix_by_variant, expected.genotype_matrix_by_variant)
+    np.testing.assert_array_equal(observed.flat_trait_indices, expected.flat_trait_indices)
+    np.testing.assert_array_equal(observed.flat_variant_indices, expected.flat_variant_indices)
+    np.testing.assert_array_equal(observed.flat_active_mask, expected.flat_active_mask)
+
+
 def test_fixed_capacity_selection_and_merge_preserve_flat_candidate_order() -> None:
     """Select trait-major lanes and merge active, flipped, and failed results."""
     genotype_matrix_by_variant = jnp.asarray(
@@ -1049,7 +1171,8 @@ def test_fixed_capacity_selection_and_merge_preserve_flat_candidate_order() -> N
         dtype=jnp.bool_,
     )
     selected_rows = regenie2_binary_firth_prepare.select_multi_firth_candidate_rows(
-        genotype_matrix_by_variant=genotype_matrix_by_variant,
+        genotype_values_by_variant=genotype_matrix_by_variant,
+        genotype_is_packed8=False,
         candidate_mask=candidate_mask,
         candidate_capacity=4,
         firth_batch_size=2,

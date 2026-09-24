@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import typing
 from dataclasses import dataclass
@@ -36,17 +37,37 @@ def resolve_initialized_scalar_firth_batch(
     solver_active_mask: jax.Array,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Run one pseudo batch and only enter Newton when a lane needs fallback."""
+    active_initial_states = initial_states
+    # A vmapped loop continues until every lane stops. Excluding unused CUDA
+    # lanes shortens those phases; the CPU path avoids the extra masking work.
+    if initial_states.solver_parameters.use_cuda_components:
+        active_initial_states = dataclasses.replace(
+            initial_states,
+            components=dataclasses.replace(
+                initial_states.components,
+                valid=initial_states.components.valid & solver_active_mask,
+            ),
+        )
     pseudo_terminal_result = jax.vmap(regenie2_binary_firth_scalar_approx.run_initialized_scalar_pseudo_firth_solver)(
-        initial_states
+        active_initial_states
     )
     fallback_mask = solver_active_mask & (~pseudo_terminal_result.valid_mask)
 
     def run_newton_raphson_fallback(
         states: regenie2_binary_firth_types.ScalarApproximateFirthInitialState,
     ) -> regenie2_binary_firth_types.ScalarFirthTerminalResult:
+        fallback_initial_states = states
+        if states.solver_parameters.use_cuda_components:
+            fallback_initial_states = dataclasses.replace(
+                states,
+                components=dataclasses.replace(
+                    states.components,
+                    valid=states.components.valid & fallback_mask,
+                ),
+            )
         newton_raphson_terminal_result = jax.vmap(
             regenie2_binary_firth_scalar_approx.run_initialized_scalar_newton_raphson_firth_solver
-        )(states)
+        )(fallback_initial_states)
         return regenie2_binary_firth_types.ScalarFirthTerminalResult(
             beta=jnp.where(
                 fallback_mask,

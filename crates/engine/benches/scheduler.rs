@@ -5,7 +5,7 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
-use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[path = "../src/association_scheduler.rs"]
 mod association_scheduler;
@@ -27,6 +27,7 @@ use g_output::{NativeVariantMetadataHandle, Regenie2StatisticBatch};
 use output_schedule::ActiveTraitSelection;
 
 const BATCH_COUNT: usize = 512;
+const CHROMOSOME_22_BATCH_COUNT: usize = 26;
 const SAMPLE_COUNT: usize = 8;
 const VARIANT_COUNT: usize = 8;
 
@@ -159,8 +160,8 @@ fn build_batch(metadata: &VariantMetadataColumns, batch_index: usize) -> Schedul
     }
 }
 
-fn build_batches(metadata: &VariantMetadataColumns) -> Vec<ScheduledAssociationBatch> {
-    (0..BATCH_COUNT).map(|batch_index| build_batch(metadata, batch_index)).collect()
+fn build_batches(metadata: &VariantMetadataColumns, batch_count: usize) -> Vec<ScheduledAssociationBatch> {
+    (0..batch_count).map(|batch_index| build_batch(metadata, batch_index)).collect()
 }
 
 fn run_pipeline(batches: Vec<ScheduledAssociationBatch>) -> usize {
@@ -201,7 +202,7 @@ fn benchmark_scheduler(criterion: &mut Criterion) {
     group.throughput(Throughput::Elements(u64::try_from(BATCH_COUNT).expect("benchmark batch count fits u64")));
     group.bench_function("packed8_noop_roundtrip", |bencher| {
         bencher.iter_batched(
-            || build_batches(&metadata),
+            || build_batches(&metadata, BATCH_COUNT),
             |batches| {
                 assert_eq!(run_pipeline(batches), BATCH_COUNT);
             },
@@ -209,7 +210,38 @@ fn benchmark_scheduler(criterion: &mut Criterion) {
         );
     });
     group.finish();
+    criterion.bench_function("association_scheduler_empty_pipeline_lifecycle", |bencher| {
+        // Isolate worker construction, chromosome barriers, and joins. Empty
+        // production deliveries are skipped; this is only a lifecycle probe.
+        bencher.iter(|| assert_eq!(run_pipeline(Vec::new()), 0));
+    });
 }
 
-criterion_group!(benches, benchmark_scheduler);
+fn benchmark_group_lifecycles(criterion: &mut Criterion) {
+    let metadata = build_metadata();
+    let mut group = criterion.benchmark_group("association_scheduler_group_lifecycles");
+    for group_count in [1_usize, 8, 32] {
+        let total_batch_count = group_count * CHROMOSOME_22_BATCH_COUNT;
+        group.throughput(Throughput::Elements(
+            u64::try_from(total_batch_count).expect("benchmark total batch count fits u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("26_batches_per_group", group_count),
+            &group_count,
+            |bencher, count| {
+                bencher.iter_batched(
+                    || (0..*count).map(|_| build_batches(&metadata, CHROMOSOME_22_BATCH_COUNT)).collect::<Vec<_>>(),
+                    |groups| {
+                        let completed_batch_count: usize = groups.into_iter().map(run_pipeline).sum();
+                        assert_eq!(completed_batch_count, total_batch_count);
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(benches, benchmark_scheduler, benchmark_group_lifecycles);
 criterion_main!(benches);

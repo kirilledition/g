@@ -79,6 +79,14 @@ pub(crate) struct RunExecution {
 /// Failure while executing a fully prepared run.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunExecutionError<BackendError, HookError> {
+    #[error("Association backend initialization failed: {0}")]
+    Initialization(#[source] HookError),
+    #[error("Association backend initialization failed: {initialization}; output abort also failed: {output}")]
+    InitializationAbort {
+        initialization: HookError,
+        #[source]
+        output: g_output::OutputError,
+    },
     #[error("Association delivery failed: {0}")]
     Delivery(#[source] DeliveryError<BackendError, HookError>),
     #[error("Association delivery was interrupted.")]
@@ -163,7 +171,16 @@ impl RunEngine {
             genotype_input.reader.variant_count(),
             &planned_chunk_ranges,
         )?;
+        let has_pending_work = prepared_groups.iter().any(|group| {
+            group.output.committed_chunk_identifier_sets.is_empty()
+                || group
+                    .output
+                    .committed_chunk_identifier_sets
+                    .iter()
+                    .any(|committed| planned_chunk_ranges.iter().any(|range| !committed.contains(&range.start)))
+        });
         Ok(PreparedRun {
+            has_pending_work,
             run_plan,
             resolved_gpu_genotype_format,
             genotype_input,
@@ -178,8 +195,9 @@ struct PreparedAssociationGroup {
     output: OutputDeliveryState,
 }
 
-/// Fully prepared run awaiting one association backend.
+/// Fully prepared run with validated output coverage.
 pub(crate) struct PreparedRun {
+    has_pending_work: bool,
     run_plan: Arc<RunPlan>,
     resolved_gpu_genotype_format: GpuGenotypeFormat,
     genotype_input: PreparedGenotypeInput,
@@ -188,6 +206,36 @@ pub(crate) struct PreparedRun {
 }
 
 impl PreparedRun {
+    /// Report whether any validated output lane still needs association work.
+    pub(crate) const fn has_pending_work(&self) -> bool {
+        self.has_pending_work
+    }
+
+    /// Borrow the canonical plan used for backend initialization.
+    pub(crate) fn run_plan(&self) -> &RunPlan {
+        &self.run_plan
+    }
+
+    /// Close prepared output when deferred backend initialization fails.
+    pub(crate) fn fail_initialization<BackendError, Hooks>(
+        self,
+        initialization: Hooks::Error,
+    ) -> RunExecutionError<BackendError, Hooks::Error>
+    where
+        Hooks: RunHooks<BackendError = BackendError>,
+    {
+        if let Some(signal_name) = Hooks::interruption_signal_name(&initialization) {
+            return match self.output_manager.finish_interrupted(signal_name) {
+                Ok(()) => RunExecutionError::Interrupted(initialization),
+                Err(output) => RunExecutionError::InterruptedOutputFlush { interruption: initialization, output },
+            };
+        }
+        match self.output_manager.abort() {
+            Ok(()) => RunExecutionError::Initialization(initialization),
+            Err(output) => RunExecutionError::InitializationAbort { initialization, output },
+        }
+    }
+
     /// Return the resolved association backend contract.
     #[must_use]
     pub(crate) const fn resolved_gpu_genotype_format(&self) -> GpuGenotypeFormat {
@@ -195,13 +243,14 @@ impl PreparedRun {
     }
 
     /// Execute every prepared group with optional throttled progress reporting.
+    /// A missing backend is accepted only when delivery finds no pending chunks.
     ///
     /// # Errors
     ///
     /// Returns a typed backend, hook, delivery, or output completion error.
     pub(crate) fn execute_with_progress<Backend, Hooks>(
         self,
-        backend: Arc<Backend>,
+        backend: Option<Arc<Backend>>,
         hooks: &mut Hooks,
         progress_reporter: Option<&Arc<RunProgressReporter>>,
     ) -> Result<RunExecution, RunExecutionError<Backend::Error, Hooks::Error>>
@@ -209,7 +258,7 @@ impl PreparedRun {
         Backend: AssociationBackend + 'static,
         Hooks: RunHooks<BackendError = Backend::Error>,
     {
-        let PreparedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager } = self;
+        let PreparedRun { run_plan, resolved_gpu_genotype_format, genotype_input, groups, output_manager, .. } = self;
         let statistics_policy = match run_plan.association_mode {
             g_plan::AssociationMode::Regenie2Linear => g_genotype::ChunkStatisticsPolicy {
                 retain_imputed_dosage_square_sum: true,
@@ -256,7 +305,7 @@ impl PreparedRun {
                             statistics_policy,
                         },
                     };
-                    reports.push(run_association_delivery(&genotype_input, &backend, request, || {
+                    reports.push(run_association_delivery(&genotype_input, backend.as_ref(), request, || {
                         hooks.check_interruption()
                     })?);
                 }

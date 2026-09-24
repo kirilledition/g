@@ -110,14 +110,15 @@ pub struct PhenotypeRunArtifact {
 }
 
 /// Prepare, execute, observe, and describe one native association run.
+/// Initialize the backend only after validation finds pending association work.
 ///
 /// # Errors
 ///
 /// Returns a typed preparation, execution, telemetry, or diagnostic error.
-pub fn execute_coordinated_run<Backend, Hooks>(
+pub fn execute_coordinated_run<Backend, Hooks, InitializeBackend>(
     run_plan: g_plan::RunPlan,
     effective_config_toml: String,
-    backend: Arc<Backend>,
+    initialize_backend: InitializeBackend,
     hooks: &mut Hooks,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
@@ -126,11 +127,13 @@ pub fn execute_coordinated_run<Backend, Hooks>(
 where
     Backend: AssociationBackend + 'static,
     Hooks: RunHooks<BackendError = Backend::Error>,
+    InitializeBackend:
+        FnOnce(&g_plan::RunPlan, &mut Hooks, Option<&mut StageTimingRecorder>) -> Result<Arc<Backend>, Hooks::Error>,
 {
     execute_coordinated_run_detail(
         run_plan,
         effective_config_toml,
-        backend,
+        initialize_backend,
         hooks,
         telemetry_session,
         thread_name,
@@ -154,10 +157,10 @@ where
     }
 }
 
-fn execute_coordinated_run_detail<Backend, Hooks>(
+fn execute_coordinated_run_detail<Backend, Hooks, InitializeBackend>(
     run_plan: g_plan::RunPlan,
     effective_config_toml: String,
-    backend: Arc<Backend>,
+    initialize_backend: InitializeBackend,
     hooks: &mut Hooks,
     telemetry_session: &TelemetryRunSession,
     thread_name: &str,
@@ -166,6 +169,8 @@ fn execute_coordinated_run_detail<Backend, Hooks>(
 where
     Backend: AssociationBackend + 'static,
     Hooks: RunHooks<BackendError = Backend::Error>,
+    InitializeBackend:
+        FnOnce(&g_plan::RunPlan, &mut Hooks, Option<&mut StageTimingRecorder>) -> Result<Arc<Backend>, Hooks::Error>,
 {
     let phenotype_count = i64::try_from(run_plan.phenotype_runs.len())
         .map_err(|_| CoordinatedRunDetailError::PhenotypeCountOutOfRange)?;
@@ -238,6 +243,14 @@ where
         "Dispatching REGENIE execution plan.",
         &ExecutionPlanDispatchDiagnosticFields { phenotype_count, association_mode: association_mode.as_str() },
     )?;
+    let backend = if prepared_run.has_pending_work() {
+        match initialize_backend(prepared_run.run_plan(), hooks, stage_timing_recorder.as_deref_mut()) {
+            Ok(backend) => Some(backend),
+            Err(error) => return Err(prepared_run.fail_initialization::<Backend::Error, Hooks>(error).into()),
+        }
+    } else {
+        None
+    };
     let execution_start_time = Instant::now();
     let execution = prepared_run.execute_with_progress(backend, hooks, progress_reporter.as_ref())?;
     record_stage_duration(stage_timing_recorder, "native_run_execution", execution_start_time);
