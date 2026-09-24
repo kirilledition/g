@@ -29,7 +29,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.22",
     "scalene>=2.3.0",
-    "ty>=0.0.62",
+    "ty>=0.0.65",
     "skylos>=4.30.0",
 ]
 cuda-format = [
