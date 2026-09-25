@@ -2,6 +2,7 @@ mod chunks;
 mod fingerprint;
 mod header;
 mod run;
+mod terminal;
 mod validation;
 
 pub(crate) use chunks::{RunManifestChunkCommit, read_chunk_commits_from_text};
@@ -14,10 +15,8 @@ pub(crate) use run::{
     OutputRunPaths, extend_run_manifest_metadata, initialize_output_run, inspect_output_run,
     reconcile_output_run_resume, resolve_output_run_paths,
 };
-pub(crate) use run::{
-    mark_run_manifest_completed, mark_run_manifest_interrupted, read_run_manifest_chunk_commits_from_text,
-    read_run_manifest_gpu_genotype_format_from_text, record_run_manifest_chunk_commits,
-};
+pub(crate) use run::{read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text};
+pub(crate) use terminal::{TerminalRunState, finalize_run_manifest};
 
 const RUN_MANIFEST_FILE_NAME: &str = "run_manifest.json";
 const RUN_MANIFEST_SCHEMA_VERSION: i64 = 0;

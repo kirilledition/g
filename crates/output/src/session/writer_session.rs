@@ -47,16 +47,14 @@ impl OutputWriterSession {
 
     pub(crate) fn finish(&self) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
-        self.flush_and_commit()?;
-        manifest::mark_run_manifest_completed(&self.config.run_directory)?;
+        self.flush_and_finalize(manifest::TerminalRunState::Completed)?;
         self.record_finish_timing(finish_start_time)?;
         self.write_stage_timing_snapshot()
     }
 
     pub(crate) fn finish_interrupted(&self, signal_name: &str) -> Result<(), OutputError> {
         let finish_start_time = start_optional_timing(self.config.collect_stage_timings);
-        self.flush_and_commit()?;
-        manifest::mark_run_manifest_interrupted(&self.config.run_directory, signal_name)?;
+        self.flush_and_finalize(manifest::TerminalRunState::Interrupted { signal_name })?;
         self.record_finish_timing(finish_start_time)?;
         self.write_stage_timing_snapshot()
     }
@@ -75,12 +73,12 @@ impl OutputWriterSession {
         Ok(std::mem::take(&mut *worker_commits))
     }
 
-    fn flush_and_commit(&self) -> Result<(), OutputError> {
+    fn flush_and_finalize(&self, terminal_state: manifest::TerminalRunState<'_>) -> Result<(), OutputError> {
         self.close_and_flush_pending_chunks()?;
         self.completion_tracker.wait()?;
         self.raise_if_worker_failed()?;
         let manifest_commit_start_time = start_optional_timing(self.config.collect_stage_timings);
-        manifest::record_run_manifest_chunk_commits(&self.config.run_directory, self.take_worker_commits()?)?;
+        manifest::finalize_run_manifest(&self.config.run_directory, self.take_worker_commits()?, terminal_state)?;
         if let Some(start_time) = manifest_commit_start_time {
             self.record_stage_timing(|stage_timings| {
                 stage_timings.manifest_commit_seconds += start_time.elapsed().as_secs_f64();

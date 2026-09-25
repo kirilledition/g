@@ -601,6 +601,52 @@ fn finish_reports_a_manifest_removed_after_initialization() {
 }
 
 #[test]
+fn failed_terminal_manifest_persistence_preserves_parts_for_strict_resume() {
+    for interrupted in [false, true] {
+        let directory = TestDirectory::new("terminal-persistence-failure");
+        let phenotype_names = [PRIMARY_PHENOTYPE];
+        let inputs = test_inputs(&directory, &phenotype_names);
+        let planned_ranges = single_chunk_plan(0..2);
+        let plan = run_plan(&directory, &inputs, &phenotype_names, false, 1);
+        let manager = initialize_manager(plan, &inputs, &phenotype_names, &planned_ranges);
+        let sessions = manager
+            .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+            .expect("delivery state exists")
+            .writer_sessions;
+        let chunk = test_chunk(&metadata_store(2), 0..2, 1);
+        write_regenie2_multi_trait_chunk_f32(&sessions, None, &chunk.handle, chunk.statistics)
+            .expect("tail chunk is accepted");
+        drop(sessions);
+        let run_directory = directory.path.join("results").join("phenotype_0000_trait_alpha.regenie2_binary.run");
+        let manifest_path = run_directory.join("run_manifest.json");
+        let original_manifest = std::fs::read(&manifest_path).expect("initial manifest reads");
+        let blocked_temporary_path = run_directory.join("run_manifest.json.tmp");
+        std::fs::create_dir(&blocked_temporary_path).expect("directory blocks the atomic writer's temporary file");
+        let result = if interrupted { manager.finish_interrupted("SIGTERM") } else { manager.finish().map(|_| ()) };
+        let error = result.expect_err("terminal publication cannot create its temporary file");
+        assert!(error.to_string().contains("preserving chunk commits also failed"));
+        assert_eq!(std::fs::read(&manifest_path).expect("prior manifest survives"), original_manifest);
+        let part_path = run_directory.join("parts/part_000000000.parquet");
+        let original_part = std::fs::read(&part_path).expect("finalized tail part survives manifest failure");
+        let original_values = read_float_column(&run_directory.join("parts"), "BETA");
+        assert_eq!(original_values.len(), 2);
+        std::fs::remove_dir(&blocked_temporary_path).expect("temporary-file blocker is removed");
+
+        let resume_plan = run_plan(&directory, &inputs, &phenotype_names, true, 1);
+        let resumed = initialize_manager(resume_plan, &inputs, &phenotype_names, &planned_ranges);
+        let delivery = resumed
+            .delivery_state_for_phenotypes(&[PRIMARY_PHENOTYPE.to_string()])
+            .expect("strict resume reconciles the retained part");
+        assert_eq!(delivery.committed_chunk_identifier_sets[0].iter().copied().collect::<Vec<_>>(), [0]);
+        drop(delivery);
+        resumed.finish().expect("recovered run finishes");
+        assert_eq!(read_manifest(&run_directory)["status"], "completed");
+        assert_eq!(std::fs::read(&part_path).expect("part remains unchanged"), original_part);
+        assert_eq!(read_float_column(&run_directory.join("parts"), "BETA"), original_values);
+    }
+}
+
+#[test]
 fn abort_discards_pending_chunks_and_closes_retained_session() {
     let directory = TestDirectory::new("abort");
     let phenotype_names = [PRIMARY_PHENOTYPE];

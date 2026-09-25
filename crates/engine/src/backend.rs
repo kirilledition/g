@@ -70,11 +70,54 @@ pub trait AssociationBackend: Send + Sync {
     type GroupState: Send;
     type ChromosomeState: Send + 'static;
     type TransferredInput: Send + 'static;
+    type SharedSourceBatch: Send + 'static;
     type DeviceResult: Send + 'static;
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Return the genotype delivery modes supported by this backend instance.
     fn genotype_delivery_capability(&self) -> GenotypeDeliveryCapability;
+
+    /// Promise support for immutable compressed source batches for this backend's lifetime.
+    fn supports_shared_source_batches(&self) -> bool {
+        false
+    }
+
+    /// Decode a compressed batch with its full source sample count once.
+    ///
+    /// The returned owner retains the source geometry, pairs, and validation
+    /// statuses until every selected consumer has drained. `None` denotes an
+    /// unsupported operation; returning it after advertising support is an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when full-source compressed input cannot be transferred.
+    fn prepare_shared_source(
+        &self,
+        _input: g_genotype::GenotypeBatch,
+    ) -> Result<Option<Self::SharedSourceBatch>, Self::Error> {
+        Ok(None)
+    }
+
+    /// Select one group's samples and prepare privately owned statistics.
+    ///
+    /// Source buffers must remain immutable and cannot be donated by consumers.
+    /// `None` denotes an unsupported operation, as in `prepare_shared_source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when source geometry or the group selection is invalid.
+    fn select_shared_source(
+        &self,
+        _group: &Self::GroupState,
+        _source: &Self::SharedSourceBatch,
+    ) -> Result<Option<Self::TransferredInput>, Self::Error> {
+        Ok(None)
+    }
+
+    /// Release a source owner after all of its selected consumers have drained.
+    fn release_shared_source(&self, source: Self::SharedSourceBatch) {
+        drop(source);
+    }
 
     /// Prepare reusable device state for one phenotype group.
     ///

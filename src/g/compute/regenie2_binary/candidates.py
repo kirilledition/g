@@ -177,26 +177,32 @@ def build_firth_candidate_bucket_order(
     if candidate_count > JAX_INT32_INDEX_MAXIMUM:
         message = "Firth candidate bucket exceeds the JAX int32 index domain."
         raise ValueError(message)
-    regular_active_mask = flat_active_mask & (~heuristic_firth_mask)
     heuristic_active_mask = flat_active_mask & heuristic_firth_mask
-    inactive_mask = ~flat_active_mask
-    regular_indices = build_compact_int32_indices(regular_active_mask, candidate_count)
-    heuristic_indices = build_compact_int32_indices(heuristic_active_mask, candidate_count)
-    inactive_indices = build_compact_int32_indices(inactive_mask, candidate_count)
-    regular_count = jnp.sum(regular_active_mask, dtype=jnp.int32)
-    heuristic_count = jnp.sum(heuristic_active_mask, dtype=jnp.int32)
-    output_positions = jnp.arange(candidate_count, dtype=jnp.int32)
-    heuristic_positions = output_positions - regular_count
-    inactive_positions = output_positions - regular_count - heuristic_count
-    return jnp.where(
-        output_positions < regular_count,
-        jnp.take(regular_indices, output_positions, axis=0),
+    if heuristic_active_mask.ndim != 1:
+        message = "Index compaction requires a one-dimensional mask."
+        raise ValueError(message)
+    if candidate_count <= 0:
+        message = "Index compaction capacity must be positive."
+        raise ValueError(message)
+    active_prefix_count = jnp.cumsum(flat_active_mask, dtype=jnp.int32)
+    heuristic_prefix_count = jnp.cumsum(heuristic_active_mask, dtype=jnp.int32)
+    active_count = active_prefix_count[-1]
+    regular_count = active_count - heuristic_prefix_count[-1]
+    source_indices = jnp.arange(candidate_count, dtype=jnp.int32)
+    regular_positions = active_prefix_count - heuristic_prefix_count - 1
+    heuristic_positions = regular_count + heuristic_prefix_count - 1
+    # Subtract before adding the active count to stay inside the int32 index domain.
+    inactive_positions = active_count + (source_indices - active_prefix_count)
+    scatter_positions = jnp.where(
+        flat_active_mask,
         jnp.where(
-            output_positions < regular_count + heuristic_count,
-            jnp.take(heuristic_indices, heuristic_positions, axis=0),
-            jnp.take(inactive_indices, inactive_positions, axis=0),
+            heuristic_active_mask,
+            heuristic_positions,
+            regular_positions,
         ),
+        inactive_positions,
     )
+    return jnp.zeros((candidate_count,), dtype=jnp.int32).at[scatter_positions].set(source_indices)
 
 
 def reorder_firth_candidate_lane_inputs(

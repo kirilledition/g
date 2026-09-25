@@ -394,6 +394,47 @@ where
         Ok(None)
     }
 
+    /// Submit an already selected shared-source batch to an empty pipeline.
+    ///
+    /// Requiring a drained pipeline bounds selected inputs independently of the
+    /// ordinary transfer queue. Shared-source delivery submits at most one input
+    /// per group and drains both groups before advancing the source chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid geometry, pending work, missing chromosome
+    /// state, a closed pipeline, or a worker failure.
+    pub(crate) fn submit_pretransferred(
+        &mut self,
+        context: AssociationBatchContext,
+        input: Backend::TransferredInput,
+        compute_variant_count: usize,
+    ) -> SchedulerResult<(), Backend::Error> {
+        self.ensure_running()?;
+        if !self.state.chromosome_prepared || self.state.chromosome_release_pending {
+            return Err(SchedulerError::ChromosomeNotPrepared);
+        }
+        if !self.is_drained() {
+            return Err(SchedulerError::InvalidBatch {
+                message: "shared-source submission requires a drained pipeline".to_string(),
+            });
+        }
+        if context.metadata.row_count() > compute_variant_count {
+            return Err(SchedulerError::InvalidBatch {
+                message: "shared-source metadata exceeds the compute variant count".to_string(),
+            });
+        }
+        let next_submitted_batch_count =
+            self.state.submitted_batch_count.checked_add(1).ok_or(SchedulerError::BatchCounterOverflow)?;
+        self.compute_sender
+            .as_ref()
+            .ok_or(SchedulerError::Closed)?
+            .send(ComputeCommand::ComputeBatch { batch: TransferredAssociationBatch { context, input } })
+            .map_err(|_| self.current_or_channel_error(TRANSFERRED_BATCH_QUEUE))?;
+        self.state.submitted_batch_count = next_submitted_batch_count;
+        Ok(())
+    }
+
     /// Receive the next submitted batch.
     ///
     /// # Errors

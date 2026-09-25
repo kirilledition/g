@@ -161,6 +161,7 @@ impl AssociationBackend for TestAssociationBackend {
     type GroupState = ();
     type ChromosomeState = ();
     type TransferredInput = ();
+    type SharedSourceBatch = ();
     type DeviceResult = ();
     type Error = Infallible;
 

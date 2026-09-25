@@ -111,6 +111,14 @@ device setup error and retry without an initialized output directory. During a
 resume, an initialization failure aborts active writers while preserving existing
 committed output; an interruption flushes writers and records its signal.
 
+After the writers finish successfully, completion or interruption records new
+chunk commits and the terminal status together in one atomic manifest update.
+If that update fails, the run reports an error. When new commits exist, it also
+attempts to record those commits while retaining the previous status and signal;
+this fallback does not count as successful completion. Finalized Parquet parts
+remain available for strict resume reconciliation if manifest persistence fails.
+The manifest format and compatibility checks are unchanged.
+
 Resume requires current chunk commit metadata in every Parquet part.
 Parts without the native writer's `g.output.chunk_commits` footer metadata are
 rejected instead of being reconstructed from data columns. Every part must use

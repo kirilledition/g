@@ -73,7 +73,7 @@ pub(crate) enum DeliveryError<BackendError, InterruptionError> {
     NullLogisticNonconvergence(String),
 }
 
-type DeliveryResult<Value, BackendError, InterruptionError> =
+pub(crate) type DeliveryResult<Value, BackendError, InterruptionError> =
     Result<Value, DeliveryError<BackendError, InterruptionError>>;
 
 /// Execute one aligned phenotype group through decode, compute, and output.
@@ -94,6 +94,20 @@ where
 {
     validate_delivery_request::<Backend::Error, InterruptionError>(&request)?;
     let chunk_specs = plan_association_delivery(genotype_input, &mut request)?;
+    run_planned_association_delivery(genotype_input, backend, request, chunk_specs, &mut check_interruption)
+}
+
+pub(crate) fn run_planned_association_delivery<Backend, CheckInterruption, InterruptionError>(
+    genotype_input: &PreparedGenotypeInput,
+    backend: Option<&Arc<Backend>>,
+    mut request: AssociationDeliveryRequest,
+    chunk_specs: Vec<g_genotype::ChunkSpec>,
+    check_interruption: &mut CheckInterruption,
+) -> DeliveryResult<AssociationDeliveryReport, Backend::Error, InterruptionError>
+where
+    Backend: AssociationBackend + 'static,
+    CheckInterruption: FnMut() -> Result<(), InterruptionError>,
+{
     if chunk_specs.is_empty() {
         check_interruption().map_err(DeliveryError::Interrupted)?;
         return Ok(AssociationDeliveryReport { processed_chunk_count: 0, warnings: Vec::new() });
@@ -108,7 +122,7 @@ where
         backend,
         &mut request,
         chunk_specs,
-        &mut check_interruption,
+        check_interruption,
     );
     let source_result = read_session.finish().map_err(DeliveryError::Bgen);
     match delivery_result {
@@ -246,7 +260,7 @@ where
     })
 }
 
-fn plan_association_delivery<BackendError, InterruptionError>(
+pub(crate) fn plan_association_delivery<BackendError, InterruptionError>(
     genotype_input: &PreparedGenotypeInput,
     request: &mut AssociationDeliveryRequest,
 ) -> DeliveryResult<Vec<g_genotype::ChunkSpec>, BackendError, InterruptionError> {
@@ -263,7 +277,7 @@ fn plan_association_delivery<BackendError, InterruptionError>(
     Ok(chunk_specs)
 }
 
-fn group_preparation_input(
+pub(crate) fn group_preparation_input(
     group: &mut g_input::AlignedPhenotypeGroup,
     genotype_transfer: GenotypeTransferPreparation,
 ) -> GroupPreparationInput {
@@ -305,7 +319,7 @@ fn planned_chromosome_blocks(
     Ok(chromosome_blocks)
 }
 
-fn prepare_chromosome_state<Backend, InterruptionError>(
+pub(crate) fn prepare_chromosome_state<Backend, InterruptionError>(
     backend: &Backend,
     group_state: &Backend::GroupState,
     group: &mut g_input::AlignedPhenotypeGroup,
@@ -368,7 +382,7 @@ fn enforce_null_logistic_policy<BackendError, InterruptionError>(
     }
 }
 
-fn validate_delivery_request<BackendError, InterruptionError>(
+pub(crate) fn validate_delivery_request<BackendError, InterruptionError>(
     request: &AssociationDeliveryRequest,
 ) -> DeliveryResult<(), BackendError, InterruptionError> {
     let trait_count = request.group.phenotype_group.phenotype_names.len();
@@ -406,7 +420,7 @@ where
     Ok(())
 }
 
-fn submit_batch<Backend, InterruptionError>(
+pub(crate) fn submit_batch<Backend, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     scheduled_batch: ScheduledAssociationBatch,
     settings: &AssociationDeliverySettings,
@@ -426,7 +440,7 @@ where
     }
 }
 
-fn drain_pending_batches<Backend, InterruptionError>(
+pub(crate) fn drain_pending_batches<Backend, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>
@@ -439,7 +453,7 @@ where
     Ok(())
 }
 
-fn finish_and_drain_pipeline<Backend, InterruptionError>(
+pub(crate) fn finish_and_drain_pipeline<Backend, InterruptionError>(
     pipeline: &mut AssociationBatchPipeline<'_, Backend>,
     settings: &AssociationDeliverySettings,
 ) -> DeliveryResult<(), Backend::Error, InterruptionError>

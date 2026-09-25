@@ -131,6 +131,36 @@ class DeviceGenotypeBatch:
     raw_packed8_statistics: DevicePacked8RawStatistics | None
 
 
+@dataclass(frozen=True, slots=True)
+class DeviceSharedSourceBatch:
+    """Immutable full-source packed values retained across selected consumers.
+
+    Attributes:
+        packed_probability_pairs_by_variant: Full-source pairs, including padded rows.
+        statuses: Original source validation statuses, including padded rows.
+        logical_variant_count: Number of source rows before compute padding.
+
+    """
+
+    packed_probability_pairs_by_variant: jax.Array
+    statuses: jax.Array
+    logical_variant_count: int
+
+
+def device_genotype_batch_from_decoded(
+    decoded_batch: compressed_genotype.DecodedPacked8DeflateBatch,
+) -> DeviceGenotypeBatch:
+    """Adapt decoded values and private statistics to the compute boundary."""
+    return DeviceGenotypeBatch(
+        genotype_values=decoded_batch.packed_probability_pairs_by_variant,
+        genotype_mean=decoded_batch.genotype_mean,
+        imputed_dosage_square_sum=decoded_batch.imputed_dosage_square_sum,
+        sparse_candidate_mask=decoded_batch.sparse_candidate_mask,
+        packed8=True,
+        raw_packed8_statistics=decoded_batch.raw_packed8_statistics,
+    )
+
+
 def resolve_host_compressed_transfer_selection(
     source_sample_count: int,
     selected_sample_count: int,
@@ -237,14 +267,60 @@ class JaxBackendBase:
             retain_imputed_dosage_square_sum=self.retain_compressed_imputed_dosage_square_sum,
             collect_sparse_candidate_mask=self.collect_compressed_sparse_candidate_mask,
         )
-        return DeviceGenotypeBatch(
-            genotype_values=decoded_batch.packed_probability_pairs_by_variant,
-            genotype_mean=decoded_batch.genotype_mean,
-            imputed_dosage_square_sum=decoded_batch.imputed_dosage_square_sum,
-            sparse_candidate_mask=decoded_batch.sparse_candidate_mask,
-            packed8=True,
-            raw_packed8_statistics=decoded_batch.raw_packed8_statistics,
+        return device_genotype_batch_from_decoded(decoded_batch)
+
+    def prepare_shared_source(
+        self,
+        compressed_slab: npt.NDArray[np.uint8],
+        compressed_metadata: npt.NDArray[np.uint32],
+        compute_variant_count: int,
+        source_sample_count: int,
+    ) -> DeviceSharedSourceBatch:
+        """Decode full-source packed pairs while retaining only reusable buffers."""
+        if compressed_metadata.ndim != 2 or compressed_metadata.shape[1] != 3:
+            raise ValueError("Shared compressed metadata requires three columns per logical variant.")
+        logical_variant_count = compressed_metadata.shape[0]
+        if source_sample_count <= 0 or not 0 < logical_variant_count <= compute_variant_count:
+            raise ValueError("Shared compressed input requires positive, consistent source geometry.")
+        decoded_batch = compressed_genotype.decode_packed8_deflate_batch(
+            compressed_slab=jax.device_put(compressed_slab, may_alias=False),
+            compressed_metadata=jax.device_put(compressed_metadata, may_alias=False),
+            selected_sample_indices=jax.device_put(np.empty((0,), dtype=np.uint32), may_alias=False),
+            source_sample_count=source_sample_count,
+            selected_sample_count=source_sample_count,
+            selection_start=0,
+            compute_variant_count=compute_variant_count,
+            retain_imputed_dosage_square_sum=False,
+            collect_sparse_candidate_mask=False,
         )
+        return DeviceSharedSourceBatch(
+            packed_probability_pairs_by_variant=decoded_batch.packed_probability_pairs_by_variant,
+            statuses=decoded_batch.raw_packed8_statistics.statuses,
+            logical_variant_count=logical_variant_count,
+        )
+
+    def select_shared_source[AssociationState](
+        self,
+        group_state: DeviceGroupState[AssociationState],
+        source: DeviceSharedSourceBatch,
+    ) -> DeviceGenotypeBatch:
+        """Select one group without donating or mutating the shared source."""
+        transfer_selection = group_state.compressed_transfer_selection
+        if transfer_selection is None:
+            raise ValueError("Shared source selection requires a prepared compressed group selection.")
+        if transfer_selection.source_sample_count != source.packed_probability_pairs_by_variant.shape[1]:
+            raise ValueError("Shared source sample count differs from the prepared group selection.")
+        decoded_batch = compressed_genotype.select_shared_packed8_batch(
+            packed_probability_pairs_by_variant=source.packed_probability_pairs_by_variant,
+            source_statuses=source.statuses,
+            selected_sample_indices=transfer_selection.selected_sample_indices,
+            logical_variant_count=source.logical_variant_count,
+            selected_sample_count=transfer_selection.selected_sample_count,
+            selection_start=transfer_selection.selection_start,
+            retain_imputed_dosage_square_sum=self.retain_compressed_imputed_dosage_square_sum,
+            collect_sparse_candidate_mask=self.collect_compressed_sparse_candidate_mask,
+        )
+        return device_genotype_batch_from_decoded(decoded_batch)
 
     def materialize_batch(
         self,

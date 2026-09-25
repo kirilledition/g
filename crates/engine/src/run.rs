@@ -20,6 +20,7 @@ use crate::preparation::{
     PipelineOutputPreparationError, RuntimeOutputGroupInput, RuntimeOutputPlan, build_runtime_output_initializations,
 };
 use crate::progress::{ProgressTotals, RunProgressReporter};
+use crate::tiled_delivery::run_association_delivery_tile;
 
 /// Failure while converting a run plan into a fully prepared native run.
 #[derive(Debug, thiserror::Error)]
@@ -280,7 +281,11 @@ impl PreparedRun {
                 } else {
                     None
                 };
+                let use_shared_tiles = run_plan.association_mode == g_plan::AssociationMode::Regenie2Linear
+                    && run_plan.compute.device == g_plan::Device::Gpu
+                    && backend.as_ref().is_some_and(|backend| backend.supports_shared_source_batches());
                 let mut reports = Vec::with_capacity(groups.len());
+                let mut tile_requests = Vec::new();
                 for prepared_group in groups {
                     let progress = progress_context
                         .map(|(reporter, totals)| {
@@ -305,6 +310,23 @@ impl PreparedRun {
                             statistics_policy,
                         },
                     };
+                    if use_shared_tiles {
+                        tile_requests.push(request);
+                        if tile_requests.len() == 2 {
+                            reports.extend(run_association_delivery_tile(
+                                &genotype_input,
+                                backend.as_ref(),
+                                std::mem::take(&mut tile_requests),
+                                || hooks.check_interruption(),
+                            )?);
+                        }
+                    } else {
+                        reports.push(run_association_delivery(&genotype_input, backend.as_ref(), request, || {
+                            hooks.check_interruption()
+                        })?);
+                    }
+                }
+                if let Some(request) = tile_requests.pop() {
                     reports.push(run_association_delivery(&genotype_input, backend.as_ref(), request, || {
                         hooks.check_interruption()
                     })?);

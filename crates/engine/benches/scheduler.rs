@@ -34,6 +34,7 @@ const VARIANT_COUNT: usize = 8;
 struct MockBackend;
 
 impl AssociationBackend for MockBackend {
+    type SharedSourceBatch = ();
     type GroupState = ();
     type ChromosomeState = ();
     type TransferredInput = GenotypeBatch;

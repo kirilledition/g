@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import typing
 
 import jax
@@ -429,6 +430,179 @@ def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest
     assert observed.genotype_values.shape == (4, 100, 2)
     assert observed.raw_packed8_statistics is not None
     assert observed.raw_packed8_statistics.selected_sample_count == 100
+
+
+def test_prepare_shared_source_decodes_identity_and_retains_only_source_buffers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decode all source samples once while retaining only pairs, statuses and geometry."""
+    foreign_outputs = tests.test_compressed_genotype.build_foreign_outputs()
+    metadata = tests.test_compressed_genotype.build_compressed_metadata()[:3]
+    calls: list[int] = []
+
+    def fake_ffi_call(
+        target_name: str,
+        result_shape_dtypes: tuple[jax.ShapeDtypeStruct, ...],
+    ) -> tests.test_compressed_genotype.Packed8ForeignCall:
+        assert target_name == compressed_genotype.PACKED8_DEFLATE_FFI_TARGET
+        assert result_shape_dtypes[0].shape == (4, 100, 2)
+
+        def foreign_call(
+            compressed_slab: jax.Array,
+            compressed_metadata: jax.Array,
+            selected_sample_indices: jax.Array,
+            *,
+            source_sample_count: int,
+            selection_start: int,
+        ) -> tests.test_compressed_genotype.Packed8ForeignOutputs:
+            np.testing.assert_array_equal(
+                np.asarray(compressed_slab), tests.test_compressed_genotype.build_compressed_slab()
+            )
+            np.testing.assert_array_equal(np.asarray(compressed_metadata), metadata)
+            assert selected_sample_indices.shape == (0,)
+            assert selected_sample_indices.dtype == jnp.uint32
+            assert source_sample_count == 100
+            assert selection_start == 0
+            calls.append(source_sample_count)
+            return foreign_outputs
+
+        return foreign_call
+
+    monkeypatch.setattr(jax.ffi, "ffi_call", fake_ffi_call)
+    with jax.disable_jit():
+        source = CompressedTestBackend().prepare_shared_source(
+            compressed_slab=tests.test_compressed_genotype.build_compressed_slab(),
+            compressed_metadata=metadata,
+            compute_variant_count=4,
+            source_sample_count=100,
+        )
+
+    assert calls == [100]
+    assert source.logical_variant_count == 3
+    assert source.packed_probability_pairs_by_variant is foreign_outputs[0]
+    assert source.statuses is foreign_outputs[5]
+    assert {field.name for field in dataclasses.fields(source)} == {
+        "packed_probability_pairs_by_variant",
+        "statuses",
+        "logical_variant_count",
+    }
+
+
+@pytest.mark.parametrize(
+    ("metadata_shape", "compute_count", "source_count"),
+    [((3,), 4, 100), ((4, 2), 4, 100), ((0, 3), 4, 100), ((4, 3), 3, 100), ((4, 3), 4, 0)],
+)
+def test_prepare_shared_source_rejects_invalid_geometry_before_decode(
+    metadata_shape: tuple[int, ...],
+    compute_count: int,
+    source_count: int,
+) -> None:
+    """Reject missing rows, malformed metadata, undersized capacity and empty cohorts."""
+    with pytest.raises(ValueError, match="Shared compressed"):
+        CompressedTestBackend().prepare_shared_source(
+            compressed_slab=np.zeros(1, dtype=np.uint8),
+            compressed_metadata=np.zeros(metadata_shape, dtype=np.uint32),
+            compute_variant_count=compute_count,
+            source_sample_count=source_count,
+        )
+
+
+def build_shared_source_for_selection() -> jax_backend.DeviceSharedSourceBatch:
+    """Build two distinct groups with a source error and a padded row."""
+    return jax_backend.DeviceSharedSourceBatch(
+        packed_probability_pairs_by_variant=jnp.asarray(
+            [
+                [[255, 0], [0, 255], [0, 0], [0, 0], [255, 0]],
+                [[200, 0], [255, 0], [0, 255], [0, 255], [0, 0]],
+                [[255, 0]] * 5,
+                [[255, 0]] * 5,
+            ],
+            dtype=jnp.uint8,
+        ),
+        statuses=jnp.asarray([0, 0, 512, 0], dtype=jnp.uint32),
+        logical_variant_count=3,
+    )
+
+
+def test_select_shared_source_reuses_source_after_releasing_private_group_moments() -> None:
+    """Sequential groups receive their own statistics and preserve the shared source."""
+    backend = CompressedTestBackend()
+    source = build_shared_source_for_selection()
+    original_pairs = np.asarray(source.packed_probability_pairs_by_variant).copy()
+    original_statuses = np.asarray(source.statuses).copy()
+    first_group = jax_backend.DeviceGroupState(
+        association_state=object(),
+        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+            source_sample_count=5,
+            selected_sample_count=2,
+            selection_start=None,
+            selected_sample_indices=np.asarray([1, 0], dtype=np.uint32),
+        ),
+    )
+    first = backend.select_shared_source(first_group, source)
+    assert first.packed8
+    assert first.raw_packed8_statistics is not None
+    np.testing.assert_array_equal(np.asarray(first.genotype_values), original_pairs[:, [1, 0]])
+    np.testing.assert_array_equal(np.asarray(first.raw_packed8_statistics.dosage_sums), [255, 110, 0, 0])
+    np.testing.assert_array_equal(np.asarray(first.raw_packed8_statistics.statuses), original_statuses)
+    assert first.raw_packed8_statistics.selected_sample_count == 2
+    assert first.imputed_dosage_square_sum is not None
+    assert first.sparse_candidate_mask is not None
+    first.genotype_mean.delete()
+    first.imputed_dosage_square_sum.delete()
+
+    second_group = jax_backend.DeviceGroupState(
+        association_state=object(),
+        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+            source_sample_count=5,
+            selected_sample_count=2,
+            selection_start=2,
+            selected_sample_indices=None,
+        ),
+    )
+    second = backend.select_shared_source(second_group, source)
+    assert second.raw_packed8_statistics is not None
+    np.testing.assert_array_equal(np.asarray(second.genotype_values), original_pairs[:, 2:4])
+    np.testing.assert_array_equal(np.asarray(second.raw_packed8_statistics.dosage_sums), [1020, 510, 0, 0])
+    np.testing.assert_array_equal(np.asarray(second.genotype_mean), [2.0, 1.0, 0.0, 0.0])
+    np.testing.assert_array_equal(np.asarray(source.packed_probability_pairs_by_variant), original_pairs)
+    np.testing.assert_array_equal(np.asarray(source.statuses), original_statuses)
+
+
+def test_select_shared_source_requires_prepared_group_selection() -> None:
+    group = jax_backend.DeviceGroupState(association_state=object(), compressed_transfer_selection=None)
+    with pytest.raises(ValueError, match="requires a prepared compressed group selection"):
+        CompressedTestBackend().select_shared_source(group, build_shared_source_for_selection())
+
+
+def test_select_shared_source_rejects_source_sample_count_mismatch() -> None:
+    group = jax_backend.DeviceGroupState(
+        association_state=object(),
+        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+            source_sample_count=6,
+            selected_sample_count=2,
+            selection_start=0,
+            selected_sample_indices=None,
+        ),
+    )
+    with pytest.raises(ValueError, match="source sample count differs"):
+        CompressedTestBackend().select_shared_source(group, build_shared_source_for_selection())
+
+
+@pytest.mark.parametrize("logical_variant_count", [0, 5])
+def test_select_shared_source_rejects_invalid_logical_geometry(logical_variant_count: int) -> None:
+    source = dataclasses.replace(build_shared_source_for_selection(), logical_variant_count=logical_variant_count)
+    group = jax_backend.DeviceGroupState(
+        association_state=object(),
+        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+            source_sample_count=5,
+            selected_sample_count=2,
+            selection_start=0,
+            selected_sample_indices=None,
+        ),
+    )
+    with pytest.raises(ValueError, match="source geometry"):
+        CompressedTestBackend().select_shared_source(group, source)
 
 
 def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> None:

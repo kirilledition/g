@@ -23,9 +23,10 @@ src/g       console bootstrap, JAX backend, JAX kernels
 - The registered CLI entrypoint and its typed terminal result.
 - Lazy construction of the Python JAX backend after `g-runner` completed
   native validation and runtime setup.
-- The five backend lifecycle stages with direct typed NumPy arguments,
-  including exactly one of the decoded or compressed transfer methods.
-- Retention of opaque Python JAX group, chromosome, and device-result handles.
+- Coarse backend lifecycle stages with direct typed NumPy arguments,
+  including decoded/compressed transfer or shared-source preparation and selection.
+- Retention of opaque Python JAX group, chromosome, shared-source, and
+  device-result handles.
 - Python signal checks, JAX configuration/device observation, and conversion
   of a concrete `PyErr` into runner-host callbacks.
 - GPU-only loading of the official nvCOMP Python wheel and private typed-XLA
@@ -60,7 +61,7 @@ supplies one `AssociationBackend` implementation that calls:
 ```text
 prepare_group
 prepare_chromosome
-transfer_batch | transfer_compressed_batch
+transfer_batch | transfer_compressed_batch | (prepare_shared_source, select_shared_source)
 compute_batch
 materialize_batch
 ```
@@ -69,6 +70,15 @@ Backend construction receives the canonical `g-plan::Device` separately from
 the mode-specific kernel plan. CPU and host-delivered GPU runs never import or
 initialize nvCOMP. The first compressed packed8 group registers the
 process-global private target once.
+
+Compressed GPU linear backends also advertise immutable source sharing. The
+engine owns eligibility, memory admission, two-group scheduling, resume masks,
+and all cleanup ordering. The binding only adapts one owned compressed payload
+to immutable NumPy views, retains the Python source handle, and converts each
+group's selection to an ordinary transferred batch. Group-specific statistics
+are private because compute kernels may donate them. Source release attaches
+Python after the engine has drained every consumer; it does not introduce a
+second scheduler or Python-owned input lifetime policy.
 
 Only GPU binary-Firth backend construction probes the optional CUDA component
 target. The binding passes the resulting static capability into the typed JAX

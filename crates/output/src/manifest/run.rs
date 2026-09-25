@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::{Map, Value};
 
-use super::chunks::{RunManifestChunkCommit, chunk_commit_to_value, insert_or_validate_chunk_commit};
+use super::chunks::{RunManifestChunkCommit, chunk_commit_to_value};
 use super::{RUN_MANIFEST_FILE_NAME, chunks, validation};
 use crate::error::{OutputError, OutputResult};
 use crate::resume;
@@ -166,59 +166,6 @@ pub(crate) fn read_run_manifest_chunk_commits_from_text(
     Ok(committed_chunks_by_identifier.into_values().collect())
 }
 
-pub(crate) fn record_run_manifest_chunk_commits(
-    run_directory: &Path,
-    chunk_commits: Vec<RunManifestChunkCommit>,
-) -> OutputResult<()> {
-    if chunk_commits.is_empty() {
-        return Ok(());
-    }
-    update_run_manifest(run_directory, |manifest| {
-        let manifest_object = manifest
-            .as_object_mut()
-            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-        let committed_chunks = manifest_object
-            .entry("committed_chunks".to_string())
-            .or_insert_with(|| Value::Array(Vec::new()))
-            .as_array_mut()
-            .ok_or_else(|| {
-                OutputError::InvalidInput("Run manifest committed_chunks field must be a list.".to_string())
-            })?;
-        let mut committed_chunks_by_identifier = BTreeMap::new();
-        for committed_chunk in committed_chunks.iter() {
-            let existing_commit = chunks::read_run_manifest_chunk_commit(committed_chunk)?;
-            insert_or_validate_chunk_commit(&mut committed_chunks_by_identifier, existing_commit)?;
-        }
-        for chunk_commit in chunk_commits {
-            insert_or_validate_chunk_commit(&mut committed_chunks_by_identifier, chunk_commit)?;
-        }
-        *committed_chunks = committed_chunks_by_identifier.values().map(chunk_commit_to_value).collect();
-        Ok(())
-    })
-}
-
-pub(crate) fn mark_run_manifest_completed(run_directory: &Path) -> OutputResult<()> {
-    update_run_manifest(run_directory, |manifest| {
-        let manifest_object = manifest
-            .as_object_mut()
-            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-        manifest_object.insert("status".to_string(), Value::String("completed".to_string()));
-        manifest_object.remove("interrupted_signal");
-        Ok(())
-    })
-}
-
-pub(crate) fn mark_run_manifest_interrupted(run_directory: &Path, signal_name: &str) -> OutputResult<()> {
-    update_run_manifest(run_directory, |manifest| {
-        let manifest_object = manifest
-            .as_object_mut()
-            .ok_or_else(|| OutputError::InvalidInput("Run manifest must contain a JSON object.".to_string()))?;
-        manifest_object.insert("status".to_string(), Value::String("interrupted".to_string()));
-        manifest_object.insert("interrupted_signal".to_string(), Value::String(signal_name.to_string()));
-        Ok(())
-    })
-}
-
 fn directory_exists_and_is_non_empty(directory_path: &Path) -> Result<bool, OutputError> {
     let mut directory_entries = match std::fs::read_dir(directory_path) {
         Ok(directory_entries) => directory_entries,
@@ -306,6 +253,16 @@ fn update_run_manifest(
     run_directory: &Path,
     update_manifest: impl FnOnce(&mut Value) -> OutputResult<()>,
 ) -> OutputResult<()> {
+    with_locked_run_manifest(run_directory, |manifest_path, manifest| {
+        update_manifest(manifest)?;
+        write_run_manifest_value_atomic(manifest_path, manifest)
+    })
+}
+
+pub(super) fn with_locked_run_manifest(
+    run_directory: &Path,
+    update_manifest: impl FnOnce(&Path, &mut Value) -> OutputResult<()>,
+) -> OutputResult<()> {
     let manifest_path = run_directory.join(RUN_MANIFEST_FILE_NAME);
     let manifest_lock = get_run_manifest_update_lock();
     let _manifest_guard =
@@ -318,11 +275,10 @@ fn update_run_manifest(
         Err(error) => return Err(OutputError::runtime(error)),
     };
     let mut manifest = parse_run_manifest_text(&manifest_text, Some(&manifest_path))?;
-    update_manifest(&mut manifest)?;
-    write_run_manifest_value_atomic(&manifest_path, &manifest)
+    update_manifest(&manifest_path, &mut manifest)
 }
 
-fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> OutputResult<()> {
+pub(super) fn write_run_manifest_value_atomic(manifest_path: &Path, manifest: &Value) -> OutputResult<()> {
     let temporary_manifest_path = manifest_path.with_extension("json.tmp");
     let mut temporary_manifest_file = File::create(&temporary_manifest_path).map_err(OutputError::runtime)?;
     let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(OutputError::runtime)?;
@@ -346,12 +302,13 @@ mod tests {
     use serde_json::{Value, json};
 
     use crate::error::OutputError;
+    use crate::manifest::{TerminalRunState, finalize_run_manifest};
 
     use super::{
         RUN_MANIFEST_FILE_NAME, RunManifestChunkCommit, directory_exists_and_is_non_empty,
         extend_run_manifest_metadata, initialize_output_run, inspect_output_run, load_run_manifest_json,
-        mark_run_manifest_completed, mark_run_manifest_interrupted, read_run_manifest_chunk_commits_from_text,
-        read_run_manifest_gpu_genotype_format_from_text, record_run_manifest_chunk_commits, resolve_output_run_paths,
+        read_run_manifest_chunk_commits_from_text, read_run_manifest_gpu_genotype_format_from_text,
+        resolve_output_run_paths,
     };
 
     struct TestDirectory {
@@ -517,12 +474,13 @@ mod tests {
         assert!(identifiers.is_empty());
         assert_eq!(read_manifest(&directory.path)["status"], "running");
 
-        record_run_manifest_chunk_commits(
+        finalize_run_manifest(
             &directory.path,
             vec![chunk_commit(4, "part-4.parquet"), chunk_commit(0, "part-0.parquet")],
+            TerminalRunState::Completed,
         )
         .expect("commits record");
-        record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "part-0.parquet")])
+        finalize_run_manifest(&directory.path, vec![chunk_commit(0, "part-0.parquet")], TerminalRunState::Completed)
             .expect("identical commit replay is idempotent");
         let manifest = read_manifest(&directory.path);
         let identifiers = manifest["committed_chunks"]
@@ -533,15 +491,21 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(identifiers, [0, 4]);
 
-        let error = record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "conflict.parquet")])
-            .expect_err("conflicting replay is rejected");
+        let error = finalize_run_manifest(
+            &directory.path,
+            vec![chunk_commit(0, "conflict.parquet")],
+            TerminalRunState::Completed,
+        )
+        .expect_err("conflicting replay is rejected");
         assert!(error.to_string().contains("conflicting commit metadata"));
 
-        mark_run_manifest_interrupted(&directory.path, "SIGTERM").expect("manifest marks interrupted");
+        finalize_run_manifest(&directory.path, Vec::new(), TerminalRunState::Interrupted { signal_name: "SIGTERM" })
+            .expect("manifest marks interrupted");
         let interrupted = read_manifest(&directory.path);
         assert_eq!(interrupted["status"], "interrupted");
         assert_eq!(interrupted["interrupted_signal"], "SIGTERM");
-        mark_run_manifest_completed(&directory.path).expect("manifest marks complete");
+        finalize_run_manifest(&directory.path, Vec::new(), TerminalRunState::Completed)
+            .expect("manifest marks complete");
         let completed = read_manifest(&directory.path);
         assert_eq!(completed["status"], "completed");
         assert!(completed.get("interrupted_signal").is_none());
@@ -558,10 +522,16 @@ mod tests {
         let directory = TestDirectory::new("missing-manifest");
         let manifest_path = directory.path.join(RUN_MANIFEST_FILE_NAME);
         let update_errors = [
-            mark_run_manifest_completed(&directory.path).expect_err("completion requires a manifest"),
-            mark_run_manifest_interrupted(&directory.path, "SIGINT").expect_err("interruption requires a manifest"),
-            record_run_manifest_chunk_commits(&directory.path, vec![chunk_commit(0, "part-0.parquet")])
-                .expect_err("chunk commits require a manifest"),
+            finalize_run_manifest(&directory.path, Vec::new(), TerminalRunState::Completed)
+                .expect_err("completion requires a manifest"),
+            finalize_run_manifest(&directory.path, Vec::new(), TerminalRunState::Interrupted { signal_name: "SIGINT" })
+                .expect_err("interruption requires a manifest"),
+            finalize_run_manifest(
+                &directory.path,
+                vec![chunk_commit(0, "part-0.parquet")],
+                TerminalRunState::Completed,
+            )
+            .expect_err("chunk commits require a manifest"),
             extend_run_manifest_metadata(&directory.path, json!(["g", "run"]), json!({"device": "gpu"}))
                 .expect_err("metadata extension requires a manifest"),
         ];

@@ -16,6 +16,8 @@ mod preparation;
 mod progress;
 mod run;
 mod run_coordinator;
+mod tiled_delivery;
+mod tiled_delivery_plan;
 
 #[cfg(test)]
 mod tests;
