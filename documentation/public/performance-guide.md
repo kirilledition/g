@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-24 | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-25 | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
@@ -175,13 +175,40 @@ both per-chromosome worker churn and overlapping chromosome-state device
 memory. Group-level device state is created at first use and released after its
 final chromosome preparation. Fully resumed phenotype groups initialize
 progress but do not select BGEN samples, prepare JAX state, or start scheduler
-workers; every remaining group uses the same direct delivery path.
+workers. Eligible linear GPU groups can also use the bounded source-sharing
+strategy below.
 
 Within a run, successive groups reuse the compressed packed8 layout plan when
 their ordered pending chunk ranges match exactly. Different sample masks can
 share that geometry, while different resume subsets replace the one cached
-plan. This retains only chunk metadata: each group still reads and decodes its
-genotypes and prepares its own statistical state.
+plan. This plan cache retains only chunk metadata; statistical state remains
+specific to each aligned sample group.
+
+For compatible compressed packed8 linear GPU input, the engine can process two
+sample groups together. It decodes a shared pending chunk once with all source
+samples, then selects each group's exact samples and computes its own statistics.
+Only one source chunk and two groups' states are retained. Each active group
+submits one private selection, then both results drain before the next source
+chunk. This permits overlap between one group's association and the other
+group's selection and materialization. Each output keeps its original variant
+order and resume coverage, and the output writer-pool size is unchanged.
+
+This internal strategy admits at most 128 MiB of retained source pairs and
+statuses, and 64 MiB of combined linear group, chromosome, and sample-selection
+array payloads. The two groups' selected inputs and association results can
+overlap beyond these limits. Preparation temporaries, compiled workspaces, and
+allocator reserves are also excluded; these are not total GPU-memory limits.
+Singleton groups, unsupported modes or input, disjoint pending plans, and
+geometries above either budget use ordinary delivery. The extra selection work
+and scheduling barriers make the benefit workload-dependent.
+
+In the 2,504-source-sample chromosome-22 qualification, hot scans with eight to
+32 distinct masks took 9.5–10.7% less time. Peak live JAX allocation increased
+by about 75–153 MiB, and the retained allocator pool grew from 522 to 1,034 MiB.
+Those allocator counters exclude native allocations outside JAX and do not
+measure total GPU memory. See the
+[profiling review](../development/performance-review-2026-09-25.md) for the
+workloads, controls, and measurement limits.
 
 ## Runtime Knobs
 
@@ -312,3 +339,5 @@ telemetry = "profile"
 Development benchmark protocols and repository-specific SLURM recipes live in
 [Benchmarking](../development/benchmarking.md) and
 [Server Gauss SLURM](../development/server-gauss-slurm.md).
+The [September 25 profiling review](../development/performance-review-2026-09-25.md)
+records the latest measured optimizations, workload scope, and limitations.

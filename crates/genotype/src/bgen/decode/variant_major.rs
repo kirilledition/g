@@ -5,8 +5,8 @@ use super::super::sample_selection::SampleSelection;
 use super::super::simd;
 use super::super::{BgenError, CompressionType};
 use super::matrix::{
-    ThreadScratch, VariantMajorTileStatsMut, exact_eight_bit_probability_pairs, packed_eight_bit_probability_index,
-    read_eight_bit_probability_pair, selected_sample_count_to_i32, unphased_eight_bit_dosage_lookup,
+    ThreadScratch, VariantMajorTileStatsMut, exact_eight_bit_probability_pairs, read_eight_bit_probability_pair,
+    selected_sample_count_to_i32, unphased_eight_bit_dosage,
 };
 use super::probability::{
     PackedProbabilityReader, layout_two_probability_byte_count, parse_layout_two_probability_block, read_exact_bytes,
@@ -256,7 +256,6 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
     let mut has_missing_values = false;
     let probability_pairs =
         exact_eight_bit_probability_pairs(&packed_probability_bytes[..expected_probability_byte_count]);
-    let dosage_lookup = unphased_eight_bit_dosage_lookup();
     for (file_sample_index, (ploidy_and_missingness, probability_pair)) in
         sample_ploidy_and_missingness.iter().zip(probability_pairs.iter().copied()).enumerate()
     {
@@ -274,8 +273,7 @@ fn decode_unphased_eight_bit_dosages_into_variant_major_row(
             continue;
         };
 
-        let packed_probability_index = packed_eight_bit_probability_index(probability_pair);
-        let dosage_value = dosage_lookup[packed_probability_index];
+        let dosage_value = unphased_eight_bit_dosage(probability_pair);
         let output_value = if is_missing { f32::NAN } else { dosage_value };
         output_row[selected_index].write(output_value);
         if is_missing {
@@ -315,7 +313,6 @@ fn decode_all_present_unphased_eight_bit_subset(
         });
     }
 
-    let dosage_lookup = unphased_eight_bit_dosage_lookup();
     let selected_file_indices = sample_selection
         .indexed_file_indices()
         .expect("non-identity, non-contiguous sample selections store explicit file indices");
@@ -333,7 +330,7 @@ fn decode_all_present_unphased_eight_bit_subset(
             false,
             file_sample_index,
         )?;
-        let dosage_value = dosage_lookup[packed_eight_bit_probability_index(probability_pair)];
+        let dosage_value = unphased_eight_bit_dosage(probability_pair);
         output_row[selected_index].write(dosage_value);
         integer_summary.record_probability_pair(probability_pair);
     }

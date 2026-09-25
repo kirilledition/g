@@ -60,6 +60,14 @@ Metadata-handle construction rejects string columns beyond Arrow's 32-bit
 `Utf8` offset limit before lazy writer-side array construction can panic.
 Normal writes do not collect detailed timers or traverse Arrow memory; that
 instrumentation is enabled only for explicit stage timing/profile modes.
+Completion and interruption publish validated worker commits and terminal status
+in one atomic manifest replacement after all writer tasks finish successfully.
+The manifest lock covers loading, commit validation, and persistence. If this
+write fails with new commits, one commit-only fallback preserves the exact prior
+status and interruption field; completion still returns an error. Both errors
+are reported if fallback persistence also fails. Empty-commit finalization uses
+one status update without fallback. The manifest-commit timing includes this
+terminal transaction; it does not indicate a separate status write.
 Binary correction codes remain `uint8` through device, host, and Arrow staging;
 the writer maps them to the existing method/status dictionaries only when it
 builds the final record batch.

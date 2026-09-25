@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod tiled_delivery;
+
 use crossbeam_channel::{Receiver, Sender};
 use g_genotype::{ChunkComputeStatistics, ChunkStats, GenotypeBatch, GenotypeBatchPayload, OwnedGenotypeBuffer};
 use g_genotype_contracts::{
@@ -119,6 +121,7 @@ impl TestBackend {
 }
 
 impl AssociationBackend for TestBackend {
+    type SharedSourceBatch = ();
     type GroupState = ();
     type ChromosomeState = usize;
     type TransferredInput = GenotypeBatch;

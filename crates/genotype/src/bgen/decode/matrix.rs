@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::sync::OnceLock;
 
 use super::super::BgenError;
 use super::probability::read_exact_bytes;
+use crate::common::EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL;
 
 pub(in crate::bgen) struct VariantMajorTileStatsMut<'a> {
     pub(in crate::bgen) dosage_sum: &'a mut [f64],
@@ -25,24 +25,15 @@ pub(in crate::bgen) fn selected_sample_count_to_i32(selected_sample_count: usize
     })
 }
 
-pub(in crate::bgen) fn unphased_eight_bit_dosage_lookup() -> &'static [f32] {
-    static UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP: OnceLock<Vec<f32>> = OnceLock::new();
-    UNPHASED_EIGHT_BIT_DOSAGE_LOOKUP.get_or_init(|| {
-        let reciprocal_scale = 1.0_f32 / 255.0_f32;
-        let mut dosage_lookup = Vec::with_capacity(usize::from(u16::MAX) + 1);
-        for packed_probability_index in 0..=u16::MAX {
-            let homozygous_reference_probability = i16::from(
-                u8::try_from(packed_probability_index & 0x00FF).expect("low packed probability byte should fit u8"),
-            );
-            let heterozygous_probability = i16::from(
-                u8::try_from((packed_probability_index & 0xFF00) >> 8)
-                    .expect("high packed probability byte should fit u8"),
-            );
-            let raw_dosage = 510 - (2 * homozygous_reference_probability) - heterozygous_probability;
-            dosage_lookup.push(f32::from(raw_dosage) * reciprocal_scale);
-        }
-        dosage_lookup
-    })
+#[inline]
+pub(super) fn unphased_eight_bit_dosage(
+    [homozygous_reference_probability_byte, heterozygous_probability_byte]: [u8; 2],
+) -> f32 {
+    let raw_dosage =
+        510 - (2 * i16::from(homozygous_reference_probability_byte)) - i16::from(heterozygous_probability_byte);
+    // Preserve the lookup table's rounded reciprocal multiplication, shared
+    // with the identity SIMD/scalar path; division can produce different bits.
+    f32::from(raw_dosage) * EIGHT_BIT_PROBABILITY_SCALE_RECIPROCAL
 }
 
 pub(super) fn exact_eight_bit_probability_pairs(packed_probability_bytes: &[u8]) -> &[[u8; 2]] {
@@ -50,12 +41,6 @@ pub(super) fn exact_eight_bit_probability_pairs(packed_probability_bytes: &[u8])
         unreachable!("8-bit BGEN probability byte slices are built from two bytes per sample");
     };
     probability_pairs
-}
-
-pub(in crate::bgen) fn packed_eight_bit_probability_index(
-    [homozygous_reference_probability_byte, heterozygous_probability_byte]: [u8; 2],
-) -> usize {
-    usize::from(homozygous_reference_probability_byte) | (usize::from(heterozygous_probability_byte) << 8)
 }
 
 pub(in crate::bgen) fn read_eight_bit_probability_pair(buffer: &[u8], offset: usize) -> Result<[u8; 2], BgenError> {

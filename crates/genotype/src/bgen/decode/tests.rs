@@ -455,6 +455,197 @@ fn variant_major_eight_bit_decode_preserves_selection_order_and_imputes_missing_
     assert_eq!(fractional_missing.observation_count, vec![2]);
 }
 
+fn legacy_unphased_eight_bit_dosage_lookup() -> Vec<f32> {
+    // Freeze the lookup construction from b3d3311. This oracle must not call
+    // the replacement arithmetic helper or use its shared scaling constant.
+    let reciprocal_scale = 1.0_f32 / 255.0_f32;
+    let mut dosage_lookup = Vec::with_capacity(usize::from(u16::MAX) + 1);
+    for packed_probability_index in 0..=u16::MAX {
+        let homozygous_reference_probability = i16::from(
+            u8::try_from(packed_probability_index & 0x00FF).expect("low packed probability byte should fit u8"),
+        );
+        let heterozygous_probability = i16::from(
+            u8::try_from((packed_probability_index & 0xFF00) >> 8).expect("high packed probability byte should fit u8"),
+        );
+        let raw_dosage = 510 - (2 * homozygous_reference_probability) - heterozygous_probability;
+        dosage_lookup.push(f32::from(raw_dosage) * reciprocal_scale);
+    }
+    dosage_lookup
+}
+
+fn assert_eight_bit_decode_matches_legacy_lookup(
+    decoded: &DecodedTile,
+    variant_index: usize,
+    probability_pairs: &[[u8; 2]],
+    ploidy: &[u8],
+    sample_indices: &[usize],
+    dosage_lookup: &[f32],
+    collect_sparse_candidate_counts: bool,
+) {
+    let mut raw_dosage_sum = 0_u64;
+    let mut raw_dosage_square_sum = 0_u64;
+    let mut observation_count = 0_i32;
+    let mut zero_count = 0_i32;
+    let mut homozygous_alternate_count = 0_i32;
+    for sample_index in sample_indices.iter().copied() {
+        if ploidy[sample_index] == 0x82 {
+            continue;
+        }
+        let [homozygous_reference_probability, heterozygous_probability] = probability_pairs[sample_index];
+        // Recover the unstored alternate probability and form exact integer
+        // moments independently of the decoder's raw-dosage helper.
+        let homozygous_alternate_probability =
+            255 - u64::from(homozygous_reference_probability) - u64::from(heterozygous_probability);
+        let raw_dosage = 2 * homozygous_alternate_probability + u64::from(heterozygous_probability);
+        raw_dosage_sum += raw_dosage;
+        raw_dosage_square_sum += raw_dosage * raw_dosage;
+        observation_count += 1;
+        zero_count += i32::from(raw_dosage == 0);
+        homozygous_alternate_count += i32::from(raw_dosage >= 383);
+    }
+    // These exhaustive fixtures contain fewer than 33,000 observations, so
+    // their exact integer totals fit comfortably within the f64 mantissa.
+    #[allow(clippy::cast_precision_loss)]
+    let expected_dosage_sum = raw_dosage_sum as f64 / 255.0;
+    #[allow(clippy::cast_precision_loss)]
+    let expected_dosage_square_sum = raw_dosage_square_sum as f64 / 65_025.0;
+    // Narrow the observed mean once, independently of rounded storage values.
+    #[allow(clippy::cast_possible_truncation)]
+    let expected_missing_dosage = (expected_dosage_sum / f64::from(observation_count.max(1))) as f32;
+    assert_eq!(decoded.dosage_sum[variant_index].to_bits(), expected_dosage_sum.to_bits());
+    assert_eq!(decoded.dosage_square_sum[variant_index].to_bits(), expected_dosage_square_sum.to_bits());
+    assert_eq!(decoded.observation_count[variant_index], observation_count);
+    for (selected_index, sample_index) in sample_indices.iter().copied().enumerate() {
+        let probability_pair = probability_pairs[sample_index];
+        let lookup_index = usize::from(u16::from_le_bytes(probability_pair));
+        let expected_dosage =
+            if ploidy[sample_index] == 0x82 { expected_missing_dosage } else { dosage_lookup[lookup_index] };
+        assert_eq!(
+            decoded.output_values[variant_index * sample_indices.len() + selected_index].to_bits(),
+            expected_dosage.to_bits(),
+            "variant {variant_index}, selected position {selected_index}, file position {sample_index}, pair {probability_pair:?}"
+        );
+    }
+    if collect_sparse_candidate_counts {
+        assert_eq!(decoded.zero_count.as_ref().expect("zero counts should be retained")[variant_index], zero_count);
+        assert_eq!(
+            decoded.homozygous_alternate_count.as_ref().expect("alternate counts should be retained")[variant_index],
+            homozygous_alternate_count
+        );
+    } else {
+        assert!(decoded.zero_count.is_none());
+        assert!(decoded.homozygous_alternate_count.is_none());
+    }
+}
+
+#[test]
+fn exhaustive_eight_bit_decode_matches_legacy_lookup_across_selection_and_missing_paths() {
+    let dosage_lookup = legacy_unphased_eight_bit_dosage_lookup();
+    let mut probability_pairs = vec![[0_u8, 0]];
+    probability_pairs.extend((0..=u16::MAX).map(u16::to_le_bytes).filter(|probability_pair| {
+        u8::try_from(u16::from(probability_pair[0]) + u16::from(probability_pair[1])).is_ok()
+    }));
+    assert_eq!(probability_pairs.len() - 1, 32_896);
+    probability_pairs.push([0, 0]);
+    let sample_count = probability_pairs.len();
+    let probabilities = probability_pairs.iter().flat_map(|pair| pair.map(u32::from)).collect::<Vec<_>>();
+    let present_ploidy = vec![2; sample_count];
+    let mut missing_ploidy = present_ploidy.clone();
+    missing_ploidy[0] = 0x82;
+    missing_ploidy[sample_count - 1] = 0x82;
+    let probability_blocks = [&present_ploidy, &missing_ploidy].map(|ploidy| {
+        probability_block(
+            u32::try_from(sample_count).expect("fixture sample count should fit u32"),
+            ploidy,
+            0,
+            8,
+            &probabilities,
+        )
+    });
+
+    // The interior contiguous selection excludes the two missing sentinels;
+    // the reversed selection must preserve all reordered sample positions.
+    for sample_indices in [
+        (0..sample_count).collect::<Vec<_>>(),
+        (1..sample_count - 1).collect::<Vec<_>>(),
+        (0..sample_count).rev().collect::<Vec<_>>(),
+    ] {
+        for collect_sparse_candidate_counts in [false, true] {
+            let decoded =
+                decode_blocks(&probability_blocks, sample_count, &sample_indices, collect_sparse_candidate_counts)
+                    .unwrap_or_else(|_| panic!("every valid eight-bit probability pair should decode"));
+            for (variant_index, ploidy) in [&present_ploidy, &missing_ploidy].into_iter().enumerate() {
+                assert_eight_bit_decode_matches_legacy_lookup(
+                    &decoded,
+                    variant_index,
+                    &probability_pairs,
+                    ploidy,
+                    &sample_indices,
+                    &dosage_lookup,
+                    collect_sparse_candidate_counts,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn eight_bit_indexed_decode_preserves_sparse_count_boundaries_and_excludes_missing_calls() {
+    // Raw dosages are 0, 1, 382, 383, 510, and 110. Missing [0, 0]
+    // probabilities must not contribute a dosage-two call or a sparse count.
+    let probability_pairs = [[255_u8, 0], [254, 1], [64, 0], [63, 1], [0, 0], [200, 0], [0, 0]];
+    let probabilities = probability_pairs.iter().flat_map(|pair| pair.map(u32::from)).collect::<Vec<_>>();
+    let present_ploidy = [2; 7];
+    let missing_ploidy = [2, 2, 2, 2, 2, 2, 0x82];
+    let probability_blocks =
+        [&present_ploidy, &missing_ploidy].map(|ploidy| probability_block(7, ploidy, 0, 8, &probabilities));
+    let sample_indices = [6, 4, 2, 0, 5, 3, 1];
+    let decoded = decode_blocks(&probability_blocks, 7, &sample_indices, true)
+        .unwrap_or_else(|_| panic!("sparse boundary fixture should decode"));
+    let dosage_lookup = legacy_unphased_eight_bit_dosage_lookup();
+    for (variant_index, ploidy) in [&present_ploidy, &missing_ploidy].into_iter().enumerate() {
+        assert_eight_bit_decode_matches_legacy_lookup(
+            &decoded,
+            variant_index,
+            &probability_pairs,
+            ploidy,
+            &sample_indices,
+            &dosage_lookup,
+            true,
+        );
+    }
+    assert_eq!(decoded.observation_count, vec![7, 6]);
+    assert_eq!(decoded.zero_count, Some(vec![1, 1]));
+    assert_eq!(decoded.homozygous_alternate_count, Some(vec![3, 2]));
+}
+
+#[test]
+fn eight_bit_missing_imputation_rounds_integer_mean_once_and_handles_all_missing() {
+    let dosage_lookup = legacy_unphased_eight_bit_dosage_lookup();
+    let observed_dosage = dosage_lookup[200];
+    // 110/255 distinguishes rounding the exact mean from averaging dosage
+    // storage rounded by the legacy reciprocal multiplication.
+    #[allow(clippy::cast_possible_truncation)]
+    let expected_missing_dosage = (110.0_f64 / 255.0) as f32;
+    assert_ne!(observed_dosage.to_bits(), expected_missing_dosage.to_bits());
+    let probability_blocks = [
+        probability_block(3, &[2, 0x82, 2], 0, 8, &[200, 0, 0, 0, 200, 0]),
+        probability_block(3, &[0x82; 3], 0, 8, &[0; 6]),
+    ];
+    let decoded = decode_blocks(&probability_blocks, 3, &[2, 1, 0], true)
+        .unwrap_or_else(|_| panic!("fractional and all-missing variants should decode"));
+    let expected_values = [observed_dosage, expected_missing_dosage, observed_dosage, 0.0, 0.0, 0.0];
+    assert_eq!(
+        decoded.output_values.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+        expected_values.map(f32::to_bits)
+    );
+    assert_eq!(decoded.dosage_sum, vec![220.0 / 255.0, 0.0]);
+    assert_eq!(decoded.dosage_square_sum, vec![24_200.0 / 65_025.0, 0.0]);
+    assert_eq!(decoded.observation_count, vec![2, 0]);
+    assert_eq!(decoded.zero_count, Some(vec![0, 0]));
+    assert_eq!(decoded.homozygous_alternate_count, Some(vec![0, 0]));
+}
+
 #[test]
 fn large_eight_bit_cohorts_preserve_fractional_moments_and_missing_imputation() {
     let sample_count = 500_000_u32;

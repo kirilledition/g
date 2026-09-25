@@ -60,6 +60,11 @@ struct CompressedPacked8BatchOwner {
     batch: native_genotype::CompressedPacked8Batch,
 }
 
+struct CompressedBatchArrays<'py> {
+    slab: Bound<'py, PyArray1<u8>>,
+    metadata: Bound<'py, PyArray2<u32>>,
+}
+
 #[pyclass(frozen)]
 struct SampleSelectionArrayOwner {
     file_indices: Arc<[u32]>,
@@ -269,12 +274,65 @@ fn binary_firth_backend_keyword_arguments<'py>(
 impl native_engine::AssociationBackend for PyJaxBackend {
     type ChromosomeState = Py<PyAny>;
     type TransferredInput = TransferredGenotypeInput;
+    type SharedSourceBatch = Py<PyAny>;
     type DeviceResult = DeviceAssociationResult;
     type Error = PyJaxBackendError;
     type GroupState = Py<PyAny>;
 
     fn genotype_delivery_capability(&self) -> native_engine::GenotypeDeliveryCapability {
         self.genotype_delivery_capability
+    }
+
+    fn supports_shared_source_batches(&self) -> bool {
+        matches!(self.kind, BackendKind::Linear)
+            && self.genotype_delivery_capability == native_engine::GenotypeDeliveryCapability::RawDeflatePacked8
+    }
+
+    fn prepare_shared_source(
+        &self,
+        input: native_genotype::GenotypeBatch,
+    ) -> Result<Option<Self::SharedSourceBatch>, Self::Error> {
+        if !self.supports_shared_source_batches() {
+            return Ok(None);
+        }
+        let native_genotype::GenotypeBatchPayload::CompressedPacked8(batch) = input.payload else {
+            return Err(PyJaxBackendError::InvalidInput("shared source requires compressed packed8 input".to_string()));
+        };
+        Python::attach(|py| {
+            let arrays = compressed_batch_arrays(py, batch, input.logical_variant_count)?;
+            self.backend
+                .bind(py)
+                .call_method1(
+                    "prepare_shared_source",
+                    (arrays.slab, arrays.metadata, input.compute_variant_count, input.sample_count),
+                )
+                .map(Bound::unbind)
+                .map(Some)
+                .map_err(PyJaxBackendError::Python)
+        })
+    }
+
+    fn select_shared_source(
+        &self,
+        group: &Self::GroupState,
+        source: &Self::SharedSourceBatch,
+    ) -> Result<Option<Self::TransferredInput>, Self::Error> {
+        if !self.supports_shared_source_batches() {
+            return Ok(None);
+        }
+        Python::attach(|py| {
+            self.backend
+                .bind(py)
+                .call_method1("select_shared_source", (group.bind(py), source.bind(py)))
+                .map(Bound::unbind)
+                .map(TransferredGenotypeInput::CompressedPacked8)
+                .map(Some)
+                .map_err(PyJaxBackendError::Python)
+        })
+    }
+
+    fn release_shared_source(&self, source: Self::SharedSourceBatch) {
+        Python::attach(|_| drop(source));
     }
 
     fn prepare_group(&self, input: native_engine::GroupPreparationInput) -> Result<Self::GroupState, Self::Error> {
@@ -501,34 +559,40 @@ fn transfer_genotype_batch(
                 .map_err(PyJaxBackendError::Python)
         }
         native_genotype::GenotypeBatchPayload::CompressedPacked8(batch) => {
-            let owner = Bound::new(py, CompressedPacked8BatchOwner { batch }).map_err(PyJaxBackendError::Python)?;
-            let slab_view = ArrayView1::from(owner.get().batch.raw_deflate_slab());
-            let compressed_slab = unsafe {
-                // Both immutable arrays use the frozen owner as their base, so
-                // pooled storage cannot be reclaimed before device_put consumes it.
-                PyArray1::borrow_from_array(&slab_view, owner.clone().into_any())
-            };
-            compressed_slab.readwrite().make_nonwriteable();
-            let metadata_view = ArrayView2::from_shape((logical_variant_count, 3), owner.get().batch.member_metadata())
-                .map_err(|error| {
-                    PyJaxBackendError::InvalidInput(format!("invalid compressed packed8 metadata shape: {error}"))
-                })?;
-            let compressed_metadata = unsafe {
-                // The same frozen owner retains the metadata allocation for this
-                // second non-writeable NumPy view.
-                PyArray2::borrow_from_array(&metadata_view, owner.clone().into_any())
-            };
-            compressed_metadata.readwrite().make_nonwriteable();
+            let arrays = compressed_batch_arrays(py, batch, logical_variant_count)?;
             backend
-                .call_method1(
-                    "transfer_compressed_batch",
-                    (group, compressed_slab, compressed_metadata, compute_variant_count),
-                )
+                .call_method1("transfer_compressed_batch", (group, arrays.slab, arrays.metadata, compute_variant_count))
                 .map(Bound::unbind)
                 .map(TransferredGenotypeInput::CompressedPacked8)
                 .map_err(PyJaxBackendError::Python)
         }
     }
+}
+
+fn compressed_batch_arrays(
+    py: Python<'_>,
+    batch: native_genotype::CompressedPacked8Batch,
+    logical_variant_count: usize,
+) -> Result<CompressedBatchArrays<'_>, PyJaxBackendError> {
+    let owner = Bound::new(py, CompressedPacked8BatchOwner { batch }).map_err(PyJaxBackendError::Python)?;
+    let slab_view = ArrayView1::from(owner.get().batch.raw_deflate_slab());
+    let slab = unsafe {
+        // Both immutable arrays retain the frozen owner, preventing pooled
+        // storage reuse before asynchronous device transfer consumes it.
+        PyArray1::borrow_from_array(&slab_view, owner.clone().into_any())
+    };
+    slab.readwrite().make_nonwriteable();
+    let metadata_view = ArrayView2::from_shape((logical_variant_count, 3), owner.get().batch.member_metadata())
+        .map_err(|error| {
+            PyJaxBackendError::InvalidInput(format!("invalid compressed packed8 metadata shape: {error}"))
+        })?;
+    let metadata = unsafe {
+        // The same owner retains the metadata allocation until its final view
+        // is released. Neither view permits Python-side mutation.
+        PyArray2::borrow_from_array(&metadata_view, owner.clone().into_any())
+    };
+    metadata.readwrite().make_nonwriteable();
+    Ok(CompressedBatchArrays { slab, metadata })
 }
 
 fn into_python_genotype_batch(

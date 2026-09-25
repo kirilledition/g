@@ -70,6 +70,30 @@ batch lifecycle without cloning; compressed batches materialize exact integer
 summaries, which the genotype crate validates and converts on the
 materialization worker before any writer sees the batch.
 
+Linear GPU backends can additionally advertise immutable shared-source batches.
+This is a stable capability promise: source preparation or selection returning
+`None` after admission is a typed delivery failure, not a fallback after output
+may have been accepted. The engine pairs at most two compressed packed8 groups,
+walks the ordered union of pending chunk ranges, and shares source decode only
+when both groups need the same range. Each group keeps its own sample selection,
+statistics, chromosome transitions, LOCO use counts, progress, and writer lanes.
+Each active group submits one private selection before either pipeline is
+drained. Both pipelines drain before source release and the next chunk, with an
+interruption check between drains that preserves already accepted output.
+At most two existing pipelines are resident; output writer-pool bounds do not
+change. On failure, pipelines abort and join before the source release hook,
+then group release hooks run.
+
+Admission uses checked arithmetic and bounds retained full-source pairs plus
+statuses to 128 MiB and combined linear group/chromosome/selection array payloads
+to 64 MiB. These are retained-array limits, not total GPU-memory limits. The two
+private selected input/result sets can overlap in addition to the source and
+state payloads; compiled workspaces, preparation temporaries, and allocator
+reservation remain separate.
+Unsupported modes, singleton groups, disjoint pending plans, incompatible input,
+and oversized geometries retain ordinary delivery. Fully committed resumes
+still initialize no backend or source state.
+
 ## Allowed downstream users
 
 `g-runner` and the root native JAX backend adapter.

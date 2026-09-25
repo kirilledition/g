@@ -178,14 +178,14 @@ Generated from Git-tracked files under `crates/` and `src/` using [`cloc`](https
 
 | Language | Files | Blank | Comment | Code |
 | --- | ---: | ---: | ---: | ---: |
-| Rust | 184 | 2,968 | 1,117 | 31,131 |
-| Python | 36 | 669 | 509 | 4,146 |
+| Rust | 189 | 3,108 | 1,207 | 33,223 |
+| Python | 36 | 690 | 542 | 4,317 |
 | C++ | 2 | 116 | 6 | 1,036 |
-| Markdown | 13 | 135 | 0 | 533 |
+| Markdown | 13 | 137 | 0 | 563 |
 | CUDA | 2 | 23 | 4 | 382 |
 | TOML | 12 | 38 | 5 | 237 |
 | C/C++ Header | 1 | 12 | 3 | 56 |
-| **Total** | 250 | 3,961 | 1,644 | 37,521 |
+| **Total** | 255 | 4,124 | 1,767 | 39,814 |
 
 `cloc` version: `2.10`.
 <!-- code-size-summary:end -->

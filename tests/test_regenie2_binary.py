@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -686,6 +687,71 @@ def test_candidate_bucket_order_is_stable_within_each_class() -> None:
     np.testing.assert_array_equal(np.asarray(observed), np.asarray([1, 0, 3, 2, 4], dtype=np.int32))
 
 
+@pytest.mark.parametrize("candidate_count", [1, 4])
+def test_candidate_bucket_order_matches_exhaustive_stable_partition(candidate_count: int) -> None:
+    """Preserve every small active/heuristic combination, including inactive flags."""
+    mask_patterns = np.arange(1 << (2 * candidate_count), dtype=np.int32)[:, None]
+    lane_positions = np.arange(candidate_count, dtype=np.int32)[None, :]
+    active_masks = ((mask_patterns >> lane_positions) & 1).astype(np.bool_)
+    heuristic_masks = ((mask_patterns >> (lane_positions + candidate_count)) & 1).astype(np.bool_)
+    expected = np.stack(
+        [
+            np.concatenate(
+                (
+                    np.flatnonzero(active_mask & ~heuristic_mask),
+                    np.flatnonzero(active_mask & heuristic_mask),
+                    np.flatnonzero(~active_mask),
+                ),
+            )
+            for active_mask, heuristic_mask in zip(active_masks, heuristic_masks, strict=True)
+        ],
+    ).astype(np.int32)
+
+    observed = jax.jit(jax.vmap(regenie2_binary_candidates.build_firth_candidate_bucket_order))(
+        flat_active_mask=jnp.asarray(active_masks),
+        heuristic_firth_mask=jnp.asarray(heuristic_masks),
+    )
+
+    assert observed.dtype == jnp.int32
+    np.testing.assert_array_equal(np.asarray(observed), expected)
+
+
+@pytest.mark.parametrize("candidate_count", [513, 1024, 32768])
+def test_candidate_bucket_order_preserves_large_padded_and_interleaved_lanes(candidate_count: int) -> None:
+    """Keep stable bucket order across batch and scan boundaries with arbitrary holes."""
+    lane_positions = np.arange(candidate_count, dtype=np.int32)
+    active_masks = np.stack(
+        (
+            np.zeros(candidate_count, dtype=np.bool_),
+            np.ones(candidate_count, dtype=np.bool_),
+            lane_positions < 1,
+            lane_positions < candidate_count - 1,
+            lane_positions % 3 != 0,
+        ),
+    )
+    heuristic_masks = np.broadcast_to(lane_positions % 5 < 2, active_masks.shape)
+    expected = np.stack(
+        [
+            np.concatenate(
+                (
+                    np.flatnonzero(active_mask & ~heuristic_mask),
+                    np.flatnonzero(active_mask & heuristic_mask),
+                    np.flatnonzero(~active_mask),
+                ),
+            )
+            for active_mask, heuristic_mask in zip(active_masks, heuristic_masks, strict=True)
+        ],
+    ).astype(np.int32)
+
+    observed = jax.jit(jax.vmap(regenie2_binary_candidates.build_firth_candidate_bucket_order))(
+        flat_active_mask=jnp.asarray(active_masks),
+        heuristic_firth_mask=jnp.asarray(heuristic_masks),
+    )
+
+    assert observed.dtype == jnp.int32
+    np.testing.assert_array_equal(np.asarray(observed), expected)
+
+
 def test_candidate_planning_rejects_invalid_static_geometry() -> None:
     """Fail before tracing when capacity or batch size cannot form an executable."""
     fallback_mask = jnp.asarray([True, False])
@@ -693,6 +759,16 @@ def test_candidate_planning_rejects_invalid_static_geometry() -> None:
         regenie2_binary_candidates.build_device_firth_batch_plan(fallback_mask, 0, 1)
     with pytest.raises(ValueError, match="batch size must be positive"):
         regenie2_binary_candidates.build_device_firth_batch_plan(fallback_mask, 1, 0)
+    with pytest.raises(ValueError, match="capacity must be positive"):
+        regenie2_binary_candidates.build_firth_candidate_bucket_order(
+            flat_active_mask=jnp.zeros((0,), dtype=jnp.bool_),
+            heuristic_firth_mask=jnp.zeros((0,), dtype=jnp.bool_),
+        )
+    with pytest.raises(ValueError, match="one-dimensional mask"):
+        regenie2_binary_candidates.build_firth_candidate_bucket_order(
+            flat_active_mask=jnp.ones((2, 2), dtype=jnp.bool_),
+            heuristic_firth_mask=jnp.zeros((2, 2), dtype=jnp.bool_),
+        )
 
 
 def test_binary_packed8_path_matches_explicit_decode() -> None:
