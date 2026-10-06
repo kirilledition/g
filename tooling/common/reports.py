@@ -171,22 +171,6 @@ def write_versioned_json_report(
     write_json_report(path, payload, sort_keys=sort_keys)
 
 
-def read_versioned_json_report(path: Path, contract: VersionedReportContract) -> dict[str, typing.Any]:
-    """Read and validate a versioned JSON report.
-
-    Args:
-        path: JSON report path.
-        contract: Expected report contract.
-
-    Returns:
-        Validated report payload.
-
-    """
-    payload = read_json_report(path)
-    validate_report_shape(payload, contract)
-    return payload
-
-
 def validate_report_envelope(payload: dict[str, typing.Any], *, schema_name: str) -> None:
     """Validate common Tooling Artifact Format envelope fields.
 
