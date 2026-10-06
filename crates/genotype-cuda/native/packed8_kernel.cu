@@ -56,34 +56,25 @@ __device__ __forceinline__ unsigned int load_u32_little_endian(const unsigned ch
          ((unsigned int)bytes[3] << 24);
 }
 
-__device__ __forceinline__ float packed8_genotype_mean(unsigned long long raw_dosage_sum,
-                                                       unsigned long long selected_sample_count) {
-  // Match the host's two explicitly rounded f32 operations. The exact
-  // reciprocal is f32(1 / 255); rounded intrinsics prevent reassociation.
-  const float packed8_probability_scale = 0x1.010102p-8f;
-  const float dosage_sum = __fmul_rn(__ull2float_rn(raw_dosage_sum), packed8_probability_scale);
-  return __fdiv_rn(dosage_sum, __ull2float_rn(selected_sample_count));
-}
-
-extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_slab,
-                                            const unsigned long long* actual_sizes,
-                                            const int* nvcomp_statuses,
-                                            const unsigned int* compressed_metadata,
-                                            const unsigned int* descriptor_statuses,
-                                            const unsigned int* selected_sample_indices,
-                                            long long selection_start,
-                                            unsigned long long logical_variant_count,
-                                            unsigned long long compute_variant_count,
-                                            unsigned long long source_sample_count,
-                                            unsigned long long selected_sample_count,
-                                            unsigned long long output_stride,
-                                            unsigned char* probabilities,
-                                            unsigned long long* raw_dosage_sums,
-                                            unsigned long long* raw_dosage_square_sums,
-                                            unsigned int* zero_counts,
-                                            unsigned int* homozygous_alternate_counts,
-                                            unsigned int* statuses,
-                                            float* genotype_means) {
+template <bool CollectStatistics>
+__device__ __forceinline__ void finalize_packed8_row(const unsigned char* decompressed_slab,
+                                                     const unsigned long long* actual_sizes,
+                                                     const int* nvcomp_statuses,
+                                                     const unsigned int* compressed_metadata,
+                                                     const unsigned int* descriptor_statuses,
+                                                     const unsigned int* selected_sample_indices,
+                                                     long long selection_start,
+                                                     unsigned long long logical_variant_count,
+                                                     unsigned long long compute_variant_count,
+                                                     unsigned long long source_sample_count,
+                                                     unsigned long long selected_sample_count,
+                                                     unsigned long long output_stride,
+                                                     unsigned char* probabilities,
+                                                     unsigned long long* raw_dosage_sums,
+                                                     unsigned long long* raw_dosage_square_sums,
+                                                     unsigned int* zero_counts,
+                                                     unsigned int* homozygous_alternate_counts,
+                                                     unsigned int* statuses) {
   constexpr unsigned int adler_modulus = 65521;
   constexpr unsigned int kernel_block_size = 256;
   constexpr unsigned int warp_size = 32;
@@ -106,12 +97,13 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
       probability_row[selected_index * 2 + 1] = 0;
     }
     if (thread_index == 0) {
-      raw_dosage_sums[variant_index] = 0;
-      raw_dosage_square_sums[variant_index] = 0;
-      zero_counts[variant_index] = 0;
-      homozygous_alternate_counts[variant_index] = 0;
+      if constexpr (CollectStatistics) {
+        raw_dosage_sums[variant_index] = 0;
+        raw_dosage_square_sums[variant_index] = 0;
+        zero_counts[variant_index] = 0;
+        homozygous_alternate_counts[variant_index] = 0;
+      }
       statuses[variant_index] = 0;
-      genotype_means[variant_index] = 0.0f;
     }
     return;
   }
@@ -135,19 +127,21 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
       probability_row[selected_index * 2 + 1] = 0;
     }
     if (thread_index == 0) {
-      raw_dosage_sums[variant_index] = 0;
-      raw_dosage_square_sums[variant_index] = 0;
-      zero_counts[variant_index] = 0;
-      homozygous_alternate_counts[variant_index] = 0;
+      if constexpr (CollectStatistics) {
+        raw_dosage_sums[variant_index] = 0;
+        raw_dosage_square_sums[variant_index] = 0;
+        zero_counts[variant_index] = 0;
+        homozygous_alternate_counts[variant_index] = 0;
+      }
       statuses[variant_index] = row_gate_status;
-      genotype_means[variant_index] = 0.0f;
     }
     return;
   }
 
   const unsigned char* row = decompressed_slab + variant_index * output_stride;
   const unsigned long long probability_offset = 10 + source_sample_count;
-  const bool identity_selection = selection_start == 0 && selected_sample_count == source_sample_count;
+  const bool identity_selection =
+      !CollectStatistics || (selection_start == 0 && selected_sample_count == source_sample_count);
   unsigned long long local_sum = 0;
   unsigned long long local_square_sum = 0;
   unsigned long long local_adler_sum = 0;
@@ -208,11 +202,13 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
     if (identity_selection) {
       probability_row[source_index * 2] = (unsigned char)first_probability;
       probability_row[source_index * 2 + 1] = (unsigned char)second_probability;
-      const unsigned long long raw_dosage = 510 - 2 * first_probability - second_probability;
-      local_sum += raw_dosage;
-      local_square_sum += raw_dosage * raw_dosage;
-      local_zero_count += raw_dosage == 0;
-      local_homozygous_alternate_count += raw_dosage >= 383;
+      if constexpr (CollectStatistics) {
+        const unsigned long long raw_dosage = 510 - 2 * first_probability - second_probability;
+        local_sum += raw_dosage;
+        local_square_sum += raw_dosage * raw_dosage;
+        local_zero_count += raw_dosage == 0;
+        local_homozygous_alternate_count += raw_dosage >= 383;
+      }
     }
   }
 
@@ -232,21 +228,27 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
       }
       probability_row[selected_index * 2] = (unsigned char)first_probability;
       probability_row[selected_index * 2 + 1] = (unsigned char)second_probability;
-      const unsigned long long raw_dosage = 510 - 2 * first_probability - second_probability;
-      local_sum += raw_dosage;
-      local_square_sum += raw_dosage * raw_dosage;
-      local_zero_count += raw_dosage == 0;
-      local_homozygous_alternate_count += raw_dosage >= 383;
+      if constexpr (CollectStatistics) {
+        const unsigned long long raw_dosage = 510 - 2 * first_probability - second_probability;
+        local_sum += raw_dosage;
+        local_square_sum += raw_dosage * raw_dosage;
+        local_zero_count += raw_dosage == 0;
+        local_homozygous_alternate_count += raw_dosage >= 383;
+      }
     }
   }
 
   for (unsigned int offset = warp_size / 2; offset != 0; offset /= 2) {
-    local_sum += __shfl_down_sync(full_warp_mask, local_sum, offset);
-    local_square_sum += __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    if constexpr (CollectStatistics) {
+      local_sum += __shfl_down_sync(full_warp_mask, local_sum, offset);
+      local_square_sum += __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    }
     local_adler_sum += __shfl_down_sync(full_warp_mask, local_adler_sum, offset);
     local_adler_weighted_sum += __shfl_down_sync(full_warp_mask, local_adler_weighted_sum, offset);
-    local_zero_count += __shfl_down_sync(full_warp_mask, local_zero_count, offset);
-    local_homozygous_alternate_count += __shfl_down_sync(full_warp_mask, local_homozygous_alternate_count, offset);
+    if constexpr (CollectStatistics) {
+      local_zero_count += __shfl_down_sync(full_warp_mask, local_zero_count, offset);
+      local_homozygous_alternate_count += __shfl_down_sync(full_warp_mask, local_homozygous_alternate_count, offset);
+    }
     local_status |= __shfl_down_sync(full_warp_mask, local_status, offset);
   }
 
@@ -258,12 +260,16 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
   __shared__ unsigned int warp_homozygous_alternate_counts[warp_count];
   __shared__ unsigned int warp_statuses[warp_count];
   if (lane_index == 0) {
-    warp_sums[warp_index] = local_sum;
-    warp_square_sums[warp_index] = local_square_sum;
+    if constexpr (CollectStatistics) {
+      warp_sums[warp_index] = local_sum;
+      warp_square_sums[warp_index] = local_square_sum;
+    }
     warp_adler_sums[warp_index] = local_adler_sum;
     warp_adler_weighted_sums[warp_index] = local_adler_weighted_sum;
-    warp_zero_counts[warp_index] = local_zero_count;
-    warp_homozygous_alternate_counts[warp_index] = local_homozygous_alternate_count;
+    if constexpr (CollectStatistics) {
+      warp_zero_counts[warp_index] = local_zero_count;
+      warp_homozygous_alternate_counts[warp_index] = local_homozygous_alternate_count;
+    }
     warp_statuses[warp_index] = local_status;
   }
   __syncthreads();
@@ -271,20 +277,28 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
   if (warp_index != 0) {
     return;
   }
-  local_sum = lane_index < warp_count ? warp_sums[lane_index] : 0;
-  local_square_sum = lane_index < warp_count ? warp_square_sums[lane_index] : 0;
+  if constexpr (CollectStatistics) {
+    local_sum = lane_index < warp_count ? warp_sums[lane_index] : 0;
+    local_square_sum = lane_index < warp_count ? warp_square_sums[lane_index] : 0;
+  }
   local_adler_sum = lane_index < warp_count ? warp_adler_sums[lane_index] : 0;
   local_adler_weighted_sum = lane_index < warp_count ? warp_adler_weighted_sums[lane_index] : 0;
-  local_zero_count = lane_index < warp_count ? warp_zero_counts[lane_index] : 0;
-  local_homozygous_alternate_count = lane_index < warp_count ? warp_homozygous_alternate_counts[lane_index] : 0;
+  if constexpr (CollectStatistics) {
+    local_zero_count = lane_index < warp_count ? warp_zero_counts[lane_index] : 0;
+    local_homozygous_alternate_count = lane_index < warp_count ? warp_homozygous_alternate_counts[lane_index] : 0;
+  }
   local_status = lane_index < warp_count ? warp_statuses[lane_index] : 0;
   for (unsigned int offset = warp_size / 2; offset != 0; offset /= 2) {
-    local_sum += __shfl_down_sync(full_warp_mask, local_sum, offset);
-    local_square_sum += __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    if constexpr (CollectStatistics) {
+      local_sum += __shfl_down_sync(full_warp_mask, local_sum, offset);
+      local_square_sum += __shfl_down_sync(full_warp_mask, local_square_sum, offset);
+    }
     local_adler_sum += __shfl_down_sync(full_warp_mask, local_adler_sum, offset);
     local_adler_weighted_sum += __shfl_down_sync(full_warp_mask, local_adler_weighted_sum, offset);
-    local_zero_count += __shfl_down_sync(full_warp_mask, local_zero_count, offset);
-    local_homozygous_alternate_count += __shfl_down_sync(full_warp_mask, local_homozygous_alternate_count, offset);
+    if constexpr (CollectStatistics) {
+      local_zero_count += __shfl_down_sync(full_warp_mask, local_zero_count, offset);
+      local_homozygous_alternate_count += __shfl_down_sync(full_warp_mask, local_homozygous_alternate_count, offset);
+    }
     local_status |= __shfl_down_sync(full_warp_mask, local_status, offset);
   }
   if (lane_index != 0) {
@@ -297,10 +311,87 @@ extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_sl
   if (observed_adler32 != compressed_metadata[variant_index * 3 + 2]) {
     local_status |= STATUS_ADLER32;
   }
-  raw_dosage_sums[variant_index] = local_sum;
-  raw_dosage_square_sums[variant_index] = local_square_sum;
-  zero_counts[variant_index] = local_zero_count;
-  homozygous_alternate_counts[variant_index] = local_homozygous_alternate_count;
+  if constexpr (CollectStatistics) {
+    raw_dosage_sums[variant_index] = local_sum;
+    raw_dosage_square_sums[variant_index] = local_square_sum;
+    zero_counts[variant_index] = local_zero_count;
+    homozygous_alternate_counts[variant_index] = local_homozygous_alternate_count;
+  }
   statuses[variant_index] = local_status;
-  genotype_means[variant_index] = packed8_genotype_mean(local_sum, selected_sample_count);
+}
+
+extern "C" __global__ void finalize_packed8(const unsigned char* decompressed_slab,
+                                            const unsigned long long* actual_sizes,
+                                            const int* nvcomp_statuses,
+                                            const unsigned int* compressed_metadata,
+                                            const unsigned int* descriptor_statuses,
+                                            const unsigned int* selected_sample_indices,
+                                            long long selection_start,
+                                            unsigned long long logical_variant_count,
+                                            unsigned long long compute_variant_count,
+                                            unsigned long long source_sample_count,
+                                            unsigned long long selected_sample_count,
+                                            unsigned long long output_stride,
+                                            unsigned char* probabilities,
+                                            unsigned long long* raw_dosage_sums,
+                                            unsigned long long* raw_dosage_square_sums,
+                                            unsigned int* zero_counts,
+                                            unsigned int* homozygous_alternate_counts,
+                                            unsigned int* statuses) {
+  finalize_packed8_row<true>(decompressed_slab,
+                             actual_sizes,
+                             nvcomp_statuses,
+                             compressed_metadata,
+                             descriptor_statuses,
+                             selected_sample_indices,
+                             selection_start,
+                             logical_variant_count,
+                             compute_variant_count,
+                             source_sample_count,
+                             selected_sample_count,
+                             output_stride,
+                             probabilities,
+                             raw_dosage_sums,
+                             raw_dosage_square_sums,
+                             zero_counts,
+                             homozygous_alternate_counts,
+                             statuses);
+}
+
+extern "C" __global__ void finalize_packed8_source(const unsigned char* decompressed_slab,
+                                                   const unsigned long long* actual_sizes,
+                                                   const int* nvcomp_statuses,
+                                                   const unsigned int* compressed_metadata,
+                                                   const unsigned int* descriptor_statuses,
+                                                   const unsigned int* selected_sample_indices,
+                                                   long long selection_start,
+                                                   unsigned long long logical_variant_count,
+                                                   unsigned long long compute_variant_count,
+                                                   unsigned long long source_sample_count,
+                                                   unsigned long long selected_sample_count,
+                                                   unsigned long long output_stride,
+                                                   unsigned char* probabilities,
+                                                   unsigned long long* raw_dosage_sums,
+                                                   unsigned long long* raw_dosage_square_sums,
+                                                   unsigned int* zero_counts,
+                                                   unsigned int* homozygous_alternate_counts,
+                                                   unsigned int* statuses) {
+  finalize_packed8_row<false>(decompressed_slab,
+                              actual_sizes,
+                              nvcomp_statuses,
+                              compressed_metadata,
+                              descriptor_statuses,
+                              selected_sample_indices,
+                              selection_start,
+                              logical_variant_count,
+                              compute_variant_count,
+                              source_sample_count,
+                              selected_sample_count,
+                              output_stride,
+                              probabilities,
+                              raw_dosage_sums,
+                              raw_dosage_square_sums,
+                              zero_counts,
+                              homozygous_alternate_counts,
+                              statuses);
 }

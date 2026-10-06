@@ -12,7 +12,8 @@ import numpy as np
 
 from g.compute.common import genotype
 
-PACKED8_DEFLATE_FFI_TARGET = "g.bgen.packed8_deflate.v1"
+PACKED8_DEFLATE_FFI_TARGET = "g.bgen.packed8_deflate.v2"
+PACKED8_SOURCE_DEFLATE_FFI_TARGET = "g.bgen.packed8_source_deflate.v1"
 RARE_SPARSE_FIRTH_MINOR_ALLELE_COUNT = 50
 PACKED8_EARLY_FAILURE_STATUS_MASK = 1 | 2 | 2048
 PACKED8_SAMPLE_INDEX_STATUS = 1024
@@ -56,6 +57,58 @@ class DecodedPacked8DeflateBatch:
     imputed_dosage_square_sum: jax.Array | None
     sparse_candidate_mask: jax.Array | None
     raw_packed8_statistics: Packed8RawStatistics[jax.Array, jax.Array]
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True, slots=True)
+class DecodedPacked8DeflateSource:
+    """Validated full-source probabilities retained across group selections.
+
+    Attributes:
+        packed_probability_pairs_by_variant: Full-source pairs, including neutral tails.
+        statuses: Source-wide descriptor, row, and checksum validation results.
+
+    """
+
+    packed_probability_pairs_by_variant: jax.Array
+    statuses: jax.Array
+
+
+@functools.partial(jax.jit, static_argnames=("source_sample_count", "compute_variant_count"))
+def decode_packed8_deflate_source(
+    compressed_slab: jax.Array,
+    compressed_metadata: jax.Array,
+    *,
+    source_sample_count: int,
+    compute_variant_count: int,
+) -> DecodedPacked8DeflateSource:
+    """Decode reusable source pairs without allocating or reducing group statistics.
+
+    Args:
+        compressed_slab: Trusted, aligned raw-DEFLATE members in one byte slab.
+        compressed_metadata: Logical member offsets, sizes, and Adler checksums.
+        source_sample_count: Sample count encoded in each source BGEN row.
+        compute_variant_count: Padded variant count retained for group selection.
+
+    Returns:
+        Validated source pairs and status bits with neutral compute tails.
+
+    """
+    packed_probability_pairs_by_variant, statuses = jax.ffi.ffi_call(
+        PACKED8_SOURCE_DEFLATE_FFI_TARGET,
+        (
+            jax.ShapeDtypeStruct((compute_variant_count, source_sample_count, 2), np.uint8),
+            jax.ShapeDtypeStruct((compute_variant_count,), np.uint32),
+        ),
+    )(
+        compressed_slab,
+        compressed_metadata,
+        source_sample_count=source_sample_count,
+    )
+    return DecodedPacked8DeflateSource(
+        packed_probability_pairs_by_variant=packed_probability_pairs_by_variant,
+        statuses=statuses,
+    )
 
 
 @functools.partial(
@@ -110,7 +163,6 @@ def decode_packed8_deflate_batch(
             jax.ShapeDtypeStruct((compute_variant_count,), np.uint32),
             jax.ShapeDtypeStruct((compute_variant_count,), np.uint32),
             jax.ShapeDtypeStruct((compute_variant_count,), np.uint32),
-            jax.ShapeDtypeStruct((compute_variant_count,), np.float32),
         ),
     )(
         compressed_slab,
@@ -126,7 +178,6 @@ def decode_packed8_deflate_batch(
         zero_counts,
         homozygous_alternate_counts,
         statuses,
-        _legacy_genotype_mean,
     ) = foreign_outputs
 
     return build_decoded_packed8_batch(
@@ -270,9 +321,8 @@ def build_decoded_packed8_batch(
     collect_sparse_candidate_mask: bool,
 ) -> DecodedPacked8DeflateBatch:
     """Derive identical compute moments and sparse decisions from exact totals."""
-    # Keep the existing FFI shape while deriving both compute moments from its
-    # exact integers. Narrowing a raw total first biases means and square sums
-    # in large cohorts; the native mean predates this precision policy.
+    # Narrow only after deriving compute moments from exact integer totals.
+    # Converting a raw total to float32 first biases moments in large cohorts.
     dosage_sums = jnp.asarray(raw_dosage_sums, dtype=jnp.float64) / genotype.EIGHT_BIT_PROBABILITY_DENOMINATOR
     genotype_mean = jnp.asarray(dosage_sums / selected_sample_count, dtype=jnp.float32)
 
