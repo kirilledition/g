@@ -113,6 +113,14 @@ resume preflight remains per entry. The process reuses JAX/CUDA state, compiled
 executables, and one verified BGEN index. Shape changes may compile an additional
 executable, so group configs with stable shapes when throughput is the priority.
 
+Approximate-Firth chunk executables specialize on correction settings and
+prepared chromosome operands. Changing only the null-logistic or null-Firth
+fitting policy can rebuild the chromosome state without compiling another
+otherwise identical chunk executable. Changing correction solver settings or
+candidate geometry can still compile a separate executable. This reduces
+repeated setup work across compatible scans; it does not make an already
+compiled chunk kernel faster.
+
 The process-local BGEN cache retains at most one index with an estimated
 allocation size of 256 MiB or less, plus one open file descriptor. It retains
 no mapping or genotype payload. Larger indexes are usable but are not cached.

@@ -13,7 +13,7 @@ from g.compute.regenie2_binary.firth import types as regenie2_binary_firth_types
 
 
 def build_scalar_approximate_firth_solver_parameters(
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
 ) -> regenie2_binary_firth_types.ScalarApproximateFirthSolverParameters:
     """Build explicit scalar approximate-Firth policy operands."""
     pseudo_maximum_iterations = min(

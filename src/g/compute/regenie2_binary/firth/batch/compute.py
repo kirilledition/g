@@ -126,7 +126,7 @@ def compute_scalar_firth_multi_variantwise(
     skip_firth_mask: jax.Array,
     sparse_correction_mask: jax.Array,
     null_failed_mask: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute scalar Firth fits for lane-specific multi-trait candidates."""
     solver_parameters = regenie2_binary_firth_scalar_approx.build_scalar_approximate_firth_solver_parameters(
@@ -318,7 +318,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches_without_sparse_compacti
     fallback_count: jax.Array,
     firth_batch_size: int,
     null_failed_mask: jax.Array,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute scalar Firth fits for flattened candidate lanes using fixed-size batches."""
     batch_count = active_mask.shape[0] // firth_batch_size
@@ -374,7 +374,7 @@ def compute_scalar_firth_multi_variantwise_fixed_batches(
     candidate_inputs: regenie2_binary_candidate_planning.ScalarFirthCandidateBatchInputs,
     fallback_count: jax.Array,
     firth_batch_size: int,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
 ) -> regenie2_binary_firth_types.FirthVariantResult:
     """Compute scalar Firth fits with compact sparse lanes when eligible."""
     active_mask = candidate_inputs.lanes.flat_active_mask
