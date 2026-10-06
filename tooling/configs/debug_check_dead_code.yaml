@@ -1,0 +1,6 @@
+tool:
+  name: check_dead_code
+
+hydra:
+  job:
+    chdir: false
