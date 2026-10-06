@@ -20,7 +20,6 @@ if typing.TYPE_CHECKING:
     import omegaconf
 
 TOY_VARIANT_COUNT = 5_000
-DEFAULT_DATA_DIRECTORY = Path("data")
 
 
 @dataclass(frozen=True)
@@ -229,16 +228,6 @@ def create_toy_slice(dataset_paths: DatasetPaths) -> None:
     )
 
 
-def build_dataset_paths() -> DatasetPaths:
-    """Construct the standard Phase 0 dataset paths."""
-    data_directory = DEFAULT_DATA_DIRECTORY
-    return DatasetPaths(
-        data_directory=data_directory,
-        full_dataset_prefix=data_directory / "1kg_chr22_full",
-        toy_dataset_prefix=data_directory / "1kg_chr22_toy",
-    )
-
-
 @dataclass(frozen=True)
 class FetchArguments:
     """Resolved parameters for dataset fetching."""
@@ -285,11 +274,6 @@ def hydra_main(config: omegaconf.DictConfig) -> None:
 def main() -> None:
     """Download and prepare benchmark data from default Hydra configuration."""
     tooling_hydra_compat.apply_argparse_help_patch()
-    hydra_main()
-
-
-def main_hydra() -> None:
-    """Hydra entrypoint for direct module execution."""
     hydra_main()
 
 

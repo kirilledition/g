@@ -714,6 +714,11 @@ check-python-architecture:
     {{ server_env }} && uv sync --group dev --frozen --no-install-project
     {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_python_architecture
 
+# Verify maintained Python module reachability
+check-dead-code:
+    {{ server_env }} && uv sync --group dev --frozen --no-install-project
+    {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_dead_code
+
 # Verify Python type stub exports are in sync with Rust `_core` registrations
 check-core-stub:
     {{ server_env }} && uv sync --group dev --frozen --no-install-project
@@ -739,7 +744,7 @@ check-artifact-schema path:
     {{ server_env }} && PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.schema_check --config-name schema_check tool.path='{{ path }}'
 
 # Run all checks
-check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-python-architecture check-justfile
+check: format lint typecheck check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-python-architecture check-dead-code check-justfile
 
 # Check formatting without requiring Nix or direct Cargo access
 format-local-check: cuda-format-check
@@ -763,7 +768,7 @@ test-local:
     uv run pytest tests/ -m "not phase0_data and not phase1_parity"
 
 # Local no-Nix verification lane
-check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-python-architecture check-justfile
+check-local: format-local-check lint-local typecheck-local test-local-focused check-core-stub check-internal-defaults check-internal-init-exports check-rust-architecture check-python-architecture check-dead-code check-justfile
 
 # Run CI lint checks without installing the project package
 ci-lint:

@@ -8,7 +8,10 @@ use std::fmt;
 use std::ptr::NonNull;
 
 /// Stable JAX FFI target registered by the private Python binding boundary.
-pub const PACKED8_DEFLATE_FFI_TARGET: &str = "g.bgen.packed8_deflate.v1";
+pub const PACKED8_DEFLATE_FFI_TARGET: &str = "g.bgen.packed8_deflate.v2";
+
+/// Source-only target that returns validated pairs and status bits without statistics.
+pub const PACKED8_SOURCE_DEFLATE_FFI_TARGET: &str = "g.bgen.packed8_source_deflate.v1";
 
 #[cfg(target_os = "linux")]
 const INITIALIZATION_SUCCESS: c_int = 0;
@@ -208,6 +211,15 @@ pub fn packed8_deflate_ffi_handler(_capability: &NvcompCapability) -> NonNull<c_
     unsafe { NonNull::new_unchecked(handler) }
 }
 
+/// Returns the source-only handler address after nvCOMP capability validation.
+#[cfg(target_os = "linux")]
+#[must_use]
+pub fn packed8_source_deflate_ffi_handler(_capability: &NvcompCapability) -> NonNull<c_void> {
+    let handler = g_nvcomp_decode_packed8_source_ffi as *mut c_void;
+    // SAFETY: A linked function symbol always has a non-null address.
+    unsafe { NonNull::new_unchecked(handler) }
+}
+
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn g_genotype_cuda_initialize_nvcomp_runtime(
@@ -218,6 +230,7 @@ unsafe extern "C" {
     ) -> c_int;
 
     fn g_nvcomp_decode_packed8_ffi(call_frame: *mut c_void) -> *mut c_void;
+    fn g_nvcomp_decode_packed8_source_ffi(call_frame: *mut c_void) -> *mut c_void;
 }
 
 #[cfg(test)]
@@ -242,7 +255,8 @@ mod tests {
 
     #[test]
     fn ffi_target_and_member_alignment_are_stable() {
-        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_TARGET), "g.bgen.packed8_deflate.v1");
+        assert_eq!(std::hint::black_box(PACKED8_DEFLATE_FFI_TARGET), "g.bgen.packed8_deflate.v2");
+        assert_eq!(std::hint::black_box(PACKED8_SOURCE_DEFLATE_FFI_TARGET), "g.bgen.packed8_source_deflate.v1");
         assert_eq!(std::hint::black_box(g_genotype_contracts::RAW_DEFLATE_MEMBER_ALIGNMENT), 4);
     }
 
@@ -437,6 +451,9 @@ mod tests {
         let second_handler = packed8_deflate_ffi_handler(&capability);
 
         assert_eq!(first_handler, second_handler);
+        let source_handler = packed8_source_deflate_ffi_handler(&capability);
+        assert_eq!(source_handler, packed8_source_deflate_ffi_handler(&capability));
+        assert_ne!(first_handler, source_handler);
         assert_eq!(capability, NvcompCapability { private: () });
         assert!(format!("{capability:?}").contains("NvcompCapability"));
     }

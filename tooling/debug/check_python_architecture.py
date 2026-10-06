@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Python package ownership boundaries for the Rust migration."""
+"""Verify current Python numerical and Rust orchestration ownership boundaries."""
 
 from __future__ import annotations
 
@@ -179,748 +179,137 @@ CLI_SHIM_MESSAGE = (
     "and avoid removed Python orchestration or sentinel paths"
 )
 
+REMOVED_ORCHESTRATION_IMPORTS = (
+    "g.api",
+    "g.engine",
+    "g.execution_plan",
+    "g.interface",
+    "g.io",
+    "g.jax_runtime",
+    "g.runner",
+)
+FILE_AND_PROCESS_IMPORTS = (
+    "asyncio",
+    "bgen_reader",
+    "concurrent.futures",
+    "csv",
+    "h5py",
+    "json",
+    "multiprocessing",
+    "pandas",
+    "pathlib",
+    "polars",
+    "pyarrow",
+    "queue",
+    "subprocess",
+    "threading",
+)
+FILE_IO_CALLS = (
+    "open",
+    "read_text",
+    "write_text",
+    "read_bytes",
+    "write_bytes",
+    "numpy.load",
+    "numpy.loadtxt",
+    "numpy.genfromtxt",
+    "numpy.save",
+    "numpy.savetxt",
+    "numpy.savez",
+    "numpy.savez_compressed",
+    "jax.numpy.load",
+    "jax.numpy.save",
+)
+
 PYTHON_IMPORT_POLICIES = (
     PythonImportPolicy(
-        name="public_api_convenience_layer_isolation",
-        source_directory=Path("api.py"),
-        forbidden_imports=(
-            "g._core",
-            "g.cli",
-            "g.compute",
-            "g.engine.callbacks",
-            "g.engine.native_dispatch",
-            "g.engine.regenie2_pipeline",
-            "g.engine.run_events",
-            "g.execution_plan",
-            "g.io",
-            "g.jax_runtime",
-        ),
-        message="public Python API must stay a convenience layer over config, runner, and public run events",
+        name="rust_orchestration_ownership",
+        source_directory=Path(),
+        forbidden_imports=REMOVED_ORCHESTRATION_IMPORTS,
+        message="planning, input, scheduling, lifecycle and output belong to Rust",
     ),
     PythonImportPolicy(
-        name="interface_config_adapter_isolation",
-        source_directory=Path("interface/config.py"),
-        forbidden_imports=(
-            "g.api",
-            "g.cli",
-            "g.compute",
-            "g.engine",
-            "g.execution_plan",
-            "g.io",
-            "g.jax_runtime",
-            "g.runner",
-        ),
-        message="Python config adapter must stay a thin boundary over Rust-owned config bindings",
+        name="native_binding_entrypoint_ownership",
+        source_directory=Path(),
+        forbidden_imports=("g._core",),
+        allowed_paths=(CLI_SHIM_PATH,),
+        message="only the console forwarding shim imports native orchestration bindings",
     ),
     PythonImportPolicy(
         name="compute_kernel_isolation",
         source_directory=Path("compute"),
-        forbidden_imports=(
-            "g._core",
-            "g.api",
-            "g.cli",
-            "g.engine",
-            "g.execution_plan",
-            "g.interface",
-            "g.io",
-            "g.jax_runtime",
-            "g.runner",
-        ),
-        message=(
-            "JAX compute kernels must not import native bindings, public API wrappers, CLI/config, "
-            "orchestration, runtime setup, output, or file-parser packages"
-        ),
+        forbidden_imports=("g.cli", "g.jax_backend", "g.backend", *FILE_AND_PROCESS_IMPORTS),
+        message="compute kernels consume numerical operands without transport, orchestration or file I/O",
+    ),
+    *(
+        PythonImportPolicy(
+            name="numerical_backend_isolation",
+            source_directory=source_path,
+            forbidden_imports=("g.cli", *FILE_AND_PROCESS_IMPORTS),
+            message="the numerical backend and its helpers must not own orchestration, files or worker queues",
+        )
+        for source_path in (Path("jax_backend.py"), Path("backend"))
     ),
     PythonImportPolicy(
-        name="jax_runtime_orchestration_isolation",
-        source_directory=Path("jax_runtime"),
-        forbidden_imports=(
-            "g.api",
-            "g.cli",
-            "g.compute",
-            "g.engine",
-            "g.execution_plan",
-            "g.interface",
-            "g.io",
-            "g.runner",
-        ),
-        message="JAX runtime helpers must not import public API, config, compute, output, or orchestration packages",
-    ),
-    PythonImportPolicy(
-        name="output_jax_runtime_policy_isolation",
-        source_directory=Path("io"),
-        forbidden_imports=("g.jax_runtime",),
-        message="output helpers must consume explicit JAX runtime policy values instead of importing JAX runtime setup",
-    ),
-    PythonImportPolicy(
-        name="output_engine_orchestration_isolation",
-        source_directory=Path("io"),
-        forbidden_imports=("g.engine",),
-        message="output helpers must not import engine orchestration or diagnostics packages",
-    ),
-    PythonImportPolicy(
-        name="obsolete_io_source_module_isolation",
-        source_directory=Path(),
-        forbidden_imports=("g.io.source",),
-        message="BGEN source configuration is part of the execution-plan contract, not the output package",
-    ),
-    PythonImportPolicy(
-        name="obsolete_warm_cache_module_isolation",
-        source_directory=Path(),
-        forbidden_imports=("g.engine.warm_cache",),
-        message="warm-cache orchestration is test support, not production engine code",
-    ),
-    PythonImportPolicy(
-        name="execution_plan_output_adapter_isolation",
-        source_directory=Path("execution_plan.py"),
-        forbidden_imports=("g.io",),
-        message="execution-plan construction must not import output adapters or prepare output lifecycle state",
-    ),
-    PythonImportPolicy(
-        name="cli_runner_event_adapter_isolation",
-        source_directory=Path("cli.py"),
-        forbidden_imports=(
-            "g.engine.run_events",
-            "g.engine.shutdown",
-            "g.engine.telemetry",
-            "g.runner",
-        ),
-        message="CLI shim must delegate the complete native lifecycle to g._core.cli.run",
-    ),
-    PythonImportPolicy(
-        name="runner_jax_import_boundary",
-        source_directory=Path("runner"),
-        forbidden_imports=("g.engine.regenie2_pipeline", "g.engine.callbacks", "g.compute", "jax", "jaxlib"),
-        message="runner modules must not import JAX-facing modules before runtime setup",
-    ),
-    PythonImportPolicy(
-        name="runner_output_adapter_isolation",
-        source_directory=Path("runner"),
-        forbidden_imports=("g.io",),
-        message="runner modules must route output adapter access through runner-local output helpers",
-        allowed_paths=(Path("runner/outputs.py"),),
-    ),
-    PythonImportPolicy(
-        name="runner_run_event_adapter_isolation",
-        source_directory=Path("runner"),
-        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
-        message="runner modules must route run-event and telemetry access through runner-local event helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="runner_shutdown_adapter_isolation",
-        source_directory=Path("runner"),
-        forbidden_imports=("g.engine.shutdown",),
-        message="runner modules must use runner-local shutdown helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="runner_timing_adapter_isolation",
-        source_directory=Path("runner"),
-        forbidden_imports=("g.engine.timing",),
-        message="runner modules must route timing access through runner-local helpers",
-        allowed_paths=(Path("runner/timing.py"),),
-    ),
-    PythonImportPolicy(
-        name="native_dispatch_event_lifecycle_adapter_isolation",
-        source_directory=Path("engine/native_dispatch"),
-        forbidden_imports=("g.engine.run_events", "g.engine.shutdown"),
-        message="native-dispatch modules must route event and shutdown access through native-dispatch helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="native_dispatch_timing_adapter_isolation",
-        source_directory=Path("engine/native_dispatch"),
-        forbidden_imports=("g.engine.timing",),
-        message="native-dispatch modules must route timing access through native-dispatch helpers",
-        allowed_paths=(Path("engine/native_dispatch/timing.py"),),
-    ),
-    PythonImportPolicy(
-        name="callback_timing_adapter_isolation",
-        source_directory=Path("engine/callbacks"),
-        forbidden_imports=("g.engine.timing",),
-        message="callback modules must route stage timing access through callback timing helpers",
-        allowed_paths=(Path("engine/callbacks/timing.py"),),
-    ),
-    PythonImportPolicy(
-        name="callback_event_telemetry_adapter_isolation",
-        source_directory=Path("engine/callbacks"),
-        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
-        message="callback modules must route event and telemetry access through callback event helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="pipeline_output_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.io",),
-        message="REGENIE pipeline modules must route output adapter access through pipeline output helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/outputs.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_run_event_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.run_events", "g.engine.telemetry"),
-        message="REGENIE pipeline modules must route run-event and telemetry access through pipeline helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="pipeline_timing_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.timing",),
-        message="REGENIE pipeline modules must route stage timing access through pipeline timing helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/timing.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_preflight_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.preflight",),
-        message="REGENIE pipeline modules must route preflight access through pipeline preflight helpers",
-        allowed_paths=(),
-    ),
-    PythonImportPolicy(
-        name="pipeline_bgen_engine_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.native_dispatch.engine",),
-        message="REGENIE pipeline modules must route BGEN engine access through pipeline BGEN engine helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/bgen_engine.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_native_input_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=(
-            "g.engine.native_dispatch.loaders",
-            "g.engine.native_dispatch.groups",
-            "g.engine.native_dispatch.models",
-        ),
-        message="REGENIE pipeline modules must route native input and group access through pipeline input helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/inputs.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_native_delivery_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.native_dispatch.delivery",),
-        message="REGENIE pipeline modules must route native delivery access through pipeline delivery helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/delivery.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_callback_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.engine.callbacks",),
-        message="REGENIE pipeline modules must route callback access through pipeline callback helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/callbacks.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_compute_config_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.compute",),
-        message="REGENIE pipeline modules must route compute configuration access through pipeline helpers",
-        allowed_paths=(Path("engine/regenie2_pipeline/compute_config.py"),),
-    ),
-    PythonImportPolicy(
-        name="pipeline_jax_runtime_policy_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_imports=("g.jax_runtime.resolution", "g.jax_runtime.setup"),
-        message="REGENIE pipeline modules must not import JAX runtime setup or resolution orchestration",
-    ),
-    PythonImportPolicy(
-        name="obsolete_backend_planner_module_isolation",
-        source_directory=Path(),
-        forbidden_imports=("g.engine.backend_planner",),
-        message="backend planning is owned by the pipeline backend helper, not a separate engine module",
-    ),
-    PythonImportPolicy(
-        name="obsolete_trusted_validation_module_isolation",
-        source_directory=Path(),
-        forbidden_imports=("g.engine.trusted_validation",),
-        message="trusted BGEN validation is owned by the native-dispatch BGEN engine helper",
-    ),
-    PythonImportPolicy(
-        name="obsolete_preflight_events_module_isolation",
-        source_directory=Path(),
-        forbidden_imports=("g.engine.preflight_events",),
-        message="preflight diagnostic policy construction is owned by the pipeline preflight helper",
+        name="cli_numerical_import_isolation",
+        source_directory=CLI_SHIM_PATH,
+        forbidden_imports=("g.compute", "g.jax_backend", "g.backend", "jax", "jaxlib"),
+        message="the console shim must leave numerical backend initialization to the native runtime",
     ),
 )
 
 PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
-        name="production_manifest_write_isolation",
+        name="native_orchestration_call_ownership",
         source_directory=Path(),
         forbidden_calls=(
-            "output.write_run_manifest",
-            "_core.write_run_manifest",
-            "_core.write_run_manifest_json",
-            "write_run_manifest",
+            "g._core.*",
+            "g.cli.*",
+            *(f"{module_name}.*" for module_name in REMOVED_ORCHESTRATION_IMPORTS),
         ),
-        allowed_paths=(Path("io/output.py"),),
-        message="production Python must not write run manifests outside the output adapter helper",
+        allowed_paths=(CLI_SHIM_PATH,),
+        message="only the console shim may invoke native CLI orchestration",
     ),
     PythonCallPolicy(
-        name="native_output_lifecycle_adapter_isolation",
+        name="rust_runtime_setup_ownership",
         source_directory=Path(),
-        forbidden_calls=(
-            "_core.prepare_output_run",
-            "_core.initialize_output_run",
-            "_core.initialize_output_run_from_values",
-            "_core.load_run_manifest_json",
-            "_core.load_run_manifest_payload",
-            "_core.NativeOutputLifecyclePolicy",
-            "_core.validate_run_manifest_compatibility",
-            "_core.validate_run_manifest_compatibility_from_values",
-            "_core.read_manifest_committed_chunk_identifiers",
-            "_core.read_manifest_committed_chunk_identifiers_from_value",
-            "_core.validate_strict_manifest_chunks",
-            "_core.validate_strict_manifest_chunks_from_value",
-            "_core.repair_strict_manifest_chunk_commits",
-            "_core.repair_strict_manifest_chunk_commits_from_value",
-            "_core.scan_committed_chunk_identifiers",
-            "_core.finalize_output_run_chunks",
-            "_core.resolve_output_run_paths",
-            "_core.build_pipeline_output_preparation_batch_from_values",
-            "_core.NativePipelineOutputPreparationBatch",
-            "_core.NativePipelineOutputPreparationPolicy",
-            "_core.initialize_pipeline_output_run_batch",
-            "_core.initialize_pipeline_output_runs",
-        ),
-        allowed_paths=(Path("io/output.py"),),
-        message="production Python must route native output lifecycle calls through the output adapter helper",
-    ),
-    PythonCallPolicy(
-        name="native_output_writer_lifecycle_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "_core.finish_output_writer_session",
-            "_core.finish_output_writer_session_interrupted",
-            "_core.abort_output_writer_session",
-        ),
-        allowed_paths=(Path("engine/native_dispatch/writers.py"),),
-        message="production Python must route native writer lifecycle calls through the native-dispatch adapter",
-    ),
-    PythonCallPolicy(
-        name="native_output_chunk_write_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "_core.write_regenie2_multi_native_chunk",
-            "_core.write_regenie2_multi_native_chunk_f64",
-            "_core.NativeOutputChunkWritePolicy",
-        ),
-        allowed_paths=(Path("engine/callbacks/writers.py"),),
-        message="production Python must route native output chunk writes through the callback writer adapter",
-    ),
-    PythonCallPolicy(
-        name="native_output_manifest_helper_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "_core.NativeManifestFileFingerprintCache",
-            "_core.build_current_run_manifest_header_json_from_input_json",
-            "_core.build_current_run_manifest_header_payload_from_input",
-            "_core.build_file_content_sha256_value",
-            "_core.build_file_fingerprint_payload",
-            "_core.build_manifest_file_fingerprint_payload",
-            "_core.build_manifest_json_sha256",
-            "_core.build_manifest_json_sha256_from_value",
-            "_core.build_prediction_loco_file_fingerprints_json",
-            "_core.build_prediction_loco_file_fingerprints_payload",
-            "_core.build_prepared_run_manifest_header_json",
-            "_core.build_prepared_run_manifest_header_json_from_current_header_json",
-            "_core.build_prepared_run_plan_json",
-            "_core.build_prepared_run_plan_json_from_current_header",
-            "_core.build_prepared_run_plan_json_from_current_header_json",
-            "build_current_run_manifest_header_json_from_input_json",
-            "build_current_run_manifest_header_payload_from_input",
-            "build_file_fingerprint_payload",
-            "build_prediction_loco_file_fingerprints_json",
-            "build_prediction_loco_file_fingerprints_payload",
-        ),
-        allowed_paths=(Path("io/output.py"),),
-        message="production Python must route native output manifest helper calls through the output adapter helper",
-    ),
-    PythonCallPolicy(
-        name="native_run_metadata_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "_core.NativeRunMetadataBuilder",
-            "_core.build_execution_run_artifacts_payload",
-            "_core.extend_run_manifest_metadata",
-        ),
-        allowed_paths=(Path("runner/metadata.py"),),
-        message="production Python must route native run-metadata helpers through the runner metadata adapter",
-    ),
-    PythonCallPolicy(
-        name="callback_worker_queue_isolation",
-        source_directory=Path("engine/callbacks"),
-        forbidden_calls=(
-            "queue.Queue",
-            "threading.Thread",
-            "threading.BoundedSemaphore",
-            "BoundedSemaphore",
-            "NativeCallbackObjectQueue",
-            "NativeCallbackWaitSignal",
-            "NativeCallbackWorkerThread",
-            "NativeCallbackSchedulerState",
-            "NativeCallbackProgressState",
-            "NativeBinaryCorrectionSummary",
-            "NativeDosageBufferPoolState",
-            "NativeResultInFlightSlotState",
-        ),
+        forbidden_calls=("jax.config.update", "jax.devices"),
         allowed_paths=(),
-        message="production callback code must use native worker queues and worker-thread handles",
+        message="Rust initializes the runtime before importing numerical Python code",
+    ),
+    *(
+        PythonCallPolicy(
+            name="numerical_file_io_isolation",
+            source_directory=source_path,
+            forbidden_calls=FILE_IO_CALLS,
+            allowed_paths=(),
+            message="numerical kernels, transport and materialization must not read or write files",
+        )
+        for source_path in (Path("compute"), Path("jax_backend.py"), Path("backend"))
     ),
     PythonCallPolicy(
-        name="prepared_plan_reconstruction_isolation",
-        source_directory=Path(),
-        forbidden_calls=("_core.build_prepared_run_plan_json", "build_native_prepared_run_plan_input_mapping"),
-        allowed_paths=(),
-        message="production Python must not reconstruct canonical prepared-run plans",
-    ),
-    PythonCallPolicy(
-        name="native_run_request_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=("_core.compile_run_request_json", "_core.compile_run_request_payload"),
-        allowed_paths=(Path("execution_plan.py"),),
-        message="production Python must route native run-request compilation through the execution-plan adapter",
-    ),
-    PythonCallPolicy(
-        name="pipeline_native_schedule_adapter_isolation",
-        source_directory=Path("engine/regenie2_pipeline"),
-        forbidden_calls=("_core.NativeSchedulePolicy",),
-        allowed_paths=(),
-        message="production Python must use native scheduling functions instead of constructing NativeSchedulePolicy",
-    ),
-    PythonCallPolicy(
-        name="native_event_policy_factory_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "_core.NativeRunEventPayloadPolicy",
-            "_core.NativeRunEventTelemetryPolicy",
-            "_core.NativeRunnerDiagnosticPolicy",
-            "_core.NativeOutputPreflightDiagnosticPolicy",
-            "_core.NativePipelineDiagnosticPolicy",
-            "_core.NativeDispatchDiagnosticPolicy",
-        ),
-        allowed_paths=(
-            Path("runner/events.py"),
-            Path("engine/regenie2_pipeline/preflight.py"),
-            Path("engine/regenie2_pipeline/telemetry_events.py"),
-            Path("engine/native_dispatch/events.py"),
-            Path("engine/callbacks/events.py"),
-        ),
-        message="production Python must route native event policy construction through boundary-local helpers",
-    ),
-    PythonCallPolicy(
-        name="native_diagnostic_payload_adapter_isolation",
-        source_directory=Path(),
-        forbidden_calls=("_core.build_*_diagnostic_payload", "_core.build_*_diagnostic_payloads"),
-        allowed_paths=(Path("runner/events.py"), Path("engine/timing.py"), Path("jax_runtime/diagnostics.py")),
-        message=(
-            "production Python must use native diagnostic recorders; payload builders are compatibility adapters only"
-        ),
-    ),
-    PythonCallPolicy(
-        name="native_diagnostic_emitter_isolation",
-        source_directory=Path(),
-        forbidden_calls=("_core.emit_diagnostic_event", "_core.emit_diagnostic_event_fields"),
-        allowed_paths=(),
-        message="production Python must route diagnostics through typed native recorder helpers",
-    ),
-    PythonCallPolicy(
-        name="native_telemetry_dispatch_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "close_with_event",
-            "log_jax_runtime_diagnostic_event",
-            "log_callback_progress_event",
-            "log_binary_correction_summary",
-            "log_run_failed",
-            "log_progress",
-        ),
-        allowed_paths=(),
-        message="production Python must dispatch telemetry through native PyO3 helpers, not fallback methods",
-    ),
-    PythonCallPolicy(
-        name="native_telemetry_handle_dispatch_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "native_session_handle.emit_*",
-            "native_telemetry_session.emit_*",
-            "emit_current_event",
-            "emit_payload",
-            "emit_progress",
-            "emit_run_completed_event",
-            "emit_run_interrupted_event",
-            "emit_run_failed_event",
-            "emit_run_started_event",
-            "emit_execution_plan_prepared_event",
-            "emit_effective_config_written_event",
-            "emit_phenotype_writer_finished_event",
-            "emit_multi_phenotype_writer_finished_event",
-            "emit_single_trait_preflight_completed_event",
-            "emit_multi_phenotype_preflight_completed_event",
-            "emit_sample_alignment_completed_event",
-            "emit_prediction_source_loaded_event",
-            "emit_multi_phenotype_sample_summary_event",
-            "emit_gpu_genotype_format_resolved_event",
-            "emit_association_backend_selected_event",
-            "emit_bgen_engine_opened_event",
-            "emit_callback_progress_event",
-            "emit_binary_correction_summary_event",
-            "emit_jax_runtime_diagnostic_event",
-        ),
-        allowed_paths=(Path("runner/events.py"),),
-        message="production Python telemetry event emission must go through typed native PyO3 dispatch helpers",
-    ),
-    PythonCallPolicy(
-        name="native_telemetry_wrapper_dispatch_isolation",
-        source_directory=Path(),
-        forbidden_calls=(
-            "log_event",
-            "should_emit_progress",
-            "build_event_payload",
-            "write_json_line",
-            "writer_counters",
-        ),
-        allowed_paths=(),
-        message="production Python must not use compatibility telemetry wrapper methods for event dispatch",
-    ),
-    PythonCallPolicy(
-        name="native_jax_cache_resolution_isolation",
-        source_directory=Path(),
-        forbidden_calls=("resolve_jax_runtime_cache_directory",),
-        allowed_paths=(),
-        message="production Python must resolve JAX setup cache directories through native runtime state",
-    ),
-    PythonCallPolicy(
-        name="native_jax_setup_session_construction_isolation",
-        source_directory=Path(),
-        forbidden_calls=("_core.resolve_jax_runtime_setup_payload", "_core.NativeJaxRuntimeSetupSession"),
-        allowed_paths=(),
-        message="production Python must construct JAX setup sessions through native runtime state",
-    ),
-    PythonCallPolicy(
-        name="native_jax_setup_side_effect_isolation",
-        source_directory=Path(),
-        forbidden_calls=("jax.config.update", "jax.devices", "side_effect_plan_payload"),
-        allowed_paths=(),
-        message="production Python must execute JAX setup side effects through typed native setup sessions",
-    ),
-    PythonCallPolicy(
-        name="native_preflight_numeric_scan_isolation",
-        source_directory=Path("engine/regenie2_pipeline/preflight.py"),
-        forbidden_calls=(
-            "np.isfinite",
-            "numpy.isfinite",
-            "np.unique",
-            "numpy.unique",
-            "np.count_nonzero",
-            "numpy.count_nonzero",
-        ),
-        allowed_paths=(),
-        message="production preflight must use native PyO3 array checks for finite and binary scans",
-    ),
-    PythonCallPolicy(
-        name="native_preflight_required_chromosome_isolation",
-        source_directory=Path("engine/regenie2_pipeline/preflight.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production preflight must call the typed native required-chromosome API directly",
-    ),
-    PythonCallPolicy(
-        name="native_covariate_rank_scan_isolation",
-        source_directory=Path("engine"),
-        forbidden_calls=("np.linalg.matrix_rank", "numpy.linalg.matrix_rank", "matrix_rank"),
-        allowed_paths=(),
-        message="production covariate rank scans must use the native PyO3 SVD-backed rank validator",
-    ),
-    PythonCallPolicy(
-        name="native_callback_convergence_scan_isolation",
-        source_directory=Path("engine/callbacks/diagnostics.py"),
-        forbidden_calls=("np.ravel", "numpy.ravel", "np.count_nonzero", "numpy.count_nonzero"),
-        allowed_paths=(),
-        message="production callback diagnostics must use native PyO3 array checks for convergence scans",
-    ),
-    PythonCallPolicy(
-        name="binary_diagnostics_result_contract_isolation",
-        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production binary diagnostics must normalize typed results instead of probing optional fields",
-    ),
-    PythonCallPolicy(
-        name="binary_diagnostics_host_materialization_isolation",
-        source_directory=Path("compute/regenie2_binary/diagnostics.py"),
-        forbidden_calls=("jax.device_get", "device_get"),
-        allowed_paths=(),
-        message="production binary diagnostics must leave host materialization to callback adapters",
-    ),
-    PythonCallPolicy(
-        name="callback_readiness_blocker_contract_isolation",
-        source_directory=Path("engine/callbacks/diagnostics.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production callback readiness blocking must use the typed JAX readiness API directly",
-    ),
-    PythonCallPolicy(
-        name="binary_callback_chromosome_state_contract_isolation",
-        source_directory=Path("engine/callbacks/binary.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production binary callbacks must require typed chromosome-state readiness fields",
-    ),
-    PythonCallPolicy(
-        name="linear_callback_chromosome_state_contract_isolation",
-        source_directory=Path("engine/callbacks/linear.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production linear callbacks must require typed chromosome-state readiness fields",
-    ),
-    PythonCallPolicy(
-        name="callback_transfer_contract_isolation",
-        source_directory=Path("engine/callbacks/transfers.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production callback transfer helpers must use typed array and chunk-stat contracts",
-    ),
-    PythonCallPolicy(
-        name="callback_writer_contract_isolation",
-        source_directory=Path("engine/callbacks/writers.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production callback writers must use typed writer contracts, not method-name probing",
-    ),
-    PythonCallPolicy(
-        name="native_compute_group_resolution_isolation",
-        source_directory=Path("engine/native_dispatch/groups.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production native-dispatch compute-group resolution must call native resolvers directly",
-    ),
-    PythonCallPolicy(
-        name="native_delivery_callback_contract_isolation",
-        source_directory=Path("engine/native_dispatch/delivery.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production native BGEN delivery must use typed callback contracts, not optional callback probing",
-    ),
-    PythonCallPolicy(
-        name="native_dispatch_callback_lifecycle_isolation",
-        source_directory=Path("engine/native_dispatch/writers.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production native-dispatch callback lifecycle must call typed callback methods directly",
-    ),
-    PythonCallPolicy(
-        name="grouped_callback_fanout_contract_isolation",
-        source_directory=Path("engine/callbacks/grouped.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production grouped callback fanout must use typed callback lifecycle contracts",
-    ),
-    PythonCallPolicy(
-        name="callback_metadata_chromosome_contract_isolation",
-        source_directory=Path("engine/callbacks/shared.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production callback metadata helpers must use native scalar chromosome labels directly",
-    ),
-    PythonCallPolicy(
-        name="timing_snapshot_serialization_contract_isolation",
-        source_directory=Path("engine/timing.py"),
-        forbidden_calls=("getattr",),
-        allowed_paths=(),
-        message="production timing snapshot serialization must use typed dataclass mappings, not reflective probing",
-    ),
-    PythonCallPolicy(
-        name="jax_host_materialization_isolation",
-        source_directory=Path("engine"),
-        forbidden_calls=("jax.device_get", "device_get"),
-        allowed_paths=(Path("engine/callbacks/diagnostics.py"), Path("engine/callbacks/writers.py")),
-        message="production JAX host materialization must stay isolated to callback diagnostic and writer adapters",
-    ),
-    PythonCallPolicy(
-        name="compute_kernel_file_io_isolation",
+        name="compute_host_materialization_isolation",
         source_directory=Path("compute"),
-        forbidden_calls=(
-            "open",
-            "Path.open",
-            "read_text",
-            "write_text",
-            "read_bytes",
-            "write_bytes",
-            "np.load",
-            "numpy.load",
-            "jnp.load",
-            "np.loadtxt",
-            "numpy.loadtxt",
-            "np.genfromtxt",
-            "numpy.genfromtxt",
-            "pandas.read_csv",
-            "pd.read_csv",
-            "pandas.read_parquet",
-            "pd.read_parquet",
-        ),
+        forbidden_calls=("jax.device_get", "g.jax_backend.*", "g.backend.*"),
         allowed_paths=(),
-        message="JAX compute kernels must not read or write files directly",
+        message="compute kernels must not call transport owners or materialize host output",
     ),
 )
 
 PYTHON_DEFINITION_POLICIES = (
     PythonDefinitionPolicy(
-        name="native_telemetry_fallback_definition_isolation",
+        name="removed_orchestration_definition_isolation",
         source_directory=Path(),
         forbidden_function_names=(
-            "close_with_event",
-            "log_jax_runtime_diagnostic_event",
+            "dispatch_cli",
+            "run_validated_cli_outcome",
+            "write_run_manifest",
+            "prepare_output_run",
             "log_callback_progress_event",
             "log_binary_correction_summary",
-            "log_run_failed",
-            "log_progress",
         ),
         allowed_paths=(),
-        message="production Python must not define old telemetry fallback methods",
-    ),
-    PythonDefinitionPolicy(
-        name="telemetry_session_wrapper_definition_isolation",
-        source_directory=Path("runner/events.py"),
-        forbidden_function_names=(
-            "log_event",
-            "log_run_completed",
-            "log_run_interrupted",
-            "log_run_started",
-            "log_execution_plan_prepared",
-            "log_effective_config_written",
-            "log_writer_finished",
-            "log_multi_writer_finished",
-            "log_single_trait_preflight_completed",
-            "log_multi_phenotype_preflight_completed",
-            "log_sample_alignment_completed",
-            "log_prediction_source_loaded",
-            "log_multi_phenotype_sample_summary",
-            "log_gpu_genotype_format_resolved",
-            "log_association_backend_selected",
-            "log_bgen_engine_opened",
-            "should_emit_progress",
-            "build_event_payload",
-            "write_json_line",
-            "writer_counters",
-            "native_session_policy",
-            "native_progress_throttle",
-        ),
-        allowed_paths=(),
-        message="the real telemetry session must not define compatibility dispatch wrappers",
-    ),
-    PythonDefinitionPolicy(
-        name="native_compute_group_fallback_definition_isolation",
-        source_directory=Path("engine/native_dispatch/groups.py"),
-        forbidden_function_names=(
-            "fingerprint_sample_set",
-            "fingerprint_covariate_design",
-            "fingerprint_prediction_alignment",
-            "update_array_fingerprint",
-            "update_string_sequence_fingerprint",
-            "update_fingerprint",
-        ),
-        allowed_paths=(),
-        message="production native dispatch must not define Python compute-group fingerprint fallbacks",
+        message="Python must not restore removed planning, output or event-dispatch owners",
     ),
 )
 
@@ -1027,33 +416,247 @@ def collect_import_violations_for_statement(
     return tuple(violations)
 
 
+def collect_import_aliases(
+    path: Path,
+    package_root: Path,
+    tree: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> dict[str, frozenset[str]]:
+    """Resolve all imported targets in one scope without absorbing nested imports."""
+    aliases: dict[str, frozenset[str]] = {}
+    pending_statements: list[ast.AST] = list(tree.body)
+    while pending_statements:
+        statement = pending_statements.pop()
+        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            continue
+        pending_statements.extend(ast.iter_child_nodes(statement))
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                local_name = alias.asname or alias.name.split(".")[0]
+                imported_name = alias.name if alias.asname else alias.name.split(".")[0]
+                aliases[local_name] = aliases.get(local_name, frozenset()) | {imported_name}
+        elif isinstance(statement, ast.ImportFrom):
+            base_module = import_from_base_module(path, package_root, statement)
+            for alias in statement.names:
+                if alias.name != "*":
+                    local_name = alias.asname or alias.name
+                    aliases[local_name] = aliases.get(local_name, frozenset()) | {f"{base_module}.{alias.name}"}
+    return aliases
+
+
 def collect_call_violations_for_statement(
     relative_path: Path,
     policy: PythonCallPolicy,
     statement: ast.Call,
+    import_aliases: dict[str, frozenset[str]],
 ) -> tuple[PythonCallViolation, ...]:
     """Collect call-policy violations from one AST call statement."""
     call_name = call_name_from_expression(statement.func)
     if call_name is None:
         return ()
+    first_component, separator, remainder = call_name.partition(".")
+    call_names = (
+        sorted(f"{import_name}{separator}{remainder}" for import_name in import_aliases[first_component])
+        if first_component in import_aliases
+        else [call_name]
+    )
+    for resolved_call_name in call_names:
+        for forbidden_call in policy.forbidden_calls:
+            if call_matches_forbidden_name(resolved_call_name, forbidden_call):
+                return (
+                    PythonCallViolation(
+                        path=relative_path,
+                        line_number=statement.lineno,
+                        column_offset=statement.col_offset,
+                        policy_name=policy.name,
+                        call_name=resolved_call_name,
+                        forbidden_call=forbidden_call,
+                        message=policy.message,
+                    ),
+                )
+    return ()
 
-    violations: list[PythonCallViolation] = []
-    for forbidden_call in policy.forbidden_calls:
-        if not call_matches_forbidden_name(call_name, forbidden_call):
+
+def function_parameter_names(arguments: ast.arguments) -> frozenset[str]:
+    """Return parameter bindings that shadow names from an enclosing scope."""
+    names = {parameter.arg for parameter in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)}
+    if arguments.vararg is not None:
+        names.add(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        names.add(arguments.kwarg.arg)
+    return frozenset(names)
+
+
+def local_assignment_names(statement: ast.FunctionDef | ast.AsyncFunctionDef) -> frozenset[str]:
+    """Collect local assignments without absorbing nested lexical scopes."""
+    names = set(function_parameter_names(statement.args))
+    external_names: set[str] = set()
+    pending_nodes: list[ast.AST] = list(statement.body)
+    while pending_nodes:
+        node = pending_nodes.pop()
+        if isinstance(
+            node,
+            ast.FunctionDef
+            | ast.AsyncFunctionDef
+            | ast.ClassDef
+            | ast.Lambda
+            | ast.ListComp
+            | ast.SetComp
+            | ast.DictComp
+            | ast.GeneratorExp,
+        ):
             continue
-        violations.append(
-            PythonCallViolation(
-                path=relative_path,
-                line_number=statement.lineno,
-                column_offset=statement.col_offset,
-                policy_name=policy.name,
-                call_name=call_name,
-                forbidden_call=forbidden_call,
-                message=policy.message,
-            )
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, ast.Global | ast.Nonlocal):
+            external_names.update(node.names)
+        pending_nodes.extend(ast.iter_child_nodes(node))
+    return frozenset(names - external_names)
+
+
+class PythonCallPolicyVisitor(ast.NodeVisitor):
+    """Resolve call aliases within each module, function and class scope."""
+
+    def __init__(
+        self,
+        path: Path,
+        relative_path: Path,
+        package_root: Path,
+        policy: PythonCallPolicy,
+        tree: ast.Module,
+    ) -> None:
+        """Initialize the policy visitor with the module's own import bindings."""
+        self.path = path
+        self.relative_path = relative_path
+        self.package_root = package_root
+        self.policy = policy
+        self.import_aliases = collect_import_aliases(path, package_root, tree)
+        self.class_parent_aliases: dict[str, frozenset[str]] | None = None
+        self.violations: list[PythonCallViolation] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        """Check one call against aliases from its owning lexical scope."""
+        self.violations.extend(
+            collect_call_violations_for_statement(self.relative_path, self.policy, node, self.import_aliases)
         )
-        break
-    return tuple(violations)
+        self.generic_visit(node)
+
+    def visit_scope_body(
+        self,
+        statement: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+        *,
+        function_scope: bool,
+    ) -> None:
+        """Visit a scope while isolating locally imported bindings from siblings."""
+        saved_aliases = self.import_aliases
+        saved_class_parent_aliases = self.class_parent_aliases
+        enclosing_aliases = (
+            self.class_parent_aliases
+            if function_scope and self.class_parent_aliases is not None
+            else self.import_aliases
+        )
+        if function_scope:
+            # Class namespaces do not form lexical closures for their methods.
+            self.class_parent_aliases = None
+        shadowed_names = (
+            local_assignment_names(statement)
+            if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef)
+            else frozenset()
+        )
+        self.import_aliases = {
+            **{name: targets for name, targets in enclosing_aliases.items() if name not in shadowed_names},
+            **collect_import_aliases(self.path, self.package_root, statement),
+        }
+        for body_statement in statement.body:
+            self.visit(body_statement)
+        self.import_aliases = saved_aliases
+        self.class_parent_aliases = saved_class_parent_aliases
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Evaluate function annotations and decorators before entering its body."""
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        self.visit_scope_body(node, function_scope=True)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Check asynchronous definitions with the same lexical-scope rules."""
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        self.visit_scope_body(node, function_scope=True)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Evaluate class construction in the enclosing scope, then its body."""
+        for expression in (*node.decorator_list, *node.bases):
+            self.visit(expression)
+        for keyword in node.keywords:
+            self.visit(keyword)
+        enclosing_class_parent_aliases = self.class_parent_aliases
+        if self.class_parent_aliases is None:
+            self.class_parent_aliases = self.import_aliases
+        self.visit_scope_body(node, function_scope=False)
+        self.class_parent_aliases = enclosing_class_parent_aliases
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Keep lambda parameters from resolving as imported module aliases."""
+        self.visit(node.args)
+        saved_aliases = self.import_aliases
+        enclosing_aliases = self.class_parent_aliases if self.class_parent_aliases is not None else saved_aliases
+        shadowed_names = function_parameter_names(node.args)
+        self.import_aliases = {
+            name: targets for name, targets in enclosing_aliases.items() if name not in shadowed_names
+        }
+        self.visit(node.body)
+        self.import_aliases = saved_aliases
+
+    def visit_comprehension_scope(
+        self,
+        node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp,
+    ) -> None:
+        """Keep comprehension targets local while checking the outer iterable."""
+        self.visit(node.generators[0].iter)
+        saved_aliases = self.import_aliases
+        enclosing_aliases = self.class_parent_aliases if self.class_parent_aliases is not None else saved_aliases
+        shadowed_names = {
+            child.id
+            for generator in node.generators
+            for child in ast.walk(generator.target)
+            if isinstance(child, ast.Name)
+        }
+        self.import_aliases = {
+            name: targets for name, targets in enclosing_aliases.items() if name not in shadowed_names
+        }
+        for generator in node.generators[1:]:
+            self.visit(generator.iter)
+        for generator in node.generators:
+            for condition in generator.ifs:
+                self.visit(condition)
+        if isinstance(node, ast.DictComp):
+            self.visit(node.key)
+            self.visit(node.value)
+        else:
+            self.visit(node.elt)
+        self.import_aliases = saved_aliases
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Check a list comprehension in its own lexical scope."""
+        self.visit_comprehension_scope(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        """Check a set comprehension in its own lexical scope."""
+        self.visit_comprehension_scope(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Check a dictionary comprehension in its own lexical scope."""
+        self.visit_comprehension_scope(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Check a generator expression in its own lexical scope."""
+        self.visit_comprehension_scope(node)
 
 
 def collect_python_import_policy_violations(
@@ -1097,10 +700,9 @@ def collect_python_call_policy_violations(
             if package_relative_path in policy.allowed_paths:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for statement in ast.walk(tree):
-                if not isinstance(statement, ast.Call):
-                    continue
-                violations.extend(collect_call_violations_for_statement(relative_path, policy, statement))
+            visitor = PythonCallPolicyVisitor(path, relative_path, package_root, policy, tree)
+            visitor.visit(tree)
+            violations.extend(visitor.violations)
     return tuple(violations)
 
 
@@ -1295,6 +897,17 @@ def render_cli_shim_violation(violation: PythonCliShimViolation) -> str:
 
 def run_tool(package_root: Path) -> int:
     """Verify Python package ownership boundaries."""
+    required_sources = (
+        CLI_SHIM_PATH,
+        Path("jax_backend.py"),
+        Path("compute/common/genotype.py"),
+        Path("compute/regenie2_linear/state.py"),
+        Path("compute/regenie2_binary/state.py"),
+    )
+    missing_sources = [source_path for source_path in required_sources if not (package_root / source_path).exists()]
+    if missing_sources:
+        print(f"Python architecture source coverage is incomplete under `{package_root}`: {missing_sources}")
+        return 1
     import_violations = collect_python_import_policy_violations(package_root)
     call_violations = collect_python_call_policy_violations(package_root)
     definition_violations = collect_python_definition_policy_violations(package_root)

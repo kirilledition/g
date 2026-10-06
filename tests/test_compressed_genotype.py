@@ -20,7 +20,6 @@ type Packed8ForeignOutputs = tuple[
     jax.Array,
     jax.Array,
     jax.Array,
-    jax.Array,
 ]
 
 
@@ -60,7 +59,6 @@ def build_foreign_outputs() -> Packed8ForeignOutputs:
         jnp.asarray([60, 2, 40, 60], dtype=jnp.uint32),
         jnp.asarray([2, 60, 1, 1], dtype=jnp.uint32),
         jnp.asarray([0, 1, 2, 7], dtype=jnp.uint32),
-        jnp.asarray([0.25, 1.75, 0.5, 0.5], dtype=jnp.float32),
     )
 
 
@@ -103,7 +101,6 @@ def install_fake_packed8_ffi(
             (4,),
             (4,),
             (4,),
-            (4,),
         )
         assert tuple(output.dtype for output in result_shape_dtypes) == (
             np.dtype(np.uint8),
@@ -112,7 +109,6 @@ def install_fake_packed8_ffi(
             np.dtype(np.uint32),
             np.dtype(np.uint32),
             np.dtype(np.uint32),
-            np.dtype(np.float32),
         )
 
         def foreign_call(
@@ -266,9 +262,6 @@ def test_large_packed8_cohort_moments_narrow_only_after_float64_arithmetic(
                 jnp.zeros(4, dtype=jnp.uint32),
                 jnp.zeros(4, dtype=jnp.uint32),
                 jnp.zeros(4, dtype=jnp.uint32),
-                # The adapter must derive precise means from the integer
-                # totals, independently of the retained legacy FFI output.
-                jnp.full(4, jnp.nan, dtype=jnp.float32),
             )
 
         return foreign_call
@@ -299,3 +292,71 @@ def test_large_packed8_cohort_moments_narrow_only_after_float64_arithmetic(
     assert observed.imputed_dosage_square_sum.dtype == jnp.float32
     np.testing.assert_array_equal(np.asarray(observed.genotype_mean), expected_mean)
     np.testing.assert_array_equal(np.asarray(observed.imputed_dosage_square_sum), expected_square_sum)
+
+
+def test_source_decode_returns_only_validated_pairs_and_statuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep reusable source decoding independent of discarded group statistics."""
+    expected_pairs = jnp.asarray([[[255, 0], [0, 255]], [[255, 0], [255, 0]]], dtype=jnp.uint8)
+    expected_statuses = jnp.asarray([512, 0], dtype=jnp.uint32)
+
+    class SourceForeignCall(typing.Protocol):
+        """Source-only typed FFI call contract."""
+
+        def __call__(
+            self,
+            compressed_slab: jax.Array,
+            compressed_metadata: jax.Array,
+            *,
+            source_sample_count: int,
+        ) -> tuple[jax.Array, jax.Array]:
+            """Return pairs and unchanged native status bits."""
+
+    def fake_ffi_call(
+        target_name: str,
+        result_shape_dtypes: tuple[jax.ShapeDtypeStruct, ...],
+    ) -> SourceForeignCall:
+        assert target_name == "g.bgen.packed8_source_deflate.v1"
+        assert tuple(output.shape for output in result_shape_dtypes) == ((2, 2, 2), (2,))
+        assert tuple(output.dtype for output in result_shape_dtypes) == (np.dtype(np.uint8), np.dtype(np.uint32))
+
+        def foreign_call(
+            compressed_slab: jax.Array,
+            compressed_metadata: jax.Array,
+            *,
+            source_sample_count: int,
+        ) -> tuple[jax.Array, jax.Array]:
+            assert compressed_slab.shape == (12,)
+            assert compressed_metadata.shape == (1, 3)
+            assert source_sample_count == 2
+            return expected_pairs, expected_statuses
+
+        return foreign_call
+
+    monkeypatch.setattr(jax.ffi, "ffi_call", fake_ffi_call)
+    with jax.disable_jit():
+        observed = compressed_genotype.decode_packed8_deflate_source(
+            compressed_slab=jnp.zeros(12, dtype=jnp.uint8),
+            compressed_metadata=jnp.zeros((1, 3), dtype=jnp.uint32),
+            source_sample_count=2,
+            compute_variant_count=2,
+        )
+    np.testing.assert_array_equal(np.asarray(observed.packed_probability_pairs_by_variant), np.asarray(expected_pairs))
+    np.testing.assert_array_equal(np.asarray(observed.statuses), np.asarray(expected_statuses))
+
+
+def test_source_decode_abstract_evaluation_exposes_no_statistic_buffers() -> None:
+    """Only the reusable source buffers cross the opaque FFI boundary."""
+    observed = jax.eval_shape(
+        lambda compressed_slab, compressed_metadata: compressed_genotype.decode_packed8_deflate_source(
+            compressed_slab,
+            compressed_metadata,
+            source_sample_count=17,
+            compute_variant_count=4,
+        ),
+        jax.ShapeDtypeStruct((128,), np.uint8),
+        jax.ShapeDtypeStruct((3, 3), np.uint32),
+    )
+    assert observed.packed_probability_pairs_by_variant.shape == (4, 17, 2)
+    assert observed.packed_probability_pairs_by_variant.dtype == np.dtype(np.uint8)
+    assert observed.statuses.shape == (4,)
+    assert observed.statuses.dtype == np.dtype(np.uint32)

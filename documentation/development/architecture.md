@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Active production architecture | Production code as of 2026-09-23 | Development maintainers |
+| Active production architecture | Production code as of 2026-10-06 | Development maintainers |
 
 `g` is a Rust host application with a Python/JAX numerical backend. Rust owns
 configuration, planning, input, scheduling, lifecycle, telemetry, shutdown,
@@ -25,15 +25,18 @@ g-interface -> g-plan -> g-engine::execute_coordinated_run
         v
 PreparedRun::execute_with_progress<AssociationBackend, RunHooks> + bounded pipeline
         |
-four-operation PyO3 adapter
+batch-oriented PyO3 adapter
         |
 g.jax_backend -> JAX kernels
 ```
 
 The backend operations are `prepare_group`, `prepare_chromosome`,
-`compute_batch`, and `materialize_batch`. The first three may retain opaque JAX
-state. Materialization performs one batched device-to-host transfer and returns
-typed arrays to Rust.
+`transfer_batch`, `transfer_compressed_batch`, `prepare_shared_source`,
+`select_shared_source`, `compute_batch`, and `materialize_batch`. Delivery
+capability selects host-decoded, compressed, or shared-source transfer. These
+operations retain opaque JAX state while Rust owns scheduling and lifetimes.
+Materialization performs one batched device-to-host transfer and returns typed
+arrays to Rust.
 
 ## Ownership
 
@@ -52,7 +55,7 @@ typed arrays to Rust.
 | CLI lifecycle, process/JAX policy, crate orchestration, terminal rendering | `g-runner` |
 | Parquet writers, manifests, and resume | `g-output` |
 | PyO3 object construction, opaque Python state, NumPy conversion, PyErr adaptation, JAX process calls | root Rust extension under `src/binding` |
-| Device state, compressed-device decode invocation, and association mathematics | `src/g/jax_backend.py`, `src/g/compute/`, and capability-gated kernels in `g-compute-cuda` |
+| Device state, compressed-device decode invocation, and association mathematics | `src/g/jax_backend.py`, private helpers in `src/g/backend/`, `src/g/compute/`, and capability-gated kernels in `g-compute-cuda` |
 
 `g-runner` is the root dependency through which the binding reaches CLI,
 planning, runtime, and execution services. It owns CLI dispatch, resolves the
@@ -106,6 +109,9 @@ Genotype, engine, and output import one canonical set of data-plane column
 contracts from `g-genotype-contracts`. Genotype retains dictionary-coded
 metadata through a shared store and output builds Arrow metadata lazily, so the
 crate boundary adds no row copies, eager arrays, or adapter DTOs.
+Each tiled delivery clones one immutable metadata owner for its active groups.
+They share UTF-8 validation and lazy Arrow arrays; their numerical statistics
+remain independently owned.
 
 The backend advertises a genotype-delivery capability to `g-engine`.
 `g-genotype` chooses either an owned host-decoded batch or a canonical
@@ -143,7 +149,8 @@ Production Python outside the kernels is limited to:
 
 ```text
 src/g/cli.py          console bootstrap and output forwarding
-src/g/jax_backend.py  typed four-operation JAX backend
+src/g/jax_backend.py  mode-specific JAX backends
+src/g/backend/       private transport, array contracts, and materialization
 src/g/compute/        JAX kernel state and mathematics
 ```
 
@@ -156,6 +163,8 @@ manage manifests/resume, select cleanup policy, or own telemetry lifecycle.
 - The JAX boundary is batch-oriented; there are no per-variant Python calls.
 - Rust owns all bounded queues, worker joins, host buffers, and output order;
   backend-bound genotype allocations move into NumPy without a second matrix.
+  Materialized result arrays are copied into owned Rust buffers before
+  asynchronous output; JAX/NumPy allocator ownership is not transferred.
 - Planning enums have one definition in `g-plan`. Only domain owners interpret
   them; infrastructure crates such as `g-runtime` receive projected generic
   policy.

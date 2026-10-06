@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import logging
-import typing
 
 from tooling.profile_deep import models as profile_deep_models
-
-if typing.TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +103,9 @@ def selected_regenie_baseline_trait_types(
 
 def build_logging_perturbation_cases(
     *,
-    output_directory: Path,
     smoke: bool,
 ) -> tuple[profile_deep_models.LoggingPerturbationCase, ...]:
     """Build perturbations supported by the current diagnostics contract."""
-    del output_directory
     cases = (
         profile_deep_models.LoggingPerturbationCase(
             name="telemetry_off",
@@ -193,7 +187,6 @@ def campaign_budget_is_over_limit(campaign_budget: profile_deep_models.CampaignB
 def build_campaign_budget(
     *,
     arguments: profile_deep_models.ProfileArguments,
-    output_directory: Path,
 ) -> profile_deep_models.CampaignBudget:
     """Estimate campaign section counts before executing workloads."""
     workload_keys = parse_profile_workload_keys(arguments.workload_keys)
@@ -240,9 +233,7 @@ def build_campaign_budget(
     deep_profiler_run_count = expected_winner_count * deep_profiler_mode_count
     logging_case_count = 0
     if arguments.enable_logging_perturbation:
-        logging_case_count = len(
-            build_logging_perturbation_cases(output_directory=output_directory, smoke=arguments.smoke)
-        )
+        logging_case_count = len(build_logging_perturbation_cases(smoke=arguments.smoke))
     logging_run_count = expected_winner_count * logging_case_count
     sections = (
         build_campaign_budget_section(

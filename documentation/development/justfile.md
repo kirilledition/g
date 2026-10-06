@@ -235,7 +235,40 @@ in saved configs or named Just recipes.
 
 `just check-rust-architecture` verifies Cargo workspace dependency boundaries
 for the Rust migration. `just check-python-architecture` verifies Python
-package ownership boundaries for compute kernels and JAX runtime helpers.
+ownership of current compute kernels, the numerical backend and its private
+helpers. It rejects native CLI recursion, Python orchestration, file I/O and
+worker queues in the numerical layer, and resolves imported aliases when
+checking calls. Parameters and local assignments shadow enclosing imports;
+ambiguous import rebinding within one scope is checked conservatively against
+all imported targets. This AST check does not execute dynamic name assignments.
+It also requires the current CLI, backend and compute source
+roots to exist; a partial snapshot cannot silently pass.
+`just check-dead-code` checks **module reachability** for all Python source under
+`src/g/` and `tooling/`, including `tooling/data/`. Its roots are console scripts
+in `pyproject.toml`, module commands in the Justfile and CI workflows, maintained
+test/script imports, literal native `PyModule::import` targets and configured
+Hydra `_target_` values. The supported direct `tooling.data.fetch` and
+`tooling.data.simulate` interfaces are reviewed explicit roots. Registry imports,
+JAX-decorated kernels, literal `importlib` calls and `python -m` argument lists
+are followed as edges from reachable modules. A module's own `__main__` block,
+an arbitrary diagnostic string or an orphan import cycle does not establish
+reachability. Empty package markers are allowed; reachable package initializers
+are followed.
+
+The gate reports source and root counts and fails on missing source anchors or
+fewer than 30 production and 60 tooling Python files. These conservative floors
+protect against empty or truncated snapshots and must be reviewed alongside an
+intentional reduction of maintained source. The scan uses bounded source
+folders, so it avoids caches and large data/results trees without excluding
+`tooling/data`. PR CI runs the module gate and Python architecture check in the
+Python lint lane.
+
+Module reachability does not prove that every function, method or branch is
+live. Symbol candidates from Skylos still need callsite review for Rust/PyO3
+registrations, JAX callbacks and CUDA FFI, and Rust dependencies need the
+maintained Cargo checks. An unfamiliar dynamic import needs an explicit,
+reviewable root or recognized edge rather than a blanket exclusion.
+
 `just check-justfile` verifies that the command surface stays config-backed and
 that maintained docs do not reference removed recipe names. These guardrails
 are included in `just check` and `just check-local`; `just rust-check` and

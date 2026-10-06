@@ -244,3 +244,37 @@ def test_binary_conditioning_rejects_invalid_design(covariate_matrix: npt.NDArra
             jnp.asarray(covariate_matrix),
             jnp.zeros((1, covariate_matrix.shape[0])),
         )
+
+
+@pytest.mark.parametrize(
+    ("covariate_matrix", "expected_message"),
+    [
+        (
+            np.asarray([[2.0, 2.0], [2.0, 2.0]]),
+            "positive residual degrees of freedom",
+        ),
+        (
+            np.asarray([[2.0, 2.0], [2.0, 2.0], [2.0, 2.0]]),
+            "leading unit intercept",
+        ),
+        (
+            np.asarray([[np.nan, np.nan], [2.0, 2.0], [2.0, 2.0]]),
+            "leading unit intercept",
+        ),
+        (
+            np.asarray([[1.0, np.nan], [1.0, 2.0], [1.0, 2.0]]),
+            "full column rank",
+        ),
+    ],
+    ids=["saturated-nonunit", "nonunit-rank-deficient", "nonfinite-intercept", "nonfinite-covariate"],
+)
+def test_binary_conditioning_preserves_validation_order(
+    covariate_matrix: npt.NDArray[np.float64],
+    expected_message: str,
+) -> None:
+    """Keep deterministic errors when a design violates several constraints."""
+    with pytest.raises(ValueError, match=expected_message):
+        regenie2_binary_state.build_multi_binary_state(
+            jnp.asarray(covariate_matrix),
+            jnp.zeros((1, covariate_matrix.shape[0])),
+        )

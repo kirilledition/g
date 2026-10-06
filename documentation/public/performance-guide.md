@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-25 | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-10-06 | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
@@ -55,6 +55,10 @@ conditioning arrays. Binary preparation stores its final conditioned design
 in `float32` and pays the QR cost during group preparation.
 Its chromosome-level null fit uses `float64` safeguarded Newton arithmetic;
 per-variant score computation remains `float32`.
+Group conditioning, QR, rank evaluation, and quantitative residual preparation
+run as compiled programs. Groups with matching sample, covariate, and phenotype
+counts can reuse those programs. A new shape still pays preparation compilation;
+rank validation and binary intercept validation retain their existing errors.
 Binary scoring also checks whether dosages vary across samples. The decoded
 path carries that check through its existing sample tiles; the materialized
 path performs a per-variant comparison reduction.
@@ -92,6 +96,13 @@ software versions, device details, and compilation-cache provenance when
 comparing results. The [profiling review](../development/performance-review-2026-09-24.md)
 includes controlled replay that separates this variation from a decoding change.
 
+The [October architecture review](../development/performance-review-2026-10-06.md)
+measured 3.69–6.50% lower warmed full-scan time on chromosome 22 workloads with
+distinct phenotype sample masks. Those comparisons include output writing and
+match every output bit. Independent binary compilations still show the vendor
+kernel variation above; these measurements do not establish a binary scan
+speedup or a guarantee for other cohorts or hardware.
+
 Explicit resumes that have no pending output still perform input and committed-
 output validation, then finish without initializing JAX or a device backend.
 In the same review's completed-run comparison, median fresh harness-process
@@ -112,6 +123,14 @@ process-policy compatibility before starting. Run-owned input, output, and
 resume preflight remains per entry. The process reuses JAX/CUDA state, compiled
 executables, and one verified BGEN index. Shape changes may compile an additional
 executable, so group configs with stable shapes when throughput is the priority.
+
+Approximate-Firth chunk executables specialize on correction settings and
+prepared chromosome operands. Changing only the null-logistic or null-Firth
+fitting policy can rebuild the chromosome state without compiling another
+otherwise identical chunk executable. Changing correction solver settings or
+candidate geometry can still compile a separate executable. This reduces
+repeated setup work across compatible scans; it does not make an already
+compiled chunk kernel faster.
 
 The process-local BGEN cache retains at most one index with an estimated
 allocation size of 256 MiB or less, plus one open file descriptor. It retains

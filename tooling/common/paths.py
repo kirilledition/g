@@ -4,27 +4,12 @@ from __future__ import annotations
 
 import os
 import typing
-from dataclasses import dataclass
 from pathlib import Path
 
 if typing.TYPE_CHECKING:
     import collections.abc
 
 DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "GWAS_ENGINE_DATA_DIR"
-
-
-@dataclass(frozen=True)
-class ProjectPaths:
-    """Resolved repository paths used by development tooling.
-
-    Attributes:
-        repository_root: Repository root containing project metadata.
-        data_directory: Local data directory used by benchmark and profiling scripts.
-
-    """
-
-    repository_root: Path
-    data_directory: Path
 
 
 def find_repository_root(start_path: Path | None = None) -> Path:
@@ -95,27 +80,6 @@ def resolve_data_directory(
     """
     resolved_repository_root = repository_root or find_repository_root()
     return resolve_repo_relative_path(configured_data_directory(environment), resolved_repository_root)
-
-
-def build_project_paths(
-    start_path: Path | None = None,
-    environment: collections.abc.Mapping[str, str] | None = None,
-) -> ProjectPaths:
-    """Build the standard project path bundle.
-
-    Args:
-        start_path: Optional path inside the repository.
-        environment: Optional environment mapping for tests.
-
-    Returns:
-        Resolved project paths.
-
-    """
-    repository_root = find_repository_root(start_path)
-    return ProjectPaths(
-        repository_root=repository_root,
-        data_directory=resolve_data_directory(repository_root, environment),
-    )
 
 
 def resolve_data_path(data_directory: Path, path: Path) -> Path:

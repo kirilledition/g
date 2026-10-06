@@ -12,6 +12,7 @@ from tooling.common import hydra_compat as tooling_hydra_compat
 from tooling.common import registry as tooling_registry
 from tooling.debug import (
     check_cuda_native,
+    check_dead_code,
     check_internal_defaults,
     check_internal_init_exports,
     check_justfile,
@@ -29,6 +30,7 @@ class DebugToolName(enum.StrEnum):
     """Available grouped debug tools."""
 
     CHECK_CUDA_NATIVE = "check_cuda_native"
+    CHECK_DEAD_CODE = "check_dead_code"
     CHECK_INTERNAL_DEFAULTS = "check_internal_defaults"
     CHECK_INTERNAL_INIT_EXPORTS = "check_internal_init_exports"
     CHECK_JUSTFILE = "check_justfile"
@@ -98,6 +100,14 @@ def run_check_rust_architecture(arguments: None) -> None:
         raise SystemExit(exit_code)
 
 
+def run_check_dead_code(arguments: None) -> None:
+    """Run the maintained Python module reachability guardrail."""
+    del arguments
+    exit_code = check_dead_code.run_tool(check_dead_code.REPOSITORY_ROOT)
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 def run_check_python_architecture(arguments: None) -> None:
     """Run the Python package architecture guardrail."""
     del arguments
@@ -107,6 +117,10 @@ def run_check_python_architecture(arguments: None) -> None:
 
 
 TOOLS: dict[str, tooling_registry.ToolSpec[typing.Any]] = {
+    DebugToolName.CHECK_DEAD_CODE.value: tooling_registry.ToolSpec(
+        build_arguments=build_no_arguments,
+        run=run_check_dead_code,
+    ),
     DebugToolName.CHECK_CUDA_NATIVE.value: tooling_registry.ToolSpec(
         build_arguments=check_cuda_native.build_arguments_from_config,
         run=run_check_cuda_native,

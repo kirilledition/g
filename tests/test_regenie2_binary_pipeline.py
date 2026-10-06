@@ -13,7 +13,8 @@ import numpy.typing as npt
 import pytest
 
 import tests.numerical
-from g import jax_backend, types
+from g import types
+from g.backend import contracts, materialization
 from g.compute.common import genotype as compute_genotype
 from g.compute.common import result as association_result
 from g.compute.regenie2_binary import api as regenie2_binary_api
@@ -1278,7 +1279,7 @@ def test_host_materialization_rejects_production_fixed_capacity_overflow(
         kernel_config=overflow_config,
         chromosome_state=prepared.chromosome_state,
     )
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=overflow_result.association,
         raw_packed8_statistics=None,
         firth_candidate_count=overflow_result.firth_candidate_count,
@@ -1288,7 +1289,7 @@ def test_host_materialization_rejects_production_fixed_capacity_overflow(
     assert int(np.asarray(overflow_result.firth_candidate_count)) == 2
     assert overflow_result.firth_candidate_capacity == 1
     with pytest.raises(ValueError, match=r"candidate count 2 exceeded.*capacity of 1"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        materialization.materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=2,

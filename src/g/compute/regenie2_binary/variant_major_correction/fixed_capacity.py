@@ -60,7 +60,7 @@ def apply_selected_firth_candidate_corrections(
     candidate_capacity: int,
     firth_batch_size: int,
     order_candidates: bool,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:
@@ -100,7 +100,7 @@ def apply_firth_multi_variant_major_fixed_capacity_corrections(
     fallback_count: jax.Array,
     candidate_capacity: int,
     order_candidates: bool,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult:

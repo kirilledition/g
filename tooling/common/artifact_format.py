@@ -333,19 +333,6 @@ class ComparisonReport:
     summary: dict[str, object]
 
 
-@dataclass(frozen=True)
-class ArtifactBundle:
-    """In-memory artifact bundle payload before writing files."""
-
-    report: ReportEnvelope
-    manifest: ArtifactManifest
-    events: list[ToolEventRecord]
-    metrics: list[MetricRecord]
-    commands: list[CommandRecord]
-    summary_markdown: str
-    comparisons: ComparisonReport | None
-
-
 def utc_now() -> str:
     """Return an RFC 3339 UTC timestamp."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
