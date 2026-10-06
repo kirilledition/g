@@ -104,6 +104,14 @@ Every registered item must appear in `src/g/_core.pyi`, and every stub item
 must be registered. The JAX backend bridge is private and does not create a
 Python extension namespace or exchange-object compatibility surface.
 
+`g.jax_backend` owns the concrete numerical backend classes imported by Rust.
+Its private `g.backend` package owns residency payloads in `contracts`,
+persistent sample selections and genotype transfers in `transport`, and
+logical output selection plus the combined host transfer in `materialization`.
+These helpers do not schedule work or own input/output lifetimes. Shared-source
+preparation retains validated packed pairs and statuses only; each consumer
+derives its own numerical statistics without donating the source buffers.
+
 ## Placement Test
 
 Move code to a domain crate whenever it can use crate-owned Rust types and
