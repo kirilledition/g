@@ -44,16 +44,3 @@ def dispatch_tool(config: omegaconf.DictConfig, registry: typing.Mapping[str, To
         message = f"Unknown tool.name `{tool_name}`. Accepted values: {accepted_names}."
         raise KeyError(message)
     tool_spec.run(tool_spec.build_arguments(config))
-
-
-def registered_tool_names(registry: typing.Mapping[str, ToolSpec[typing.Any]]) -> tuple[str, ...]:
-    """Return stable sorted tool names for documentation checks.
-
-    Args:
-        registry: Tool registry.
-
-    Returns:
-        Sorted tool names.
-
-    """
-    return tuple(sorted(registry))

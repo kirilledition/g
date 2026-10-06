@@ -384,11 +384,6 @@ def torchgwas_venv_directory(arguments: BenchmarkArguments) -> Path:
     )
 
 
-def torchgwas_python_executable(arguments: BenchmarkArguments) -> Path:
-    """Return the Python executable in the TorchGWAS venv."""
-    return torchgwas_venv_directory(arguments) / "bin" / "python"
-
-
 def torchgwas_console_script(arguments: BenchmarkArguments) -> Path:
     """Return the TorchGWAS console script in the TorchGWAS venv."""
     return torchgwas_venv_directory(arguments) / "bin" / "torchgwas"

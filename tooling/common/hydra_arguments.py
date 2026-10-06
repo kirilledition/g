@@ -103,37 +103,3 @@ def format_scalar_value(value: typing.Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
-
-
-def format_override_value(value: typing.Any) -> str:
-    """Format a Python value as a Hydra command-line override value."""
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, str):
-        return quote_string_value(value)
-    if isinstance(value, collections.abc.Sequence) and not isinstance(value, str | bytes):
-        return "[" + ",".join(format_override_value(item) for item in value) + "]"
-    return str(value)
-
-
-def quote_string_value(value: str) -> str:
-    """Quote Hydra override strings that contain grammar-significant characters."""
-    if value == "" or any(character in value for character in ", []{}:=\t\n"):
-        escaped_value = value.replace("\\", "\\\\").replace("'", "\\'")
-        return f"'{escaped_value}'"
-    return value
-
-
-def build_overrides(values_by_key: collections.abc.Mapping[str, typing.Any]) -> list[str]:
-    """Build Hydra override strings from key-value pairs.
-
-    Args:
-        values_by_key: Mapping from Hydra override key to Python value.
-
-    Returns:
-        List of ``key=value`` override strings.
-
-    """
-    return [f"{key}={format_override_value(value)}" for key, value in values_by_key.items()]

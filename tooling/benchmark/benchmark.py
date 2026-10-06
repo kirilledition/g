@@ -270,16 +270,6 @@ def run_setup_command(command_arguments: list[str]) -> subprocess.CompletedProce
     return completed_process
 
 
-def hail_runner_path() -> Path:
-    """Return the Hail baseline runner module path for diagnostics."""
-    return REPOSITORY_ROOT / "tooling" / "benchmark" / "run_hail_baseline.py"
-
-
-def hail_suite_runner_path() -> Path:
-    """Return the Hail benchmark suite runner module path for diagnostics."""
-    return REPOSITORY_ROOT / "tooling" / "benchmark" / "run_hail_benchmark_suite.py"
-
-
 def hail_environment_directory() -> Path:
     """Return the managed virtual environment directory for Hail."""
     return REPOSITORY_ROOT / HAIL_ENVIRONMENT_DIRECTORY_NAME
@@ -515,51 +505,6 @@ def build_regenie_step2_continuous_command(regenie_executable: str, baseline_pat
         str(baseline_paths.regenie_qt_prediction_list_path),
         "--out",
         str(baseline_paths.baseline_directory / "regenie_step2_qt"),
-    ]
-
-
-def build_hail_linear_command(hail_python_executable: str, baseline_paths: BaselinePaths) -> list[str]:
-    """Build the cached Hail continuous trait command."""
-    output_name = "hail_cont"
-    return [
-        hail_python_executable,
-        "-m",
-        "tooling.benchmark.run_hail_baseline",
-        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
-        "tool.cache_mode=require",
-        f"tool.bfile={baseline_paths.bed_prefix}",
-        f"tool.pheno={baseline_paths.continuous_phenotype_path}",
-        "tool.pheno_name=phenotype_continuous",
-        f"tool.covar={baseline_paths.covariate_path}",
-        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
-        "tool.glm=linear",
-        f"tool.out={hail_output_path(baseline_paths, output_name)}",
-        f"tool.log_path={hail_log_path(baseline_paths, output_name)}",
-    ]
-
-
-def build_hail_logistic_command(
-    hail_python_executable: str,
-    baseline_paths: BaselinePaths,
-    test_name: str,
-) -> list[str]:
-    """Build one cached Hail binary trait command."""
-    output_name = f"hail_bin_{test_name}"
-    return [
-        hail_python_executable,
-        "-m",
-        "tooling.benchmark.run_hail_baseline",
-        f"tool.matrix_table_cache={baseline_paths.hail_matrix_table_path}",
-        "tool.cache_mode=require",
-        f"tool.bfile={baseline_paths.bed_prefix}",
-        f"tool.pheno={baseline_paths.binary_phenotype_path}",
-        "tool.pheno_name=phenotype_binary",
-        f"tool.covar={baseline_paths.covariate_path}",
-        f"tool.covar_names={HAIL_COVARIATE_NAMES}",
-        "tool.glm=logistic",
-        f"tool.logistic_test={test_name}",
-        f"tool.out={hail_output_path(baseline_paths, output_name)}",
-        f"tool.log_path={hail_log_path(baseline_paths, output_name)}",
     ]
 
 

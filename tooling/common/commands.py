@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import os
 import select
 import subprocess
@@ -397,19 +396,6 @@ def run_captured_command(
         env=environment_overrides,
     )
     return command_result_to_output(run_command(spec))
-
-
-def command_result_to_json_dict(result: CommandResult) -> dict[str, object]:
-    """Convert a command result to a JSON-ready dictionary.
-
-    Args:
-        result: Command result.
-
-    Returns:
-        JSON-ready result.
-
-    """
-    return dataclasses.asdict(result)
 
 
 def command_record_from_result(
