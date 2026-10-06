@@ -17,6 +17,7 @@ import tests.test_regenie2_binary
 import tests.test_regenie2_binary_pipeline
 import tests.test_regenie2_linear
 from g import jax_backend, types
+from g.backend import contracts, materialization, transport
 from g.compute.common import compressed_genotype
 from g.compute.common import result as association_result
 
@@ -39,17 +40,29 @@ MATERIALIZED_CHI_SQUARED_ABSOLUTE_TOLERANCE = 2.0e-6
 MATERIALIZED_LOG10_P_VALUE_ABSOLUTE_TOLERANCE = 5.0e-7
 
 
-class CompressedTestBackend(jax_backend.JaxBackendBase):
+class CompressedTestBackend(transport.BackendTransport):
     """Concrete policy used to exercise the shared compressed path."""
 
     retain_compressed_imputed_dosage_square_sum = True
     collect_compressed_sparse_candidate_mask = True
 
 
+class SourcePacked8ForeignCall(typing.Protocol):
+    """Two-operand source decoder call used by the CPU-safe FFI fixture."""
+
+    def __call__(
+        self,
+        compressed_slab: jax.Array,
+        compressed_metadata: jax.Array,
+        *,
+        source_sample_count: int,
+    ) -> tuple[jax.Array, jax.Array]: ...
+
+
 def build_device_association(
     *,
     include_correction_codes: bool,
-) -> jax_backend.DeviceAssociationResult:
+) -> contracts.DeviceAssociationResult:
     """Build deterministic trait-major statistics with padded variant columns."""
     result = association_result.AssociationResult(
         beta=jnp.asarray(
@@ -97,7 +110,7 @@ def build_device_association(
             else None
         ),
     )
-    return typing.cast("jax_backend.DeviceAssociationResult", result)
+    return typing.cast("contracts.DeviceAssociationResult", result)
 
 
 def build_raw_statistics() -> compressed_genotype.Packed8RawStatistics[jax.Array, jax.Array]:
@@ -111,7 +124,7 @@ def build_raw_statistics() -> compressed_genotype.Packed8RawStatistics[jax.Array
 
 
 def assert_host_association_statistics(
-    association: jax_backend.HostAssociationResult,
+    association: contracts.HostAssociationResult,
     *,
     beta: npt.NDArray[np.float32],
     standard_error: npt.NDArray[np.float32],
@@ -146,7 +159,7 @@ def assert_host_association_statistics(
 
 
 def test_resolve_contiguous_compressed_selection_accepts_exact_tail() -> None:
-    observed = jax_backend.resolve_host_compressed_transfer_selection(
+    observed = transport.resolve_host_compressed_transfer_selection(
         source_sample_count=12,
         selected_sample_count=5,
         selection_start=7,
@@ -167,7 +180,7 @@ def test_resolve_contiguous_compressed_selection_rejects_invalid_range(
     selected_sample_count: int,
 ) -> None:
     with pytest.raises(ValueError, match="exceeds the source sample count"):
-        jax_backend.resolve_host_compressed_transfer_selection(
+        transport.resolve_host_compressed_transfer_selection(
             source_sample_count=12,
             selected_sample_count=selected_sample_count,
             selection_start=selection_start,
@@ -178,7 +191,7 @@ def test_resolve_contiguous_compressed_selection_rejects_invalid_range(
 def test_resolve_indexed_compressed_selection_preserves_nonmonotonic_indices() -> None:
     selected_sample_indices = np.asarray([7, 1, 7, 3], dtype=np.uint32)
 
-    observed = jax_backend.resolve_host_compressed_transfer_selection(
+    observed = transport.resolve_host_compressed_transfer_selection(
         source_sample_count=12,
         selected_sample_count=4,
         selection_start=None,
@@ -200,7 +213,7 @@ def test_resolve_indexed_compressed_selection_rejects_shape_or_dtype(
     selected_sample_indices: npt.NDArray[np.integer],
 ) -> None:
     with pytest.raises(ValueError, match="one-dimensional uint32"):
-        jax_backend.resolve_host_compressed_transfer_selection(
+        transport.resolve_host_compressed_transfer_selection(
             source_sample_count=12,
             selected_sample_count=selected_sample_indices.size,
             selection_start=None,
@@ -210,7 +223,7 @@ def test_resolve_indexed_compressed_selection_rejects_shape_or_dtype(
 
 def test_resolve_indexed_compressed_selection_rejects_count_mismatch() -> None:
     with pytest.raises(ValueError, match="one index per selected sample"):
-        jax_backend.resolve_host_compressed_transfer_selection(
+        transport.resolve_host_compressed_transfer_selection(
             source_sample_count=12,
             selected_sample_count=3,
             selection_start=None,
@@ -230,7 +243,7 @@ def test_resolve_compressed_selection_requires_exactly_one_mode(
     selected_sample_indices: npt.NDArray[np.uint32] | None,
 ) -> None:
     with pytest.raises(ValueError, match="either contiguous or indexed"):
-        jax_backend.resolve_host_compressed_transfer_selection(
+        transport.resolve_host_compressed_transfer_selection(
             source_sample_count=12,
             selected_sample_count=1,
             selection_start=selection_start,
@@ -240,7 +253,7 @@ def test_resolve_compressed_selection_requires_exactly_one_mode(
 
 def test_prepare_host_transfer_requires_all_compressed_values_absent() -> None:
     assert (
-        jax_backend.prepare_compressed_transfer_selection(
+        transport.prepare_compressed_transfer_selection(
             source_sample_count=None,
             selected_sample_count=None,
             selection_start=None,
@@ -250,7 +263,7 @@ def test_prepare_host_transfer_requires_all_compressed_values_absent() -> None:
     )
 
     with pytest.raises(ValueError, match="every compressed selection value to be None"):
-        jax_backend.prepare_compressed_transfer_selection(
+        transport.prepare_compressed_transfer_selection(
             source_sample_count=None,
             selected_sample_count=4,
             selection_start=None,
@@ -260,7 +273,7 @@ def test_prepare_host_transfer_requires_all_compressed_values_absent() -> None:
 
 def test_prepare_compressed_transfer_requires_complete_positive_geometry() -> None:
     with pytest.raises(ValueError, match="source and selected sample counts"):
-        jax_backend.prepare_compressed_transfer_selection(
+        transport.prepare_compressed_transfer_selection(
             source_sample_count=12,
             selected_sample_count=None,
             selection_start=0,
@@ -269,7 +282,7 @@ def test_prepare_compressed_transfer_requires_complete_positive_geometry() -> No
 
     for source_sample_count, selected_sample_count in [(0, 1), (12, 0), (-1, 1), (12, -1)]:
         with pytest.raises(ValueError, match="counts must be positive"):
-            jax_backend.prepare_compressed_transfer_selection(
+            transport.prepare_compressed_transfer_selection(
                 source_sample_count=source_sample_count,
                 selected_sample_count=selected_sample_count,
                 selection_start=0,
@@ -280,7 +293,7 @@ def test_prepare_compressed_transfer_requires_complete_positive_geometry() -> No
 def test_prepare_compressed_transfer_uploads_indexed_selection() -> None:
     selected_sample_indices = np.asarray([5, 1, 3], dtype=np.uint32)
 
-    observed = jax_backend.prepare_compressed_transfer_selection(
+    observed = transport.prepare_compressed_transfer_selection(
         source_sample_count=8,
         selected_sample_count=3,
         selection_start=None,
@@ -341,7 +354,7 @@ def test_transfer_batch_preserves_absent_optional_operands() -> None:
 
 
 def test_transfer_compressed_batch_requires_prepared_selection() -> None:
-    group_state = jax_backend.DeviceGroupState(
+    group_state = contracts.DeviceGroupState(
         association_state=object(),
         compressed_transfer_selection=None,
     )
@@ -361,14 +374,14 @@ def test_transfer_compressed_batch_maps_indexed_selection(monkeypatch: pytest.Mo
         expected_selected_sample_indices=np.arange(100, dtype=np.uint32),
         expected_selection_start=-1,
     )
-    selection = jax_backend.prepare_compressed_transfer_selection(
+    selection = transport.prepare_compressed_transfer_selection(
         source_sample_count=120,
         selected_sample_count=100,
         selection_start=None,
         selected_sample_indices=np.arange(100, dtype=np.uint32),
     )
     assert selection is not None
-    group_state = jax_backend.DeviceGroupState(
+    group_state = contracts.DeviceGroupState(
         association_state=object(),
         compressed_transfer_selection=selection,
     )
@@ -404,7 +417,7 @@ def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest
         expected_selected_sample_indices=expected_selected_sample_indices,
         expected_selection_start=10,
     )
-    selection = jax_backend.prepare_compressed_transfer_selection(
+    selection = transport.prepare_compressed_transfer_selection(
         source_sample_count=120,
         selected_sample_count=100,
         selection_start=10,
@@ -413,7 +426,7 @@ def test_transfer_compressed_batch_maps_contiguous_selection(monkeypatch: pytest
     assert selection is not None
     assert selection.selection_start == 10
     assert selection.selected_sample_indices.shape == (0,)
-    group_state = jax_backend.DeviceGroupState(
+    group_state = contracts.DeviceGroupState(
         association_state=object(),
         compressed_transfer_selection=selection,
     )
@@ -443,28 +456,26 @@ def test_prepare_shared_source_decodes_identity_and_retains_only_source_buffers(
     def fake_ffi_call(
         target_name: str,
         result_shape_dtypes: tuple[jax.ShapeDtypeStruct, ...],
-    ) -> tests.test_compressed_genotype.Packed8ForeignCall:
-        assert target_name == compressed_genotype.PACKED8_DEFLATE_FFI_TARGET
+    ) -> SourcePacked8ForeignCall:
+        assert target_name == compressed_genotype.PACKED8_SOURCE_DEFLATE_FFI_TARGET
+        assert len(result_shape_dtypes) == 2
         assert result_shape_dtypes[0].shape == (4, 100, 2)
+        assert result_shape_dtypes[1].shape == (4,)
+        assert result_shape_dtypes[1].dtype == np.dtype(np.uint32)
 
         def foreign_call(
             compressed_slab: jax.Array,
             compressed_metadata: jax.Array,
-            selected_sample_indices: jax.Array,
             *,
             source_sample_count: int,
-            selection_start: int,
-        ) -> tests.test_compressed_genotype.Packed8ForeignOutputs:
+        ) -> tuple[jax.Array, jax.Array]:
             np.testing.assert_array_equal(
                 np.asarray(compressed_slab), tests.test_compressed_genotype.build_compressed_slab()
             )
             np.testing.assert_array_equal(np.asarray(compressed_metadata), metadata)
-            assert selected_sample_indices.shape == (0,)
-            assert selected_sample_indices.dtype == jnp.uint32
             assert source_sample_count == 100
-            assert selection_start == 0
             calls.append(source_sample_count)
-            return foreign_outputs
+            return foreign_outputs[0], foreign_outputs[5]
 
         return foreign_call
 
@@ -507,9 +518,9 @@ def test_prepare_shared_source_rejects_invalid_geometry_before_decode(
         )
 
 
-def build_shared_source_for_selection() -> jax_backend.DeviceSharedSourceBatch:
+def build_shared_source_for_selection() -> contracts.DeviceSharedSourceBatch:
     """Build two distinct groups with a source error and a padded row."""
-    return jax_backend.DeviceSharedSourceBatch(
+    return contracts.DeviceSharedSourceBatch(
         packed_probability_pairs_by_variant=jnp.asarray(
             [
                 [[255, 0], [0, 255], [0, 0], [0, 0], [255, 0]],
@@ -530,9 +541,9 @@ def test_select_shared_source_reuses_source_after_releasing_private_group_moment
     source = build_shared_source_for_selection()
     original_pairs = np.asarray(source.packed_probability_pairs_by_variant).copy()
     original_statuses = np.asarray(source.statuses).copy()
-    first_group = jax_backend.DeviceGroupState(
+    first_group = contracts.DeviceGroupState(
         association_state=object(),
-        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+        compressed_transfer_selection=transport.prepare_compressed_transfer_selection(
             source_sample_count=5,
             selected_sample_count=2,
             selection_start=None,
@@ -551,9 +562,9 @@ def test_select_shared_source_reuses_source_after_releasing_private_group_moment
     first.genotype_mean.delete()
     first.imputed_dosage_square_sum.delete()
 
-    second_group = jax_backend.DeviceGroupState(
+    second_group = contracts.DeviceGroupState(
         association_state=object(),
-        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+        compressed_transfer_selection=transport.prepare_compressed_transfer_selection(
             source_sample_count=5,
             selected_sample_count=2,
             selection_start=2,
@@ -570,15 +581,15 @@ def test_select_shared_source_reuses_source_after_releasing_private_group_moment
 
 
 def test_select_shared_source_requires_prepared_group_selection() -> None:
-    group = jax_backend.DeviceGroupState(association_state=object(), compressed_transfer_selection=None)
+    group = contracts.DeviceGroupState(association_state=object(), compressed_transfer_selection=None)
     with pytest.raises(ValueError, match="requires a prepared compressed group selection"):
         CompressedTestBackend().select_shared_source(group, build_shared_source_for_selection())
 
 
 def test_select_shared_source_rejects_source_sample_count_mismatch() -> None:
-    group = jax_backend.DeviceGroupState(
+    group = contracts.DeviceGroupState(
         association_state=object(),
-        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+        compressed_transfer_selection=transport.prepare_compressed_transfer_selection(
             source_sample_count=6,
             selected_sample_count=2,
             selection_start=0,
@@ -592,9 +603,9 @@ def test_select_shared_source_rejects_source_sample_count_mismatch() -> None:
 @pytest.mark.parametrize("logical_variant_count", [0, 5])
 def test_select_shared_source_rejects_invalid_logical_geometry(logical_variant_count: int) -> None:
     source = dataclasses.replace(build_shared_source_for_selection(), logical_variant_count=logical_variant_count)
-    group = jax_backend.DeviceGroupState(
+    group = contracts.DeviceGroupState(
         association_state=object(),
-        compressed_transfer_selection=jax_backend.prepare_compressed_transfer_selection(
+        compressed_transfer_selection=transport.prepare_compressed_transfer_selection(
             source_sample_count=5,
             selected_sample_count=2,
             selection_start=0,
@@ -606,14 +617,14 @@ def test_select_shared_source_rejects_invalid_logical_geometry(logical_variant_c
 
 
 def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> None:
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=build_device_association(include_correction_codes=True),
         raw_packed8_statistics=build_raw_statistics(),
         firth_candidate_count=jnp.asarray(4, dtype=jnp.int32),
         firth_candidate_capacity=4,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = materialization.materialize_batch(
         device_result=device_batch,
         active_trait_indices=np.asarray([2, 0], dtype=np.int32),
         logical_variant_count=3,
@@ -654,14 +665,14 @@ def test_materialize_batch_reorders_traits_and_truncates_padded_variants() -> No
 
 
 def test_materialize_batch_supports_uncorrected_full_batch() -> None:
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=build_device_association(include_correction_codes=False),
         raw_packed8_statistics=build_raw_statistics(),
         firth_candidate_count=None,
         firth_candidate_capacity=None,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = materialization.materialize_batch(
         device_result=device_batch,
         active_trait_indices=None,
         logical_variant_count=4,
@@ -724,15 +735,29 @@ def test_materialize_batch_supports_uncorrected_full_batch() -> None:
     assert observed.firth_candidate_capacity is None
 
 
+@pytest.mark.parametrize("include_correction_codes", [False, True])
+def test_select_association_preserves_full_batch_device_buffers(*, include_correction_codes: bool) -> None:
+    """The full-batch path avoids additional device selection or conversion work."""
+    association = build_device_association(include_correction_codes=include_correction_codes)
+
+    observed = materialization.select_association(
+        association=association,
+        active_trait_indices=None,
+        logical_variant_count=4,
+    )
+
+    assert observed is association
+
+
 def test_materialize_batch_truncates_uncorrected_association_without_raw_statistics() -> None:
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=build_device_association(include_correction_codes=False),
         raw_packed8_statistics=None,
         firth_candidate_count=None,
         firth_candidate_capacity=None,
     )
 
-    observed = jax_backend.JaxBackendBase().materialize_batch(
+    observed = materialization.materialize_batch(
         device_result=device_batch,
         active_trait_indices=None,
         logical_variant_count=2,
@@ -759,7 +784,7 @@ def test_materialize_batch_rejects_partial_candidate_capacity_contract(
     candidate_count: jax.Array | None,
     candidate_capacity: int | None,
 ) -> None:
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=build_device_association(include_correction_codes=False),
         raw_packed8_statistics=None,
         firth_candidate_count=candidate_count,
@@ -767,7 +792,7 @@ def test_materialize_batch_rejects_partial_candidate_capacity_contract(
     )
 
     with pytest.raises(ValueError, match="count and capacity must be materialized together"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        materialization.materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=4,
@@ -775,7 +800,7 @@ def test_materialize_batch_rejects_partial_candidate_capacity_contract(
 
 
 def test_materialize_batch_rejects_candidate_capacity_overflow() -> None:
-    device_batch: jax_backend.DeviceAssociationBatch = jax_backend.AssociationBatch(
+    device_batch: contracts.DeviceAssociationBatch = contracts.AssociationBatch(
         association=build_device_association(include_correction_codes=False),
         raw_packed8_statistics=None,
         firth_candidate_count=jnp.asarray(5, dtype=jnp.int32),
@@ -783,7 +808,7 @@ def test_materialize_batch_rejects_candidate_capacity_overflow() -> None:
     )
 
     with pytest.raises(ValueError, match=r"candidate count 5 exceeded.*capacity of 4"):
-        jax_backend.JaxBackendBase().materialize_batch(
+        materialization.materialize_batch(
             device_result=device_batch,
             active_trait_indices=None,
             logical_variant_count=4,
@@ -950,9 +975,9 @@ def build_binary_score_backend() -> jax_backend.BinaryScoreJaxBackend:
 def build_decoded_genotype_batch(
     *,
     sparse_candidate_mask: npt.NDArray[np.bool_] | None,
-) -> jax_backend.DeviceGenotypeBatch:
+) -> contracts.DeviceGenotypeBatch:
     """Build a small decoded batch for early adapter validation branches."""
-    return jax_backend.DeviceGenotypeBatch(
+    return contracts.DeviceGenotypeBatch(
         genotype_values=jnp.asarray([[0.0, 1.0]], dtype=jnp.float32),
         genotype_mean=jnp.asarray([0.5], dtype=jnp.float32),
         imputed_dosage_square_sum=None,
@@ -1121,7 +1146,7 @@ def run_firth_backend_fixture(
     fixture: tests.test_regenie2_binary_pipeline.FirthPipelineFixture,
     *,
     packed8: bool,
-) -> jax_backend.DeviceAssociationBatch:
+) -> contracts.DeviceAssociationBatch:
     """Run one Firth fixture through the production adapter and selected delivery route."""
     backend = build_firth_backend()
     group_state = backend.prepare_group(
