@@ -2,7 +2,7 @@
 
 | Status | Applies to | Owner |
 | --- | --- | --- |
-| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-09-25 | Public user docs |
+| Pre-release draft; guidance, not a benchmark guarantee | CPU and GPU Step 2 implementation as of 2026-10-06 | Public user docs |
 
 Performance depends on genotype format, trait mode, phenotype count, BGEN
 decode cost, host-device transfer, JAX compilation, Parquet writing, storage, and
@@ -95,6 +95,13 @@ float32 bits as well as runtime even with identical source and inputs. Record
 software versions, device details, and compilation-cache provenance when
 comparing results. The [profiling review](../development/performance-review-2026-09-24.md)
 includes controlled replay that separates this variation from a decoding change.
+
+The [October architecture review](../development/performance-review-2026-10-06.md)
+measured 3.69–6.50% lower warmed full-scan time on chromosome 22 workloads with
+distinct phenotype sample masks. Those comparisons include output writing and
+match every output bit. Independent binary compilations still show the vendor
+kernel variation above; these measurements do not establish a binary scan
+speedup or a guarantee for other cohorts or hardware.
 
 Explicit resumes that have no pending output still perform input and committed-
 output validation, then finish without initializing JAX or a device backend.
