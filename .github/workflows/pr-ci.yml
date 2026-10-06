@@ -94,6 +94,11 @@ jobs:
       - name: Run Ruff lint
         run: uv run --no-sync ruff check .
 
+      - name: Check Python architecture and module reachability
+        run: |
+          PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_python_architecture
+          PYTHONPATH=src:. uv run --no-sync python -m tooling.cli.debug --config-name debug_check_dead_code
+
   cuda-lint:
     name: cuda-lint
     runs-on: ubuntu-latest
