@@ -262,7 +262,11 @@ PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
         name="native_orchestration_call_ownership",
         source_directory=Path(),
-        forbidden_calls=("g._core.*",),
+        forbidden_calls=(
+            "g._core.*",
+            "g.cli.*",
+            *(f"{module_name}.*" for module_name in REMOVED_ORCHESTRATION_IMPORTS),
+        ),
         allowed_paths=(CLI_SHIM_PATH,),
         message="only the console shim may invoke native CLI orchestration",
     ),
@@ -286,9 +290,9 @@ PYTHON_CALL_POLICIES = (
     PythonCallPolicy(
         name="compute_host_materialization_isolation",
         source_directory=Path("compute"),
-        forbidden_calls=("jax.device_get",),
+        forbidden_calls=("jax.device_get", "g.jax_backend.*", "g.backend.*"),
         allowed_paths=(),
-        message="the backend owns host materialization after compute completes",
+        message="compute kernels must not call transport owners or materialize host output",
     ),
 )
 
