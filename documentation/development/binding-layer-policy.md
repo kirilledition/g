@@ -18,6 +18,14 @@ src/binding PyO3/NumPy adaptation and Python host callbacks
 src/g       console bootstrap, JAX backend, JAX kernels
 ```
 
+## Private Module Ownership
+
+The private `engine` adapter implements the backend lifecycle. Its
+`ffi_registration` module owns runtime-version checks and process-lifetime
+CUDA target registration; `array_conversion` owns checked NumPy conversion
+and immutable native-backed array owners. These modules do not register a
+Python namespace or add wrappers around domain-crate services.
+
 ## Allowed
 
 - The registered CLI entrypoint and its typed terminal result.
@@ -106,3 +114,37 @@ not reasons to keep BGEN, output, buffer, numeric, or scheduling policy in the
 binding. The same rule applies to telemetry lifecycle: only Python thread-name
 lookup belongs here. Prefer deletion or a direct owner-type import over a
 forwarding adapter.
+
+## Materialized Result Ownership
+
+Materialized association columns are copied once from NumPy into Rust-owned
+vectors before the asynchronous output pipeline accepts them. Output then
+moves those vectors into Arrow buffers without copying the statistic values
+again. A NumPy read-only flag does not establish allocation ownership: with
+the supported JAX 0.11.0 CPU runtime, `device_get` can return a NumPy view whose
+base is a `PyCapsule`, whose `owndata` flag is false, and whose allocation is
+shared with the JAX array and later calls to `device_get`.
+
+Keeping such a Python reference alive cannot transfer the allocation to a
+Rust vector or establish exclusive storage ownership. Any future removal of
+this copy must specify the allocation owner, asynchronous writer lifetime,
+and interaction with JAX buffer donation; it must also preserve trait-major
+ordering for strided and Fortran-contiguous NumPy arrays. Conversion uses
+the row-major contiguous fast path and logical iteration for other layouts.
+Current conversion tests check independent result ownership after the source
+storage changes, along with row-major, Fortran-contiguous, and strided ordering.
+
+An allocation-and-copy microbenchmark on Leibniz on 2026-10-06 covered 26 full
+chunks of 16,384 variants, or 425,984 variant rows. Each chunk copied four
+float32 association columns and uint8 correction codes with shape
+`(trait_count, 16384)`, plus two uint64 and one uint32 packed8 statistic columns
+with shape `(16384,)`. The raw genotype statistics are copied once per variant,
+independent of trait count. All copied columns remain owned simultaneously until the end of each chunk.
+Median times over 21 runs were 8.31 ms for one trait (15.76 MB), 83.18 ms for
+16 traits (124.39 MB), and 250.33 ms for 64 traits
+(471.99 MB). These measure the isolated ownership copy, not an end-to-end
+application speedup; the probe uses a full final chunk and includes correction
+codes even when an analysis would omit them. Larger trait counts make allocation
+and buffer reuse worth investigating, but these measurements do not establish
+an end-to-end benefit from sharing JAX allocations. The explicit ownership
+boundary remains until a safe shared-buffer contract is qualified.

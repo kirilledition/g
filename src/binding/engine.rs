@@ -1,25 +1,16 @@
 //! Private PyO3 adapter for the coarse JAX association backend.
 
-use std::sync::Arc;
+mod array_conversion;
+mod ffi_registration;
 
-use numpy::ndarray::{Array2, ArrayView1, ArrayView2, ArrayView3, Ix1, Ix2};
-use numpy::{
-    Element, IntoPyArray, PyArray, PyArray1, PyArray2, PyArray3, PyArrayDescrMethods, PyArrayMethods, PyReadonlyArray,
-    PyUntypedArray, PyUntypedArrayMethods, dtype,
-};
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use numpy::ndarray::Array2;
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
-use pyo3::sync::PyOnceLock;
-#[cfg(target_os = "linux")]
-use pyo3::types::PyCapsule;
 use pyo3::types::{PyDict, PyModule};
 
 use g_engine as native_engine;
 use g_genotype as native_genotype;
 use g_input as native_input;
-use g_output as native_output;
-
-use crate::binding::cli::python_interruption_signal_name;
 
 /// Private adapter implementing the Python-free engine contract.
 pub(crate) struct PyJaxBackend {
@@ -27,11 +18,6 @@ pub(crate) struct PyJaxBackend {
     genotype_delivery_capability: native_engine::GenotypeDeliveryCapability,
     kind: BackendKind,
 }
-
-static NVCOMP_FFI_REGISTRATION: PyOnceLock<()> = PyOnceLock::new();
-static FIRTH_COMPONENTS_FFI_REGISTRATION: PyOnceLock<bool> = PyOnceLock::new();
-const SUPPORTED_JAX_VERSION: &str = "0.11.0";
-const SUPPORTED_JAXLIB_VERSION: &str = "0.11.0";
 
 #[derive(Clone, Copy)]
 enum BackendKind {
@@ -48,26 +34,6 @@ pub(crate) enum TransferredGenotypeInput {
 pub(crate) enum DeviceAssociationResult {
     Decoded { result: Py<PyAny>, output_statistics: g_genotype_contracts::ChunkOutputStatistics },
     CompressedPacked8(Py<PyAny>),
-}
-
-#[pyclass(frozen)]
-struct Packed8ArrayOwner {
-    values: native_genotype::PooledPacked8Buffer,
-}
-
-#[pyclass(frozen)]
-struct CompressedPacked8BatchOwner {
-    batch: native_genotype::CompressedPacked8Batch,
-}
-
-struct CompressedBatchArrays<'py> {
-    slab: Bound<'py, PyArray1<u8>>,
-    metadata: Bound<'py, PyArray2<u32>>,
-}
-
-#[pyclass(frozen)]
-struct SampleSelectionArrayOwner {
-    file_indices: Arc<[u32]>,
 }
 
 /// Error crossing the engine-to-Python backend boundary.
@@ -93,7 +59,7 @@ pub(crate) fn create_jax_backend(
     device: g_plan::Device,
     plan: g_runner::JaxAssociationBackendPlan<'_>,
 ) -> PyResult<PyJaxBackend> {
-    validate_jax_runtime_versions(py)?;
+    ffi_registration::validate_jax_runtime_versions(py)?;
     let genotype_delivery_capability = match device {
         g_plan::Device::Cpu => native_engine::GenotypeDeliveryCapability::HostOnly,
         g_plan::Device::Gpu => native_engine::GenotypeDeliveryCapability::RawDeflatePacked8,
@@ -113,115 +79,14 @@ pub(crate) fn create_jax_backend(
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryScore })
         }
         g_runner::JaxAssociationBackendPlan::BinaryFirth { correction, kernels } => {
-            let use_cuda_firth_components = device == g_plan::Device::Gpu && register_firth_components_ffi_target(py)?;
+            let use_cuda_firth_components =
+                device == g_plan::Device::Gpu && ffi_registration::register_firth_components_ffi_target(py)?;
             let keyword_arguments =
                 binary_firth_backend_keyword_arguments(py, kernels, *correction, use_cuda_firth_components)?;
             let backend = backend_module.getattr("BinaryFirthJaxBackend")?.call((), Some(&keyword_arguments))?.unbind();
             Ok(PyJaxBackend { backend, genotype_delivery_capability, kind: BackendKind::BinaryFirth })
         }
     }
-}
-
-fn validate_jax_runtime_versions(py: Python<'_>) -> PyResult<()> {
-    let jax_version = PyModule::import(py, "jax")?.getattr("__version__")?.extract::<String>()?;
-    let jaxlib_version = PyModule::import(py, "jaxlib")?.getattr("__version__")?.extract::<String>()?;
-    if let Some(message) = jax_runtime_version_error(&jax_version, &jaxlib_version) {
-        return Err(PyRuntimeError::new_err(message));
-    }
-    Ok(())
-}
-
-fn jax_runtime_version_error(jax_version: &str, jaxlib_version: &str) -> Option<String> {
-    if jax_version == SUPPORTED_JAX_VERSION && jaxlib_version == SUPPORTED_JAXLIB_VERSION {
-        return None;
-    }
-    Some(format!(
-        "Unsupported JAX runtime: g requires jax=={SUPPORTED_JAX_VERSION} and jaxlib=={SUPPORTED_JAXLIB_VERSION} because its native XLA FFI handlers are built against headers from that jaxlib release; observed jax=={jax_version} and jaxlib=={jaxlib_version}. Recreate the environment with `uv sync --frozen` before running g."
-    ))
-}
-
-fn register_nvcomp_ffi_target(py: Python<'_>) -> PyResult<()> {
-    NVCOMP_FFI_REGISTRATION.get_or_try_init(py, || register_nvcomp_ffi_target_once(py)).copied()
-}
-
-fn contextual_backend_error(py: Python<'_>, error: PyErr, context: &str) -> PyErr {
-    if python_interruption_signal_name(py, &error).is_some() {
-        error
-    } else {
-        PyRuntimeError::new_err(format!("{context}: {error}"))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
-    let nvcomp_module = PyModule::import(py, "nvidia.libnvcomp").map_err(|error| {
-        contextual_backend_error(py, error, "GPU packed8 delivery requires the official nvidia-libnvcomp-cu12 package")
-    })?;
-    let loaded_library = nvcomp_module.call_method0("load_library").map_err(|error| {
-        contextual_backend_error(py, error, "The official nvidia.libnvcomp loader failed to load libnvcomp.so.5")
-    })?;
-    if loaded_library.is_none() {
-        return Err(PyRuntimeError::new_err("The official nvidia.libnvcomp loader could not find libnvcomp.so.5."));
-    }
-
-    let capability = g_genotype_cuda::initialize_nvcomp_runtime(0)
-        .map_err(|error| PyRuntimeError::new_err(format!("nvCOMP runtime initialization failed: {error}")))?;
-    let handler = g_genotype_cuda::packed8_deflate_ffi_handler(&capability);
-    // SAFETY: `handler` is the process-lifetime address of the linked typed-XLA FFI
-    // handler, and the capsule has no destructor or borrowed storage.
-    let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
-    let keyword_arguments = PyDict::new(py);
-    keyword_arguments.set_item("platform", "CUDA")?;
-    keyword_arguments.set_item("api_version", 1)?;
-    PyModule::import(py, "jax")?
-        .getattr("ffi")?
-        .call_method(
-            "register_ffi_target",
-            (g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET, capsule),
-            Some(&keyword_arguments),
-        )
-        .map_err(|error| contextual_backend_error(py, error, "JAX nvCOMP FFI target registration failed"))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn register_nvcomp_ffi_target_once(_py: Python<'_>) -> PyResult<()> {
-    Err(PyRuntimeError::new_err("GPU packed8 delivery through nvCOMP is supported only on Linux."))
-}
-
-fn register_firth_components_ffi_target(py: Python<'_>) -> PyResult<bool> {
-    FIRTH_COMPONENTS_FFI_REGISTRATION
-        .get_or_try_init(py, || optional_ffi_registration_result(py, register_firth_components_ffi_target_once(py)))
-        .copied()
-}
-
-fn optional_ffi_registration_result(py: Python<'_>, result: PyResult<bool>) -> PyResult<bool> {
-    result.or_else(|error| if python_interruption_signal_name(py, &error).is_some() { Err(error) } else { Ok(false) })
-}
-
-#[cfg(target_os = "linux")]
-fn register_firth_components_ffi_target_once(py: Python<'_>) -> PyResult<bool> {
-    let Ok(capability) = g_compute_cuda::initialize_firth_components_runtime(0) else {
-        return Ok(false);
-    };
-    let handler = g_compute_cuda::firth_components_ffi_handler(&capability);
-    // SAFETY: The linked typed-XLA FFI handler has process lifetime, and the
-    // capsule has no destructor or borrowed storage.
-    let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
-    let keyword_arguments = PyDict::new(py);
-    keyword_arguments.set_item("platform", "CUDA")?;
-    keyword_arguments.set_item("api_version", 1)?;
-    PyModule::import(py, "jax")?.getattr("ffi")?.call_method(
-        "register_ffi_target",
-        (g_compute_cuda::FIRTH_COMPONENTS_FFI_TARGET, capsule),
-        Some(&keyword_arguments),
-    )?;
-    Ok(true)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn register_firth_components_ffi_target_once(_py: Python<'_>) -> PyResult<bool> {
-    Ok(false)
 }
 
 fn binary_score_backend_keyword_arguments<'py>(
@@ -299,7 +164,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
             return Err(PyJaxBackendError::InvalidInput("shared source requires compressed packed8 input".to_string()));
         };
         Python::attach(|py| {
-            let arrays = compressed_batch_arrays(py, batch, input.logical_variant_count)?;
+            let arrays = array_conversion::compressed_batch_arrays(py, batch, input.logical_variant_count)?;
             self.backend
                 .bind(py)
                 .call_method1(
@@ -460,7 +325,7 @@ impl native_engine::AssociationBackend for PyJaxBackend {
                 .bind(py)
                 .call_method1("materialize_batch", (result, active_trait_indices, logical_variant_count))
                 .map_err(PyJaxBackendError::Python)?;
-            parse_host_materialized_batch(py, &materialized, output_statistics, logical_variant_count)
+            array_conversion::parse_host_materialized_batch(py, &materialized, output_statistics, logical_variant_count)
                 .map_err(PyJaxBackendError::Python)
         })
     }
@@ -479,7 +344,7 @@ fn prepare_python_group<'py>(
             (phenotype_matrix, covariate_matrix, py.None(), py.None(), py.None(), py.None()),
         ),
         native_engine::GenotypeTransferPreparation::CompressedPacked8(transfer) => {
-            register_nvcomp_ffi_target(py)?;
+            ffi_registration::register_nvcomp_ffi_target(py)?;
             let source_sample_count = transfer.file_sample_count;
             let selected_sample_count = transfer.selected_sample_count;
             match transfer.sample_selection {
@@ -496,14 +361,7 @@ fn prepare_python_group<'py>(
                         ),
                     ),
                 native_genotype::CompressedPacked8SampleSelection::Indexed { file_indices } => {
-                    let owner = Bound::new(py, SampleSelectionArrayOwner { file_indices })?;
-                    let selection_view = ArrayView1::from(&owner.get().file_indices[..]);
-                    let selected_sample_indices = unsafe {
-                        // The frozen private owner retains immutable Arc storage as the
-                        // ndarray base until Python finishes its one group-level upload.
-                        PyArray1::borrow_from_array(&selection_view, owner.clone().into_any())
-                    };
-                    selected_sample_indices.readwrite().make_nonwriteable();
+                    let selected_sample_indices = array_conversion::into_python_sample_selection(py, file_indices)?;
                     backend.call_method1(
                         "prepare_group",
                         (
@@ -542,8 +400,9 @@ fn transfer_genotype_batch(
                 imputed_dosage_square_sum,
                 sparse_candidate_mask,
             } = statistics.compute;
-            let genotype_values = into_python_genotype_batch(py, genotypes, compute_variant_count, sample_count)
-                .map_err(PyJaxBackendError::Python)?;
+            let genotype_values =
+                array_conversion::into_python_genotype_batch(py, genotypes, compute_variant_count, sample_count)
+                    .map_err(PyJaxBackendError::Python)?;
             backend
                 .call_method1(
                     "transfer_batch",
@@ -559,320 +418,12 @@ fn transfer_genotype_batch(
                 .map_err(PyJaxBackendError::Python)
         }
         native_genotype::GenotypeBatchPayload::CompressedPacked8(batch) => {
-            let arrays = compressed_batch_arrays(py, batch, logical_variant_count)?;
+            let arrays = array_conversion::compressed_batch_arrays(py, batch, logical_variant_count)?;
             backend
                 .call_method1("transfer_compressed_batch", (group, arrays.slab, arrays.metadata, compute_variant_count))
                 .map(Bound::unbind)
                 .map(TransferredGenotypeInput::CompressedPacked8)
                 .map_err(PyJaxBackendError::Python)
-        }
-    }
-}
-
-fn compressed_batch_arrays(
-    py: Python<'_>,
-    batch: native_genotype::CompressedPacked8Batch,
-    logical_variant_count: usize,
-) -> Result<CompressedBatchArrays<'_>, PyJaxBackendError> {
-    let owner = Bound::new(py, CompressedPacked8BatchOwner { batch }).map_err(PyJaxBackendError::Python)?;
-    let slab_view = ArrayView1::from(owner.get().batch.raw_deflate_slab());
-    let slab = unsafe {
-        // Both immutable arrays retain the frozen owner, preventing pooled
-        // storage reuse before asynchronous device transfer consumes it.
-        PyArray1::borrow_from_array(&slab_view, owner.clone().into_any())
-    };
-    slab.readwrite().make_nonwriteable();
-    let metadata_view = ArrayView2::from_shape((logical_variant_count, 3), owner.get().batch.member_metadata())
-        .map_err(|error| {
-            PyJaxBackendError::InvalidInput(format!("invalid compressed packed8 metadata shape: {error}"))
-        })?;
-    let metadata = unsafe {
-        // The same owner retains the metadata allocation until its final view
-        // is released. Neither view permits Python-side mutation.
-        PyArray2::borrow_from_array(&metadata_view, owner.clone().into_any())
-    };
-    metadata.readwrite().make_nonwriteable();
-    Ok(CompressedBatchArrays { slab, metadata })
-}
-
-fn into_python_genotype_batch(
-    py: Python<'_>,
-    genotypes: native_genotype::OwnedGenotypeBuffer,
-    variant_count: usize,
-    sample_count: usize,
-) -> PyResult<Py<PyAny>> {
-    match genotypes {
-        native_genotype::OwnedGenotypeBuffer::Dosage(values) => {
-            Ok(Array2::from_shape_vec((variant_count, sample_count), values)
-                .expect("engine-validated dosage matrix shape")
-                .into_pyarray(py)
-                .into_any()
-                .unbind())
-        }
-        native_genotype::OwnedGenotypeBuffer::Packed8(values) => {
-            let owner = Bound::new(py, Packed8ArrayOwner { values })?;
-            let array_view = ArrayView3::from_shape((variant_count, sample_count, 2), &owner.get().values[..])
-                .map_err(|error| PyValueError::new_err(format!("Invalid packed8 genotype shape: {error}")))?;
-            let values = unsafe {
-                // The frozen private owner never mutates or reallocates its buffer. The ndarray
-                // receives an owned reference to that owner as its base, so the pooled allocation
-                // cannot be returned until the final ndarray reference is dropped.
-                PyArray3::borrow_from_array(&array_view, owner.clone().into_any())
-            };
-            values.readwrite().make_nonwriteable();
-            Ok(values.into_any().unbind())
-        }
-    }
-}
-
-fn parse_host_materialized_batch(
-    py: Python<'_>,
-    payload: &Bound<'_, PyAny>,
-    output_statistics: Option<g_genotype_contracts::ChunkOutputStatistics>,
-    logical_variant_count: usize,
-) -> PyResult<native_engine::MaterializedAssociationBatch> {
-    let association_payload = payload.getattr("association")?;
-    let association = parse_host_association_batch(py, &association_payload, logical_variant_count)?;
-    let raw_statistics_payload = payload.getattr("raw_packed8_statistics")?;
-    let genotype_statistics = match (output_statistics, raw_statistics_payload.is_none()) {
-        (Some(statistics), true) => native_engine::MaterializedGenotypeStatistics::Ready(statistics),
-        (Some(_), false) => {
-            return Err(PyValueError::new_err(
-                "Host-decoded association output unexpectedly included packed8 raw statistics.",
-            ));
-        }
-        (None, true) => {
-            return Err(PyValueError::new_err(
-                "Compressed packed8 association output omitted its raw genotype statistics.",
-            ));
-        }
-        (None, false) => native_engine::MaterializedGenotypeStatistics::Packed8Raw(parse_packed8_raw_statistics(
-            py,
-            &raw_statistics_payload,
-            logical_variant_count,
-        )?),
-    };
-    Ok(native_engine::MaterializedAssociationBatch { association, genotype_statistics })
-}
-
-fn parse_packed8_raw_statistics(
-    py: Python<'_>,
-    payload: &Bound<'_, PyAny>,
-    logical_variant_count: usize,
-) -> PyResult<native_genotype::Packed8RawStatistics> {
-    let dosage_sums =
-        parse_host_vector::<u64>(py, &payload.getattr("dosage_sums")?, "dosage_sums", logical_variant_count)?;
-    let dosage_square_sums = parse_host_vector::<u64>(
-        py,
-        &payload.getattr("dosage_square_sums")?,
-        "dosage_square_sums",
-        logical_variant_count,
-    )?;
-    let statuses = parse_host_vector::<u32>(py, &payload.getattr("statuses")?, "statuses", logical_variant_count)?;
-    let selected_sample_count = payload.getattr("selected_sample_count")?.extract::<usize>()?;
-    Ok(native_genotype::Packed8RawStatistics { dosage_sums, dosage_square_sums, statuses, selected_sample_count })
-}
-
-fn parse_host_vector<ElementType: Element + Copy>(
-    py: Python<'_>,
-    payload: &Bound<'_, PyAny>,
-    label: &str,
-    expected_value_count: usize,
-) -> PyResult<Vec<ElementType>> {
-    let values = payload.cast::<PyUntypedArray>()?;
-    if !values.dtype().is_equiv_to(&dtype::<ElementType>(py)) {
-        return Err(PyValueError::new_err(format!("{label} must use {} dtype.", dtype::<ElementType>(py))));
-    }
-    let values = values.cast::<PyArray<ElementType, Ix1>>()?.readonly();
-    if values.shape() != [expected_value_count] {
-        return Err(PyValueError::new_err(format!(
-            "{label} shape {:?} does not match logical variant count {expected_value_count}.",
-            values.shape()
-        )));
-    }
-    Ok(copy_array_values(&values))
-}
-
-fn parse_host_association_batch(
-    py: Python<'_>,
-    payload: &Bound<'_, PyAny>,
-    logical_variant_count: usize,
-) -> PyResult<native_output::Regenie2StatisticBatch> {
-    let beta_object = payload.getattr("beta")?;
-    let standard_error_object = payload.getattr("standard_error")?;
-    let chi_squared_object = payload.getattr("chi_squared")?;
-    let log10_p_value_object = payload.getattr("log10_p_value")?;
-    let beta = beta_object.cast::<PyUntypedArray>()?;
-    let standard_error = standard_error_object.cast::<PyUntypedArray>()?;
-    let chi_squared = chi_squared_object.cast::<PyUntypedArray>()?;
-    let log10_p_value = log10_p_value_object.cast::<PyUntypedArray>()?;
-    let observed_dtype = beta.dtype();
-    for (label, values) in
-        [("standard_error", standard_error), ("chi_squared", chi_squared), ("log10_p_value", log10_p_value)]
-    {
-        if !values.dtype().is_equiv_to(&observed_dtype) {
-            return Err(PyValueError::new_err(format!("{label} dtype must match beta dtype.")));
-        }
-    }
-    if !observed_dtype.is_equiv_to(&dtype::<f32>(py)) {
-        return Err(PyValueError::new_err("Host association statistics must use float32 dtype."));
-    }
-    let beta = beta.cast::<PyArray<f32, Ix2>>()?.readonly();
-    let standard_error = standard_error.cast::<PyArray<f32, Ix2>>()?.readonly();
-    let chi_squared = chi_squared.cast::<PyArray<f32, Ix2>>()?.readonly();
-    let log10_p_value = log10_p_value.cast::<PyArray<f32, Ix2>>()?.readonly();
-    let expected_shape = beta.shape();
-    for (label, observed_shape) in [
-        ("standard_error", standard_error.shape()),
-        ("chi_squared", chi_squared.shape()),
-        ("log10_p_value", log10_p_value.shape()),
-    ] {
-        if observed_shape != expected_shape {
-            return Err(PyValueError::new_err(format!(
-                "{label} shape {observed_shape:?} does not match beta shape {expected_shape:?}."
-            )));
-        }
-    }
-    let (trait_count, materialized_variant_count) = (expected_shape[0], expected_shape[1]);
-    if logical_variant_count != materialized_variant_count {
-        return Err(PyValueError::new_err(format!(
-            "materialized variant count {materialized_variant_count} does not match logical variant count {logical_variant_count}."
-        )));
-    }
-    let correction_code_object = payload.getattr("correction_code")?;
-    let correction_code = if correction_code_object.is_none() {
-        None
-    } else {
-        Some(parse_correction_codes(
-            py,
-            correction_code_object.cast::<PyUntypedArray>()?,
-            trait_count,
-            logical_variant_count,
-        )?)
-    };
-    Ok(native_output::Regenie2StatisticBatch {
-        trait_count,
-        variant_count: logical_variant_count,
-        beta: copy_array_values(&beta),
-        standard_error: copy_array_values(&standard_error),
-        chi_squared: copy_array_values(&chi_squared),
-        log10_p_value: copy_array_values(&log10_p_value),
-        correction_code,
-    })
-}
-
-fn copy_array_values<ElementType: Element + Copy, Dimension: numpy::ndarray::Dimension>(
-    values: &PyReadonlyArray<'_, ElementType, Dimension>,
-) -> Vec<ElementType> {
-    match values.as_slice() {
-        Ok(contiguous_values) => contiguous_values.to_vec(),
-        Err(_) => values.as_array().iter().copied().collect(),
-    }
-}
-
-fn parse_correction_codes(
-    py: Python<'_>,
-    values: &Bound<'_, PyUntypedArray>,
-    trait_count: usize,
-    logical_variant_count: usize,
-) -> PyResult<Vec<u8>> {
-    if !values.dtype().is_equiv_to(&dtype::<u8>(py)) {
-        return Err(PyValueError::new_err("correction_code must use uint8 dtype."));
-    }
-    let values = values.cast::<PyArray<u8, Ix2>>()?.readonly();
-    if values.shape() != [trait_count, logical_variant_count] {
-        return Err(PyValueError::new_err(format!(
-            "correction_code shape {:?} does not match statistic shape ({trait_count}, {logical_variant_count}).",
-            values.shape()
-        )));
-    }
-    Ok(copy_array_values(&values))
-}
-
-#[cfg(test)]
-mod tests {
-    use pyo3::exceptions::{PyKeyboardInterrupt, PyRuntimeError};
-    use pyo3::prelude::*;
-    use pyo3::sync::PyOnceLock;
-
-    use super::{
-        SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION, contextual_backend_error, jax_runtime_version_error,
-        optional_ffi_registration_result,
-    };
-    use crate::binding::cli::NativeSigtermRequested;
-
-    #[test]
-    fn backend_setup_context_preserves_interruptions() {
-        Python::initialize();
-        Python::attach(|py| {
-            for error in [PyKeyboardInterrupt::new_err("stop"), NativeSigtermRequested::new_err("terminate")] {
-                let original_exception = error.value(py).as_ptr();
-                let contextual_error = contextual_backend_error(py, error, "loading GPU runtime failed");
-                assert_eq!(contextual_error.value(py).as_ptr(), original_exception);
-            }
-            let failure = contextual_backend_error(py, PyRuntimeError::new_err("KeyboardInterrupt"), "GPU setup");
-            assert!(failure.is_instance_of::<PyRuntimeError>(py));
-            assert!(failure.to_string().contains("GPU setup"));
-        });
-    }
-
-    #[test]
-    fn optional_backend_registration_retries_after_interruption() {
-        Python::initialize();
-        Python::attach(|py| {
-            let registration = PyOnceLock::new();
-            let error = registration
-                .get_or_try_init(py, || optional_ffi_registration_result(py, Err(PyKeyboardInterrupt::new_err("stop"))))
-                .expect_err("optional setup must preserve interruption");
-            assert!(error.is_instance_of::<PyKeyboardInterrupt>(py));
-            assert!(registration.get(py).is_none());
-            assert!(
-                *registration
-                    .get_or_try_init(py, || optional_ffi_registration_result(py, Ok(true)))
-                    .expect("interrupted setup can be retried")
-            );
-            assert!(
-                !optional_ffi_registration_result(py, Err(PyRuntimeError::new_err("optional GPU support unavailable")))
-                    .expect("ordinary optional-support failures retain fallback")
-            );
-        });
-    }
-
-    #[test]
-    fn exact_supported_jax_pair_is_accepted() {
-        assert_eq!(jax_runtime_version_error(SUPPORTED_JAX_VERSION, SUPPORTED_JAXLIB_VERSION), None);
-    }
-
-    #[test]
-    fn wrong_jax_version_is_rejected_independently() {
-        let error = jax_runtime_version_error("0.11.1", SUPPORTED_JAXLIB_VERSION)
-            .expect("a mismatched JAX version should be rejected");
-
-        assert!(error.contains("jax==0.11.0 and jaxlib==0.11.0"));
-        assert!(error.contains("observed jax==0.11.1 and jaxlib==0.11.0"));
-        assert!(error.contains("uv sync --frozen"));
-    }
-
-    #[test]
-    fn wrong_jaxlib_version_is_rejected_independently() {
-        let error = jax_runtime_version_error(SUPPORTED_JAX_VERSION, "0.11.1")
-            .expect("a mismatched jaxlib version should be rejected");
-
-        assert!(error.contains("observed jax==0.11.0 and jaxlib==0.11.1"));
-    }
-
-    #[test]
-    fn local_and_prerelease_suffixes_are_rejected() {
-        for (jax_version, jaxlib_version) in [
-            ("0.11.0+local", SUPPORTED_JAXLIB_VERSION),
-            (SUPPORTED_JAX_VERSION, "0.11.0+local"),
-            ("0.11.0rc1", SUPPORTED_JAXLIB_VERSION),
-            (SUPPORTED_JAX_VERSION, "0.11.0rc1"),
-        ] {
-            assert!(
-                jax_runtime_version_error(jax_version, jaxlib_version).is_some(),
-                "version suffix should be rejected for jax={jax_version}, jaxlib={jaxlib_version}"
-            );
         }
     }
 }
