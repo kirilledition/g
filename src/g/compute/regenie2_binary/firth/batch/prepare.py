@@ -127,7 +127,7 @@ def prepare_scalar_firth_candidate_batch(
     selected_rows: SelectedMultiFirthCandidateRows,
     sparse_candidate_mask: jax.Array | None,
     order_candidates: bool,
-    kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    kernel_config: regenie2_binary_config.BinaryKernelConfig | regenie2_binary_config.BinaryChunkConfig,
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_candidate_planning.ScalarFirthCandidateBatchInputs:
     """Prepare only the arrays consumed by scalar approximate Firth."""

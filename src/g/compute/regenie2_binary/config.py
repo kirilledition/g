@@ -132,3 +132,22 @@ class BinaryKernelConfig(BinaryScoreConfig):
     firth_candidate: FirthCandidateConfig
     approximate_firth: ApproximateFirthConfig
     null_firth: NullFirthConfig
+
+
+@dataclass(frozen=True)
+class BinaryChunkConfig:
+    """Static settings consumed by chunk-level approximate-Firth correction.
+
+    Null fitting prepares chromosome operands before chunk execution, so its
+    settings must not distinguish otherwise identical correction programs.
+
+    Attributes:
+        numerical: Shared binary numerical floors and tolerances.
+        firth_candidate: Device Firth candidate batching policy.
+        approximate_firth: Approximate Firth solver policy.
+
+    """
+
+    numerical: BinaryNumericalConfig
+    firth_candidate: FirthCandidateConfig
+    approximate_firth: ApproximateFirthConfig

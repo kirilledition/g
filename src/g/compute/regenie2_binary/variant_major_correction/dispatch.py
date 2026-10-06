@@ -9,19 +9,14 @@ import jax
 import jax.numpy as jnp
 
 from g import types
+from g.compute.regenie2_binary import config as regenie2_binary_config
 from g.compute.regenie2_binary import result as regenie2_binary_result
 from g.compute.regenie2_binary.variant_major_correction import fixed_capacity
 
 if typing.TYPE_CHECKING:
-    from g.compute.regenie2_binary import config as regenie2_binary_config
     from g.compute.regenie2_binary import state as regenie2_binary_state
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=("firth_se", "kernel_config", "genotype_is_packed8"),
-    donate_argnames=("result",),
-)
 def apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
     *,
     chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
@@ -30,6 +25,40 @@ def apply_static_capacity_corrections_multi_firth_variant_major_donating_result(
     result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
     firth_se: bool,
     kernel_config: regenie2_binary_config.BinaryKernelConfig,
+    sparse_candidate_mask: jax.Array | None,
+    native_genotype_mean: jax.Array | None,
+) -> regenie2_binary_result.CorrectedMultiBinaryScoreChunkResult:
+    """Project correction policy before dispatching the donating chunk kernel."""
+    chunk_config = regenie2_binary_config.BinaryChunkConfig(
+        numerical=kernel_config.numerical,
+        firth_candidate=kernel_config.firth_candidate,
+        approximate_firth=kernel_config.approximate_firth,
+    )
+    return compute_static_capacity_corrections_multi_firth_variant_major(
+        chromosome_state=chromosome_state,
+        genotype_values_by_variant=genotype_values_by_variant,
+        genotype_is_packed8=genotype_is_packed8,
+        result=result,
+        firth_se=firth_se,
+        kernel_config=chunk_config,
+        sparse_candidate_mask=sparse_candidate_mask,
+        native_genotype_mean=native_genotype_mean,
+    )
+
+
+@functools.partial(
+    jax.jit,
+    static_argnames=("firth_se", "kernel_config", "genotype_is_packed8"),
+    donate_argnames=("result",),
+)
+def compute_static_capacity_corrections_multi_firth_variant_major(
+    *,
+    chromosome_state: regenie2_binary_state.Regenie2MultiBinaryFirthChromosomeState,
+    genotype_values_by_variant: jax.Array,
+    genotype_is_packed8: bool,
+    result: regenie2_binary_result.Regenie2MultiBinaryScoreChunkResult,
+    firth_se: bool,
+    kernel_config: regenie2_binary_config.BinaryChunkConfig,
     sparse_candidate_mask: jax.Array | None,
     native_genotype_mean: jax.Array | None,
 ) -> regenie2_binary_result.CorrectedMultiBinaryScoreChunkResult:
