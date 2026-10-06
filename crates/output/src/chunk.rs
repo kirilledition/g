@@ -14,8 +14,9 @@ pub(crate) struct NativeChunkWriterArrays {
     pub(crate) observation_count: ArrayRef,
 }
 
+#[derive(Clone)]
 pub struct NativeVariantMetadataHandle {
-    source: NativeVariantMetadataSource,
+    source: Arc<NativeVariantMetadataSource>,
 }
 
 pub(crate) struct NativeVariantMetadataArrays {
@@ -40,6 +41,8 @@ impl std::fmt::Debug for NativeVariantMetadataHandle {
 impl NativeVariantMetadataHandle {
     /// Retain one metadata slice for asynchronous output.
     ///
+    /// Clones share its validated source and lazily materialized Arrow arrays.
+    ///
     /// # Errors
     ///
     /// Returns an error when a string column exceeds Arrow's `Utf8` offset
@@ -50,7 +53,9 @@ impl NativeVariantMetadataHandle {
         validate_utf8_column_width("ID", metadata.variant_identifiers())?;
         validate_utf8_column_width("ALLELE0", metadata.allele_ones())?;
         validate_utf8_column_width("ALLELE1", metadata.allele_twos())?;
-        Ok(Self { source: NativeVariantMetadataSource { metadata: metadata.clone(), arrays: OnceLock::new() } })
+        Ok(Self {
+            source: Arc::new(NativeVariantMetadataSource { metadata: metadata.clone(), arrays: OnceLock::new() }),
+        })
     }
 
     #[must_use]
@@ -168,7 +173,7 @@ fn validate_row_count(column_name: &str, observed: usize, expected: usize) -> Re
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
 
     use arrow::array::{Array, Float32Array, Int64Array, StringArray};
     use g_genotype_contracts::{
@@ -252,6 +257,77 @@ mod tests {
         assert!(!info_scores.is_null(2));
         assert!((info_scores.value(0) - 0.8).abs() < f32::EPSILON);
         assert!((info_scores.value(2) - 0.95).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn metadata_clones_share_lazy_arrays_with_independent_group_statistics() {
+        let metadata_handle = NativeVariantMetadataHandle::try_new(&metadata_columns(3)).expect("metadata is valid");
+        let second_metadata_handle = metadata_handle.clone();
+        assert!(Arc::ptr_eq(&metadata_handle.source, &second_metadata_handle.source));
+        assert!(metadata_handle.source.arrays.get().is_none());
+
+        let first_chunk = NativeChunkHandle::try_new(metadata_handle, statistics(3, 3, 3, vec![0b0000_0111]), 0)
+            .expect("first group statistics are valid");
+        let mut second_statistics = statistics(3, 3, 3, vec![0b0000_0111]);
+        second_statistics.allele_one_frequency[0] = 0.75;
+        let second_chunk = NativeChunkHandle::try_new(second_metadata_handle, second_statistics, 0)
+            .expect("second group statistics are valid");
+        assert!(first_chunk.writer_arrays.metadata.source.arrays.get().is_none());
+
+        let first_metadata = first_chunk.writer_arrays.metadata.arrays();
+        let second_metadata = second_chunk.writer_arrays.metadata.arrays();
+        assert!(std::ptr::eq(first_metadata, second_metadata));
+        assert!(Arc::ptr_eq(&first_metadata.chromosome, &second_metadata.chromosome));
+        assert!(Arc::ptr_eq(&first_metadata.position, &second_metadata.position));
+        assert!(Arc::ptr_eq(&first_metadata.variant_identifier, &second_metadata.variant_identifier));
+        assert!(Arc::ptr_eq(&first_metadata.allele_one, &second_metadata.allele_one));
+        assert!(Arc::ptr_eq(&first_metadata.allele_two, &second_metadata.allele_two));
+
+        let first_frequency = first_chunk
+            .writer_arrays
+            .allele_one_frequency
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("first group frequency is Float32");
+        let second_frequency = second_chunk
+            .writer_arrays
+            .allele_one_frequency
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("second group frequency is Float32");
+        assert!((first_frequency.value(0) - 0.25).abs() < f32::EPSILON);
+        assert!((second_frequency.value(0) - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn concurrent_metadata_consumers_outlive_original_source() {
+        let metadata = metadata_columns(3);
+        let original_handle = NativeVariantMetadataHandle::try_new(&metadata).expect("metadata is valid");
+        let initialization_barrier = Arc::new(Barrier::new(3));
+        let consumers = (0..2)
+            .map(|_| {
+                let consumer_handle = original_handle.clone();
+                let initialization_barrier = Arc::clone(&initialization_barrier);
+                std::thread::spawn(move || {
+                    initialization_barrier.wait();
+                    let arrays = consumer_handle.arrays();
+                    let identifiers =
+                        arrays.variant_identifier.as_any().downcast_ref::<StringArray>().expect("ID is Utf8");
+                    let positions = arrays.position.as_any().downcast_ref::<Int64Array>().expect("GENPOS is Int64");
+                    assert_eq!(identifiers.value(2), "variant-2-β");
+                    assert_eq!(positions.values(), &[100, 101, 102]);
+                    consumer_handle
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(original_handle);
+        drop(metadata);
+        initialization_barrier.wait();
+        let completed_consumers = consumers
+            .into_iter()
+            .map(|consumer| consumer.join().expect("metadata consumer succeeds"))
+            .collect::<Vec<_>>();
+        assert!(std::ptr::eq(completed_consumers[0].arrays(), completed_consumers[1].arrays()));
     }
 
     #[test]

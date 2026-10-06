@@ -226,6 +226,7 @@ where
         pipelines.push(AssociationBatchPipeline::new(Arc::clone(backend), state)?);
     }
     let compute_variant_count = genotype_input.chunk_size.min(genotype_input.reader.variant_count());
+    let source_sample_count = genotype_input.reader.sample_count();
     for chunk in chunks {
         check_interruption().map_err(DeliveryError::Interrupted)?;
         let active_groups = deliveries
@@ -255,15 +256,10 @@ where
             // Compressed members do not depend on a session's sample selection.
             // Decode them with the full file count, then select each group from
             // the immutable source; never pass the first group's selected count.
-            let input = compressed_batch(
-                &sessions[0],
-                layout,
-                chunk,
-                compute_variant_count,
-                genotype_input.reader.sample_count(),
-            )?;
+            let input = compressed_batch(&sessions[0], layout, chunk, compute_variant_count, source_sample_count)?;
             source.prepare(input)?;
         }
+        let mut shared_output_metadata: Option<NativeVariantMetadataHandle> = None;
         for (group_index, delivery) in deliveries.iter_mut().enumerate() {
             if !active_groups[group_index] {
                 continue;
@@ -272,7 +268,13 @@ where
             let settings = &delivery.request.settings;
             let active_trait_selection = active_traits_for_pending_chunk(settings, chunk.variant_start_index)
                 .map_err(DeliveryError::InvalidInput)?;
-            let output_metadata = NativeVariantMetadataHandle::try_new(&metadata)?;
+            let output_metadata = if let Some(output_metadata) = &shared_output_metadata {
+                output_metadata.clone()
+            } else {
+                let output_metadata = NativeVariantMetadataHandle::try_new(&metadata)?;
+                shared_output_metadata = Some(output_metadata.clone());
+                output_metadata
+            };
             let pipeline = &mut pipelines[group_index];
             if let Some(shared_source) = source.source.as_ref() {
                 submit_shared_batch(
