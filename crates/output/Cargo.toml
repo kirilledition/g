@@ -24,5 +24,9 @@ criterion = { workspace = true }
 name = "writer"
 harness = false
 
+[[bench]]
+name = "metadata"
+harness = false
+
 [lints]
 workspace = true
