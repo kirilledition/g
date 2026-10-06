@@ -43,6 +43,29 @@ Benchmark and profiler modules should reuse these boundaries instead of
 building production argument vectors, output discovery, cache logic, or report
 dictionaries independently.
 
+## Deep-Profile Ownership
+
+`tooling.cli.profile_regenie2_deep` adapts Hydra configuration and starts the
+campaign through `tooling.profile_deep.runner`. The CLI remains the maintained
+entrypoint for all saved profile configurations.
+
+The profile package owns its implementations directly:
+
+- `baseline`, `candidates`, and `trials` construct matched workloads, select
+  tuning candidates, and keep measured trials separate from diagnostics;
+- `application` and `execution` construct isolated children, validate completed
+  output evidence, and manage logged subprocesses and timeouts;
+- `tools` and `profilers` detect profiler availability and capture diagnostics;
+- `diagnostics`, `reports`, and `artifacts` interpret native evidence and write
+  the existing summary and versioned artifact contracts;
+- `planning` builds dry-run evidence without executing workloads;
+- `config`, `budget`, `commands`, `environment`, `jax_cache`, and `models` own
+  their respective configuration, policy, transport, and evidence structures.
+
+Profile implementation modules import their owners directly. They do not
+import the CLI or expose forwarding aliases for its former private helpers.
+Tests patch the module that owns the operation being exercised.
+
 ## Configuration Ownership
 
 Every maintained Hydra entrypoint selects an explicit saved config. Workflow

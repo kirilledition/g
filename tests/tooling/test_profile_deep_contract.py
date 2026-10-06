@@ -12,9 +12,11 @@ import typing
 import pytest
 
 from tooling.benchmark import native_lifecycle
-from tooling.cli import profile_regenie2_deep
+from tooling.profile_deep import application as profile_deep_application
 from tooling.profile_deep import commands as profile_deep_commands
+from tooling.profile_deep import environment as profile_deep_environment
 from tooling.profile_deep import models as profile_deep_models
+from tooling.profile_deep import trials as profile_deep_trials
 
 if typing.TYPE_CHECKING:
     from pathlib import Path
@@ -71,8 +73,8 @@ def test_trial_config_defaults_to_production_telemetry_off(tmp_path: Path) -> No
 
 def test_headline_environment_omits_debug_and_allocator_overrides() -> None:
     """Production timings do not inherit profiler logging or allocator policy."""
-    headline_environment = profile_regenie2_deep.build_g_trial_environment(enable_jax_debug_logging=False)
-    diagnostic_environment = profile_regenie2_deep.build_g_trial_environment(enable_jax_debug_logging=True)
+    headline_environment = profile_deep_environment.build_g_trial_environment(enable_jax_debug_logging=False)
+    diagnostic_environment = profile_deep_environment.build_g_trial_environment(enable_jax_debug_logging=True)
 
     assert headline_environment == {}
     assert diagnostic_environment["JAX_LOGGING_LEVEL"] == "DEBUG"
@@ -87,9 +89,9 @@ def test_repeated_trials_keep_profile_run_out_of_headline(tmp_path: Path, monkey
         observed_calls.append(arguments)
         return trial_result(str(arguments["name"]))
 
-    monkeypatch.setattr(profile_regenie2_deep, "run_g_trial", fake_run_g_trial)
+    monkeypatch.setattr(profile_deep_trials, "run_g_trial", fake_run_g_trial)
 
-    aggregate = profile_regenie2_deep.run_repeated_g_trials(
+    aggregate = profile_deep_trials.run_repeated_g_trials(
         name="binary_gpu",
         baseline_paths=object(),
         candidate=candidate(),
@@ -119,7 +121,7 @@ def test_external_profiler_success_requires_completed_output(
     profiler_status: str,
 ) -> None:
     """A stopped sampler can return zero while its application is incomplete."""
-    application_metadata = profile_regenie2_deep.GTrialApplicationMetadata(
+    application_metadata = profile_deep_application.GTrialApplicationMetadata(
         wall_time_seconds=None,
         output_row_count=output_row_count,
         output_path=None,
@@ -129,7 +131,7 @@ def test_external_profiler_success_requires_completed_output(
         child_reported_cache_directory=None,
     )
     monkeypatch.setattr(
-        profile_regenie2_deep,
+        profile_deep_application,
         "collect_g_trial_application_metadata",
         lambda **arguments: application_metadata,
     )
@@ -140,7 +142,7 @@ def test_external_profiler_success_requires_completed_output(
         profile_script_path=tmp_path / "child.py",
     )
     retained_trace = tmp_path / "partial-trace.json"
-    result = profile_regenie2_deep.attach_deep_profiler_metadata(
+    result = profile_deep_application.attach_deep_profiler_metadata(
         result=dataclasses.replace(
             trial_result("sampler"),
             status=profiler_status,
