@@ -7,11 +7,11 @@ const INCORRECT_SHA256: &str = "000000000000000000000000000000000000000000000000
 const TRACKED_KERNEL_ARTIFACTS: [(&str, &str); 4] = [
     (
         "crates/genotype-cuda/native/packed8_kernel.cu",
-        "673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d",
+        "5d08dac719a190b201f9c11cdf4a031fb69e4f02b4a20adef1e4837b6842b180",
     ),
     (
         "crates/genotype-cuda/native/packed8_kernel.compute_70.ptx",
-        "a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088",
+        "3e89b8d8277de8b10113c4d0d27979a1449e34593c4141c9dc1a230137fdba32",
     ),
     (
         "crates/compute-cuda/native/firth_components_kernel.cu",

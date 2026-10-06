@@ -60,6 +60,7 @@ using xla::ffi::ScratchAllocator;
 
 constexpr char kDescriptorKernelName[] = "build_nvcomp_descriptors";
 constexpr char kFinalizeKernelName[] = "finalize_packed8";
+constexpr char kFinalizeSourceKernelName[] = "finalize_packed8_source";
 constexpr std::int32_t kMinimumCudaDriverVersion = 12020;
 constexpr std::int32_t kMinimumComputeCapabilityMajor = 7;
 constexpr unsigned int kKernelBlockSize = 256;
@@ -273,6 +274,7 @@ class Packed8Kernels {
     module_ = driver_.load_module(kPacked8KernelPtx, "load packed8 compute_70 PTX");
     descriptor_function_ = driver_.get_function(module_, kDescriptorKernelName);
     finalize_function_ = driver_.get_function(module_, kFinalizeKernelName);
+    finalize_source_function_ = driver_.get_function(module_, kFinalizeSourceKernelName);
   }
 
   Packed8Kernels(const Packed8Kernels&) = delete;
@@ -341,7 +343,7 @@ class Packed8Kernels {
                        std::uint32_t* zero_counts,
                        std::uint32_t* homozygous_alternate_counts,
                        std::uint32_t* statuses,
-                       float* genotype_means,
+                       bool collect_statistics,
                        CudaStream stream) const {
     if (compute_variant_count > std::numeric_limits<unsigned int>::max()) {
       fail_runtime("packed8 finalize kernel grid exceeds uint32");
@@ -370,9 +372,8 @@ class Packed8Kernels {
         &zero_counts,
         &homozygous_alternate_counts,
         &statuses,
-        &genotype_means,
     };
-    driver_.launch_kernel(finalize_function_,
+    driver_.launch_kernel(collect_statistics ? finalize_function_ : finalize_source_function_,
                           static_cast<unsigned int>(compute_variant_count),
                           kKernelBlockSize,
                           stream,
@@ -385,6 +386,7 @@ class Packed8Kernels {
   CudaModule module_ = nullptr;
   CudaFunction descriptor_function_ = nullptr;
   CudaFunction finalize_function_ = nullptr;
+  CudaFunction finalize_source_function_ = nullptr;
 };
 
 class Packed8KernelCache {
@@ -523,20 +525,21 @@ bool is_result_vector(ResultBufferR1<data_type>& result, std::size_t expected_co
   return dimensions.size() == 1 && dimensions[0] >= 0 && static_cast<std::uint64_t>(dimensions[0]) == expected_count;
 }
 
-Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
-                     BufferR2<DataType::U32> compressed_metadata,
-                     BufferR1<DataType::U32> selected_sample_indices,
-                     ResultBufferR3<DataType::U8> probabilities,
-                     ResultBufferR1<DataType::U64> raw_dosage_sums,
-                     ResultBufferR1<DataType::U64> raw_dosage_square_sums,
-                     ResultBufferR1<DataType::U32> zero_counts,
-                     ResultBufferR1<DataType::U32> homozygous_alternate_counts,
-                     ResultBufferR1<DataType::U32> statuses,
-                     ResultBufferR1<DataType::F32> genotype_means,
-                     std::int64_t source_sample_count_attribute,
-                     std::int64_t selection_start,
-                     CudaStream stream,
-                     ScratchAllocator scratch) {
+Error decode_packed8_members(BufferR1<DataType::U8> compressed_slab,
+                             BufferR2<DataType::U32> compressed_metadata,
+                             const std::uint32_t* selected_sample_indices,
+                             std::size_t selected_index_count,
+                             ResultBufferR3<DataType::U8> probabilities,
+                             std::uint64_t* raw_dosage_sums,
+                             std::uint64_t* raw_dosage_square_sums,
+                             std::uint32_t* zero_counts,
+                             std::uint32_t* homozygous_alternate_counts,
+                             ResultBufferR1<DataType::U32> statuses,
+                             bool collect_statistics,
+                             std::int64_t source_sample_count_attribute,
+                             std::int64_t selection_start,
+                             CudaStream stream,
+                             ScratchAllocator& scratch) {
   try {
     const auto metadata_dimensions = compressed_metadata.dimensions();
     if (metadata_dimensions.size() != 2 || metadata_dimensions[0] <= 0 || metadata_dimensions[1] != 3) {
@@ -567,7 +570,6 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
       return Error::InvalidArgument("compute variant count must cover all logical variants");
     }
 
-    const std::size_t selected_index_count = selected_sample_indices.element_count();
     if (selection_start >= 0) {
       if (selected_index_count != 0) {
         return Error::InvalidArgument("contiguous selection requires an empty selected-index operand");
@@ -585,13 +587,11 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
       return Error::InvalidArgument("selection_start must be -1 for indexed selection or nonnegative");
     }
 
-    if (!is_result_vector(raw_dosage_sums, compute_variant_count) ||
-        !is_result_vector(raw_dosage_square_sums, compute_variant_count) ||
-        !is_result_vector(zero_counts, compute_variant_count) ||
-        !is_result_vector(homozygous_alternate_counts, compute_variant_count) ||
-        !is_result_vector(statuses, compute_variant_count) ||
-        !is_result_vector(genotype_means, compute_variant_count)) {
-      return Error::InvalidArgument("packed8 summary outputs must match the compute variant count");
+    if (!is_result_vector(statuses, compute_variant_count)) {
+      return Error::InvalidArgument("packed8 status output must match the compute variant count");
+    }
+    if (!collect_statistics && (selection_start != 0 || selected_sample_count != source_sample_count)) {
+      return Error::InvalidArgument("packed8 source output requires identity sample selection");
     }
     if (logical_variant_count > std::numeric_limits<std::size_t>::max() / output_stride) {
       return Error::InvalidArgument("decompressed packed8 slab size overflows size_t");
@@ -676,7 +676,7 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
                             nvcomp_statuses,
                             compressed_metadata.typed_data(),
                             descriptor_statuses,
-                            selected_sample_indices.typed_data(),
+                            selected_sample_indices,
                             selection_start,
                             logical_variant_count,
                             compute_variant_count,
@@ -684,12 +684,12 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
                             selected_sample_count,
                             output_stride,
                             probabilities->typed_data(),
-                            raw_dosage_sums->typed_data(),
-                            raw_dosage_square_sums->typed_data(),
-                            zero_counts->typed_data(),
-                            homozygous_alternate_counts->typed_data(),
+                            raw_dosage_sums,
+                            raw_dosage_square_sums,
+                            zero_counts,
+                            homozygous_alternate_counts,
                             statuses->typed_data(),
-                            genotype_means->typed_data(),
+                            collect_statistics,
                             stream);
     return Error::Success();
   } catch (const HandlerFailure& failure) {
@@ -699,6 +699,71 @@ Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
   } catch (...) {
     return Error(ErrorCode::kInternal, "unknown native packed8 handler failure");
   }
+}
+
+Error decode_packed8(BufferR1<DataType::U8> compressed_slab,
+                     BufferR2<DataType::U32> compressed_metadata,
+                     BufferR1<DataType::U32> selected_sample_indices,
+                     ResultBufferR3<DataType::U8> probabilities,
+                     ResultBufferR1<DataType::U64> raw_dosage_sums,
+                     ResultBufferR1<DataType::U64> raw_dosage_square_sums,
+                     ResultBufferR1<DataType::U32> zero_counts,
+                     ResultBufferR1<DataType::U32> homozygous_alternate_counts,
+                     ResultBufferR1<DataType::U32> statuses,
+                     std::int64_t source_sample_count_attribute,
+                     std::int64_t selection_start,
+                     CudaStream stream,
+                     ScratchAllocator scratch) {
+  const auto probability_dimensions = probabilities->dimensions();
+  if (probability_dimensions.size() != 3 || probability_dimensions[0] < 0) {
+    return Error::InvalidArgument("packed8 probabilities must have shape [compute_variants, selected_samples, 2]");
+  }
+  const auto compute_variant_count = static_cast<std::size_t>(probability_dimensions[0]);
+  if (!is_result_vector(raw_dosage_sums, compute_variant_count) ||
+      !is_result_vector(raw_dosage_square_sums, compute_variant_count) ||
+      !is_result_vector(zero_counts, compute_variant_count) ||
+      !is_result_vector(homozygous_alternate_counts, compute_variant_count)) {
+    return Error::InvalidArgument("packed8 summary outputs must match the compute variant count");
+  }
+  return decode_packed8_members(compressed_slab,
+                                compressed_metadata,
+                                selected_sample_indices.typed_data(),
+                                selected_sample_indices.element_count(),
+                                probabilities,
+                                raw_dosage_sums->typed_data(),
+                                raw_dosage_square_sums->typed_data(),
+                                zero_counts->typed_data(),
+                                homozygous_alternate_counts->typed_data(),
+                                statuses,
+                                true,
+                                source_sample_count_attribute,
+                                selection_start,
+                                stream,
+                                scratch);
+}
+
+Error decode_packed8_source(BufferR1<DataType::U8> compressed_slab,
+                            BufferR2<DataType::U32> compressed_metadata,
+                            ResultBufferR3<DataType::U8> probabilities,
+                            ResultBufferR1<DataType::U32> statuses,
+                            std::int64_t source_sample_count_attribute,
+                            CudaStream stream,
+                            ScratchAllocator scratch) {
+  return decode_packed8_members(compressed_slab,
+                                compressed_metadata,
+                                nullptr,
+                                0,
+                                probabilities,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                statuses,
+                                false,
+                                source_sample_count_attribute,
+                                0,
+                                stream,
+                                scratch);
 }
 
 }  // namespace
@@ -745,8 +810,18 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(g_nvcomp_decode_packed8_ffi,
                                   .Ret<xla::ffi::BufferR1<DataType::U32>>()
                                   .Ret<xla::ffi::BufferR1<DataType::U32>>()
                                   .Ret<xla::ffi::BufferR1<DataType::U32>>()
-                                  .Ret<xla::ffi::BufferR1<DataType::F32>>()
                                   .Attr<std::int64_t>("source_sample_count")
                                   .Attr<std::int64_t>("selection_start")
+                                  .Ctx<xla::ffi::PlatformStream<CudaStream>>()
+                                  .Ctx<ScratchAllocator>());
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(g_nvcomp_decode_packed8_source_ffi,
+                              decode_packed8_source,
+                              xla::ffi::Ffi::Bind()
+                                  .Arg<BufferR1<DataType::U8>>()
+                                  .Arg<BufferR2<DataType::U32>>()
+                                  .Ret<xla::ffi::BufferR3<DataType::U8>>()
+                                  .Ret<xla::ffi::BufferR1<DataType::U32>>()
+                                  .Attr<std::int64_t>("source_sample_count")
                                   .Ctx<xla::ffi::PlatformStream<CudaStream>>()
                                   .Ctx<ScratchAllocator>());

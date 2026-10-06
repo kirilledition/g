@@ -69,7 +69,13 @@ materialize_batch
 Backend construction receives the canonical `g-plan::Device` separately from
 the mode-specific kernel plan. CPU and host-delivered GPU runs never import or
 initialize nvCOMP. The first compressed packed8 group registers the
-process-global private target once.
+process-global private targets once. The association decoder uses
+`g.bgen.packed8_deflate.v2`, which returns six buffers and derives floating
+moments from exact integer totals. The immutable source decoder uses
+`g.bgen.packed8_source_deflate.v1`, which returns only probability pairs and
+validation statuses; it does not allocate or reduce group statistics. Each
+versioned target has its own XLA cache identity, preventing old seven-result
+executables from calling the new six-result handler.
 
 Compressed GPU linear backends also advertise immutable source sharing. The
 engine owns eligibility, memory admission, two-group scheduling, resume masks,

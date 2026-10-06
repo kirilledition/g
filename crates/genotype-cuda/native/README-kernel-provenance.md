@@ -3,8 +3,8 @@
 `packed8_kernel.cu` is the maintained source for the embedded
 `packed8_kernel.compute_70.ptx` artifact. The frozen files have these hashes:
 
-- source: `sha256:673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d`
-- PTX: `sha256:a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088`
+- source: `sha256:5d08dac719a190b201f9c11cdf4a031fb69e4f02b4a20adef1e4837b6842b180`
+- PTX: `sha256:3e89b8d8277de8b10113c4d0d27979a1449e34593c4141c9dc1a230137fdba32`
 
 The crate build verifies both hashes before embedding the PTX. A source or PTX
 change therefore requires an explicit provenance-hash update after regeneration
@@ -16,10 +16,19 @@ tool only and is not a build-time or runtime dependency of this crate. Native
 initialization requires CUDA driver API version 12020 or newer because the
 embedded artifact uses the CUDA 12.2 PTX ISA.
 
-The finalizer computes the packed8 genotype mean with explicit
-`cvt.rn.f32.u64`, `mul.rn.f32`, and `div.rn.f32` instructions. This preserves
-the host's sequential float32 conversion and operations instead of allowing an
-XLA consumer to reassociate the scale and sample-count division.
+The association finalizer returns six buffers: probability pairs, exact dosage
+sums, exact dosage-square sums, zero counts, homozygous-alternate counts, and
+validation statuses. Floating-point means are derived in Python from the exact
+integer totals; the old float32 native mean was unused and is no longer emitted.
+The private target version is `g.bgen.packed8_deflate.v2`, so previously cached
+seven-result executables cannot be paired with its changed result signature.
+
+The source-only target `g.bgen.packed8_source_deflate.v1` returns just full-source
+probability pairs and validation statuses. Its finalizer specializes the same
+row validation code at compile time, omitting moment and count accumulation,
+reductions, and stores while preserving Adler-32, descriptor, length, ploidy,
+header, and probability validation. The host handler enforces identity source
+selection. Group selection computes its own private statistics afterward.
 
 The finalizer partitions every BGEN row byte exactly once among the CUDA
 threads, computes Adler-32 from unreduced integer byte and weighted-byte sums,
@@ -29,11 +38,6 @@ that same source pass; other selection modes retain the indexed gather pass.
 The private FFI rejects source sample counts above 126,789,562, the largest
 count for which the unreduced Adler weighted sum is proven to fit in `uint64_t`
 for a `3 * sample_count + 10` byte packed8 row.
-
-CUDA 12.4 `ptxas` reports 40 registers, 360 bytes of static shared memory, no
-stack frame, and no spills for the finalizer on `sm_70`. The generated finalizer
-contains two block barriers and no integer divide or remainder instructions;
-the descriptor kernel retains its separate dynamic-alignment remainder.
 
 The private FFI accepts compressed bytes only from `g-genotype`'s trusted
 packed8 transport. That transport is selected after the exact-source
@@ -74,3 +78,25 @@ bit-for-bit. The direct FFI diagnostic covered full and tail batches,
 contiguous and nonmonotonic indexed selections, an out-of-range selected index,
 Adler-32 corruption, and an invalid descriptor; valid results matched exactly,
 and error rows retained their established status and neutral-output contracts.
+
+
+The six-result and source-only handlers were qualified on Landau V100 in SLURM
+job 52101. Full (16,384 variants) and tail (9,343 logical variants) batches,
+identity, contiguous, duplicate indexed, and invalid indexed selections matched
+the prior decoder exactly for every retained field. The source specialization
+matched probability bytes and statuses for every row gate, header/ploidy/pair
+failure, Adler failure, and neutral tail. A resident diagnostic passed null
+statistic pointers and injected nvCOMP failure statuses without accesses.
+
+CUDA 12.9 `ptxas` reports 40 registers and 360 bytes of shared memory for the
+association finalizer, and 43 registers and 168 bytes for the source finalizer;
+both have no stack frame or spills. The warmed full-FFI stage measured 6.385 ms
+for both association ABIs and 6.308 ms for source-only decoding in this campaign.
+These stage measurements do not establish a whole-application speedup.
+
+SLURM job 52114 screened source-only blocks of 64, 128, 256, and 512 threads
+against full/tail 2,504-sample batches and a 100,000-sample batch. Every variant
+preserved exact probabilities and statuses, including injected row gates. The
+128-thread variant improved the full/tail resident finalizer but regressed the
+large cohort; 512 threads reversed that tradeoff. The maintained source retains
+256 threads to avoid an unsupported sample-count-dependent launch policy.
