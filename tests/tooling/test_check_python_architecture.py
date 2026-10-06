@@ -295,3 +295,27 @@ def test_lambda_and_comprehension_bindings_shadow_imports(tmp_path: Path) -> Non
     )
 
     assert check_python_architecture.collect_python_call_policy_violations(package_root) == ()
+
+
+def test_root_package_import_cannot_hide_cli_recursion(tmp_path: Path) -> None:
+    """Existing namespace attributes cannot bypass the import ownership guard."""
+    package_root = tmp_path / "src/g"
+    write_numerical_source(package_root, "jax_backend.py", "import g\ng.cli.run([])\n")
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [violation.call_name for violation in violations] == ["g.cli.run"]
+
+
+def test_root_package_import_cannot_hide_compute_transport_call(tmp_path: Path) -> None:
+    """Pure kernels cannot call backend helpers through a package-root alias."""
+    package_root = tmp_path / "src/g"
+    write_numerical_source(
+        package_root,
+        "compute/score.py",
+        "import g as package\npackage.backend.transport.prepare_group(None)\n",
+    )
+
+    violations = check_python_architecture.collect_python_call_policy_violations(package_root)
+
+    assert [violation.call_name for violation in violations] == ["g.backend.transport.prepare_group"]
