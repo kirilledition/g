@@ -30,6 +30,21 @@ class Regenie2MultiBinaryState:
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
+class PreparedMultiBinaryState:
+    """Numerical group preparation and its deferred rank-validation flag.
+
+    Attributes:
+        state: Conditioned binary design and phenotypes.
+        has_full_column_rank: Whether conditioning preserves a valid design.
+
+    """
+
+    state: Regenie2MultiBinaryState
+    has_full_column_rank: jax.Array
+
+
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
 class PreparedBinaryTraitState:
     """Prepared null-logistic quantities shared by score and Firth execution.
 
@@ -144,6 +159,20 @@ def build_multi_binary_state(
         raise ValueError("Binary covariate design must leave positive residual degrees of freedom.")
     if not bool(jnp.all(covariate_matrix_float64[:, 0] == 1.0)):
         raise ValueError("Binary covariate design must include a leading unit intercept.")
+    prepared_state = prepare_multi_binary_state(covariate_matrix_float64, phenotype_matrix)
+    if not bool(prepared_state.has_full_column_rank):
+        raise ValueError("Binary covariate design must have full column rank after centering and scaling.")
+    return prepared_state.state
+
+
+@jax.jit
+def prepare_multi_binary_state(
+    covariate_matrix_float64: jax.Array,
+    phenotype_matrix: jax.Array,
+) -> PreparedMultiBinaryState:
+    """Compile float64 conditioning and rank evaluation before materialization."""
+    sample_count = covariate_matrix_float64.shape[0]
+    covariate_count = covariate_matrix_float64.shape[1]
     covariate_offsets = jnp.mean(covariate_matrix_float64, axis=0).at[0].set(0.0)
     centered_covariate_matrix = covariate_matrix_float64 - covariate_offsets[None, :]
     covariate_scales = jnp.sqrt(jnp.mean(centered_covariate_matrix**2, axis=0)).at[0].set(1.0)
@@ -155,14 +184,16 @@ def build_multi_binary_state(
     orthonormal_covariate_matrix, triangular_factor = jnp.linalg.qr(conditioned_covariate_matrix, mode="reduced")
     singular_values = jnp.linalg.svd(triangular_factor, compute_uv=False)
     rank_tolerance = max(sample_count, covariate_count) * jnp.finfo(jnp.float64).eps * singular_values[0]
-    if not bool(jnp.all(jnp.isfinite(singular_values) & (singular_values > rank_tolerance))):
-        raise ValueError("Binary covariate design must have full column rank after centering and scaling.")
+    has_full_column_rank = jnp.all(jnp.isfinite(singular_values) & (singular_values > rank_tolerance))
     scaled_covariate_basis = (
         (orthonormal_covariate_matrix * jnp.sqrt(jnp.asarray(sample_count, dtype=jnp.float64))).at[:, 0].set(1.0)
     )
-    return Regenie2MultiBinaryState(
-        covariate_matrix=jnp.asarray(scaled_covariate_basis, dtype=jnp.float32),
-        phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jnp.float32),
+    return PreparedMultiBinaryState(
+        state=Regenie2MultiBinaryState(
+            covariate_matrix=jnp.asarray(scaled_covariate_basis, dtype=jnp.float32),
+            phenotype_matrix=jnp.asarray(phenotype_matrix, dtype=jnp.float32),
+        ),
+        has_full_column_rank=has_full_column_rank,
     )
 
 
