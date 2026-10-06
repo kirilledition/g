@@ -44,6 +44,21 @@ class Regenie2MultiLinearChromosomeState:
     degrees_of_freedom: jax.Array
 
 
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class PreparedLinearState:
+    """Numerical group preparation and its deferred rank-validation flag.
+
+    Attributes:
+        state: Prepared covariate basis and phenotype residuals.
+        has_full_column_rank: Whether conditioning preserves a valid design.
+
+    """
+
+    state: Regenie2MultiLinearState
+    has_full_column_rank: jax.Array
+
+
 def project_residuals_at_float64_resolution(
     values: jax.Array,
     orthonormal_covariate_transpose: jax.Array,
@@ -85,6 +100,20 @@ def build_multi_linear_state(
     degrees_of_freedom = sample_count - covariate_parameter_count
     if degrees_of_freedom <= 0:
         raise ValueError("Covariate design must leave positive residual degrees of freedom.")
+    prepared_state = prepare_multi_linear_state(covariate_matrix_compute, phenotype_matrix_compute)
+    if not bool(prepared_state.has_full_column_rank):
+        raise ValueError("Covariate design must have full column rank after centering and scaling.")
+    return prepared_state.state
+
+
+@jax.jit
+def prepare_multi_linear_state(
+    covariate_matrix_compute: jax.Array,
+    phenotype_matrix_compute: jax.Array,
+) -> PreparedLinearState:
+    """Compile float64 conditioning, rank evaluation, and residual preparation."""
+    sample_count = covariate_matrix_compute.shape[0]
+    covariate_parameter_count = covariate_matrix_compute.shape[1]
 
     # Native alignment supplies a leading intercept. Center only in its span;
     # a caller without that intercept must retain the original column space.
@@ -109,18 +138,20 @@ def build_multi_linear_state(
     orthonormal_covariate_matrix, triangular_factor = jnp.linalg.qr(normalized_covariate_matrix, mode="reduced")
     singular_values = jnp.linalg.svd(triangular_factor, compute_uv=False)
     rank_tolerance = max(sample_count, covariate_parameter_count) * jnp.finfo(jnp.float64).eps * singular_values[0]
-    if not bool(jnp.all(jnp.isfinite(singular_values) & (singular_values > rank_tolerance))):
-        raise ValueError("Covariate design must have full column rank after centering and scaling.")
+    has_full_column_rank = jnp.all(jnp.isfinite(singular_values) & (singular_values > rank_tolerance))
     whitened_covariate_transpose = orthonormal_covariate_matrix.T
     phenotype_residual_matrix = project_residuals_at_float64_resolution(
         phenotype_matrix_compute,
         whitened_covariate_transpose,
     )
 
-    return Regenie2MultiLinearState(
-        whitened_covariate_transpose=whitened_covariate_transpose,
-        phenotype_residual_matrix=phenotype_residual_matrix,
-        degrees_of_freedom=jnp.asarray(degrees_of_freedom, dtype=jnp.float32),
+    return PreparedLinearState(
+        state=Regenie2MultiLinearState(
+            whitened_covariate_transpose=whitened_covariate_transpose,
+            phenotype_residual_matrix=phenotype_residual_matrix,
+            degrees_of_freedom=jnp.asarray(sample_count - covariate_parameter_count, dtype=jnp.float32),
+        ),
+        has_full_column_rank=has_full_column_rank,
     )
 
 

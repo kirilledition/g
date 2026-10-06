@@ -55,6 +55,10 @@ conditioning arrays. Binary preparation stores its final conditioned design
 in `float32` and pays the QR cost during group preparation.
 Its chromosome-level null fit uses `float64` safeguarded Newton arithmetic;
 per-variant score computation remains `float32`.
+Group conditioning, QR, rank evaluation, and quantitative residual preparation
+run as compiled programs. Groups with matching sample, covariate, and phenotype
+counts can reuse those programs. A new shape still pays preparation compilation;
+rank validation and binary intercept validation retain their existing errors.
 Binary scoring also checks whether dosages vary across samples. The decoded
 path carries that check through its existing sample tiles; the materialized
 path performs a per-variant comparison reduction.
