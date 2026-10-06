@@ -166,21 +166,24 @@ fn register_nvcomp_ffi_target_once(py: Python<'_>) -> PyResult<()> {
 
     let capability = g_genotype_cuda::initialize_nvcomp_runtime(0)
         .map_err(|error| PyRuntimeError::new_err(format!("nvCOMP runtime initialization failed: {error}")))?;
-    let handler = g_genotype_cuda::packed8_deflate_ffi_handler(&capability);
-    // SAFETY: `handler` is the process-lifetime address of the linked typed-XLA FFI
-    // handler, and the capsule has no destructor or borrowed storage.
-    let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
     let keyword_arguments = PyDict::new(py);
     keyword_arguments.set_item("platform", "CUDA")?;
     keyword_arguments.set_item("api_version", 1)?;
-    PyModule::import(py, "jax")?
-        .getattr("ffi")?
-        .call_method(
-            "register_ffi_target",
-            (g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET, capsule),
-            Some(&keyword_arguments),
-        )
-        .map_err(|error| contextual_backend_error(py, error, "JAX nvCOMP FFI target registration failed"))?;
+    let jax_ffi = PyModule::import(py, "jax")?.getattr("ffi")?;
+    for (target, handler) in [
+        (g_genotype_cuda::PACKED8_DEFLATE_FFI_TARGET, g_genotype_cuda::packed8_deflate_ffi_handler(&capability)),
+        (
+            g_genotype_cuda::PACKED8_SOURCE_DEFLATE_FFI_TARGET,
+            g_genotype_cuda::packed8_source_deflate_ffi_handler(&capability),
+        ),
+    ] {
+        // SAFETY: `handler` is the process-lifetime address of a linked typed-XLA
+        // FFI handler, and the capsule has no destructor or borrowed storage.
+        let capsule = unsafe { PyCapsule::new_with_pointer(py, handler, c"xla._CUSTOM_CALL_TARGET")? };
+        jax_ffi
+            .call_method("register_ffi_target", (target, capsule), Some(&keyword_arguments))
+            .map_err(|error| contextual_backend_error(py, error, "JAX nvCOMP FFI target registration failed"))?;
+    }
     Ok(())
 }
 

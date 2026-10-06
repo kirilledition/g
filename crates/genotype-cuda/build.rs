@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 #[path = "../../native/cuda-build/artifact_verification.rs"]
 mod artifact_verification;
 
-const KERNEL_SOURCE_SHA256: &str = "673df9629dcb5fec1fc9d688f16349eba7d75bb8a942724f7bcdcd0a0c5dbf1d";
-const KERNEL_PTX_SHA256: &str = "a4b7b84171b6a78e6677a5fe1ba84fa6b4fd5a307eef198a5573fb83381ed088";
+const KERNEL_SOURCE_SHA256: &str = "5d08dac719a190b201f9c11cdf4a031fb69e4f02b4a20adef1e4837b6842b180";
+const KERNEL_PTX_SHA256: &str = "3e89b8d8277de8b10113c4d0d27979a1449e34593c4141c9dc1a230137fdba32";
 
 fn main() {
     println!("cargo:rerun-if-changed=../../native/cuda-build/artifact_verification.rs");
