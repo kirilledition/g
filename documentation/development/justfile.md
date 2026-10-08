@@ -10,6 +10,25 @@ workflows and delegates workflow truth to saved Hydra configs under
 
 Run `just help` for the full recipe list.
 
+## All of Us and Workbench
+
+These recipes select saved configs for the experimental
+[All of Us workflow](../public/all-of-us.md). Pass paths and research-specific
+selections as trailing Hydra overrides.
+
+| Recipe | Purpose |
+| --- | --- |
+| `data-all-of-us` | Plan or execute explicit local cohort selection and BGEN export. |
+| `workspace-demo` | Generate a new participant-free integration bundle. |
+| `workspace-preflight` | Check a pinned job and estimate its chunk resources. |
+| `workspace-profile` | Inspect a bounded genotype prefix, retaining native-validation requirements. |
+| `workspace-run` | Launch a fresh attempt, validate outputs and publish a completion marker. |
+
+Workbench tooling uses the minimal `workbench` dependency group. It is copied
+into the deployment image and remains outside the installed public `g` API.
+Real controlled-data execution and validation must occur in the authorized
+workspace.
+
 ## Policy
 
 ```text

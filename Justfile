@@ -62,6 +62,26 @@ data-baseline-qt: data-prepare
 data-verify-binary-gpu-inputs:
     {{ server_env }} && uv run --no-sync python -m tooling.cli.data --config-name data_verify_binary_gpu_inputs
 
+# Prepare an explicitly selected local All of Us cohort and BGEN export
+data-all-of-us *arguments:
+    {{ server_env }} && uv run --no-default-groups --group workbench python -m tooling.cli.data --config-name data_all_of_us {{ arguments }}
+
+# Create synthetic inputs for a Workbench smoke test
+workspace-demo *arguments:
+    {{ server_env }} && uv run --no-default-groups --group workbench python -m tooling.cli.workbench_demo --config-name workbench_demo {{ arguments }}
+
+# Validate a pinned Workbench job without launching association
+workspace-preflight *arguments:
+    {{ server_env }} && uv run --no-default-groups --group workbench python -m tooling.cli.workbench --config-name workbench_preflight {{ arguments }}
+
+# Inspect a bounded prefix of a Workbench job's genotype input
+workspace-profile *arguments:
+    {{ server_env }} && uv run --no-default-groups --group workbench python -m tooling.cli.workbench --config-name workbench_profile {{ arguments }}
+
+# Execute and validate a new Workbench job attempt
+workspace-run *arguments:
+    {{ server_env }} && uv run --no-default-groups --group workbench python -m tooling.cli.workbench --config-name workbench_run {{ arguments }}
+
 # Build the patched REGENIE reference binary with native CPU performance flags
 data-build-patched-regenie:
     #!/usr/bin/env bash
@@ -702,7 +722,7 @@ rust-lint-check:
 
 # Type check Python code
 typecheck:
-    {{ server_env }} && uv run ty check src tests scripts tooling
+    {{ server_env }} && uv run ty check src tests scripts tooling deploy/workbench
 
 # Verify Rust workspace dependency boundaries
 check-rust-architecture:
@@ -756,7 +776,7 @@ lint-local: cuda-lint
 
 # Type check Python in uv/maturin-only environments
 typecheck-local:
-    uv run ty check src tests scripts tooling
+    uv run ty check src tests scripts tooling deploy/workbench
 
 # Focused login-node-safe checks for the external-parity contract
 test-local-focused:
@@ -778,7 +798,7 @@ ci-lint:
 # Run CI type checks without installing the project package
 ci-typecheck:
     {{ server_env }} && uv sync --group dev --frozen --no-install-project
-    {{ server_env }} && uv run --no-sync ty check src tests scripts tooling
+    {{ server_env }} && uv run --no-sync ty check src tests scripts tooling deploy/workbench
 
 # Run CI tests that exclude heavy data- and parity-dependent suites
 ci-test:

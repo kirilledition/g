@@ -24,6 +24,7 @@ prediction lists, then use `g` for Step 2 scans.
 | find and interpret output files | [Output Files](output-files.md), then [Algorithm](algorithm.md) |
 | resume or inspect an interrupted run | [Resume and Manifest](resume-and-manifest.md) |
 | run on GPU or SLURM | [GPU and Clusters](gpu-and-clusters.md) |
+| prepare a workflow for All of Us on Verily Workbench | [All of Us](all-of-us.md) |
 | tune or measure performance | [Performance Guide](performance-guide.md) |
 | fix an error | [Troubleshooting](troubleshooting.md) |
 

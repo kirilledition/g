@@ -1,0 +1,20 @@
+# Versioned scientific inputs are supplied through a JSON job manifest.
+defaults:
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+tool:
+  action: preflight
+  manifest: ???
+  work_directory: ???
+  dry_run: false
+  billing_project: null
+  runner_prefix: [g, regenie]
+  profile_max_variants: 128
+
+hydra:
+  output_subdir: null
+  job:
+    chdir: false
+  run:
+    dir: .

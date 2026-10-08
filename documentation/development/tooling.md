@@ -8,6 +8,14 @@ This page is the operational reference for the development-only `tooling/`
 package. The shorter design summary is in
 [Development Tooling Architecture](dev-tooling-architecture.md).
 
+The experimental [All of Us Workbench workflow](../public/all-of-us.md) adds
+`tooling.workbench` for input inspection, pinned-file localization, resource
+planning and validated subprocess execution. It invokes the existing Step 2
+CLI and preserves the engine's scientific and resume contracts. Install the
+minimal `workbench` dependency group when using this tooling outside the
+development environment. It is copied into the Workbench image, rather than
+exported through the public `g` package.
+
 ## Scope
 
 `tooling/` owns repeatable development workflows: data preparation, benchmark

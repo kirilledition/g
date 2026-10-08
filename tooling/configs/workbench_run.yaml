@@ -1,0 +1,6 @@
+defaults:
+  - workbench
+  - _self_
+
+tool:
+  action: run

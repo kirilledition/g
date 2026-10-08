@@ -35,6 +35,11 @@ Unsupported REGENIE options are rejected rather than silently ignored. See
 [Compatibility](documentation/public/compatibility.md) for the exact current
 surface.
 
+For All of Us, the experimental [Verily Workbench workflow](documentation/public/all-of-us.md)
+adds explicit cohort preparation, pinned input manifests and verified result
+bundles. Start with its synthetic smoke test; controlled-data compatibility
+and cohort-scale performance still require qualification inside your workspace.
+
 ## Installation
 
 `g` is installed from a Git checkout because it is not published on PyPI.

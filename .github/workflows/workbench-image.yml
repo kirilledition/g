@@ -1,0 +1,74 @@
+name: Workbench image
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - deploy/workbench/**
+      - tooling/**
+      - src/**
+      - crates/**
+      - native/**
+      - vendor/openxla/**
+      - pyproject.toml
+      - uv.lock
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .dockerignore
+      - .github/workflows/workbench-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+
+      - name: Validate portable WDL
+        run: uv tool run --python 3.12 --from miniwdl==1.15.0 miniwdl check deploy/workbench/all_of_us_step2.wdl
+
+      - name: Build pinned portable image without publishing
+        run: >-
+          docker build --platform linux/amd64
+          --build-arg SOURCE_REVISION="$GITHUB_SHA"
+          --tag g-workbench:ci --file deploy/workbench/Dockerfile .
+
+      - name: Check non-root image and installed native package
+        run: |
+          test "$(docker image inspect --format '{{.Config.User}}' g-workbench:ci)" = '1000:1000'
+          docker run --rm g-workbench:ci --help
+          docker run --rm --entrypoint g g-workbench:ci --help
+          docker run --rm g-workbench:ci python -m tooling.cli.data --config-name data_all_of_us --help
+          docker run --rm --entrypoint python g-workbench:ci -c \
+            'import importlib.metadata, g._core; assert importlib.metadata.version("jax") == "0.11.0"; assert importlib.metadata.version("nvidia-libnvcomp-cu12") == "5.3.0.16"; import pyarrow.parquet'
+
+      - name: Run native quantitative and binary jobs with missing calls
+        run: |
+          mkdir ci-workbench
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --mount type=bind,src="$PWD/ci-workbench",dst=/work \
+            g-workbench:ci python -m tooling.cli.workbench_demo \
+            tool.output_directory=/work/demo
+          for phenotype in quantitative binary; do
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --mount type=bind,src="$PWD/ci-workbench",dst=/work \
+              g-workbench:ci --config-name workbench_run \
+              tool.manifest="/work/demo/$phenotype.job.json" \
+              tool.work_directory=/work/attempts
+          done
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --mount type=bind,src="$PWD/ci-workbench",dst=/work \
+            g-workbench:ci python -m deploy.workbench.check_demo /work/demo
