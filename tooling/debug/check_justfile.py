@@ -109,6 +109,8 @@ HYDRA_TOOLING_MODULES = (
     "tooling.cli.rust_build_profiles ",
     "tooling.cli.schema_check ",
     "tooling.cli.server ",
+    "tooling.cli.workbench ",
+    "tooling.cli.workbench_demo ",
 )
 HYDRA_OVERRIDE_PATTERN = re.compile(r"(?:^|\s)(?:dataset|machine|sweep|telemetry|tool|workload)(?:\.[A-Za-z0-9_]+)?=")
 RECIPE_PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]*)(?:\s+[^:=].*)?:")

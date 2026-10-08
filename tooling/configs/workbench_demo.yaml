@@ -1,0 +1,14 @@
+defaults:
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+tool:
+  output_directory: null
+
+hydra:
+  job:
+    chdir: false
+  output_subdir: null
+  run:
+    dir: .

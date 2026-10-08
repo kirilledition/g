@@ -25,6 +25,11 @@ nav = [
     "public/api-python.md",
     "public/performance-guide.md",
     "public/gpu-and-clusters.md",
+    "public/all-of-us.md",
+    "public/all-of-us-preparation.md",
+    "public/workbench-deployment.md",
+    "public/workbench-runner.md",
+    "public/workbench-input-profile.md",
     "public/troubleshooting.md",
   ] },
   { "Development" = [

@@ -1,0 +1,41 @@
+defaults:
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+tool:
+  name: all_of_us
+  mode: plan
+  source_format: tables
+  input_prefix: null
+  input_bgen: null
+  input_sample: null
+  pvar_zstd: false
+  bgen_reference: null
+  confirm_diploid: false
+  identity_map: ???
+  phenotype_file: ???
+  phenotype_columns: []
+  phenotype_trait: quantitative
+  covariate_file: null
+  covariate_columns: []
+  keep_file: null
+  remove_file: null
+  release_exclusion_files: []
+  variant_extract_file: null
+  minimum_allele_count: null
+  minimum_variant_call_rate: null
+  release_label: ???
+  genome_build: GRCh38
+  output_directory: ???
+  plink_executable: plink2
+  threads: 1
+  memory_megabytes: 4096
+  hash_genotype_inputs: false
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false
